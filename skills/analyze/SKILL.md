@@ -32,6 +32,13 @@ This returns:
 - Deltas vs baseline
 - HP correlations
 
+## Step 1.5: Filter Results
+
+Before analysis, filter out non-completed experiments:
+- Exclude experiments with `status: "diverged"` or `status: "failed"` from correlation analysis
+- Include diverged/failed experiments in the failure analysis section (they provide boundary information)
+- The result_analyzer now filters by status automatically, but verify the output
+
 ## Step 2: Deep Analysis
 
 Beyond what the script provides, reason about:
@@ -83,12 +90,18 @@ Output:
 - Research proposals haven't been tried yet
 - Architectural changes might help more than HP tuning
 
+Provide concrete pivot actions (not just "try different approach"):
+- "Switch from HP-only tuning to research + code changes"
+- "Try a different code branch that hasn't been tested with this HP range"
+- "Increase batch size and retune LR with linear scaling"
+- "Add data augmentation (current model appears to be overfitting)"
+
 Output:
 ```json
 {
   "action": "pivot",
   "reason": "<why current approach is insufficient>",
-  "suggestion": "<what to try instead>",
+  "suggestion": "<specific actionable next step>",
   "remaining_potential": "<estimated room for improvement>"
 }
 ```

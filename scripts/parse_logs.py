@@ -23,6 +23,44 @@ def parse_kv_line(line: str) -> dict:
     return metrics
 
 
+def parse_python_logging_line(line: str) -> dict:
+    """Parse a Python logging format line for metrics.
+
+    Matches lines like: 2024-01-15 10:30:45,123 INFO epoch=5 loss=0.234 accuracy=87.5
+    Extracts key=value or key: value metrics from the message part,
+    plus a wall_time field with the timestamp.
+    """
+    m = re.match(r'^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.\d]*)\s+\S+\s+(.*)', line)
+    if not m:
+        return {}
+    timestamp, message = m.group(1), m.group(2)
+    metrics = parse_kv_line(message)
+    if metrics:
+        metrics['wall_time'] = timestamp
+    return metrics
+
+
+def parse_tqdm_line(line: str) -> dict:
+    """Parse a tqdm progress bar line for metrics.
+
+    Matches lines like: 100%|████████| 50/50 [00:30<00:00, 1.67it/s, loss=0.5, acc=85.2]
+    Extracts key=value metrics from the trailing bracket section.
+    """
+    # Find trailing bracket content that contains key=value pairs
+    m = re.search(r'\[([^\]]*,\s*\w+\s*=\s*[^\]]+)\]\s*$', line)
+    if not m:
+        return {}
+    bracket_content = m.group(1)
+    metrics = {}
+    for kv_match in re.finditer(r'(\w+)\s*=\s*([0-9eE.+\-]+)', bracket_content):
+        key, value = kv_match.group(1), kv_match.group(2)
+        try:
+            metrics[key] = float(value)
+        except ValueError:
+            continue
+    return metrics
+
+
 def parse_json_line(line: str) -> dict:
     """Parse a JSON line for metrics."""
     try:
@@ -56,7 +94,7 @@ def parse_csv_lines(lines: list[str]) -> list[dict]:
 
 
 def detect_format(lines: list[str]) -> str:
-    """Auto-detect log format: 'json', 'csv', or 'kv'."""
+    """Auto-detect log format: 'json', 'csv', 'logging', 'tqdm', or 'kv'."""
     for line in lines[:5]:
         stripped = line.strip()
         if not stripped:
@@ -66,6 +104,16 @@ def detect_format(lines: list[str]) -> str:
             return "json"
         except json.JSONDecodeError:
             pass
+    # Check for Python logging format (lines starting with datetime)
+    for line in lines[:5]:
+        stripped = line.strip()
+        if stripped and re.match(r'^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}', stripped):
+            return "logging"
+    # Check for tqdm progress bar format
+    for line in lines[:5]:
+        stripped = line.strip()
+        if stripped and re.search(r'\d+%\|', stripped):
+            return "tqdm"
     # Check if first non-empty line looks like CSV header
     for line in lines[:3]:
         stripped = line.strip()
@@ -91,6 +139,10 @@ def parse_log(filepath: str, fmt: str | None = None) -> list[dict]:
         return [m for line in lines if (m := parse_json_line(line))]
     elif fmt == "csv":
         return parse_csv_lines(lines)
+    elif fmt == "logging":
+        return [m for line in lines if (m := parse_python_logging_line(line))]
+    elif fmt == "tqdm":
+        return [m for line in lines if (m := parse_tqdm_line(line))]
     else:
         return [m for line in lines if (m := parse_kv_line(line))]
 

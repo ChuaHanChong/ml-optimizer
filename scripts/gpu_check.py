@@ -38,11 +38,13 @@ def parse_nvidia_smi(output: str) -> list[dict]:
     return gpus
 
 
-def check_availability(gpus: list[dict], util_threshold: int = 30) -> list[dict]:
-    """Mark GPUs as available/busy based on utilization threshold."""
+def check_availability(gpus: list[dict], util_threshold: int = 30, memory_threshold: float = 80.0) -> list[dict]:
+    """Mark GPUs as available/busy based on utilization and memory thresholds."""
     for gpu in gpus:
         util = gpu.get("utilization_pct", 100)
-        gpu["available"] = util < util_threshold
+        memory_pct = gpu.get("memory_used_mib", 0) / gpu.get("memory_total_mib", 1) * 100
+        gpu["memory_used_pct"] = round(memory_pct, 1)
+        gpu["available"] = util < util_threshold and memory_pct < memory_threshold
     return gpus
 
 
@@ -51,7 +53,7 @@ def get_free_gpus(gpus: list[dict]) -> list[int]:
     return [g["index"] for g in gpus if g.get("available", False)]
 
 
-def run(util_threshold: int = 30) -> dict:
+def run(util_threshold: int = 30, memory_threshold: float = 80.0) -> dict:
     """Run nvidia-smi and return GPU status."""
     try:
         result = subprocess.run(
@@ -72,11 +74,12 @@ def run(util_threshold: int = 30) -> dict:
         return {"error": "nvidia-smi timed out", "gpus": []}
 
     gpus = parse_nvidia_smi(result.stdout)
-    gpus = check_availability(gpus, util_threshold)
+    gpus = check_availability(gpus, util_threshold, memory_threshold)
     free = get_free_gpus(gpus)
     return {"gpus": gpus, "free_gpu_indices": free, "num_free": len(free)}
 
 
 if __name__ == "__main__":
     threshold = int(sys.argv[1]) if len(sys.argv) > 1 else 30
-    print(json.dumps(run(threshold), indent=2))
+    mem_threshold = float(sys.argv[2]) if len(sys.argv) > 2 else 80.0
+    print(json.dumps(run(threshold, mem_threshold), indent=2))

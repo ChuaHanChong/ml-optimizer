@@ -2,8 +2,11 @@
 """Set up experiment directory structure and generate configs/scripts."""
 
 import json
+import os
+import re
 import shlex
 import sys
+import time
 from pathlib import Path
 
 
@@ -22,19 +25,25 @@ def create_experiment_dirs(project_root: str) -> str:
 
 
 def next_experiment_id(results_dir: str) -> str:
-    """Generate the next sequential experiment ID (exp-001, exp-002, ...)."""
+    """Generate the next sequential experiment ID (exp-001, exp-002, ...).
+
+    Only files matching the strict ``exp-\\d+\\.json`` pattern are considered,
+    so unrelated JSON files (e.g. ``experiment-summary.json``) are ignored.
+    """
     path = Path(results_dir)
     if not path.exists():
         return "exp-001"
-    existing = sorted(path.glob("exp-*.json"))
-    if not existing:
+
+    exp_pattern = re.compile(r"^exp-(\d+)\.json$")
+    nums: list[int] = []
+    for f in path.iterdir():
+        m = exp_pattern.match(f.name)
+        if m:
+            nums.append(int(m.group(1)))
+
+    if not nums:
         return "exp-001"
-    last = existing[-1].stem  # e.g., "exp-005"
-    try:
-        num = int(last.split("-")[1])
-    except (IndexError, ValueError):
-        num = 0
-    return f"exp-{num + 1:03d}"
+    return f"exp-{max(nums) + 1:03d}"
 
 
 def write_experiment_config(results_dir: str, exp_id: str, config: dict) -> str:
@@ -65,9 +74,10 @@ def generate_train_script(
             lines.append(f"export {key}={shlex.quote(str(value))}")
     lines.append("")
 
-    # Create log directory
+    # Create log directory and record PID
     log_dir = str(Path(log_file).parent)
     lines.append(f"mkdir -p {shlex.quote(log_dir)}")
+    lines.append(f"echo $$ > {shlex.quote(log_dir + '/pid')}")
     lines.append("")
 
     # Training command with logging
@@ -111,6 +121,46 @@ def setup(project_root: str, train_command: str, gpu_id: int = 0, config: dict |
         "script_path": script_path,
         "log_file": log_file,
     }
+
+
+def cleanup_stale_experiments(results_dir: str, timeout_hours: float = 2.0) -> list[str]:
+    """Mark stale running/pending experiments as failed.
+
+    An experiment is considered stale when its JSON file has not been modified
+    for longer than *timeout_hours*.
+
+    Returns:
+        List of experiment IDs that were cleaned up.
+    """
+    path = Path(results_dir)
+    if not path.exists():
+        return []
+
+    exp_pattern = re.compile(r"^exp-\d+\.json$")
+    now = time.time()
+    cutoff = now - timeout_hours * 3600
+    cleaned: list[str] = []
+
+    for f in sorted(path.iterdir()):
+        if not exp_pattern.match(f.name):
+            continue
+        if f.stat().st_mtime > cutoff:
+            continue
+        try:
+            data = json.loads(f.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+        status = data.get("status")
+        if status not in ("running", "pending"):
+            continue
+        data["status"] = "failed"
+        data["notes"] = (
+            f"Marked as failed: stale experiment (no updates for {timeout_hours}h)"
+        )
+        f.write_text(json.dumps(data, indent=2))
+        cleaned.append(f.stem)
+
+    return cleaned
 
 
 if __name__ == "__main__":

@@ -162,3 +162,76 @@ self.stoch_depth = StochasticDepth(p=0.1, mode="row")
 - **Too aggressive:** High dropout (>0.3) in generative models usually hurts. Start conservative.
 - **Label smoothing + other losses:** Label smoothing changes the loss landscape. May need to adjust learning rate.
 - **Stacking regularizers:** Combining multiple regularization techniques can over-regularize. Add one at a time.
+
+---
+
+## 6. Mixed Precision Training
+
+### Where to look
+- Training loop (the main training step)
+- Model forward pass and loss computation
+- Gradient scaling logic
+
+### What to read first
+- Whether the project already uses AMP (`torch.cuda.amp`)
+- What dtype the model and inputs use
+- Whether custom loss functions handle mixed precision correctly
+
+### Minimal change pattern
+```python
+# Add scaler and autocast to training loop
+scaler = torch.cuda.amp.GradScaler()
+
+for batch in dataloader:
+    optimizer.zero_grad()
+    with torch.cuda.amp.autocast():
+        output = model(input)
+        loss = criterion(output, target)
+    scaler.scale(loss).backward()
+    scaler.step(optimizer)
+    scaler.update()
+```
+
+### Pitfalls
+- **Custom losses with reduce ops:** Some custom losses break in float16. Use `torch.cuda.amp.autocast(enabled=False)` for problematic operations.
+- **Gradient overflow:** GradScaler handles this, but very high LR + AMP can cause more frequent skipped steps.
+- **BN statistics:** Batch norm accumulates in float32 automatically, but verify if using custom normalization.
+
+---
+
+## 7. Distributed Training (DDP/FSDP)
+
+### Where to look
+- Model initialization (wrapping with DDP)
+- Dataloader (DistributedSampler)
+- Training loop (gradient synchronization)
+
+### What to read first
+- Current single-GPU training loop structure
+- How model is created and moved to device
+- Whether there are any `model.module` accesses
+
+### Minimal change pattern (DDP)
+```python
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
+
+# Initialize process group
+dist.init_process_group("nccl")
+local_rank = int(os.environ["LOCAL_RANK"])
+torch.cuda.set_device(local_rank)
+
+# Wrap model
+model = model.to(local_rank)
+model = DDP(model, device_ids=[local_rank])
+
+# Use DistributedSampler
+sampler = torch.utils.data.distributed.DistributedSampler(dataset)
+dataloader = DataLoader(dataset, sampler=sampler)
+```
+
+### Pitfalls
+- **Saving/loading:** Save `model.module.state_dict()` not `model.state_dict()` to avoid DDP wrapper keys.
+- **Metrics logging:** Only log from rank 0 to avoid duplicate entries.
+- **Random seeds:** Set different seeds per rank for data augmentation, same seed for model init.
+- **Batch size:** Per-GPU batch size × num_GPUs = effective batch size. Adjust LR accordingly.

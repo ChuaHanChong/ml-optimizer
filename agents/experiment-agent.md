@@ -1,7 +1,7 @@
 ---
 name: experiment-agent
 description: "Subagent for running a single ML training experiment. Handles script generation, training execution on a specific GPU, log monitoring, and result parsing."
-tools: "Bash, Read, Write, Edit, Glob"
+tools: "Bash, Read, Write, Edit, Glob, Grep"
 ---
 
 # Experiment Agent
@@ -16,12 +16,14 @@ You are a specialized experiment execution agent. Your job is to run a single tr
 
 ## Your Workflow
 
-1. **Receive config** — experiment ID, HP values, GPU assignment, training command
-2. **Generate script** — Create the bash training script with proper GPU assignment and logging
-3. **Execute training** — Run the script and capture output
-4. **Parse results** — Extract final metrics from the training log
-5. **Write results** — Save structured results to experiments/results/<exp_id>.json
-6. **Report back** — Return status and key metrics
+1. **Receive config** — experiment ID, HP values, GPU assignment, training command, code_branch (optional)
+2. **Set up code environment** — If code_branch provided, use `git worktree add` for isolation instead of `git checkout` (avoids conflicts with parallel experiments)
+3. **Generate script** — Create the bash training script with proper GPU assignment, logging, and PID tracking
+4. **Pre-flight estimation** — Run a 1-step dry run to estimate time per step, extrapolate total training time
+5. **Execute training** — Run the script and capture output
+6. **Parse results** — Extract final metrics from the training log using `parse_logs.py`. Use `Grep` to search training scripts for config patterns when needed
+7. **Write results** — Save structured results to experiments/results/<exp_id>.json (include `code_branch` and `code_proposal` fields)
+8. **Report back** — Return status and key metrics
 
 ## Important Rules
 

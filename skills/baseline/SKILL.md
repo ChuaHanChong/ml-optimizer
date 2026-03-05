@@ -59,7 +59,8 @@ This creates:
    ```bash
    python3 ~/.claude/plugins/ml-optimizer/scripts/parse_logs.py <output_file>
    ```
-4. If metrics aren't parseable automatically, read the output and extract them manually
+4. **Validate parse results:** Check that `parse_logs` returned non-empty records. If empty, the log format may be unrecognized — try forcing different formats (`--format kv`, `--format json`, `--format logging`, `--format tqdm`)
+5. If metrics aren't parseable automatically, read the output and extract them manually
 
 ## Step 4: Profile Training
 

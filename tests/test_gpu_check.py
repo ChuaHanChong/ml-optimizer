@@ -52,6 +52,36 @@ def test_get_free_gpus():
     assert free == [0, 2]
 
 
+def test_check_availability_memory_threshold():
+    gpus = parse_nvidia_smi(SAMPLE_OUTPUT)
+    # GPU 1 has 20000/24576 MiB used (~81.4%). With memory_threshold=80, it should
+    # be unavailable even though util_threshold is generous.
+    gpus = check_availability(gpus, util_threshold=100, memory_threshold=80)
+    assert gpus[0]["available"] is True   # 5% util, ~5% mem — both under
+    assert gpus[1]["available"] is False  # 95% util ok (threshold 100), but ~81% mem >= 80%
+    assert gpus[2]["available"] is True   # 10% util, ~2% mem — both under
+
+    # With memory_threshold=90, GPU 1's ~81% memory is fine, so only util matters.
+    gpus2 = parse_nvidia_smi(SAMPLE_OUTPUT)
+    gpus2 = check_availability(gpus2, util_threshold=100, memory_threshold=90)
+    assert gpus2[1]["available"] is True  # 95% util < 100 threshold, ~81% mem < 90%
+
+
+def test_check_availability_both_thresholds():
+    gpus = parse_nvidia_smi(SAMPLE_OUTPUT)
+    gpus = check_availability(gpus, util_threshold=30, memory_threshold=80)
+    # GPU 0: 5% util < 30, ~5% mem < 80 — available
+    assert gpus[0]["available"] is True
+    # GPU 1: 95% util >= 30 AND ~81% mem >= 80 — unavailable on both counts
+    assert gpus[1]["available"] is False
+    # GPU 2: 10% util < 30, ~2% mem < 80 — available
+    assert gpus[2]["available"] is True
+    # Verify memory_used_pct is populated for visibility
+    assert "memory_used_pct" in gpus[0]
+    assert "memory_used_pct" in gpus[1]
+    assert gpus[1]["memory_used_pct"] > 80
+
+
 def test_parse_nvidia_smi_malformed_index():
     malformed = """index, name, memory.total [MiB], memory.used [MiB], utilization.gpu [%]
 N/A, NVIDIA GeForce RTX 3090, ERR MiB, ERR MiB, ERR %

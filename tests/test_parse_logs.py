@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
-from parse_logs import parse_kv_line, parse_json_line, parse_csv_lines, detect_format, parse_log, extract_metric_trajectory
+from parse_logs import parse_kv_line, parse_json_line, parse_csv_lines, parse_python_logging_line, parse_tqdm_line, detect_format, parse_log, extract_metric_trajectory
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -105,3 +105,41 @@ def test_extract_metric_trajectory():
     losses = extract_metric_trajectory(records, "loss")
     assert len(losses) == 8
     assert losses[0] > losses[-1]  # loss should decrease
+
+
+def test_parse_python_logging_line():
+    line = "2024-01-15 10:30:45,123 INFO epoch=5 loss=0.234 accuracy=87.5"
+    metrics = parse_python_logging_line(line)
+    assert metrics["epoch"] == 5.0
+    assert abs(metrics["loss"] - 0.234) < 1e-6
+    assert metrics["accuracy"] == 87.5
+    assert metrics["wall_time"] == "2024-01-15 10:30:45,123"
+
+
+def test_parse_tqdm_line():
+    line = "100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 50/50 [00:30<00:00, 1.67it/s, loss=0.5, acc=85.2]"
+    metrics = parse_tqdm_line(line)
+    assert metrics["loss"] == 0.5
+    assert metrics["acc"] == 85.2
+
+
+def test_detect_format_logging():
+    lines = [
+        "2024-01-15 10:30:45,123 INFO epoch=1 loss=2.345",
+        "2024-01-15 10:30:46,456 INFO epoch=1 loss=2.100",
+    ]
+    assert detect_format(lines) == "logging"
+
+
+def test_detect_format_tqdm():
+    lines = [
+        "100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 50/50 [00:30<00:00, 1.67it/s, loss=0.5, acc=85.2]",
+    ]
+    assert detect_format(lines) == "tqdm"
+
+
+def test_parse_kv_line_negative_value():
+    line = "delta=-0.5 reward=-1.2"
+    metrics = parse_kv_line(line)
+    assert metrics["delta"] == -0.5
+    assert metrics["reward"] == -1.2

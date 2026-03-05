@@ -110,3 +110,43 @@ def test_detect_plateau_all_nan():
     values = [float("nan")] * 25
     result = detect_plateau(values, patience=20)
     assert result is None
+
+
+def test_detect_plateau_higher_is_better():
+    # Accuracy steadily improving — should NOT trigger plateau
+    values = [50, 55, 60, 65, 70, 75, 80, 85, 90]
+    result = detect_plateau(values, patience=5, lower_is_better=False)
+    assert result is None
+
+
+def test_detect_plateau_higher_is_better_stalled():
+    # Accuracy stuck at 80 for 25 steps — SHOULD trigger plateau
+    values = [50, 55, 60, 65, 70, 75, 80] + [80] * 25
+    result = detect_plateau(values, patience=20, lower_is_better=False)
+    assert result is not None
+    assert result["diverged"] is True
+    assert "plateau" in result["reason"].lower()
+
+
+def test_detect_explosion_higher_is_better():
+    # Accuracy going from 30 to 90 — should NOT trigger explosion
+    values = [30 + i * 2 for i in range(15)] + [90]
+    result = detect_explosion(values, window=10, threshold=5.0, lower_is_better=False)
+    assert result is None
+
+
+def test_detect_explosion_higher_is_better_crash():
+    # Accuracy dropping from 80 to 5 — SHOULD trigger explosion (metric crash)
+    values = [80] * 15 + [5]
+    result = detect_explosion(values, window=10, threshold=5.0, lower_is_better=False)
+    assert result is not None
+    assert result["diverged"] is True
+    assert "crash" in result["reason"].lower()
+
+
+def test_check_divergence_higher_is_better_healthy():
+    # Improving accuracy trajectory should be healthy
+    values = [50 + i for i in range(50)]
+    result = check_divergence(values, lower_is_better=False)
+    assert result["diverged"] is False
+    assert result["reason"] == "Training healthy"

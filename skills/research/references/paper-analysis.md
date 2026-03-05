@@ -59,12 +59,22 @@ Be skeptical when:
 - Search: "[task] data augmentation" or "[domain] augmentation strategy"
 - Look for: domain-specific augmentations, mixing strategies
 
+## Previously Tried Techniques
+
+Before proposing, check if `experiments/reports/research-findings.md` already exists. If so:
+1. Read all previously proposed technique names
+2. Do NOT re-propose techniques that were already tried
+3. Note in the output: "Excluded N previously-proposed techniques"
+
+This prevents wasting effort on re-implementing techniques from prior optimization runs.
+
 ## Output Format
 
 Rank proposals by: (expected impact * feasibility) / complexity
 
 ```markdown
 ### Proposal: [Name]
+- **Type:** code_change | hp_only
 - **Source:** [Paper title, URL]
 - **Technique:** [Category] - [Brief description]
 - **Implementation:**
@@ -76,3 +86,8 @@ Rank proposals by: (expected impact * feasibility) / complexity
 - **Risk:** [What could go wrong]
 - **Priority score:** [1-10]
 ```
+
+### Proposal Type Classification
+
+- **`code_change`**: Requires modifying model architecture, loss functions, data pipeline, or training loop code. These go through the implement skill for branch creation.
+- **`hp_only`**: Can be achieved purely through hyperparameter or config changes. Examples: "use cosine annealing" (scheduler config), "increase weight decay" (optimizer param), "add warmup" (scheduler config). These bypass implement and go directly to hp-tune.

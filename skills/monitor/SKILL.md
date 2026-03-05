@@ -15,6 +15,9 @@ From the orchestrator:
 - `project_root`: Project root directory
 - `poll_interval`: How often to check (default: 30 seconds)
 - `metric_to_watch`: Which metric to monitor (default: "loss")
+- `lower_is_better`: Whether lower values are better for the watched metric (default: true). **Note:** The orchestrator should always pass `"loss"` with `lower_is_better=true` for divergence detection. The `primary_metric` (accuracy, PSNR, etc.) is used by analyze/hp-tune, not by monitor.
+- `explosion_threshold`: Threshold multiplier for explosion detection (default: 5.0). Override based on model type.
+- `plateau_patience`: Steps without improvement before plateau alarm (default: 20). Override based on model type.
 
 ## Step 1: Validate Inputs
 
@@ -49,7 +52,7 @@ Extract the metric trajectory (all values of the watched metric over time).
 
 ### 2c: Check for Divergence
 
-Run divergence detection on the extracted trajectory:
+Run divergence detection on the extracted trajectory, passing `lower_is_better`:
 ```bash
 python3 -c "
 import json, sys
@@ -59,7 +62,7 @@ from parse_logs import parse_log, extract_metric_trajectory
 
 records = parse_log('experiments/logs/<exp_id>/train.log')
 values = extract_metric_trajectory(records, '<metric>')
-result = check_divergence(values)
+result = check_divergence(values, lower_is_better=<lower_is_better>)
 print(json.dumps(result))
 "
 ```
@@ -128,6 +131,15 @@ The monitor exits when:
 - **NaN/Inf detection:** Always enabled, immediate kill
 - **Explosion threshold:** 5x rolling average over 10-step window
 - **Plateau patience:** 20 evaluation checkpoints with min_delta=1e-6
+
+### Recommended thresholds by model type
+| Model Type | Explosion Threshold | Plateau Patience | Notes |
+|------------|-------------------|-----------------|-------|
+| CNN (classification) | 5.0 | 20 | Standard defaults |
+| Transformer | 10.0 | 30 | Loss can be spikier |
+| GAN | 20.0 | 50 | Inherently noisy training |
+| Diffusion model | 10.0 | 40 | Slow convergence is normal |
+| Fine-tuning | 3.0 | 15 | Should converge faster |
 
 ### Common divergence patterns
 - **NaN in first 10 steps:** Learning rate too high. Note this for hp-tune.

@@ -139,10 +139,10 @@ Read `references/validation-checklist.md` and run checks progressively:
 
 **Recommended (run if project supports it):**
 
-3. Model instantiation check
-4. Forward pass shape check
+3. Model instantiation check — attempt if the project has a model factory function (e.g., `get_model()`)
+4. Forward pass shape check — attempt if model instantiation succeeds
 
-See `references/validation-checklist.md` for commands.
+See `references/validation-checklist.md` for commands. Attempt Level 3 validation when the project structure supports it (e.g., has a clear model factory or config-based instantiation).
 
 ### 4f. Commit (git strategy only)
 
@@ -259,7 +259,7 @@ New dependencies needed (install before experiments):
 - **File not found:** If a file listed in the proposal doesn't exist, report it and skip that file. Mark the proposal as `implementation_error`.
 - **Syntax validation fails:** Keep the branch as-is (for debugging). Mark as `validation_failed`. The experiment skill will skip it.
 - **Import validation fails:** Check if a new dependency is needed. Flag it in `new_dependencies`. Mark as `validation_failed`.
-- **Git conflicts on branch creation:** If `ml-opt/<slug>` already exists, append a counter: `ml-opt/<slug>-2`.
+- **Git conflicts on branch creation:** If `ml-opt/<slug>` already exists, use a while loop to find an available name: `ml-opt/<slug>-2`, `ml-opt/<slug>-3`, etc.
 - **Not a git repo and no backup possible:** Report to user, do not proceed with modifications.
 
 ## Non-Git Fallback Details

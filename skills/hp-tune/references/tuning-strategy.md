@@ -65,6 +65,44 @@ When proposing N experiments (one per GPU):
 - **Hybrid batch:** Mix exploration and exploitation
   - 2/3 configs near best result, 1/3 exploring new regions
 
+## Multi-Objective Optimization
+
+When optimizing for multiple metrics simultaneously (e.g., accuracy AND latency):
+
+1. **Weighted scoring:** Combine metrics into a single score: `score = w1 * metric1_normalized + w2 * metric2_normalized`. Ask the user for relative weights.
+2. **Pareto frontier:** Identify experiments where no other experiment is better on ALL metrics simultaneously. Present the Pareto-optimal set to the user.
+3. **Constraint-based:** Optimize primary metric subject to secondary metric constraint (e.g., "maximize accuracy where latency < 100ms").
+4. **Sequential:** First optimize the primary metric, then fine-tune the secondary without regressing.
+
+When `secondary_metric` is provided, include both metrics in the ranking and note trade-offs.
+
+## Effective Hyperparameters
+
+Some "code changes" are effectively HP-only changes:
+- **Mixed precision training:** `torch.cuda.amp.autocast()` — no architecture change, just a training mode flag. Doubles effective batch size with same memory.
+- **Gradient accumulation:** Simulates larger batch sizes without more memory. Effective_batch = batch_size × accumulation_steps.
+- **Gradient clipping:** `torch.nn.utils.clip_grad_norm_()` — prevents explosion without changing architecture.
+
+Consider these alongside traditional HPs when tuning.
+
+## Per-Model-Type Guidance
+
+### Vision Transformers (ViT, DeiT, Swin)
+- Batch size: 256-4096 (use gradient accumulation)
+- Weight decay: 0.05-0.3 (higher than CNNs)
+- Warmup: 5-10% of training
+
+### Large Language Models (Fine-tuning)
+- LoRA rank: 8-64 (higher = more capacity but more memory)
+- LR: 1e-5 to 3e-4 (very sensitive)
+- Batch size: as large as possible with gradient accumulation
+
+### GANs
+- Generator LR: 1e-4 to 2e-4
+- Discriminator LR: usually same or 2-4x generator
+- DO NOT use weight decay on generator
+- Betas: (0.0, 0.9) for Adam (not the default 0.9, 0.999)
+
 ## Anti-Patterns to Avoid
 
 - Don't change all HPs at once — change 1-2 per experiment for interpretability

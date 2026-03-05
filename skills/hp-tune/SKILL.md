@@ -48,12 +48,15 @@ python3 ~/.claude/plugins/ml-optimizer/scripts/result_analyzer.py \
   <lower_is_better>
 ```
 
+**Branch-aware analysis:** Group past results by `code_branch` field before analysis. Experiments on different code branches should be analyzed separately — HP sensitivities may differ between branches. For example, `lr=0.001` on a perceptual-loss branch may behave very differently from `lr=0.001` on baseline code.
+
 From this analysis, understand:
-- **Best result so far:** Which config and what metric value?
+- **Best result so far:** Which config AND branch gave the best metric value?
 - **Worst result:** What should be avoided?
 - **Diverged experiments:** What caused them? (too high LR, too large batch, etc.)
-- **Trends:** Is there a clear direction (e.g., lower LR consistently better)?
+- **Trends:** Is there a clear direction (e.g., lower LR consistently better)? Do trends differ by branch?
 - **Untried regions:** What parts of the search space haven't been explored?
+- **Branch performance:** Which code branches are consistently better/worse?
 
 ## Step 3: Reason About Next Configs
 
@@ -116,6 +119,8 @@ For each proposed config, write a JSON file:
     "epochs": <value>,
     ...
   },
+  "code_branch": "<branch name or null for baseline>",
+  "code_proposal": "<proposal name or null>",
   "gpu_id": <assigned_gpu>,
   "reasoning": "<why this config was chosen>",
   "iteration": <tuning_iteration>

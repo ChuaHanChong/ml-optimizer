@@ -38,6 +38,14 @@ If the user provided papers or URLs:
    - Assess expected impact
    - Identify risks
 
+## Step 1.5: Check for Existing Research (Deduplication)
+
+Before searching, check if `experiments/reports/research-findings.md` already exists:
+
+1. If it exists, read it and extract all previously proposed technique names
+2. When generating new proposals, exclude techniques that were already proposed
+3. This prevents re-proposing the same techniques on subsequent optimization runs
+
 ## Step 2: Web Search for Techniques
 
 Construct targeted searches based on the model type and task:
@@ -95,7 +103,9 @@ Score each proposal on three axes:
 - **Feasibility** (1-10): How easy is it to implement?
 - **Confidence** (1-10): How confident are we in the expected outcome?
 
-Priority score = (impact * confidence) / (11 - feasibility)
+Priority score = (impact * confidence) / (11 - min(feasibility, 10))
+
+Note: Clamp feasibility to [1, 10] range to prevent division by zero when feasibility=11.
 
 Sort proposals by priority score, highest first.
 
@@ -120,6 +130,7 @@ Write to `experiments/reports/research-findings.md`:
 ## Proposals (Ranked by Priority)
 
 ### Proposal 1: [Name] (Priority: X/10)
+- **Type:** code_change | hp_only
 - **Source:** [Paper title and URL]
 - **Technique:** [Category] - [Description]
 - **What to change:**

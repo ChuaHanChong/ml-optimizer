@@ -70,5 +70,53 @@
     "input": "Optimize my Tiny ResNet classifier on CIFAR-10 for better accuracy",
     "expected_skill": "ml-optimizer:orchestrate",
     "description": "CIFAR-10 ResNet optimization request should trigger orchestrate"
+  },
+  {
+    "name": "ambiguous_fast_training_triggers_orchestrate",
+    "input": "Make my model train faster",
+    "expected_skill": "ml-optimizer:orchestrate",
+    "description": "Ambiguous speed request could mean optimize or reduce time - defaults to orchestrate"
+  },
+  {
+    "name": "ambiguous_better_results_triggers_orchestrate",
+    "input": "I want better results from my neural network",
+    "expected_skill": "ml-optimizer:orchestrate",
+    "description": "Vague improvement request should trigger orchestrate"
+  },
+  {
+    "name": "ambiguous_loss_too_high_triggers_orchestrate",
+    "input": "My training loss is too high and won't go down",
+    "expected_skill": "ml-optimizer:orchestrate",
+    "description": "Problem description implying optimization need should trigger orchestrate"
+  },
+  {
+    "name": "multi_step_research_then_implement",
+    "input": "Find recent papers on attention mechanisms and then apply the best one to my transformer model",
+    "expected_skill": "ml-optimizer:orchestrate",
+    "description": "Multi-step request (research + implement) should trigger orchestrate which coordinates"
+  },
+  {
+    "name": "multi_step_baseline_then_tune",
+    "input": "Run a baseline and then tune my model's learning rate and batch size",
+    "expected_skill": "ml-optimizer:orchestrate",
+    "description": "Multi-step request (baseline + tune) should trigger orchestrate"
+  },
+  {
+    "name": "negative_deploy_model",
+    "input": "Deploy my model to production using Docker",
+    "expected_skill": null,
+    "description": "Deployment request is NOT optimization - should not trigger"
+  },
+  {
+    "name": "negative_write_tests",
+    "input": "Write unit tests for my model's forward pass",
+    "expected_skill": null,
+    "description": "Testing request is NOT optimization - should not trigger"
+  },
+  {
+    "name": "negative_explain_code",
+    "input": "Explain how the attention mechanism works in my model",
+    "expected_skill": null,
+    "description": "Code explanation request is NOT optimization - should not trigger"
   }
 ]

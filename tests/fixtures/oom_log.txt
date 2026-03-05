@@ -1,0 +1,8 @@
+epoch=1 step=100 loss=2.3456 lr=0.001 accuracy=35.2
+epoch=1 step=200 loss=2.1890 lr=0.001 accuracy=38.1
+epoch=1 step=300 loss=2.0543 lr=0.001 accuracy=40.2
+RuntimeError: CUDA out of memory. Tried to allocate 2.00 GiB (GPU 0; 24.00 GiB total capacity; 22.50 GiB already allocated; 1.20 GiB free; 23.10 GiB reserved in total by PyTorch) If reserved memory is >> allocated memory try setting max_split_size_mb to avoid fragmentation.
+Traceback (most recent call last):
+  File "train.py", line 145, in train_epoch
+    loss = criterion(output, target)
+torch.cuda.OutOfMemoryError: CUDA out of memory.

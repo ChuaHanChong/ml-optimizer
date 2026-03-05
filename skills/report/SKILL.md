@@ -92,6 +92,22 @@ From the analysis reports and results, identify:
 3. Any surprising results?
 4. What would be worth trying next?
 
+## Step 5.5: Generate Visualizations
+
+Use the plot_results.py script to generate ASCII charts:
+
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/plot_results.py \
+  <project_root>/experiments/results <primary_metric> comparison
+```
+
+Generate:
+1. Metric comparison bar chart (all experiments)
+2. Improvement timeline (best-so-far over time)
+3. HP sensitivity scatter for the highest-impact HP
+
+Include the ASCII chart output in the report (in code blocks).
+
 ## Step 6: Write the Report
 
 Write to `experiments/reports/final-report.md` using the template from `references/report-template.md`.
@@ -106,6 +122,7 @@ Fill in all sections:
 - Full experiments table (with code branch, duration, GPU columns)
 - Best configuration details
 - HP sensitivity analysis
+- Visualizations (ASCII charts from plot_results.py)
 - Key findings
 - What worked / what didn't
 - Reproduction command

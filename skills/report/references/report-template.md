@@ -116,6 +116,25 @@ Analysis based on <N> completed experiments:
 
 ---
 
+## Visualizations
+
+### Metric Comparison
+```
+<output of plot_results.py comparison chart>
+```
+
+### Improvement Timeline
+```
+<output of plot_results.py timeline chart>
+```
+
+### HP Sensitivity
+```
+<output of plot_results.py sensitivity chart for highest-impact HP>
+```
+
+---
+
 ## Key Findings
 
 1. **<Finding 1 title>:** <detail>

@@ -27,22 +27,20 @@ From the orchestrator or hp-tune skill:
 
 If `code_branch` is provided (from implementation manifest):
 
-1. Record the current branch:
+1. **Use git worktree** instead of checkout (avoids conflicts with parallel experiments):
    ```bash
-   git rev-parse --abbrev-ref HEAD
+   git worktree add experiments/worktrees/<exp_id> <code_branch>
    ```
-2. Checkout the proposal branch:
+2. Verify the branch exists and the expected modified files are present in the worktree
+3. Run training commands from within the worktree directory
+4. **After training completes**, remove the worktree:
    ```bash
-   git checkout <code_branch>
-   ```
-3. Verify the branch exists and the expected modified files are present
-4. Proceed with training on this branch
-5. **After training completes**, return to the original branch:
-   ```bash
-   git checkout <original_branch>
+   git worktree remove experiments/worktrees/<exp_id>
    ```
 
 If no `code_branch` is provided: use the current code as-is (HP-only experiment). Skip this step.
+
+**Fallback:** If `git worktree` is not available (old git version), fall back to `git checkout` with a warning that parallel experiments on different branches will conflict.
 
 ## Step 2: Build Training Command
 
@@ -54,6 +52,13 @@ Construct the full training command by overriding the base command with experime
    - **Config file:** Modify a YAML/JSON config, then `python train.py --config <path>`
    - **Environment vars:** `LR=0.001 python train.py`
 3. Build the override command
+
+### Config Override Validation
+
+After building the override command, verify it actually takes effect:
+1. Run a 1-step dry run (if the training script supports `--max_steps 1` or similar)
+2. Parse the first log output to verify the config values match what was intended
+3. If the override didn't take effect (e.g., training script ignores `--lr` arg), try an alternative override method
 
 ### Config Override Strategy
 

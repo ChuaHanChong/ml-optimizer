@@ -62,8 +62,12 @@ def create_proposal_branch(project_root: str, slug: str, base_branch: str, prefi
     return branch_name
 
 
-def backup_files(files: list[str], backup_dir: str) -> dict:
+def backup_files(files: list[str], backup_dir: str, project_root: str = "") -> dict:
     """Non-git fallback: copy original files to a backup directory.
+
+    When *project_root* is provided and a file resides inside it, the
+    relative directory structure is preserved under *backup_dir* so that
+    files with identical names in different subdirectories do not collide.
 
     Returns a mapping of {original_path: backup_path}.
     """
@@ -72,7 +76,11 @@ def backup_files(files: list[str], backup_dir: str) -> dict:
     for filepath in files:
         src = Path(filepath)
         if src.exists():
-            dest = Path(backup_dir) / src.name
+            if project_root and src.is_relative_to(Path(project_root)):
+                dest = Path(backup_dir) / src.relative_to(project_root)
+            else:
+                dest = Path(backup_dir) / src.name
+            dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(str(src), str(dest))
             mapping[str(src)] = str(dest)
     return mapping

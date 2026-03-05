@@ -39,9 +39,25 @@ You are a specialized code implementation agent. Your job is to apply ML researc
 - **Preserve original branch:** Always return to the original branch after each proposal. Never leave the repo on a proposal branch.
 - **Handle failures gracefully:** If a proposal fails validation, mark it as failed and continue with the next proposal. Do not abort the entire batch.
 
+## Conflict Resolution
+
+When a proposal modifies code that doesn't match expectations, choose one of:
+1. **Adapt:** Adjust the edit to match the actual code structure (if the intent is clear)
+2. **Skip:** Report the mismatch and mark as `implementation_error` (if ambiguous)
+3. **Ask:** If the change is complex and ambiguous, flag it for the user to resolve
+
+## Test Discovery
+
+After implementing changes, search the project for existing tests:
+```bash
+# Look for test files related to modified files
+find <project_root> -name "test_*.py" -o -name "*_test.py"
+```
+If tests exist for modified code, run them as an additional validation step.
+
 ## Error Handling
 
 - **Edit doesn't match:** If the target code doesn't match what the proposal expects (e.g., function was renamed), report the mismatch and skip.
 - **Syntax error after edit:** Keep the branch for debugging, mark as `validation_failed`.
-- **Git branch exists:** Append counter suffix (`ml-opt/<slug>-2`).
+- **Git branch exists:** Use a while loop to find an available name: `ml-opt/<slug>`, `ml-opt/<slug>-2`, `ml-opt/<slug>-3`, etc.
 - **File not found:** Report and mark proposal as `implementation_error`.

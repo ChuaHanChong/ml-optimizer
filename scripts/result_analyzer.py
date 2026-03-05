@@ -36,6 +36,40 @@ def rank_by_metric(results: dict[str, dict], metric: str, lower_is_better: bool 
     return ranked
 
 
+def spearman_correlation(x: list, y: list) -> float:
+    """Compute Spearman rank correlation coefficient between two lists.
+
+    Uses the formula: rho = 1 - 6 * sum(d^2) / (n * (n^2 - 1))
+    where d is the difference between ranks of corresponding values.
+    Handles ties by assigning average ranks.
+    """
+    if len(x) != len(y) or len(x) < 2:
+        return 0.0
+
+    def _rank(values):
+        """Assign ranks with average-rank tie-breaking."""
+        n = len(values)
+        indexed = sorted(range(n), key=lambda i: values[i])
+        ranks = [0.0] * n
+        i = 0
+        while i < n:
+            j = i
+            while j < n - 1 and values[indexed[j]] == values[indexed[j + 1]]:
+                j += 1
+            avg_rank = (i + j) / 2.0 + 1  # 1-based
+            for k in range(i, j + 1):
+                ranks[indexed[k]] = avg_rank
+            i = j + 1
+        return ranks
+
+    n = len(x)
+    rx = _rank(x)
+    ry = _rank(y)
+    d_sq_sum = sum((rx[i] - ry[i]) ** 2 for i in range(n))
+    rho = 1 - 6 * d_sq_sum / (n * (n ** 2 - 1))
+    return rho
+
+
 def compute_deltas(results: dict[str, dict], baseline_id: str, metric: str) -> list[dict]:
     """Compute metric deltas vs baseline for all experiments."""
     if baseline_id not in results:
@@ -54,7 +88,7 @@ def compute_deltas(results: dict[str, dict], baseline_id: str, metric: str) -> l
         if metric in metrics:
             val = metrics[metric]
             delta = val - baseline_val
-            pct = (delta / abs(baseline_val) * 100) if baseline_val != 0 else 0
+            pct = delta / (abs(baseline_val) + 1e-10) * 100
             deltas.append({
                 "exp_id": exp_id,
                 "value": val,
@@ -68,8 +102,12 @@ def compute_deltas(results: dict[str, dict], baseline_id: str, metric: str) -> l
 def identify_correlations(results: dict[str, dict], metric: str, lower_is_better: bool = True) -> dict:
     """Identify which hyperparameters correlate with improvement."""
     # Collect (config_key, config_value, metric_value) triples
+    # Filter to only completed experiments (or those without a status key for backward compat)
     entries = []
     for exp_id, data in results.items():
+        status = data.get("status")
+        if status is not None and status != "completed":
+            continue
         metrics = data.get("metrics", data)
         config = data.get("config", {})
         if metric in metrics and config:
@@ -99,11 +137,16 @@ def identify_correlations(results: dict[str, dict], metric: str, lower_is_better
             try:
                 top_avg = sum(float(v) for v in top_vals) / len(top_vals)
                 bottom_avg = sum(float(v) for v in bottom_vals) / len(bottom_vals)
+                # Compute Spearman correlation between this HP and the metric
+                hp_values = [float(e["config"][key]) for e in entries if key in e["config"]]
+                metric_values = [e["metric_value"] for e in entries if key in e["config"]]
+                rho = spearman_correlation(hp_values, metric_values)
                 correlations.append({
                     "param": key,
                     "top_avg": top_avg,
                     "bottom_avg": bottom_avg,
                     "direction": "lower" if top_avg < bottom_avg else "higher",
+                    "spearman_rho": round(rho, 4),
                 })
             except (ValueError, TypeError):
                 # Categorical — report most common values

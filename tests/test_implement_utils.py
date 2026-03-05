@@ -114,6 +114,36 @@ def test_backup_files(tmp_path):
         assert Path(backup).read_text() == Path(original).read_text()
 
 
+def test_backup_files_same_name_different_dirs(tmp_path):
+    project = tmp_path / "project"
+    models_dir = project / "models"
+    data_dir = project / "data"
+    models_dir.mkdir(parents=True)
+    data_dir.mkdir(parents=True)
+
+    models_utils = models_dir / "utils.py"
+    models_utils.write_text("# models utils\n")
+    data_utils = data_dir / "utils.py"
+    data_utils.write_text("# data utils\n")
+
+    backup_dir = tmp_path / "backups"
+    mapping = backup_files(
+        [str(models_utils), str(data_utils)],
+        str(backup_dir),
+        project_root=str(project),
+    )
+
+    assert len(mapping) == 2
+    # Both backups must exist with correct content
+    for original, backup in mapping.items():
+        assert Path(backup).exists()
+        assert Path(backup).read_text() == Path(original).read_text()
+
+    # Verify directory structure is preserved (no collision)
+    assert Path(mapping[str(models_utils)]) == backup_dir / "models" / "utils.py"
+    assert Path(mapping[str(data_utils)]) == backup_dir / "data" / "utils.py"
+
+
 # --- write_manifest ---
 
 def test_write_manifest(tmp_path):

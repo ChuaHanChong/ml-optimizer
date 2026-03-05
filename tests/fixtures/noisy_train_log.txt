@@ -1,0 +1,12 @@
+epoch=1 step=100 loss=2.3456 lr=0.001 accuracy=35.2
+epoch=1 step=200 loss=2.1890 lr=0.001 accuracy=38.1
+WARNING: GPU memory usage at 85%
+epoch=1 step=300 loss=2.4012 lr=0.001 accuracy=36.5
+epoch=2 step=400 loss=1.9876 lr=0.001 accuracy=42.3
+epoch=2 step=500 loss=2.0543 lr=0.001 accuracy=40.8
+/usr/lib/python3/dist-packages/torch/nn/functional.py:2747: UserWarning: reduction: 'mean'
+epoch=2 step=600 loss=1.8234 lr=0.001 accuracy=45.1
+epoch=3 step=700 loss=1.7654 lr=0.0005 accuracy=48.2
+epoch=3 step=800 loss=1.8901 lr=0.0005 accuracy=46.7
+epoch=3 step=900 loss=1.6543 lr=0.0005 accuracy=51.3
+epoch=4 step=1000 loss=1.5432 lr=0.0005 accuracy=55.0

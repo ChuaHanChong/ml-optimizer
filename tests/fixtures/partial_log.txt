@@ -1,0 +1,4 @@
+epoch=1 step=100 loss=2.3456 lr=0.001 accuracy=35.2
+epoch=1 step=200 loss=2.1890 lr=0.001 accuracy=38.1
+epoch=2 step=300 loss=1.9876 lr=0.001 accuracy=42.3
+epoch=2 step=400 loss=1.8

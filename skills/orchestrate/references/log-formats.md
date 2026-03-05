@@ -6,7 +6,7 @@
 ```json
 {
   "exp_id": "exp-001",
-  "status": "completed|failed|diverged|running",
+  "status": "completed|failed|diverged|running|pending",
   "config": {
     "lr": 0.001,
     "batch_size": 16,
@@ -24,6 +24,8 @@
   "duration_seconds": 3600,
   "log_file": "experiments/logs/exp-001/train.log",
   "script_file": "experiments/scripts/exp-001.sh",
+  "code_branch": "ml-opt/perceptual-loss|null",
+  "code_proposal": "Perceptual Loss Function|null",
   "notes": "Optional notes about this experiment"
 }
 ```
@@ -70,6 +72,23 @@ Session task log.
 ### Proposal 2: [Name]
 ...
 ```
+
+## Pipeline State (`experiments/pipeline-state.json`)
+```json
+{
+  "phase": 5,
+  "iteration": 2,
+  "running_experiments": ["exp-003", "exp-004"],
+  "timestamp": "2025-01-15T14:30:00Z",
+  "status": "running|interrupted|completed"
+}
+```
+
+## Research Proposal Type Field
+
+Each proposal in `research-findings.md` should include a `type` field:
+- `"code_change"`: Requires modifying model/training code (routed to implement skill)
+- `"hp_only"`: Can be achieved via hyperparameter/config changes only (routed directly to hp-tune)
 
 ## Batch Analysis (`experiments/reports/batch-<N>-analysis.md`)
 ```markdown

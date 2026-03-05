@@ -1,6 +1,6 @@
 # Experiment Script Templates
 
-## Basic Training Script
+## Basic Training Script (with PID tracking)
 ```bash
 #!/bin/bash
 # Experiment: {exp_id}
@@ -9,6 +9,7 @@ set -e
 export CUDA_VISIBLE_DEVICES={gpu_id}
 
 mkdir -p experiments/logs/{exp_id}
+echo $$ > experiments/logs/{exp_id}/pid
 
 echo "Starting experiment {exp_id} on GPU {gpu_id}"
 echo "Config: {config_summary}"
@@ -28,6 +29,7 @@ set -e
 export CUDA_VISIBLE_DEVICES={gpu_id}
 
 mkdir -p experiments/logs/{exp_id}
+echo $$ > experiments/logs/{exp_id}/pid
 
 python train.py \
   --config {base_config} \
@@ -48,6 +50,7 @@ set -e
 export CUDA_VISIBLE_DEVICES={gpu_id}
 
 mkdir -p experiments/logs/{exp_id}
+echo $$ > experiments/logs/{exp_id}/pid
 
 # Training
 {train_command} 2>&1 | tee experiments/logs/{exp_id}/train.log
@@ -58,19 +61,28 @@ mkdir -p experiments/logs/{exp_id}
 echo "Experiment {exp_id} completed"
 ```
 
-## Training with Code Changes (Branch-Based)
+## Training with Code Changes (Git Worktree)
 ```bash
 #!/bin/bash
 # Experiment: {exp_id}
 # Code changes: {change_description}
+# Code branch: {code_branch}
 set -e
 
 export CUDA_VISIBLE_DEVICES={gpu_id}
 
-# Apply code changes (already done by experiment skill before script generation)
 mkdir -p experiments/logs/{exp_id}
+echo $$ > experiments/logs/{exp_id}/pid
 
-{train_command} 2>&1 | tee experiments/logs/{exp_id}/train.log
+# Set up isolated worktree for code branch
+git worktree add experiments/worktrees/{exp_id} {code_branch}
+cd experiments/worktrees/{exp_id}
+
+{train_command} 2>&1 | tee ../../logs/{exp_id}/train.log
+
+# Cleanup worktree
+cd -
+git worktree remove experiments/worktrees/{exp_id}
 ```
 
 ## Background Training with PID Tracking

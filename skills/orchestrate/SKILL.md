@@ -11,7 +11,7 @@ You are an ML optimization orchestrator. You coordinate the full optimization pi
 
 - Plan template: `references/plan-template.md` (in this skill's directory)
 - Log format specs: `references/log-formats.md` (in this skill's directory)
-- Python scripts: `~/.claude/plugins/ml-optimizer/scripts/` (gpu_check.py, parse_logs.py, detect_divergence.py, result_analyzer.py, experiment_setup.py, implement_utils.py)
+- Python scripts: `~/.claude/plugins/ml-optimizer/scripts/` (gpu_check.py, parse_logs.py, detect_divergence.py, result_analyzer.py, experiment_setup.py, implement_utils.py, pipeline_state.py, schema_validator.py, plot_results.py)
 
 ## Phase 0: Discovery & Planning (MANDATORY)
 
@@ -84,7 +84,13 @@ You are an ML optimization orchestrator. You coordinate the full optimization pi
    - Use the user's stated metric, target, and constraints — do not override them
    - Define the HP search space (informed by the user's scope preference)
 
-7. **Confirm plan with user:**
+7. **Estimate cost/time budget:**
+   - Use the baseline profiling data (training time per experiment) and GPU count
+   - Estimate: `total_experiments = num_branches × iterations × num_gpus`
+   - Show the user: estimated total GPU-hours and wall-clock time
+   - If the estimate exceeds the user's max training time constraint from Phase 0, warn and adjust
+
+8. **Confirm plan with user:**
    Use AskUserQuestion to confirm the plan aligns with their Phase 0 answers:
    ```
    Based on your goals and my analysis, here is the optimization plan:
@@ -95,6 +101,7 @@ You are an ML optimization orchestrator. You coordinate the full optimization pi
    - Target: [target from Phase 0]
    - Search space: [summary]
    - Estimated experiments: [N]
+   - Estimated total GPU-hours: [X]
    - Scope: [HP-only / HP + research, per Phase 0]
 
    Does this match your expectations? Any adjustments?
@@ -175,15 +182,60 @@ If the user selected research proposals that require code changes (not just HP t
 
 This loop runs autonomously without user checkpoints until complete or blocked.
 
+### Pre-Loop: Validate Pipeline State
+
+Before starting the experiment loop, validate all prerequisites:
+
+```bash
+python3 -c "
+import sys; sys.path.insert(0, '$HOME/.claude/plugins/ml-optimizer/scripts')
+from pipeline_state import validate_phase_requirements
+import json; print(json.dumps(validate_phase_requirements(5, '<exp_root>')))
+"
+```
+
+**Required state:**
+- `experiments/results/baseline.json` must exist with `metrics` and `config` keys
+- If `implementation-manifest.json` exists, it must have `proposals` key
+
+If validation fails, stop and report the missing prerequisites to the user.
+
 ### Pre-Loop: Load Implementation Manifest
 
 If `experiments/results/implementation-manifest.json` exists:
 1. Read the manifest
-2. Collect all proposals with `"status": "validated"` — these are the code branches to test
+2. Collect all proposals with `"status": "validated"` — skip any with `"status": "validation_failed"` or `"status": "implementation_error"`
 3. Each validated proposal branch will be tested with HP tuning
 4. Also test the baseline (original branch, HP-only) for comparison
+5. **Non-git detection:** If manifest has `"strategy": "file_backup"`, force sequential execution (only ONE experiment at a time)
 
 If no manifest exists, run HP-only experiments on the current code.
+
+### Pre-Loop: Save Pipeline State
+
+```bash
+python3 -c "
+import sys; sys.path.insert(0, '$HOME/.claude/plugins/ml-optimizer/scripts')
+from pipeline_state import save_state
+save_state(5, 0, [], '<exp_root>')
+"
+```
+
+### Metric Routing Rule
+
+**Critical:** Always monitor `"loss"` for divergence detection — it is the universal safety signal. Use `primary_metric` (which may be "accuracy", "psnr", "f1", etc.) only for the analyze and hp-tune skills.
+
+- Monitor skill: `metric_to_watch = "loss"`, `lower_is_better = True`
+- Analyze skill: `primary_metric` from user's Phase 0 answer, `lower_is_better` based on metric type
+- HP-tune skill: uses `primary_metric` for ranking
+
+### Branch Dispatch Strategy
+
+When the implementation manifest contains multiple code branches:
+
+- **Iteration 1:** Test each branch with baseline HPs (one experiment per branch). This determines which code changes show promise.
+- **Iteration 2:** Prune branches that performed worse than baseline. Focus experiments on surviving branches + baseline.
+- **Iterations 3+:** Focus on the best branch + HP tuning. Only keep branches within 5% of the best result.
 
 ### Loop Iteration:
 
@@ -208,15 +260,18 @@ If no manifest exists, run HP-only experiments on the current code.
      - `exp_ids`: Corresponding experiment IDs
      - `project_root`: Project root directory
      - `poll_interval`: Seconds between checks (default: 30)
-     - `metric_to_watch`: Metric name to monitor (default: "loss")
+     - `metric_to_watch`: `"loss"` (always — see Metric Routing Rule)
+     - `lower_is_better`: `true` (always for loss-based divergence monitoring)
    - If divergence detected: the experiment is stopped automatically
    - Record divergence reason in experiment results
 
 4. **Wait for completion:**
    - All experiments in the batch must complete (or be stopped) before analysis
+   - Save pipeline state after each batch completes
 
 5. **Analyze results:**
    - Invoke the `ml-optimizer:analyze` skill
+   - Pass `primary_metric` and `lower_is_better` from Phase 0 (NOT "loss")
    - It compares all experiments, ranks them, identifies patterns
    - It recommends: continue tuning, try different approach, or stop
 
@@ -224,8 +279,7 @@ If no manifest exists, run HP-only experiments on the current code.
    - If analyze says **continue**: loop back to step 1
    - If analyze says **try different approach**: adjust the strategy, loop back to step 1
    - If analyze says **stop**: exit loop
-   - **Safety limit:** Maximum 5 loop iterations to prevent runaway optimization
-   - After 5 iterations, force exit and report
+   - **Safety limit:** Maximum total experiments budget (default: `num_gpus × 5 iterations`). After budget exhausted, force exit and report. This replaces the rigid 5-iteration limit to account for varying GPU counts.
 
 ### Parallel GPU Dispatch Pattern:
 When dispatching experiments across multiple GPUs, use the Agent tool with `subagent_type: "general-purpose"` for each experiment:
@@ -286,7 +340,19 @@ The orchestrator ensures this structure exists in the target project:
 
 All state is persisted in the `experiments/` directory:
 - Experiment results in `results/*.json`
+- Pipeline state in `pipeline-state.json` (phase, iteration, running experiments)
 - Analysis and research findings in `reports/`
+- Implementation manifest in `results/implementation-manifest.json`
 - Session progress in `dev_notes.md`
 
-This means the orchestrator can be stopped and resumed — it reads all past results on each iteration to understand where it left off.
+### Pipeline Resumption
+
+The orchestrator can be stopped and resumed:
+1. On start, check for `pipeline-state.json` via `pipeline_state.load_state()`
+2. If state exists and status is "running", run `pipeline_state.cleanup_stale()` to handle interrupted experiments
+3. Resume from the recorded phase and iteration
+4. Read all past results to understand what has been tried
+
+### State Validation
+
+Before each phase transition, validate prerequisites via `pipeline_state.validate_phase_requirements()`. This prevents cascading failures from missing or corrupted data.

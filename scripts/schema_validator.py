@@ -32,6 +32,8 @@ PROPOSAL_REQUIRED = ["name", "slug", "status"]
 PROPOSAL_OPTIONAL = [
     "branch", "files_modified", "complexity", "validation",
     "commit_sha", "notes", "type",
+    "implementation_strategy", "reference_repo", "reference_files_used",
+    "adaptation_notes", "files_created", "license_warning", "new_dependencies",
 ]
 VALID_PROPOSAL_STATUSES = ["validated", "validation_failed", "implementation_error"]
 

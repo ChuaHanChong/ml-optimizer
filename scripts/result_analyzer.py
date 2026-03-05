@@ -88,12 +88,15 @@ def compute_deltas(results: dict[str, dict], baseline_id: str, metric: str) -> l
         if metric in metrics:
             val = metrics[metric]
             delta = val - baseline_val
-            pct = delta / (abs(baseline_val) + 1e-10) * 100
+            if abs(baseline_val) < 1e-8:
+                delta_pct = None
+            else:
+                delta_pct = round(delta / abs(baseline_val) * 100, 2)
             deltas.append({
                 "exp_id": exp_id,
                 "value": val,
                 "delta": delta,
-                "delta_pct": round(pct, 2),
+                "delta_pct": delta_pct,
                 "config": data.get("config", {}),
             })
     return deltas

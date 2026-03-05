@@ -54,9 +54,11 @@ Construct targeted searches based on the model type and task:
 
 ### Search queries to run (adapt to the specific model/task):
 
+**Date handling:** Always use the current year dynamically. Never hardcode year strings. Use `<current_year-1> <current_year>` in search queries (e.g., if the current year is 2026, search for "2025 2026").
+
 1. **Architecture improvements:**
    ```
-   WebSearch(query: "<task> <model_type> architecture improvement 2024 2025")
+   WebSearch(query: "<task> <model_type> architecture improvement <current_year-1> <current_year>")
    ```
 
 2. **Training strategies:**
@@ -76,7 +78,7 @@ Construct targeted searches based on the model type and task:
 
 5. **Recent papers:**
    ```
-   WebSearch(query: "arxiv <task> <model_type> 2024 2025 improvement")
+   WebSearch(query: "arxiv <task> <model_type> <current_year-1> <current_year> improvement")
    ```
 
 Run at least 3 searches. For each promising result, use WebFetch to get more details.
@@ -97,6 +99,14 @@ For each relevant paper or technique found:
    - Is it compatible with the model architecture?
    - Does it fit the computational budget?
    - Can it be implemented without major refactoring?
+
+4. Search for reference implementations:
+   - Check if the paper links to a code repository
+   - Search: `WebSearch(query: "<paper_title> github implementation")`
+   - If a repo is found, use WebFetch on the README to verify relevance and quality
+   - Identify which source files contain the core implementation
+   - Check the license (prefer permissive: MIT, Apache, BSD)
+   - Decide strategy: `from_reference` if a quality repo exists (>10 stars or official, updated within 2 years, permissive license), otherwise `from_scratch`
 
 ## Step 4: Rank Proposals
 
@@ -145,6 +155,9 @@ Write to `experiments/reports/research-findings.md`:
   1. [Step 1]
   2. [Step 2]
   3. [Step 3]
+- **Implementation strategy:** from_scratch | from_reference
+- **Reference repo:** [GitHub URL] (only for from_reference)
+- **Reference files:** `path/to/relevant.py`, `path/to/other.py` (only for from_reference)
 
 ### Proposal 2: [Name] (Priority: Y/10)
 ...
@@ -170,7 +183,7 @@ Return:
 ## Tips for Effective Research
 
 1. **Be specific in searches:** "diffusion model image restoration perceptual loss" is better than "ML improvement"
-2. **Check recency:** Prefer papers from 2023-2025 over older ones
+2. **Check recency:** Prefer papers from the last 2-3 years over older ones
 3. **Look for code:** Papers with code repos are much more implementable
 4. **Check benchmarks:** Make sure reported improvements are on comparable tasks/datasets
 5. **Combine techniques:** Some improvements stack (e.g., better loss + better scheduler)

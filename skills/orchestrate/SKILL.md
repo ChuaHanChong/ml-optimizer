@@ -41,7 +41,9 @@ You are an ML optimization orchestrator. You coordinate the full optimization pi
       - HP tuning only (fastest, no code changes)
       - HP tuning + architecture research (slower, potentially bigger gains)
       - Let me decide based on analysis
-   7. **Anything else** I should know about this model or training setup?
+   7. **Divergence metric name:** What is the loss metric called in your training logs? (default: "loss". Common alternatives: "train_loss", "val_loss", "objective", "nll_loss")
+   8. **Optimization type:** Are you optimizing training performance or inference performance? (This plugin focuses on **training** optimization — inference optimization like quantization, pruning, or ONNX conversion is out of scope.)
+   9. **Anything else** I should know about this model or training setup?
    ```
 
 3. **Record user responses:**
@@ -56,8 +58,13 @@ You are an ML optimization orchestrator. You coordinate the full optimization pi
 
 1. **Locate model code:**
    - Use Glob to find Python files: `**/*.py`
-   - Look for model definitions (classes inheriting from `nn.Module`, `LightningModule`, etc.)
-   - Look for training scripts (files with `train` in the name, `main.py`, etc.)
+   - Look for model definitions:
+     - PyTorch: `nn.Module`, `torch.nn.Module`
+     - Lightning: `LightningModule`, `pl.LightningModule`
+     - TF/Keras: `tf.keras.Model`, `keras.Model`, `tf.Module`
+     - JAX/Flax: `flax.linen.Module`, `nn.Module` (Flax)
+     - HuggingFace: `PreTrainedModel`, `Trainer`
+   - Look for training scripts (files with `train` in the name, `main.py`, `run.py`, etc.)
 
 2. **Locate training config:**
    - Use Glob to find: `**/*.yaml`, `**/*.yml`, `**/*.json`
@@ -178,7 +185,15 @@ If the user selected research proposals that require code changes (not just HP t
    Install them? (The experiment will fail without them.)
    ```
 
-4. **If conflicts detected** → Inform user which proposals touch the same files. Each is on its own branch, so experiments run independently, but merging winners later may need manual conflict resolution.
+4. **If license warnings flagged** → Use AskUserQuestion to surface to user:
+   ```
+   The following proposals adapted code from reference repositories with license concerns:
+   - <proposal_name>: <license_warning details>
+
+   Please review before proceeding. Continue with these proposals?
+   ```
+
+5. **If conflicts detected** → Inform user which proposals touch the same files. Each is on its own branch, so experiments run independently, but merging winners later may need manual conflict resolution.
 
 ## Phase 5: Experiment Loop (Autonomous)
 
@@ -225,11 +240,13 @@ save_state(5, 0, [], '<exp_root>')
 
 ### Metric Routing Rule
 
-**Critical:** Always monitor `"loss"` for divergence detection — it is the universal safety signal. Use `primary_metric` (which may be "accuracy", "psnr", "f1", etc.) only for the analyze and hp-tune skills.
+**Critical:** Use the user's `divergence_metric` (from Phase 0 Q7, default: `"loss"`) for divergence detection. Use `primary_metric` (which may be "accuracy", "psnr", "f1", etc.) only for the analyze and hp-tune skills.
 
-- Monitor skill: `metric_to_watch = "loss"`, `lower_is_better = True`
+- Monitor skill: `metric_to_watch = <divergence_metric>`, `lower_is_better = True`
 - Analyze skill: `primary_metric` from user's Phase 0 answer, `lower_is_better` based on metric type
 - HP-tune skill: uses `primary_metric` for ranking
+
+If the monitor skill cannot find `<divergence_metric>` in the logs, it will attempt auto-detection via a fallback chain (see monitor skill for details).
 
 ### Branch Dispatch Strategy
 
@@ -262,7 +279,7 @@ When the implementation manifest contains multiple code branches:
      - `exp_ids`: Corresponding experiment IDs
      - `project_root`: Project root directory
      - `poll_interval`: Seconds between checks (default: 30)
-     - `metric_to_watch`: `"loss"` (always — see Metric Routing Rule)
+     - `metric_to_watch`: `<divergence_metric>` from Phase 0 (default: `"loss"` — see Metric Routing Rule)
      - `lower_is_better`: `true` (always for loss-based divergence monitoring)
    - If divergence detected: the experiment is stopped automatically
    - Record divergence reason in experiment results
@@ -370,3 +387,12 @@ The orchestrator can be stopped and resumed:
 ### State Validation
 
 Before each phase transition, validate prerequisites via `pipeline_state.validate_phase_requirements()`. This prevents cascading failures from missing or corrupted data.
+
+## Unsupported Scenarios
+
+The following are currently out of scope. If the user requests them, explain the limitation clearly:
+
+- **Inference optimization:** Quantization, pruning, ONNX export, TensorRT — these require a fundamentally different toolchain. Recommend dedicated tools instead.
+- **Multi-machine distributed training:** This plugin operates on a single machine with multiple GPUs. Cross-node training requires a different dispatch mechanism.
+- **Reinforcement learning:** The tuning strategy assumes supervised/self-supervised training with a loss metric. RL reward signals need a different optimization approach.
+- **Multi-seed ensembling:** The pipeline runs one seed per experiment. Multi-seed evaluation would require significant orchestrator changes.

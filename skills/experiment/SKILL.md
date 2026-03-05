@@ -42,6 +42,21 @@ If no `code_branch` is provided: use the current code as-is (HP-only experiment)
 
 **Fallback:** If `git worktree` is not available (old git version), fall back to `git checkout` with a warning that parallel experiments on different branches will conflict.
 
+## Step 1.5: Pre-Flight Checks
+
+Before building the training command, verify:
+
+1. **Disk space:** Check that the target filesystem has sufficient free space for logs and checkpoints:
+   ```bash
+   df -h <project_root> | tail -1
+   ```
+   Warn if less than 5 GB free.
+
+2. **Timeout estimation:** If baseline profiling data is available, estimate total training time:
+   - Read `experiments/results/baseline.json` → `profiling.throughput_samples_per_sec`
+   - Estimate: `total_time = (dataset_size * epochs) / throughput`
+   - If estimated time exceeds 4 hours, warn the orchestrator
+
 ## Step 2: Build Training Command
 
 Construct the full training command by overriding the base command with experiment-specific config:

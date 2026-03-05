@@ -33,6 +33,15 @@ This returns structured proposals with names, slugs, files to modify, and implem
 
 If no findings file exists, ask the user to run the `ml-optimizer:research` skill first.
 
+## Step 1.5: Classify Proposals by Strategy
+
+Group proposals by their `implementation_strategy` field:
+
+- **`from_reference` proposals:** Will require cloning a reference repo. If multiple proposals share the same `reference_repo` URL, clone it once and reuse.
+- **`from_scratch` proposals:** Will be implemented from paper descriptions and implementation steps only.
+
+Note: Proposals without an `implementation_strategy` field default to `from_scratch` (backward compatibility).
+
 ## Step 2: Detect Conflicts
 
 Check for proposals that modify the same files:
@@ -80,34 +89,71 @@ git checkout -b ml-opt/<slug>
 python3 -c "from implement_utils import backup_files; ..."
 ```
 
-### 4b. Read implementation patterns
+### 4b. Check implementation strategy
 
-Read `references/implementation-patterns.md` and find the matching category for this proposal:
-- Loss function changes → Section 1
-- Architecture changes → Section 2
-- Data augmentation → Section 3
-- Training strategy → Section 4
-- Regularization → Section 5
+Check the proposal's `implementation_strategy` field and follow the appropriate path:
 
-Follow the "what to read first" and "minimal change pattern" guidance.
+#### Path A: `from_reference` (Code Adaptation)
 
-### 4c. Read target files
+Follow `references/implementation-patterns.md` Section 9.
 
-Before modifying, **read every file** listed in the proposal's `files_to_modify`. Understand:
-- The current code structure
-- Where the change should be inserted
-- What surrounding code depends on
+1. **Clone reference repo:**
+   ```bash
+   python3 ~/.claude/plugins/ml-optimizer/scripts/implement_utils.py clone <reference_repo_url> experiments/reference-repos/<slug>
+   ```
+   If multiple proposals share the same repo, clone once and reuse.
 
-### 4d. Apply changes
+2. **Analyze repo structure:**
+   ```bash
+   python3 ~/.claude/plugins/ml-optimizer/scripts/implement_utils.py analyze experiments/reference-repos/<slug>
+   ```
 
-Follow the proposal's implementation steps exactly:
+3. **Read reference code:** Read the files listed in the proposal's `reference_files`. Identify the core implementation, internal dependencies, and external packages.
 
-1. Use Edit to apply each change
-2. Keep changes minimal — only what the proposal specifies
-3. Add a comment marking the change: `# [ml-opt] <proposal_name>`
-4. If the proposal requires a new file (e.g., a new module), use Write
+4. **Read target files:** Read every file listed in the proposal's `files_to_modify` to understand the existing code structure.
 
-**Important rules:**
+5. **Adapt and apply:**
+   - Extract only the relevant functions/classes from the reference
+   - Adapt imports, framework calls, and tensor conventions to the target project
+   - Apply changes using Edit, keeping modifications minimal
+   - Add provenance comments: `# [ml-opt] Adapted from <url>, file: <original_path>`
+   - Add license comment: `# [ml-opt] License: <license_type>`
+
+6. **Check license:** Read the LICENSE file in the cloned repo. If missing or restrictive, note `license_warning` for the manifest.
+
+7. **Cleanup:** Remove the cloned repo:
+   ```bash
+   python3 -c "
+   import sys; sys.path.insert(0, '$HOME/.claude/plugins/ml-optimizer/scripts')
+   from implement_utils import cleanup_reference_repo
+   cleanup_reference_repo('experiments/reference-repos/<slug>')
+   "
+   ```
+
+#### Path B: `from_scratch` (Paper-Based)
+
+Follow `references/implementation-patterns.md` Sections 1-8.
+
+1. **Read implementation patterns:** Find the matching category for this proposal:
+   - Loss function changes → Section 1
+   - Architecture changes → Section 2
+   - Data augmentation → Section 3
+   - Training strategy → Section 4
+   - Regularization → Section 5
+   - Paper-based implementation → Section 8
+   Follow the "what to read first" and "minimal change pattern" guidance.
+
+2. **If steps are ambiguous:** If the proposal's implementation steps are vague and a paper URL is available in the Source field, use WebFetch to re-read the paper for clarification before proceeding.
+
+3. **Read target files:** Before modifying, **read every file** listed in the proposal's `files_to_modify`. Understand the current code structure, where changes should be inserted, and what surrounding code depends on.
+
+4. **Apply changes:** Follow the proposal's implementation steps exactly:
+   - Use Edit to apply each change
+   - Keep changes minimal — only what the proposal specifies
+   - Add a comment marking the change: `# [ml-opt] <proposal_name>`
+   - If the proposal requires a new file (e.g., a new module), use Write
+
+**Important rules (both paths):**
 - Do NOT improvise changes beyond what the proposal specifies
 - Do NOT refactor surrounding code
 - Do NOT change configs unless the proposal explicitly requires it
@@ -176,7 +222,13 @@ Write `experiments/results/implementation-manifest.json`:
       "branch": "ml-opt/perceptual-loss-function",
       "status": "validated|validation_failed|implementation_error",
       "files_modified": ["path/to/file1.py", "path/to/file2.py"],
+      "files_created": ["path/to/new_module.py"],
       "complexity": "Low",
+      "implementation_strategy": "from_scratch|from_reference",
+      "reference_repo": "https://github.com/...",
+      "reference_files_used": ["path/in/repo.py"],
+      "adaptation_notes": "Translated from TF to PyTorch",
+      "license_warning": null,
       "validation": {
         "syntax": "pass|fail",
         "import": "pass|fail",

@@ -109,6 +109,59 @@ def test_validate_manifest_invalid_proposal():
     assert any("name" in e for e in result["errors"])
 
 
+def test_validate_result_empty_metrics():
+    """A result with an empty metrics dict should still pass validation."""
+    data = {
+        "exp_id": "exp-001",
+        "status": "completed",
+        "config": {"lr": 0.001},
+        "metrics": {},
+    }
+    result = validate_result(data)
+    assert result["valid"] is True
+    assert result["errors"] == []
+
+
+def test_validate_result_non_dict_input():
+    """A non-dict input should fail validation."""
+    result = validate_result("not a dict")
+    assert result["valid"] is False
+    assert any("dict" in e.lower() for e in result["errors"])
+
+
+def test_validate_manifest_empty_proposals():
+    """A manifest with an empty proposals list should pass validation."""
+    data = {
+        "original_branch": "main",
+        "strategy": "git_branch",
+        "proposals": [],
+    }
+    result = validate_manifest(data)
+    assert result["valid"] is True
+    assert result["errors"] == []
+
+
+def test_validate_manifest_invalid_strategy():
+    """A manifest with an invalid strategy should fail validation."""
+    data = {
+        "original_branch": "main",
+        "strategy": "invalid_strategy",
+        "proposals": [],
+    }
+    result = validate_manifest(data)
+    assert result["valid"] is False
+    assert any("strategy" in e.lower() for e in result["errors"])
+
+
+def test_validate_file_invalid_json(tmp_path):
+    """Validating a file with invalid JSON should fail gracefully."""
+    bad_file = tmp_path / "bad.json"
+    bad_file.write_text("{this is not valid json")
+    result = validate_file(str(bad_file), "result")
+    assert result["valid"] is False
+    assert any("json" in e.lower() for e in result["errors"])
+
+
 def test_validate_file_nonexistent():
     """Validating a nonexistent file returns an error."""
     result = validate_file("/nonexistent/path/to/file.json", "result")

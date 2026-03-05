@@ -7,7 +7,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
 from implement_utils import (
+    _extract_reference_files,
+    analyze_reference_structure,
     backup_files,
+    cleanup_reference_repo,
+    clone_reference_repo,
     detect_conflicts,
     get_current_branch,
     is_git_repo,
@@ -20,6 +24,7 @@ from implement_utils import (
 
 FIXTURES = Path(__file__).parent / "fixtures"
 SAMPLE_FINDINGS = FIXTURES / "sample_research_findings.md"
+SAMPLE_FINDINGS_REF = FIXTURES / "sample_research_findings_with_reference.md"
 
 
 # --- slugify ---
@@ -190,3 +195,95 @@ def test_get_current_branch():
     branch = get_current_branch(project_root)
     assert isinstance(branch, str)
     assert len(branch) > 0
+
+
+# --- _extract_reference_files ---
+
+def test_extract_reference_files_backtick():
+    body = "- **Reference files:** `basicsr/models/restormer_arch.py`, `basicsr/losses/loss.py`"
+    result = _extract_reference_files(body)
+    assert result == ["basicsr/models/restormer_arch.py", "basicsr/losses/loss.py"]
+
+
+def test_extract_reference_files_comma():
+    body = "- **Reference files:** models/arch.py, models/loss.py"
+    result = _extract_reference_files(body)
+    assert result == ["models/arch.py", "models/loss.py"]
+
+
+def test_extract_reference_files_missing():
+    body = "- **Complexity:** Low\n- **Risk:** None"
+    result = _extract_reference_files(body)
+    assert result == []
+
+
+# --- parse_research_proposals with reference fields ---
+
+def test_parse_proposals_with_reference_repo():
+    proposals = parse_research_proposals(str(SAMPLE_FINDINGS_REF))
+    # Proposal 1 is from_reference
+    p1 = proposals[0]
+    assert p1["implementation_strategy"] == "from_reference"
+    assert "github.com/swz30/Restormer" in p1["reference_repo"]
+    assert len(p1["reference_files"]) == 2
+    assert "basicsr/models/archs/restormer_arch.py" in p1["reference_files"]
+    # Proposal 2 is from_scratch
+    p2 = proposals[1]
+    assert p2["implementation_strategy"] == "from_scratch"
+    assert p2["reference_repo"] == ""
+    assert p2["reference_files"] == []
+
+
+def test_parse_proposals_backward_compat():
+    """Old fixture without strategy fields gets safe defaults."""
+    proposals = parse_research_proposals(str(SAMPLE_FINDINGS))
+    for p in proposals:
+        assert p["implementation_strategy"] == "from_scratch"
+        assert p["reference_repo"] == ""
+        assert p["reference_files"] == []
+
+
+# --- clone_reference_repo ---
+
+def test_clone_reference_repo_invalid_url():
+    result = clone_reference_repo("https://bitbucket.org/user/repo", "/tmp/test-clone")
+    assert result["success"] is False
+    assert "URL must be" in result["error"]
+
+
+# --- analyze_reference_structure ---
+
+def test_analyze_reference_structure(tmp_path):
+    # Create a mock repo directory
+    (tmp_path / "model.py").write_text("import torch\nfrom torch import nn\nclass MyModel(nn.Module):\n    pass\n")
+    (tmp_path / "train.py").write_text("import torch\nfor epoch in range(10):\n    pass\n")
+    (tmp_path / "utils.py").write_text("import os\ndef helper(): pass\n")
+    (tmp_path / "test_model.py").write_text("# should be skipped\n")
+    (tmp_path / "requirements.txt").write_text("torch>=2.0\nnumpy\n")
+    (tmp_path / "README.md").write_text("# My Model\nA great model for doing things.\n")
+
+    result = analyze_reference_structure(str(tmp_path))
+    assert result["framework"] == "pytorch"
+    assert "model.py" in result["python_files"]
+    assert "train.py" in result["python_files"]
+    assert "utils.py" in result["python_files"]
+    assert "test_model.py" not in result["python_files"]
+    assert "model.py" in result["model_files"]
+    assert "train.py" in result["training_files"]
+    assert "torch>=2.0" in result["requirements"]
+    assert "numpy" in result["requirements"]
+    assert "My Model" in result["readme_summary"]
+
+
+# --- cleanup_reference_repo ---
+
+def test_cleanup_reference_repo(tmp_path):
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    (repo_dir / "file.py").write_text("x = 1\n")
+    assert cleanup_reference_repo(str(repo_dir)) is True
+    assert not repo_dir.exists()
+
+
+def test_cleanup_reference_repo_nonexistent(tmp_path):
+    assert cleanup_reference_repo(str(tmp_path / "nonexistent")) is False

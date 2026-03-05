@@ -166,4 +166,6 @@ Recommend stopping the tuning loop if:
 3. The goal metric has been achieved
 4. All reasonable LR values have been tried and the best is clear
 
+**Note:** The "<1% improvement" threshold is **relative** to the baseline value (i.e., `delta / baseline * 100`). For metrics with very small absolute values (e.g., loss=0.001), even a tiny absolute change may be a large relative improvement. Always use percentage change, not absolute delta, for stopping decisions.
+
 Include a `"recommendation": "continue"|"stop"` field in your output.

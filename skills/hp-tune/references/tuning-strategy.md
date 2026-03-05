@@ -110,3 +110,21 @@ Consider these alongside traditional HPs when tuning.
 - Don't repeat identical configs (check past results first)
 - Don't use extremely large LR just because loss is high — check if the metric is appropriate
 - Don't tune past diminishing returns — know when to stop
+
+## Constraint Handling
+
+### Hard Constraints
+Parameters that cannot be violated (will cause failure):
+- **GPU memory:** Batch size × per-sample memory must fit. Proposals exceeding this should be rejected before dispatch.
+- **Training time:** If the user set a max training time per experiment, estimate duration from baseline profiling and reject configs that would exceed it.
+
+### Soft Constraints
+Parameters the user prefers but can be relaxed if justified:
+- **Frozen parameters:** User may say "don't change the optimizer". Respect unless analysis strongly suggests otherwise — then ask.
+- **Search space bounds:** If the best result is at the boundary of the defined search space, propose extending the range and explain why.
+
+### Constraint Propagation
+When one constraint changes, propagate effects:
+- Increasing batch size → may need to reduce model size or enable gradient checkpointing
+- Enabling mixed precision → doubles effective batch size capacity → may want to increase batch size
+- Changing optimizer → may need to re-tune learning rate from scratch

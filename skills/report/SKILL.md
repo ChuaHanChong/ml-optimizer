@@ -185,3 +185,24 @@ Before writing the report, verify:
 - [ ] Infrastructure/profiling data included
 - [ ] If research proposals were used, implementation manifest summarized
 - [ ] Appendix has concrete file paths, not just vague references
+
+## Edge Cases
+
+### Missing Baseline
+If `baseline.json` does not exist or has no metrics, the report should:
+- State that no baseline was established
+- Report absolute metric values only (no deltas or improvement percentages)
+- Recommend re-running with a proper baseline for meaningful comparison
+
+### Single Experiment
+If only one experiment was run (plus baseline), the report should:
+- Skip HP sensitivity analysis (insufficient data)
+- Note that results are preliminary and more experiments are recommended
+- Still generate the full report structure with available data
+
+### All Experiments Diverged
+If every experiment (excluding baseline) has `status: "diverged"`, the report should:
+- Highlight this prominently in the executive summary
+- Analyze common factors across diverged experiments (LR too high? batch size?)
+- Recommend a more conservative search space
+- Still document what was learned from the failures

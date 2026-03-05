@@ -76,6 +76,92 @@ def test_save_and_load_state(tmp_path):
     datetime.fromisoformat(state["timestamp"])
 
 
+def test_validate_phase2_valid(tmp_path):
+    """Phase 2 passes when results/ directory exists."""
+    (tmp_path / "results").mkdir()
+    result = validate_phase_requirements(2, str(tmp_path))
+    assert result["valid"] is True
+    assert result["phase"] == 2
+    assert result["missing"] == []
+
+
+def test_validate_phase2_missing_results(tmp_path):
+    """Phase 2 fails when results/ directory does not exist."""
+    result = validate_phase_requirements(2, str(tmp_path))
+    assert result["valid"] is False
+    assert any("results" in m for m in result["missing"])
+
+
+def test_validate_phase3_valid(tmp_path):
+    """Phase 3 passes when baseline.json has metrics and config."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    baseline = {"metrics": {"loss": 0.5}, "config": {"lr": 0.001}}
+    (results_dir / "baseline.json").write_text(json.dumps(baseline))
+
+    result = validate_phase_requirements(3, str(tmp_path))
+    assert result["valid"] is True
+    assert result["missing"] == []
+
+
+def test_validate_phase3_missing_keys(tmp_path):
+    """Phase 3 fails when baseline.json is missing required keys."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    baseline = {"metrics": {"loss": 0.5}}  # missing 'config'
+    (results_dir / "baseline.json").write_text(json.dumps(baseline))
+
+    result = validate_phase_requirements(3, str(tmp_path))
+    assert result["valid"] is False
+    assert any("config" in m for m in result["missing"])
+
+
+def test_validate_phase4_valid(tmp_path):
+    """Phase 4 passes when baseline.json exists."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    (results_dir / "baseline.json").write_text(json.dumps({"metrics": {}, "config": {}}))
+
+    result = validate_phase_requirements(4, str(tmp_path))
+    assert result["valid"] is True
+    assert result["missing"] == []
+
+
+def test_validate_phase4_missing_baseline(tmp_path):
+    """Phase 4 fails when baseline.json does not exist."""
+    (tmp_path / "results").mkdir()
+    result = validate_phase_requirements(4, str(tmp_path))
+    assert result["valid"] is False
+    assert any("baseline.json" in m for m in result["missing"])
+
+
+def test_load_state_corrupt_json(tmp_path):
+    """Loading corrupt JSON returns None."""
+    (tmp_path / "pipeline-state.json").write_text("{invalid json")
+    state = load_state(str(tmp_path))
+    assert state is None
+
+
+def test_cleanup_stale_skips_recent(tmp_path):
+    """A recently-updated running state should NOT be cleaned up."""
+    recent_time = datetime.now(timezone.utc) - timedelta(minutes=5)
+    state = {
+        "phase": 5,
+        "iteration": 1,
+        "running_experiments": ["exp-001"],
+        "timestamp": recent_time.isoformat(),
+        "status": "running",
+    }
+    (tmp_path / "pipeline-state.json").write_text(json.dumps(state))
+
+    cleaned = cleanup_stale(str(tmp_path), timeout_hours=2.0)
+    assert len(cleaned) == 0
+
+    # Verify the file was NOT modified
+    updated = json.loads((tmp_path / "pipeline-state.json").read_text())
+    assert updated["status"] == "running"
+
+
 def test_cleanup_stale(tmp_path):
     """A stale pipeline-state.json (3 hours old) gets marked as interrupted."""
     stale_time = datetime.now(timezone.utc) - timedelta(hours=3)

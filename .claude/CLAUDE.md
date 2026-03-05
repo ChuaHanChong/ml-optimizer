@@ -14,7 +14,7 @@ python -m pytest tests/test_parse_logs.py -v   # single file
 python -m pytest tests/test_parse_logs.py::test_name -v  # single test
 ```
 
-No build step. No linter configured. Python 3.8+ required. The `scripts/` directory uses only the Python standard library.
+No build step. No linter configured. Python 3.10+ required. The `scripts/` directory uses only the Python standard library.
 
 ## Architecture
 
@@ -60,7 +60,7 @@ The implement skill creates `ml-opt/<slug>` branches per research proposal. The 
 Four subagent types with specified tool access:
 - **research-agent**: WebSearch, WebFetch, Read, Write, Bash, Glob, Grep
 - **tuning-agent**: Read, Write, Bash, Glob, Grep
-- **implement-agent**: Bash, Read, Write, Edit, Glob, Grep
+- **implement-agent**: Bash, Read, Write, Edit, Glob, Grep, WebFetch
 - **experiment-agent**: Bash, Read, Write, Edit, Glob, Grep
 
 Analytical agents (hp-tune, research, analyze, implement) use "ultrathink" prompting. Procedural agents (experiment, monitor) do not.
@@ -76,7 +76,7 @@ All scripts work as both importable modules and CLI tools:
 | `detect_divergence.py` | `python3 scripts/detect_divergence.py <logfile>` — detect NaN/explosion/plateau |
 | `result_analyzer.py` | `python3 scripts/result_analyzer.py <results_dir> <metric> [baseline_id] [lower_is_better]` |
 | `experiment_setup.py` | Generates experiment IDs and directory structure |
-| `implement_utils.py` | `python3 scripts/implement_utils.py <findings.md> '<indices_json>'` — parse proposals |
+| `implement_utils.py` | `python3 scripts/implement_utils.py <findings.md> '<indices_json>'` — parse proposals; also `clone <url> <dest>` and `analyze <path>` subcommands |
 | `pipeline_state.py` | `python3 scripts/pipeline_state.py <exp_root> validate|save|load|cleanup` |
 | `schema_validator.py` | Validates JSON result files against expected schemas |
 | `plot_results.py` | Generates result visualizations |
@@ -117,6 +117,7 @@ The orchestrator can be stopped and resumed. On restart it reads `pipeline-state
 - **Experiment budget**: Default max experiments = `num_gpus * 5 iterations`. The analyze skill recommends stop when diminishing returns detected.
 - **Proposal priority scoring**: `(impact * confidence) / (11 - min(feasibility, 10))` — feasibility clamped to [1,10] to prevent division by zero.
 - **Spearman correlation**: `result_analyzer.py` uses rank correlation with average-rank tie-breaking to identify HP-metric relationships (no scipy dependency).
+- **Dual implementation strategy**: Research proposals include an `implementation_strategy` field (`from_scratch` or `from_reference`). The implement agent dispatches accordingly — either implementing from paper descriptions (Section 8) or cloning and adapting reference repos (Section 9). Strategy is decided by the research agent based on repo availability and quality.
 
 ## Test Fixtures
 

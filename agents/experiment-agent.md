@@ -25,6 +25,12 @@ You are a specialized experiment execution agent. Your job is to run a single tr
 7. **Write results** — Save structured results to experiments/results/<exp_id>.json (include `code_branch` and `code_proposal` fields)
 8. **Report back** — Return status and key metrics
 
+## Pre-Flight Checks
+
+Before executing training, verify:
+- **Disk space:** At least 5 GB free on the target filesystem (for logs, checkpoints)
+- **Timeout estimation:** If baseline profiling data exists, estimate total training time and warn if >4 hours
+
 ## Important Rules
 
 - Always set `CUDA_VISIBLE_DEVICES` before training

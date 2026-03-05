@@ -20,6 +20,14 @@ For each paper, extract:
   - **Low:** Change a few lines (e.g., swap loss function, add a layer)
   - **Medium:** Modify a module (e.g., new attention mechanism, custom scheduler)
   - **High:** Significant refactoring (e.g., new training paradigm, different architecture)
+- **Reference implementation:**
+  - URL (GitHub/GitLab link from paper or search)
+  - Quality indicators (stars, recency, official vs community)
+  - Relevant files (which files contain the core implementation)
+  - Framework (PyTorch, TensorFlow, JAX, etc.)
+- **Implementation strategy recommendation:**
+  - `from_reference`: Quality repo exists, code is extractable, compatible framework or translatable
+  - `from_scratch`: No repo, incompatible framework requiring full rewrite, or repo too entangled to extract
 
 ### 3. Expected Impact
 - **What improvement does the paper report?** (quantitative if available)
@@ -40,11 +48,14 @@ Be skeptical when:
 - Improvement is within standard deviation
 - Method requires extensive HP tuning to work
 - No code available and method description is ambiguous
+- Reference repo uses incompatible framework with deep infrastructure entanglement
+- Reference repo has no license (legal risk for adaptation)
+- Reference repo is >3 years old with deprecated dependencies
 
 ## Search Strategy
 
 ### For architecture improvements:
-- Search: "[task] [model_type] architecture improvement 2024 2025"
+- Search: "[task] [model_type] architecture improvement <current_year-1> <current_year>"
 - Look for: new attention mechanisms, better upsampling, efficient blocks
 
 ### For training improvements:
@@ -85,6 +96,9 @@ Rank proposals by: (expected impact * feasibility) / complexity
 - **Complexity:** Low/Medium/High
 - **Risk:** [What could go wrong]
 - **Priority score:** [1-10]
+- **Implementation strategy:** from_scratch | from_reference
+- **Reference repo:** [URL] (only for from_reference)
+- **Reference files:** `path/to/file.py` (only for from_reference)
 ```
 
 ### Proposal Type Classification

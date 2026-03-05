@@ -148,6 +148,9 @@ def parse_research_proposals(findings_path: str, selected_indices: list[int] | N
             "files_to_modify": _extract_files(body),
             "complexity": _extract_field(body, "Complexity"),
             "implementation_steps": _extract_steps(body),
+            "implementation_strategy": _extract_field(body, "Implementation strategy") or "from_scratch",
+            "reference_repo": _extract_field(body, "Reference repo") or "",
+            "reference_files": _extract_reference_files(body),
         }
         proposals.append(proposal)
 
@@ -200,6 +203,160 @@ def _extract_steps(body: str) -> list[str]:
     return steps
 
 
+def _extract_reference_files(body: str) -> list[str]:
+    """Extract reference file paths from '**Reference files:**' field.
+
+    Handles backtick-delimited and comma-separated paths:
+      **Reference files:** `path/to/model.py`, `path/to/loss.py`
+      **Reference files:** path/to/model.py, path/to/loss.py
+    """
+    pattern = re.compile(r"\*\*Reference files:\*\*\s*(.+)", re.IGNORECASE)
+    match = pattern.search(body)
+    if not match:
+        return []
+    raw = match.group(1).strip()
+    # Extract backtick-delimited paths first
+    backtick_paths = re.findall(r"`([^`]+)`", raw)
+    if backtick_paths:
+        return [p.strip() for p in backtick_paths if p.strip()]
+    # Fall back to comma-separated
+    return [p.strip() for p in raw.split(",") if p.strip()]
+
+
+def clone_reference_repo(repo_url: str, dest_dir: str, shallow: bool = True) -> dict:
+    """Clone a reference repository for code adaptation.
+
+    Only allows GitHub and GitLab URLs for safety.
+    Returns {"success": True, "path": dest_dir} or {"success": False, "error": "..."}.
+    """
+    if not re.match(r"https://(github\.com|gitlab\.com)/", repo_url):
+        return {"success": False, "error": f"URL must be https://github.com/ or https://gitlab.com/: {repo_url}"}
+
+    cmd = ["git", "clone"]
+    if shallow:
+        cmd.extend(["--depth", "1"])
+    cmd.extend([repo_url, dest_dir])
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        if result.returncode != 0:
+            return {"success": False, "error": result.stderr.strip()}
+        return {"success": True, "path": dest_dir}
+    except subprocess.TimeoutExpired:
+        return {"success": False, "error": "Clone timed out after 120 seconds"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def analyze_reference_structure(repo_path: str) -> dict:
+    """Analyze a cloned reference repository's structure.
+
+    Returns framework detection, file categorization, requirements, and README summary.
+    """
+    repo = Path(repo_path)
+    skip_dirs = {".git", "__pycache__", "node_modules", ".eggs", "dist", "build"}
+    skip_files = {"setup.py", "setup.cfg", "conftest.py"}
+
+    python_files = []
+    model_files = []
+    training_files = []
+    framework_hints: dict[str, int] = {}
+
+    framework_patterns = {
+        "pytorch": [r"import torch", r"from torch"],
+        "tensorflow": [r"import tensorflow", r"from tensorflow", r"from keras"],
+        "jax": [r"import jax", r"from jax", r"from flax"],
+        "lightning": [r"import lightning", r"import pytorch_lightning"],
+        "transformers": [r"from transformers"],
+    }
+    model_patterns = [r"class\s+\w+\(.*(?:nn\.Module|Model|LightningModule)", r"class\s+\w+Model"]
+    training_patterns = ["train", "main", "run"]
+
+    for dirpath, dirnames, filenames in os.walk(repo_path):
+        dirnames[:] = [d for d in dirnames if d not in skip_dirs]
+        for fname in filenames:
+            if not fname.endswith(".py"):
+                continue
+            if fname in skip_files or fname.startswith("test_"):
+                continue
+
+            rel_path = os.path.relpath(os.path.join(dirpath, fname), repo_path)
+            # Skip files in docs/ or test directories
+            if rel_path.startswith("docs/") or "/tests/" in rel_path or "/test/" in rel_path:
+                continue
+
+            python_files.append(rel_path)
+
+            try:
+                content = Path(os.path.join(dirpath, fname)).read_text(errors="ignore")
+            except OSError:
+                continue
+
+            # Detect framework
+            for fw, patterns in framework_patterns.items():
+                for pat in patterns:
+                    if re.search(pat, content):
+                        framework_hints[fw] = framework_hints.get(fw, 0) + 1
+
+            # Detect model files
+            for pat in model_patterns:
+                if re.search(pat, content):
+                    model_files.append(rel_path)
+                    break
+
+            # Detect training files
+            base = fname.lower().replace(".py", "")
+            if any(tp in base for tp in training_patterns):
+                training_files.append(rel_path)
+
+    # Determine primary framework
+    framework = max(framework_hints, key=framework_hints.get) if framework_hints else "unknown"
+
+    # Read requirements.txt
+    requirements: list[str] = []
+    req_path = repo / "requirements.txt"
+    if req_path.exists():
+        try:
+            requirements = [
+                line.strip() for line in req_path.read_text().splitlines()
+                if line.strip() and not line.strip().startswith("#")
+            ]
+        except OSError:
+            pass
+
+    # Read README summary
+    readme_summary = ""
+    for readme_name in ["README.md", "README.rst", "README.txt", "README"]:
+        readme_path = repo / readme_name
+        if readme_path.exists():
+            try:
+                readme_summary = readme_path.read_text(errors="ignore")[:500]
+            except OSError:
+                pass
+            break
+
+    return {
+        "framework": framework,
+        "python_files": sorted(python_files),
+        "model_files": sorted(model_files),
+        "training_files": sorted(training_files),
+        "requirements": requirements,
+        "readme_summary": readme_summary,
+    }
+
+
+def cleanup_reference_repo(repo_path: str) -> bool:
+    """Remove a cloned reference repository.
+
+    Returns True if cleanup succeeded, False otherwise.
+    """
+    try:
+        shutil.rmtree(repo_path)
+        return True
+    except Exception:
+        return False
+
+
 def detect_conflicts(proposals: list[dict]) -> list[dict]:
     """Check for overlapping files_to_modify across proposals.
 
@@ -226,12 +383,34 @@ def write_manifest(path: str, data: dict) -> str:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 3:
-        print("Usage: implement_utils.py <findings_path> <selected_json>")
-        print('  selected_json: JSON array of 1-based indices, e.g. "[1,3]"')
+    if len(sys.argv) < 2:
+        print("Usage:")
+        print("  implement_utils.py <findings_path> <selected_json>  — parse proposals")
+        print("  implement_utils.py clone <repo_url> <dest_dir>      — clone reference repo")
+        print("  implement_utils.py analyze <repo_path>              — analyze repo structure")
         sys.exit(1)
-    findings_path = sys.argv[1]
-    selected = json.loads(sys.argv[2])
-    proposals = parse_research_proposals(findings_path, selected)
-    conflicts = detect_conflicts(proposals)
-    print(json.dumps({"proposals": proposals, "conflicts": conflicts}, indent=2))
+
+    if sys.argv[1] == "clone":
+        if len(sys.argv) < 4:
+            print("Usage: implement_utils.py clone <repo_url> <dest_dir>")
+            sys.exit(1)
+        result = clone_reference_repo(sys.argv[2], sys.argv[3])
+        print(json.dumps(result, indent=2))
+        sys.exit(0 if result["success"] else 1)
+    elif sys.argv[1] == "analyze":
+        if len(sys.argv) < 3:
+            print("Usage: implement_utils.py analyze <repo_path>")
+            sys.exit(1)
+        result = analyze_reference_structure(sys.argv[2])
+        print(json.dumps(result, indent=2))
+    else:
+        # Original behavior: parse proposals
+        if len(sys.argv) < 3:
+            print("Usage: implement_utils.py <findings_path> <selected_json>")
+            print('  selected_json: JSON array of 1-based indices, e.g. "[1,3]"')
+            sys.exit(1)
+        findings_path = sys.argv[1]
+        selected = json.loads(sys.argv[2])
+        proposals = parse_research_proposals(findings_path, selected)
+        conflicts = detect_conflicts(proposals)
+        print(json.dumps({"proposals": proposals, "conflicts": conflicts}, indent=2))

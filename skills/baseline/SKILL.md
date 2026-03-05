@@ -25,6 +25,9 @@ Search the project for evaluation scripts:
 2. Read the training script to find validation/evaluation logic:
    - Look for functions named `evaluate`, `validate`, `test`, `infer`
    - Look for metric computation (PSNR, SSIM, loss, accuracy, F1, etc.)
+   - **Lightning projects:** Look for `validation_step()` / `test_step()` methods and `self.log()` calls. Metrics may be in TensorBoard logs (`lightning_logs/`) — parse with `parse_logs.py`
+   - **HuggingFace Trainer:** Look for `compute_metrics` function passed to `Trainer`. Metrics are logged to `runs/` or `output_dir`. Use `trainer.evaluate()` as eval command
+   - **TF/Keras:** Look for `model.evaluate()` or custom callbacks. Metrics may be in `CSVLogger` output or TensorBoard
 
 3. If no clear eval command found, use AskUserQuestion:
    ```

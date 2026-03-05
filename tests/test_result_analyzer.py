@@ -141,10 +141,9 @@ def test_compute_deltas_zero_baseline():
     }
     deltas = compute_deltas(results, "baseline", "loss")
     assert len(deltas) == 2
-    # Should not raise and should produce finite percentages
+    # When baseline is zero, delta_pct should be None (undefined percentage)
     for d in deltas:
-        assert isinstance(d["delta_pct"], float)
-        assert d["delta_pct"] != 0  # With epsilon guard, pct should be non-zero when delta is non-zero
+        assert d["delta_pct"] is None
     exp1 = next(d for d in deltas if d["exp_id"] == "exp-001")
     assert exp1["delta"] == 0.5
 

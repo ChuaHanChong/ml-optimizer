@@ -1,0 +1,16 @@
+model:
+  type: tiny_resnet
+  channels: 16
+  num_blocks: 3
+
+training:
+  lr: 0.01
+  batch_size: 64
+  epochs: 3
+  weight_decay: 0.0001
+  scheduler: cosine
+
+data:
+  dataset: cifar10
+  subset_size: 1000
+  seed: 42

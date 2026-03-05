@@ -1,0 +1,74 @@
+[
+  {
+    "name": "optimize_model_triggers_orchestrate",
+    "input": "Optimize my image classification model",
+    "expected_skill": "ml-optimizer:orchestrate",
+    "description": "Generic optimization request should trigger orchestrate"
+  },
+  {
+    "name": "tune_hyperparameters_triggers_orchestrate",
+    "input": "Tune the hyperparameters for my training",
+    "expected_skill": "ml-optimizer:orchestrate",
+    "description": "HP tuning request should trigger orchestrate (which dispatches hp-tune)"
+  },
+  {
+    "name": "research_triggers_research",
+    "input": "Search for better architectures for image restoration",
+    "expected_skill": "ml-optimizer:research",
+    "description": "Explicit research request should trigger research skill"
+  },
+  {
+    "name": "baseline_triggers_baseline",
+    "input": "Run a baseline evaluation of my current model",
+    "expected_skill": "ml-optimizer:baseline",
+    "description": "Baseline evaluation request should trigger baseline skill"
+  },
+  {
+    "name": "analyze_triggers_analyze",
+    "input": "Analyze my experiment results in the experiments folder",
+    "expected_skill": "ml-optimizer:analyze",
+    "description": "Analysis request should trigger analyze skill"
+  },
+  {
+    "name": "report_triggers_report",
+    "input": "Generate a final report of all my optimization experiments",
+    "expected_skill": "ml-optimizer:report",
+    "description": "Report request should trigger report skill"
+  },
+  {
+    "name": "monitor_triggers_monitor",
+    "input": "Watch my running training experiments for divergence",
+    "expected_skill": "ml-optimizer:monitor",
+    "description": "Monitoring request should trigger monitor skill"
+  },
+  {
+    "name": "implement_triggers_implement",
+    "input": "Apply the research proposals to my model code",
+    "expected_skill": "ml-optimizer:implement",
+    "description": "Request to apply research proposals should trigger implement skill"
+  },
+  {
+    "name": "unrelated_does_not_trigger",
+    "input": "Write a Python function to sort a list",
+    "expected_skill": null,
+    "description": "Unrelated coding request should NOT trigger any ml-optimizer skill"
+  },
+  {
+    "name": "slash_optimize_triggers_command",
+    "input": "/optimize my model for better accuracy",
+    "expected_skill": "ml-optimizer:orchestrate",
+    "description": "Slash command should invoke the optimize command which triggers orchestrate"
+  },
+  {
+    "name": "improve_model_triggers_orchestrate",
+    "input": "Help me improve my model's training performance",
+    "expected_skill": "ml-optimizer:orchestrate",
+    "description": "General model improvement request should trigger orchestrate"
+  },
+  {
+    "name": "optimize_resnet_cifar10_triggers_orchestrate",
+    "input": "Optimize my Tiny ResNet classifier on CIFAR-10 for better accuracy",
+    "expected_skill": "ml-optimizer:orchestrate",
+    "description": "CIFAR-10 ResNet optimization request should trigger orchestrate"
+  }
+]

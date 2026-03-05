@@ -5,6 +5,8 @@ description: "LLM-driven hyperparameter tuning for ML models. Reads past experim
 
 # Hyperparameter Tuning (LLM-Driven)
 
+Use extended thinking for all analytical reasoning in this skill. Ultrathink. Think through trade-offs, HP interaction effects, exploration vs exploitation balance, and diminishing returns before proposing configurations.
+
 You are acting as an intelligent hyperparameter tuning agent. Instead of using grid search, random search, or Bayesian optimization, you reason directly about past results to propose the next batch of configurations.
 
 ## Reference

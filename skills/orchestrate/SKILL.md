@@ -5,6 +5,8 @@ description: "Core ML optimization orchestrator. Understands model problems, dis
 
 # ML Optimization Orchestrator
 
+Use extended thinking for all analytical reasoning in this skill. Ultrathink. Think through phase transition decisions, branch pruning strategy, error recovery options, and cost/time budget trade-offs before acting.
+
 You are an ML optimization orchestrator. You coordinate the full optimization pipeline: understanding the model, establishing baselines, researching improvements, tuning hyperparameters, running experiments, monitoring for divergence, and producing final reports.
 
 ## Important Files
@@ -295,6 +297,18 @@ For each config in proposed_configs:
 ```
 
 Then wait for all agents to complete before invoking analyze.
+
+### Thinking Depth for Agent Dispatch:
+When dispatching agents via the Agent tool, include "ultrathink" in the prompt for **analytical** agents (hp-tune, research, analyze, implement) to trigger maximum reasoning depth. Do NOT include it for **procedural** agents (experiment, monitor) — these are execution-focused and don't benefit from extended thinking.
+
+Example for analytical dispatch:
+```
+Agent(
+  description: "Analyze batch {N} results",
+  prompt: "Ultrathink. Use the ml-optimizer:analyze skill to analyze batch {N}. ...",
+  subagent_type: "general-purpose"
+)
+```
 
 ## Phase 6: Report
 

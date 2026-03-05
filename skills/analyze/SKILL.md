@@ -5,6 +5,8 @@ description: "Analyze ML experiment results after a batch completes. Ranks exper
 
 # Experiment Analysis
 
+Use extended thinking for all analytical reasoning in this skill. Ultrathink. Think through HP interaction effects, trend detection across batches, and the continue/pivot/stop decision with full consideration of alternatives and edge cases.
+
 Analyze completed experiment results to determine what worked, what didn't, and what to do next.
 
 ## Inputs Expected

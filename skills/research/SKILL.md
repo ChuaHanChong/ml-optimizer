@@ -5,6 +5,8 @@ description: "Research ML optimization techniques via web search and paper analy
 
 # ML Research Agent
 
+Use extended thinking for all analytical reasoning in this skill. Ultrathink. Critically evaluate paper claims, assess feasibility and compatibility, and reason through confidence scoring before ranking proposals.
+
 Search for and analyze ML techniques that could improve the target model. Extract actionable, implementable proposals — not just paper summaries.
 
 ## Reference

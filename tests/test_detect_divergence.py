@@ -1,5 +1,6 @@
 """Tests for detect_divergence.py."""
 
+import json
 import math
 import sys
 from pathlib import Path
@@ -150,3 +151,45 @@ def test_check_divergence_higher_is_better_healthy():
     result = check_divergence(values, lower_is_better=False)
     assert result["diverged"] is False
     assert result["reason"] == "Training healthy"
+
+
+def test_detect_explosion_non_finite_current():
+    """Non-finite current value is skipped (not counted as explosion)."""
+    values = [1.0] * 15 + [float("inf")]
+    result = detect_explosion(values, window=10, threshold=5.0)
+    # inf is skipped by the isfinite check on values[i], so no explosion
+    assert result is None
+
+
+def test_detect_explosion_all_nan_window():
+    """All-NaN window is skipped (no division by zero)."""
+    values = [float("nan")] * 15 + [1.0]
+    result = detect_explosion(values, window=10, threshold=5.0)
+    # Window is all NaN -> window_vals is empty -> continue
+    assert result is None
+
+
+# --- CLI tests ---
+
+
+def test_cli_basic(run_main):
+    """CLI with JSON array of values."""
+    r = run_main("detect_divergence.py", "[0.5, 0.4, 0.3, 0.2]")
+    assert r.returncode == 0
+    output = json.loads(r.stdout)
+    assert output["diverged"] is False
+
+
+def test_cli_higher_is_better(run_main):
+    """CLI with --higher-is-better flag."""
+    r = run_main("detect_divergence.py", "[50, 60, 70, 80]", "--higher-is-better")
+    assert r.returncode == 0
+    output = json.loads(r.stdout)
+    assert output["diverged"] is False
+
+
+def test_cli_no_args(run_main):
+    """CLI with no args prints usage and exits 1."""
+    r = run_main("detect_divergence.py")
+    assert r.returncode == 1
+    assert "Usage" in r.stdout

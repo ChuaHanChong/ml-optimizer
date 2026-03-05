@@ -168,3 +168,136 @@ def test_validate_file_nonexistent():
     assert result["valid"] is False
     assert result["filepath"] == "/nonexistent/path/to/file.json"
     assert any("not found" in e.lower() for e in result["errors"])
+
+
+# --- Type-check branches ---
+
+
+def test_validate_result_non_dict_metrics():
+    """Result with non-dict metrics fails."""
+    data = {"exp_id": "exp-001", "status": "completed", "config": {}, "metrics": "not-a-dict"}
+    result = validate_result(data)
+    assert result["valid"] is False
+    assert any("metrics" in e and "dict" in e for e in result["errors"])
+
+
+def test_validate_result_non_dict_config():
+    """Result with non-dict config fails."""
+    data = {"exp_id": "exp-001", "status": "completed", "config": [1, 2], "metrics": {}}
+    result = validate_result(data)
+    assert result["valid"] is False
+    assert any("config" in e and "dict" in e for e in result["errors"])
+
+
+def test_validate_baseline_non_dict_input():
+    """Non-dict baseline input fails."""
+    result = validate_baseline("string")
+    assert result["valid"] is False
+    assert any("dict" in e.lower() for e in result["errors"])
+
+
+def test_validate_baseline_invalid_status():
+    """Baseline with invalid status fails."""
+    data = {"exp_id": "baseline", "status": "bogus", "config": {}, "metrics": {}}
+    result = validate_baseline(data)
+    assert result["valid"] is False
+    assert any("bogus" in e for e in result["errors"])
+
+
+def test_validate_baseline_non_dict_metrics():
+    """Baseline with non-dict metrics fails."""
+    data = {"exp_id": "baseline", "status": "completed", "config": {}, "metrics": 42}
+    result = validate_baseline(data)
+    assert result["valid"] is False
+    assert any("metrics" in e and "dict" in e for e in result["errors"])
+
+
+def test_validate_baseline_non_dict_config():
+    """Baseline with non-dict config fails."""
+    data = {"exp_id": "baseline", "status": "completed", "config": "bad", "metrics": {}}
+    result = validate_baseline(data)
+    assert result["valid"] is False
+    assert any("config" in e and "dict" in e for e in result["errors"])
+
+
+def test_validate_manifest_non_dict_input():
+    """Non-dict manifest input fails."""
+    result = validate_manifest([1, 2, 3])
+    assert result["valid"] is False
+    assert any("dict" in e.lower() for e in result["errors"])
+
+
+def test_validate_manifest_non_list_proposals():
+    """Manifest with non-list proposals fails."""
+    data = {"original_branch": "main", "strategy": "git_branch", "proposals": "not-a-list"}
+    result = validate_manifest(data)
+    assert result["valid"] is False
+    assert any("proposals" in e and "list" in e for e in result["errors"])
+
+
+def test_validate_manifest_non_dict_proposal_item():
+    """Manifest with non-dict proposal item fails."""
+    data = {"original_branch": "main", "strategy": "git_branch", "proposals": ["string-item"]}
+    result = validate_manifest(data)
+    assert result["valid"] is False
+    assert any("dict" in e for e in result["errors"])
+
+
+def test_validate_manifest_invalid_proposal_status():
+    """Manifest with invalid proposal status fails."""
+    data = {
+        "original_branch": "main",
+        "strategy": "git_branch",
+        "proposals": [{"name": "Test", "slug": "test", "status": "bogus"}],
+    }
+    result = validate_manifest(data)
+    assert result["valid"] is False
+    assert any("bogus" in e for e in result["errors"])
+
+
+# --- validate_file dispatch ---
+
+
+def test_validate_file_valid_result(tmp_path):
+    """validate_file dispatches to validate_result for result schema."""
+    f = tmp_path / "exp.json"
+    f.write_text(json.dumps({"exp_id": "exp-001", "status": "completed", "config": {}, "metrics": {}}))
+    result = validate_file(str(f), "result")
+    assert result["valid"] is True
+
+
+def test_validate_file_valid_baseline(tmp_path):
+    """validate_file dispatches to validate_baseline for baseline schema."""
+    f = tmp_path / "baseline.json"
+    f.write_text(json.dumps({"exp_id": "baseline", "status": "completed", "config": {}, "metrics": {}}))
+    result = validate_file(str(f), "baseline")
+    assert result["valid"] is True
+
+
+def test_validate_file_unknown_schema(tmp_path):
+    """validate_file returns error for unknown schema type."""
+    f = tmp_path / "data.json"
+    f.write_text(json.dumps({"key": "value"}))
+    result = validate_file(str(f), "unknown_schema")
+    assert result["valid"] is False
+    assert any("unknown" in e.lower() for e in result["errors"])
+
+
+# --- CLI tests ---
+
+
+def test_cli_validate_valid(run_main, tmp_path):
+    """CLI validates a valid result file."""
+    f = tmp_path / "exp.json"
+    f.write_text(json.dumps({"exp_id": "exp-001", "status": "completed", "config": {}, "metrics": {}}))
+    r = run_main("schema_validator.py", str(f), "result")
+    assert r.returncode == 0
+    output = json.loads(r.stdout)
+    assert output["valid"] is True
+
+
+def test_cli_no_args(run_main):
+    """CLI with no args prints usage and exits 1."""
+    r = run_main("schema_validator.py")
+    assert r.returncode == 1
+    assert "Usage" in r.stdout

@@ -187,3 +187,85 @@ def test_plot_hp_sensitivity_no_data(tmp_path):
 def test_plot_hp_sensitivity_no_results(tmp_path):
     chart = plot_hp_sensitivity(str(tmp_path / "nonexistent"), "loss", "lr")
     assert "No results" in chart
+
+
+# --- Additional edge cases ---
+
+
+def test_ascii_line_chart_resampling():
+    """Line chart with >60 values triggers resampling."""
+    values = [i * 0.1 for i in range(100)]
+    chart = ascii_line_chart(values, width=60)
+    assert chart
+    assert "*" in chart
+
+
+def test_plot_improvement_timeline_higher_is_better(tmp_path):
+    """Timeline with higher_is_better uses max for best-so-far."""
+    _write_results(tmp_path, {
+        "exp-001": {"metrics": {"acc": 70.0}, "config": {}},
+        "exp-002": {"metrics": {"acc": 80.0}, "config": {}},
+        "exp-003": {"metrics": {"acc": 75.0}, "config": {}},
+    })
+    chart = plot_improvement_timeline(str(tmp_path), "acc", lower_is_better=False)
+    assert chart
+    assert "Best-so-far" in chart
+
+
+def test_plot_improvement_timeline_metric_not_found(tmp_path):
+    """Timeline returns error when metric not found."""
+    _write_results(tmp_path, {
+        "exp-001": {"metrics": {"accuracy": 0.9}, "config": {}},
+    })
+    chart = plot_improvement_timeline(str(tmp_path), "loss")
+    assert "not found" in chart
+
+
+def test_plot_hp_sensitivity_non_numeric_hp(tmp_path):
+    """HP sensitivity skips non-numeric HP values."""
+    _write_results(tmp_path, {
+        "exp-001": {"metrics": {"loss": 0.5}, "config": {"optimizer": "adam"}},
+        "exp-002": {"metrics": {"loss": 0.3}, "config": {"optimizer": "sgd"}},
+    })
+    chart = plot_hp_sensitivity(str(tmp_path), "loss", "optimizer")
+    assert "No numeric data" in chart
+
+
+# --- CLI tests ---
+
+
+def test_cli_comparison(run_main, tmp_path):
+    """CLI comparison mode works."""
+    _write_results(tmp_path, {
+        "exp-001": {"metrics": {"loss": 0.5}, "config": {}},
+    })
+    r = run_main("plot_results.py", str(tmp_path), "loss", "comparison")
+    assert r.returncode == 0
+    assert "loss" in r.stdout
+
+
+def test_cli_timeline(run_main, tmp_path):
+    """CLI timeline mode works."""
+    _write_results(tmp_path, {
+        "exp-001": {"metrics": {"loss": 0.5}, "config": {}},
+        "exp-002": {"metrics": {"loss": 0.3}, "config": {}},
+    })
+    r = run_main("plot_results.py", str(tmp_path), "loss", "timeline")
+    assert r.returncode == 0
+
+
+def test_cli_sensitivity(run_main, tmp_path):
+    """CLI sensitivity mode works."""
+    _write_results(tmp_path, {
+        "exp-001": {"metrics": {"loss": 0.5}, "config": {"lr": 0.01}},
+        "exp-002": {"metrics": {"loss": 0.3}, "config": {"lr": 0.001}},
+    })
+    r = run_main("plot_results.py", str(tmp_path), "loss", "sensitivity", "lr")
+    assert r.returncode == 0
+
+
+def test_cli_no_args(run_main):
+    """CLI with no args prints usage and exits 1."""
+    r = run_main("plot_results.py")
+    assert r.returncode == 1
+    assert "Usage" in r.stdout

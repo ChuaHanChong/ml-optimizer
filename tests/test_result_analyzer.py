@@ -206,3 +206,50 @@ def test_spearman_correlation():
     # Tied values
     rho = spearman_correlation([1, 1, 2, 3], [10, 10, 20, 30])
     assert rho > 0.9  # Should still be strongly positive
+
+
+def test_compute_deltas_baseline_missing_metric():
+    """When baseline exists but lacks the requested metric, return empty list."""
+    results = {
+        "baseline": {"metrics": {"accuracy": 85.0}},
+        "exp-001": {"metrics": {"loss": 0.5}, "config": {"lr": 0.001}},
+    }
+    deltas = compute_deltas(results, "baseline", "loss")
+    assert deltas == []
+
+
+def test_identify_correlations_categorical_values():
+    """Categorical HP values trigger the except branch with top_common/bottom_common."""
+    results = {
+        "exp-001": {"metrics": {"loss": 0.3}, "config": {"optimizer": "adam"}, "status": "completed"},
+        "exp-002": {"metrics": {"loss": 0.5}, "config": {"optimizer": "sgd"}, "status": "completed"},
+        "exp-003": {"metrics": {"loss": 0.4}, "config": {"optimizer": "adam"}, "status": "completed"},
+        "exp-004": {"metrics": {"loss": 0.7}, "config": {"optimizer": "sgd"}, "status": "completed"},
+    }
+    corr = identify_correlations(results, "loss", lower_is_better=True)
+    assert len(corr["correlations"]) > 0
+    opt_corr = next(c for c in corr["correlations"] if c["param"] == "optimizer")
+    assert "top_common" in opt_corr
+    assert "bottom_common" in opt_corr
+
+
+# --- CLI tests ---
+
+
+def test_cli_analyze(run_main, tmp_path):
+    """CLI analyzes results directory."""
+    _write_results(tmp_path, {
+        "baseline": {"metrics": {"loss": 1.0}, "config": {"lr": 0.001}},
+        "exp-001": {"metrics": {"loss": 0.5}, "config": {"lr": 0.0001}},
+    })
+    r = run_main("result_analyzer.py", str(tmp_path), "loss")
+    assert r.returncode == 0
+    output = json.loads(r.stdout)
+    assert output["num_experiments"] == 2
+
+
+def test_cli_no_args(run_main):
+    """CLI with no args prints usage and exits 1."""
+    r = run_main("result_analyzer.py")
+    assert r.returncode == 1
+    assert "Usage" in r.stdout

@@ -143,3 +143,103 @@ def test_parse_kv_line_negative_value():
     metrics = parse_kv_line(line)
     assert metrics["delta"] == -0.5
     assert metrics["reward"] == -1.2
+
+
+# --- Error / edge cases ---
+
+
+def test_parse_kv_line_unparseable_value():
+    """Non-numeric, non-nan/inf kv values are skipped."""
+    line = "loss=abc lr=0.001"
+    metrics = parse_kv_line(line)
+    assert "loss" not in metrics
+    assert metrics.get("lr") == 0.001
+
+
+def test_parse_tqdm_line_non_numeric():
+    """Tqdm line with non-numeric value skips that key."""
+    line = "100%|████| 50/50 [00:30<00:00, 1.67it/s, loss=abc, acc=85.2]"
+    metrics = parse_tqdm_line(line)
+    assert "loss" not in metrics
+    assert metrics.get("acc") == 85.2
+
+
+def test_parse_csv_lines_non_numeric():
+    """CSV with non-float cell skips that field."""
+    lines = ["loss,lr,status", "0.5,0.001,ok", "0.4,0.002,ok"]
+    results = parse_csv_lines(lines)
+    assert len(results) == 2
+    assert "status" not in results[0]
+    assert results[0]["loss"] == 0.5
+
+
+def test_parse_csv_lines_single_line():
+    """Header-only CSV returns empty list."""
+    lines = ["loss,lr,epoch"]
+    results = parse_csv_lines(lines)
+    assert results == []
+
+
+def test_parse_csv_lines_mismatched_cols():
+    """CSV row with wrong column count is skipped."""
+    lines = ["loss,lr", "0.5,0.001", "0.4"]
+    results = parse_csv_lines(lines)
+    assert len(results) == 1
+    assert results[0]["loss"] == 0.5
+
+
+# --- parse_log format dispatch ---
+
+
+def test_parse_log_json_format(tmp_path):
+    """parse_log dispatches to JSON parser."""
+    f = tmp_path / "log.jsonl"
+    f.write_text('{"loss": 0.5, "epoch": 1}\n{"loss": 0.4, "epoch": 2}\n')
+    records = parse_log(str(f))
+    assert len(records) == 2
+    assert records[0]["loss"] == 0.5
+
+
+def test_parse_log_csv_format(tmp_path):
+    """parse_log dispatches to CSV parser."""
+    f = tmp_path / "log.csv"
+    f.write_text("loss,lr\n0.5,0.001\n0.4,0.002\n")
+    records = parse_log(str(f))
+    assert len(records) == 2
+    assert records[0]["loss"] == 0.5
+
+
+def test_parse_log_logging_format(tmp_path):
+    """parse_log dispatches to Python logging parser."""
+    f = tmp_path / "log.txt"
+    f.write_text("2024-01-15 10:30:45,123 INFO epoch=1 loss=2.345\n2024-01-15 10:30:46,456 INFO epoch=2 loss=2.100\n")
+    records = parse_log(str(f))
+    assert len(records) == 2
+    assert records[0]["epoch"] == 1.0
+
+
+def test_parse_log_tqdm_format(tmp_path):
+    """parse_log dispatches to tqdm parser."""
+    f = tmp_path / "log.txt"
+    f.write_text("100%|████████| 50/50 [00:30<00:00, 1.67it/s, loss=0.5, acc=85.2]\n")
+    records = parse_log(str(f))
+    assert len(records) == 1
+    assert records[0]["loss"] == 0.5
+
+
+# --- CLI tests ---
+
+
+def test_cli_parse_log(run_main):
+    """CLI parses sample log file."""
+    r = run_main("parse_logs.py", str(FIXTURES / "sample_train_log.txt"))
+    assert r.returncode == 0
+    output = json.loads(r.stdout)
+    assert len(output) == 8
+
+
+def test_cli_no_args(run_main):
+    """CLI with no args prints usage and exits 1."""
+    r = run_main("parse_logs.py")
+    assert r.returncode == 1
+    assert "Usage" in r.stdout

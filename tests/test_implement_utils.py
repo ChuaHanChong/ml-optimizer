@@ -1,8 +1,10 @@
 """Tests for implement_utils.py."""
 
 import json
+import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
@@ -12,6 +14,7 @@ from implement_utils import (
     backup_files,
     cleanup_reference_repo,
     clone_reference_repo,
+    create_proposal_branch,
     detect_conflicts,
     get_current_branch,
     is_git_repo,
@@ -287,3 +290,146 @@ def test_cleanup_reference_repo(tmp_path):
 
 def test_cleanup_reference_repo_nonexistent(tmp_path):
     assert cleanup_reference_repo(str(tmp_path / "nonexistent")) is False
+
+
+# --- create_proposal_branch ---
+
+
+def test_create_proposal_branch(tmp_path):
+    """Create a proposal branch in a real git repo."""
+    subprocess.run(["git", "init", "-b", "main", str(tmp_path)], capture_output=True, check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", "test@test.com"], capture_output=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "Test"], capture_output=True)
+    (tmp_path / "file.txt").write_text("hello")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "."], capture_output=True)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-m", "init"], capture_output=True)
+    branch = create_proposal_branch(str(tmp_path), "test-feature", "main")
+    assert branch == "ml-opt/test-feature"
+    result = subprocess.run(
+        ["git", "-C", str(tmp_path), "rev-parse", "--abbrev-ref", "HEAD"],
+        capture_output=True, text=True,
+    )
+    assert result.stdout.strip() == "ml-opt/test-feature"
+
+
+# --- validate_imports failure ---
+
+
+def test_validate_imports_failure(tmp_path):
+    """Importing a module that fails should return passed=False."""
+    bad_mod = tmp_path / "bad_mod.py"
+    bad_mod.write_text("import nonexistent_module_xyz_123\n")
+    result = validate_imports(str(bad_mod), str(tmp_path))
+    assert result["passed"] is False
+    assert result["error"] is not None
+
+
+# --- _extract_files section break ---
+
+
+def test_extract_files_section_break():
+    """_extract_files stops at ### section boundary."""
+    from implement_utils import _extract_files
+    body = """**What to change:**
+- `models/classifier.py` — modify forward pass
+### Next Section
+- `should/not/appear.py`
+"""
+    files = _extract_files(body)
+    assert "models/classifier.py" in files
+    assert "should/not/appear.py" not in files
+
+
+# --- _extract_steps section break ---
+
+
+def test_extract_steps_section_break():
+    """_extract_steps stops at ** section boundary."""
+    from implement_utils import _extract_steps
+    body = """**Implementation steps:**
+1. First step
+2. Second step
+**Risk:**
+3. Not a step
+"""
+    steps = _extract_steps(body)
+    assert len(steps) == 2
+    assert steps[0] == "First step"
+
+
+# --- clone_reference_repo ---
+
+
+def test_clone_reference_repo_success():
+    """Successful clone returns success."""
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    with patch("implement_utils.subprocess.run", return_value=mock_result):
+        result = clone_reference_repo("https://github.com/user/repo", "/tmp/dest")
+    assert result["success"] is True
+    assert result["path"] == "/tmp/dest"
+
+
+def test_clone_reference_repo_failure():
+    """Clone returning nonzero exit code returns error."""
+    mock_result = MagicMock()
+    mock_result.returncode = 1
+    mock_result.stderr = "fatal: not found"
+    with patch("implement_utils.subprocess.run", return_value=mock_result):
+        result = clone_reference_repo("https://github.com/user/repo", "/tmp/dest")
+    assert result["success"] is False
+    assert "not found" in result["error"]
+
+
+def test_clone_reference_repo_timeout():
+    """Clone timeout returns error."""
+    with patch("implement_utils.subprocess.run", side_effect=subprocess.TimeoutExpired("git", 120)):
+        result = clone_reference_repo("https://github.com/user/repo", "/tmp/dest")
+    assert result["success"] is False
+    assert "timed out" in result["error"].lower()
+
+
+# --- analyze_reference_structure edge cases ---
+
+
+def test_analyze_no_requirements(tmp_path):
+    """Repo without requirements.txt returns empty requirements."""
+    (tmp_path / "model.py").write_text("import torch\nclass M(torch.nn.Module): pass\n")
+    result = analyze_reference_structure(str(tmp_path))
+    assert result["requirements"] == []
+
+
+def test_analyze_readme_priority(tmp_path):
+    """README.rst is found when README.md doesn't exist."""
+    (tmp_path / "model.py").write_text("x = 1\n")
+    (tmp_path / "README.rst").write_text("My RST Readme\n==============\n")
+    result = analyze_reference_structure(str(tmp_path))
+    assert "My RST Readme" in result["readme_summary"]
+
+
+# --- CLI tests ---
+
+
+def test_cli_no_args(run_main):
+    """CLI with no args prints usage and exits 1."""
+    r = run_main("implement_utils.py")
+    assert r.returncode == 1
+    assert "Usage" in r.stdout
+
+
+def test_cli_parse_proposals(run_main):
+    """CLI parses proposals from fixture file."""
+    r = run_main("implement_utils.py", str(SAMPLE_FINDINGS), '[1,3]')
+    assert r.returncode == 0
+    output = json.loads(r.stdout)
+    assert "proposals" in output
+    assert len(output["proposals"]) == 2
+
+
+def test_cli_analyze(run_main, tmp_path):
+    """CLI analyze subcommand works."""
+    (tmp_path / "model.py").write_text("import torch\n")
+    r = run_main("implement_utils.py", "analyze", str(tmp_path))
+    assert r.returncode == 0
+    output = json.loads(r.stdout)
+    assert "python_files" in output

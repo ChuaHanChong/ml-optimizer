@@ -230,6 +230,19 @@ def test_parse_log_tqdm_format(tmp_path):
 # --- CLI tests ---
 
 
+def test_parse_log_kv_fallback_warns_on_empty(tmp_path):
+    """Auto-detected 'kv' format with no parseable metrics should warn."""
+    import warnings
+    f = tmp_path / "weird.log"
+    f.write_text("This is just a plain text log\nNo metrics here\nJust words\n")
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        records = parse_log(str(f))
+        assert records == []
+        assert len(w) == 1
+        assert "kv" in str(w[0].message).lower()
+
+
 def test_cli_parse_log(run_main):
     """CLI parses sample log file."""
     r = run_main("parse_logs.py", str(FIXTURES / "sample_train_log.txt"))

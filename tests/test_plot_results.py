@@ -234,6 +234,25 @@ def test_plot_hp_sensitivity_non_numeric_hp(tmp_path):
 # --- CLI tests ---
 
 
+def test_plot_metric_comparison_baseline_case_insensitive(tmp_path):
+    """Baseline marker [B] should work regardless of case."""
+    _write_results(tmp_path, {
+        "Baseline": {"metrics": {"loss": 1.0}, "config": {"lr": 0.01}},
+        "exp-001": {"metrics": {"loss": 0.7}, "config": {"lr": 0.001}},
+    })
+    chart = plot_metric_comparison(str(tmp_path), "loss")
+    assert "[B]" in chart
+
+
+def test_ascii_line_chart_resampling_preserves_data_points():
+    """Resampling with large dataset should produce valid chart with expected row count."""
+    values = [i * 0.1 for i in range(150)]
+    chart = ascii_line_chart(values, width=40, height=10)
+    data_rows = [line for line in chart.split("\n") if "|" in line]
+    assert len(data_rows) == 10
+    assert "*" in chart
+
+
 def test_cli_comparison(run_main, tmp_path):
     """CLI comparison mode works."""
     _write_results(tmp_path, {

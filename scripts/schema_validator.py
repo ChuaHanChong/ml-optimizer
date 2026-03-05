@@ -36,6 +36,7 @@ PROPOSAL_OPTIONAL = [
     "adaptation_notes", "files_created", "license_warning", "new_dependencies",
 ]
 VALID_PROPOSAL_STATUSES = ["validated", "validation_failed", "implementation_error"]
+VALID_IMPLEMENTATION_STRATEGIES = ["from_scratch", "from_reference"]
 
 
 # ---------------------------------------------------------------------------
@@ -49,6 +50,14 @@ def _check_required(data: dict, required: list[str]) -> list[str]:
         if field not in data:
             errors.append(f"Missing required field: {field}")
     return errors
+
+
+def _check_numeric_metrics(data: dict, errors: list[str]) -> None:
+    """Append errors for any non-numeric values in data["metrics"]."""
+    if "metrics" in data and isinstance(data["metrics"], dict):
+        for mk, mv in data["metrics"].items():
+            if not isinstance(mv, (int, float)):
+                errors.append(f"Metric '{mk}' must be numeric, got {type(mv).__name__}")
 
 
 # ---------------------------------------------------------------------------
@@ -80,6 +89,8 @@ def validate_result(data: dict) -> dict:
 
     if "metrics" in data and not isinstance(data["metrics"], dict):
         errors.append("'metrics' must be a dict")
+    else:
+        _check_numeric_metrics(data, errors)
 
     if "config" in data and not isinstance(data["config"], dict):
         errors.append("'config' must be a dict")
@@ -108,6 +119,8 @@ def validate_baseline(data: dict) -> dict:
 
     if "metrics" in data and not isinstance(data["metrics"], dict):
         errors.append("'metrics' must be a dict")
+    else:
+        _check_numeric_metrics(data, errors)
 
     if "config" in data and not isinstance(data["config"], dict):
         errors.append("'config' must be a dict")
@@ -155,6 +168,12 @@ def validate_manifest(data: dict) -> dict:
                     errors.append(
                         f"Proposal at index {i}: invalid status '{proposal['status']}': "
                         f"must be one of {VALID_PROPOSAL_STATUSES}"
+                    )
+                if "implementation_strategy" in proposal and proposal["implementation_strategy"] not in VALID_IMPLEMENTATION_STRATEGIES:
+                    errors.append(
+                        f"Proposal at index {i}: invalid implementation_strategy "
+                        f"'{proposal['implementation_strategy']}': "
+                        f"must be one of {VALID_IMPLEMENTATION_STRATEGIES}"
                     )
 
     return {"valid": len(errors) == 0, "errors": errors}

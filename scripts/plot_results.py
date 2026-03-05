@@ -163,7 +163,7 @@ def plot_metric_comparison(
     values: list[float] = []
     for entry in ranked:
         exp_id = entry["exp_id"]
-        if exp_id == "baseline":
+        if exp_id.lower() == "baseline":
             exp_id = exp_id + " [B]"
         labels.append(exp_id)
         values.append(entry["value"])

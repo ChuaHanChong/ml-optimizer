@@ -70,6 +70,18 @@ Be skeptical when:
 - Search: "[task] data augmentation" or "[domain] augmentation strategy"
 - Look for: domain-specific augmentations, mixing strategies
 
+### For NLP improvements:
+- Search: "[task] language model training improvement <year>"
+- Look for: efficient attention, better tokenization, knowledge distillation, prompt tuning
+
+### For audio/speech improvements:
+- Search: "[task] speech model training <year>"
+- Look for: acoustic feature improvements, CTC alternatives, streaming architectures
+
+### For graph learning improvements:
+- Search: "graph neural network [task] improvement <year>"
+- Look for: message passing alternatives, over-smoothing solutions, graph transformers
+
 ## Previously Tried Techniques
 
 Before proposing, check if `experiments/reports/research-findings.md` already exists. If so:

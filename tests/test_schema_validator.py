@@ -286,6 +286,66 @@ def test_validate_file_unknown_schema(tmp_path):
 # --- CLI tests ---
 
 
+def test_validate_manifest_invalid_implementation_strategy():
+    """Proposal with invalid implementation_strategy should fail."""
+    data = {
+        "original_branch": "main",
+        "strategy": "git_branch",
+        "proposals": [{
+            "name": "Test",
+            "slug": "test",
+            "status": "validated",
+            "implementation_strategy": "from_nowhere",
+        }],
+    }
+    result = validate_manifest(data)
+    assert result["valid"] is False
+    assert any("implementation_strategy" in e for e in result["errors"])
+
+
+def test_validate_manifest_valid_implementation_strategies():
+    """Both valid implementation strategies should pass."""
+    for strategy in ["from_scratch", "from_reference"]:
+        data = {
+            "original_branch": "main",
+            "strategy": "git_branch",
+            "proposals": [{
+                "name": "Test",
+                "slug": "test",
+                "status": "validated",
+                "implementation_strategy": strategy,
+            }],
+        }
+        result = validate_manifest(data)
+        assert result["valid"] is True, f"Strategy '{strategy}' should be valid"
+
+
+def test_validate_result_non_numeric_metric():
+    """A result with a non-numeric metric value should fail."""
+    data = {
+        "exp_id": "exp-001",
+        "status": "completed",
+        "config": {"lr": 0.001},
+        "metrics": {"loss": 0.5, "model_name": "resnet"},
+    }
+    result = validate_result(data)
+    assert result["valid"] is False
+    assert any("model_name" in e and "numeric" in e for e in result["errors"])
+
+
+def test_validate_baseline_non_numeric_metric():
+    """A baseline with a non-numeric metric value should fail."""
+    data = {
+        "exp_id": "baseline",
+        "status": "completed",
+        "config": {"lr": 0.001},
+        "metrics": {"loss": 0.5, "notes": "good run"},
+    }
+    result = validate_baseline(data)
+    assert result["valid"] is False
+    assert any("notes" in e and "numeric" in e for e in result["errors"])
+
+
 def test_cli_validate_valid(run_main, tmp_path):
     """CLI validates a valid result file."""
     f = tmp_path / "exp.json"

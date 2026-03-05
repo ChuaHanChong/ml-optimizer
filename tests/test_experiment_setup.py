@@ -182,6 +182,25 @@ def test_cleanup_stale_corrupt_json(tmp_path):
 # --- CLI tests ---
 
 
+def test_concurrent_setup_unique_ids(tmp_path):
+    """Multiple concurrent setup() calls should produce unique experiment IDs."""
+    import concurrent.futures
+
+    project_root = str(tmp_path)
+
+    def do_setup(i):
+        return setup(project_root, f"python train.py --seed {i}", config={"seed": i})
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        futures = [executor.submit(do_setup, i) for i in range(8)]
+        results = [f.result() for f in concurrent.futures.as_completed(futures)]
+
+    exp_ids = [r["exp_id"] for r in results]
+    assert len(exp_ids) == len(set(exp_ids)), f"Duplicate IDs found: {exp_ids}"
+    for r in results:
+        assert Path(r["config_path"]).exists()
+
+
 def test_cli_setup(run_main, tmp_path):
     """CLI sets up experiment structure."""
     r = run_main("experiment_setup.py", str(tmp_path), "python train.py")

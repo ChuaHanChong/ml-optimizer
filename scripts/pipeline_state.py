@@ -198,11 +198,12 @@ if __name__ == "__main__":
 
     elif action == "save":
         if len(sys.argv) < 5:
-            print("Usage: pipeline_state.py <exp_root> save <phase> <iteration>")
+            print("Usage: pipeline_state.py <exp_root> save <phase> <iteration> [running_ids_json]")
             sys.exit(1)
         phase = int(sys.argv[3])
         iteration = int(sys.argv[4])
-        path = save_state(phase, iteration, [], exp_root)
+        running_ids = json.loads(sys.argv[5]) if len(sys.argv) > 5 else []
+        path = save_state(phase, iteration, running_ids, exp_root)
         print(f"State saved to {path}")
 
     elif action == "load":

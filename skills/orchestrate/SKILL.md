@@ -41,7 +41,7 @@ You are an ML optimization orchestrator. You coordinate the full optimization pi
       - HP tuning only (fastest, no code changes)
       - HP tuning + architecture research (slower, potentially bigger gains)
       - Let me decide based on analysis
-   7. **Divergence metric name:** What is the loss metric called in your training logs? (default: "loss". Common alternatives: "train_loss", "val_loss", "objective", "nll_loss")
+   7. **Divergence metric name:** What metric should be monitored for training divergence? (default: "loss". Common alternatives: "train_loss", "val_loss", "objective", "nll_loss", "reward" for RL, "perplexity" for LLMs)
    8. **Optimization type:** Are you optimizing training performance or inference performance? (This plugin focuses on **training** optimization — inference optimization like quantization, pruning, or ONNX conversion is out of scope.)
    9. **Anything else** I should know about this model or training setup?
    ```
@@ -394,5 +394,5 @@ The following are currently out of scope. If the user requests them, explain the
 
 - **Inference optimization:** Quantization, pruning, ONNX export, TensorRT — these require a fundamentally different toolchain. Recommend dedicated tools instead.
 - **Multi-machine distributed training:** This plugin operates on a single machine with multiple GPUs. Cross-node training requires a different dispatch mechanism.
-- **Reinforcement learning:** The tuning strategy assumes supervised/self-supervised training with a loss metric. RL reward signals need a different optimization approach.
+- **Reinforcement learning:** The default tuning strategy assumes supervised/self-supervised training with a loss metric. RL workflows may work if a suitable divergence metric (e.g., negative reward, policy loss) is specified in Phase 0 Q7, but reward-shaped optimization may require a different approach for best results.
 - **Multi-seed ensembling:** The pipeline runs one seed per experiment. Multi-seed evaluation would require significant orchestrator changes.

@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
-from detect_divergence import detect_nan_inf, detect_explosion, detect_plateau, check_divergence
+from detect_divergence import detect_nan_inf, detect_explosion, detect_plateau, detect_gradual_drift, check_divergence
 
 
 def test_detect_nan():
@@ -170,6 +170,53 @@ def test_detect_explosion_all_nan_window():
 
 
 # --- CLI tests ---
+
+
+def test_detect_gradual_drift_increasing_loss():
+    """Slowly increasing loss should be caught by drift detection."""
+    values = [0.5 + i * 0.005 for i in range(60)]
+    result = detect_gradual_drift(values, window=50, min_slope_ratio=0.1)
+    assert result is not None
+    assert result["diverged"] is True
+    assert "drift" in result["reason"].lower()
+
+
+def test_detect_gradual_drift_healthy():
+    """Decreasing loss should not trigger drift."""
+    values = [1.0 - i * 0.005 for i in range(60)]
+    result = detect_gradual_drift(values, window=50, min_slope_ratio=0.1)
+    assert result is None
+
+
+def test_detect_gradual_drift_higher_is_better():
+    """Gradually decreasing accuracy should be caught."""
+    values = [80 - i * 0.3 for i in range(60)]
+    result = detect_gradual_drift(values, window=50, min_slope_ratio=0.1, lower_is_better=False)
+    assert result is not None
+    assert result["diverged"] is True
+    assert "drift" in result["reason"].lower()
+
+
+def test_detect_gradual_drift_too_short():
+    """Not enough data for drift window returns None."""
+    values = [0.5 + i * 0.01 for i in range(10)]
+    assert detect_gradual_drift(values, window=50) is None
+
+
+def test_check_divergence_gradual_drift():
+    """check_divergence integrates gradual drift detection."""
+    values = [0.5 + i * 0.005 for i in range(60)]
+    result = check_divergence(values, gradual_drift_window=50)
+    assert result["diverged"] is True
+    assert "drift" in result["reason"].lower()
+
+
+def test_mixed_plateau_then_explosion():
+    """Plateau followed by explosion: explosion detected first (higher priority)."""
+    values = [1.0] * 30 + [50.0]
+    result = check_divergence(values, explosion_window=10, explosion_threshold=5.0, plateau_patience=20)
+    assert result["diverged"] is True
+    assert "explosion" in result["reason"].lower()
 
 
 def test_cli_basic(run_main):

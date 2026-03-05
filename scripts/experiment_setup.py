@@ -46,10 +46,22 @@ def next_experiment_id(results_dir: str) -> str:
     return f"exp-{max(nums) + 1:03d}"
 
 
-def write_experiment_config(results_dir: str, exp_id: str, config: dict) -> str:
-    """Write an experiment config JSON file."""
+def write_experiment_config(results_dir: str, exp_id: str, config: dict, exclusive: bool = False) -> str:
+    """Write an experiment config JSON file.
+
+    When *exclusive* is True, the file is created atomically using O_CREAT|O_EXCL.
+    Raises FileExistsError if the file already exists (used to prevent race conditions).
+    """
     path = Path(results_dir) / f"{exp_id}.json"
-    path.write_text(json.dumps(config, indent=2))
+    content = json.dumps(config, indent=2)
+    if exclusive:
+        fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        try:
+            os.write(fd, content.encode())
+        finally:
+            os.close(fd)
+    else:
+        path.write_text(content)
     return str(path)
 
 
@@ -93,17 +105,29 @@ def generate_train_script(
 
 
 def setup(project_root: str, train_command: str, gpu_id: int = 0, config: dict | None = None) -> dict:
-    """Full setup: create dirs, generate ID, write config and script."""
+    """Full setup: create dirs, generate ID, write config and script.
+
+    Uses atomic file creation to prevent race conditions when multiple
+    agents call setup() concurrently.
+    """
     exp_root = create_experiment_dirs(project_root)
     results_dir = str(Path(exp_root) / "results")
-    exp_id = next_experiment_id(results_dir)
 
     config = config or {}
-    config_path = write_experiment_config(results_dir, exp_id, {
-        "exp_id": exp_id,
-        "config": config,
-        "status": "pending",
-    })
+    max_retries = 10
+    for attempt in range(max_retries):
+        exp_id = next_experiment_id(results_dir)
+        try:
+            config_path = write_experiment_config(results_dir, exp_id, {
+                "exp_id": exp_id,
+                "config": config,
+                "status": "pending",
+            }, exclusive=True)
+            break
+        except FileExistsError:
+            if attempt == max_retries - 1:
+                raise
+            continue
 
     log_file = str(Path(exp_root) / "logs" / exp_id / "train.log")
     script_path = generate_train_script(

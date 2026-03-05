@@ -89,6 +89,55 @@ def detect_plateau(
     return None
 
 
+def detect_gradual_drift(
+    values: list[float],
+    window: int = 50,
+    min_slope_ratio: float = 0.1,
+    lower_is_better: bool = True,
+) -> dict | None:
+    """Detect gradual metric drift via linear regression over a rolling window.
+
+    Computes slope of the last *window* finite values using least-squares.
+    Flags when the total drift exceeds *min_slope_ratio* times the first
+    value's magnitude, in the wrong direction.
+    """
+    finite = [(i, v) for i, v in enumerate(values) if math.isfinite(v)]
+    if len(finite) < window:
+        return None
+
+    tail = finite[-window:]
+    xs = [x for x, _ in tail]
+    ys = [y for _, y in tail]
+
+    n = len(xs)
+    sx = sum(xs)
+    sy = sum(ys)
+    sxy = sum(x * y for x, y in zip(xs, ys))
+    sx2 = sum(x * x for x in xs)
+
+    denom = n * sx2 - sx * sx
+    if denom == 0:
+        return None
+    slope = (n * sxy - sx * sy) / denom
+
+    # Total drift over the window
+    total_drift = slope * (xs[-1] - xs[0])
+    ref = abs(ys[0]) if ys[0] != 0 else 1.0
+    if abs(total_drift) < min_slope_ratio * ref:
+        return None
+
+    drifting_wrong_way = (lower_is_better and slope > 0) or (not lower_is_better and slope < 0)
+    if drifting_wrong_way:
+        direction = "increasing" if slope > 0 else "decreasing"
+        return {
+            "diverged": True,
+            "reason": f"Gradual drift: metric {direction} over {window} steps "
+                      f"(slope={slope:.6f}, total_drift={total_drift:.4f})",
+            "step": tail[-1][0],
+        }
+    return None
+
+
 def check_divergence(
     values: list[float],
     explosion_window: int = 10,
@@ -96,6 +145,8 @@ def check_divergence(
     plateau_patience: int = 20,
     plateau_min_delta: float = 1e-6,
     lower_is_better: bool = True,
+    gradual_drift_window: int = 50,
+    gradual_drift_min_slope: float = 0.1,
 ) -> dict:
     """Run all divergence checks on a metric trajectory."""
     if not values:
@@ -108,6 +159,12 @@ def check_divergence(
 
     result = detect_explosion(
         values, explosion_window, explosion_threshold, lower_is_better
+    )
+    if result:
+        return result
+
+    result = detect_gradual_drift(
+        values, gradual_drift_window, gradual_drift_min_slope, lower_is_better
     )
     if result:
         return result

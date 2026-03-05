@@ -42,6 +42,10 @@ Tune hyperparameters in this order, as earlier ones have the largest impact:
 ### 6. Data Augmentation (Lower Priority for HP Tuning)
 - Usually better to get the right LR first, then tune augmentation
 - Exception: if baseline is clearly overfitting
+- **Vision:** Random crop, flip, color jitter, CutMix, MixUp
+- **NLP:** Back-translation, synonym replacement, random deletion, token masking
+- **Audio:** SpecAugment, time stretching, pitch shifting, noise injection
+- **Tabular/Graph:** Feature dropout, edge dropout, node feature masking
 
 ## Reasoning Framework
 
@@ -76,6 +80,15 @@ When optimizing for multiple metrics simultaneously (e.g., accuracy AND latency)
 
 When `secondary_metric` is provided, include both metrics in the ranking and note trade-offs.
 
+## Multi-Loss Training
+
+When the model uses multiple loss terms (e.g., reconstruction + perceptual + adversarial):
+
+1. **Identify the dominant loss:** Which loss term contributes most to the total gradient? Start by tuning its weight.
+2. **Loss weight tuning order:** Keep one loss fixed (usually the primary task loss) and tune weights of auxiliary losses.
+3. **Relative scaling:** Auxiliary loss weights should typically be 0.001x–0.1x the primary loss magnitude.
+4. **Diagnostic:** If one loss decreases while another increases, the weights are imbalanced. Monitor component losses alongside the combined total.
+
 ## Effective Hyperparameters
 
 Some "code changes" are effectively HP-only changes:
@@ -102,6 +115,25 @@ Consider these alongside traditional HPs when tuning.
 - Discriminator LR: usually same or 2-4x generator
 - DO NOT use weight decay on generator
 - Betas: (0.0, 0.9) for Adam (not the default 0.9, 0.999)
+
+### NLP / Language Models
+- Batch size: largest that fits (gradient accumulation for effective batch 256+)
+- LR: 1e-5 to 5e-5 (fine-tuning), 1e-4 to 1e-3 (pre-training)
+- Warmup: 6–10% of total steps
+- Weight decay: 0.01–0.1
+- Key HP: sequence length (affects memory quadratically for attention models)
+
+### Audio / Speech Models
+- Batch size: often measured in seconds of audio, not samples
+- LR: 1e-4 to 3e-4 typical
+- Spectrogram parameters (n_fft, hop_length) are effectively HPs
+- Data augmentation: SpecAugment (time/frequency masking)
+
+### Graph Neural Networks
+- Number of layers: 2–4 (over-smoothing with too many)
+- Hidden dimension: 32–256
+- Dropout: 0.3–0.6 (higher than vision/NLP due to small datasets)
+- LR: 1e-3 to 1e-2
 
 ## Anti-Patterns to Avoid
 

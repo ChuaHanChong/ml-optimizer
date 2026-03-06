@@ -81,16 +81,6 @@ All scripts work as both importable modules and CLI tools:
 | `schema_validator.py` | Validates JSON result files against expected schemas |
 | `plot_results.py` | Generates result visualizations |
 
-### Skill Reference Files
-
-Each skill has a `references/` directory with templates and guides:
-- `orchestrate/references/plan-template.md`, `log-formats.md`
-- `hp-tune/references/tuning-strategy.md`
-- `research/references/paper-analysis.md`
-- `implement/references/implementation-patterns.md`, `validation-checklist.md`
-- `experiment/references/script-templates.md`
-- `report/references/report-template.md`
-
 ### State & Output (in target project)
 
 The plugin creates `experiments/` in the user's project:
@@ -121,6 +111,11 @@ The orchestrator can be stopped and resumed. On restart it reads `pipeline-state
 
 ## Test Fixtures
 
-`tests/fixtures/tiny_resnet_cifar10/` contains a minimal PyTorch model (model.py, train.py, eval.py, config.yaml) used by integration tests.
+`tests/fixtures/` contains a minimal PyTorch project (`tiny_resnet_cifar10/`), sample training logs (normal, divergent, OOM, tqdm, noisy), sample research findings (with and without reference repos), and sample result/config files. Used by the 359-test pytest suite.
 
-`tests/fixtures/divergent_log.txt` contains sample training logs with divergence patterns.
+## Gotchas
+
+- **`detect_divergence.py` CLI takes a JSON string, not a file path**: `python3 scripts/detect_divergence.py '[0.5, 0.4, 100.0]'` — the quotes are required.
+- **`implement_utils.py` has three CLI modes**: default (parse proposals), `clone <url> <dest>`, and `analyze <path>`. Each has different argument patterns.
+- **Metric routing is split**: Monitor/divergence always uses loss (lower-is-better). Analyze/hp-tune use the user's `primary_metric`. Mixing these up causes silent wrong behavior.
+- **Branch experiments are independent**: Results on `ml-opt/branch-a` tell you nothing about what HPs will work on `ml-opt/branch-b`. The tuning agent must group by `code_branch` before analyzing trends.

@@ -57,6 +57,35 @@ def test_rank_by_metric():
     assert ranked[1]["exp_id"] == "exp-002"
 
 
+def test_rank_by_metric_includes_status():
+    """Ranked entries include the experiment status field."""
+    results = {
+        "baseline": {"metrics": {"loss": 1.0}, "status": "completed"},
+        "exp-001": {"metrics": {"loss": 0.5}, "status": "completed"},
+        "exp-002": {"metrics": {"loss": 0.7}, "status": "failed"},
+        "exp-003": {"metrics": {"loss": 0.3}, "status": "diverged"},
+    }
+    ranked = rank_by_metric(results, "loss", lower_is_better=True)
+    assert len(ranked) == 4
+    # Each entry has a status field
+    for entry in ranked:
+        assert "status" in entry
+    # Find the failed one
+    failed = next(r for r in ranked if r["exp_id"] == "exp-002")
+    assert failed["status"] == "failed"
+    diverged = next(r for r in ranked if r["exp_id"] == "exp-003")
+    assert diverged["status"] == "diverged"
+
+
+def test_rank_by_metric_status_none_when_missing():
+    """Status is None when experiment data has no status field."""
+    results = {
+        "exp-001": {"metrics": {"loss": 0.5}},
+    }
+    ranked = rank_by_metric(results, "loss")
+    assert ranked[0]["status"] is None
+
+
 def test_rank_by_metric_higher_better():
     results = {
         "baseline": {"metrics": {"accuracy": 70.0}},

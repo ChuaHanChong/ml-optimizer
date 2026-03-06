@@ -6,6 +6,7 @@ Schemas are defined as plain Python data structures.
 """
 
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -53,11 +54,13 @@ def _check_required(data: dict, required: list[str]) -> list[str]:
 
 
 def _check_numeric_metrics(data: dict, errors: list[str]) -> None:
-    """Append errors for any non-numeric values in data["metrics"]."""
+    """Append errors for any non-numeric or non-finite values in data["metrics"]."""
     if "metrics" in data and isinstance(data["metrics"], dict):
         for mk, mv in data["metrics"].items():
             if not isinstance(mv, (int, float)):
                 errors.append(f"Metric '{mk}' must be numeric, got {type(mv).__name__}")
+            elif isinstance(mv, float) and not math.isfinite(mv):
+                errors.append(f"Metric '{mk}' must be finite, got {mv}")
 
 
 # ---------------------------------------------------------------------------

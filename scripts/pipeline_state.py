@@ -79,8 +79,20 @@ def validate_phase_requirements(phase: int, exp_root: str) -> dict:
     }
 
 
-def save_state(phase: int, iteration: int, running_exp_ids: list[str], exp_root: str) -> str:
+def save_state(
+    phase: int,
+    iteration: int,
+    running_exp_ids: list[str],
+    exp_root: str,
+    *,
+    user_choices: dict | None = None,
+) -> str:
     """Write pipeline-state.json to exp_root.
+
+    Args:
+        user_choices: Optional dict of Phase 0 user choices to persist
+            (e.g., primary_metric, divergence_metric, lower_is_better,
+            target_value). These are preserved across pipeline resumptions.
 
     Returns the path to the state file.
     """
@@ -94,6 +106,8 @@ def save_state(phase: int, iteration: int, running_exp_ids: list[str], exp_root:
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "status": "running",
     }
+    if user_choices:
+        state["user_choices"] = user_choices
 
     state_path = root / "pipeline-state.json"
     state_path.write_text(json.dumps(state, indent=2))

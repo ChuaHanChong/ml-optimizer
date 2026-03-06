@@ -67,6 +67,22 @@ cd <project_root> && git rev-parse --is-inside-work-tree 2>/dev/null
 **If git repo (preferred):**
 - `strategy = "git_branch"`
 - Record `original_branch` via `git rev-parse --abbrev-ref HEAD`
+- **Check for uncommitted changes:**
+  ```bash
+  git status --porcelain
+  ```
+  If output is non-empty (dirty working tree), use AskUserQuestion:
+  ```
+  Your working tree has uncommitted changes. These changes would be carried into
+  all proposal branches, which could contaminate the baseline comparison.
+
+  Please either:
+  1. Commit your changes: git commit -am "WIP"
+  2. Stash your changes: git stash
+
+  Then re-run the implement skill.
+  ```
+  Do NOT proceed with branch creation on a dirty working tree.
 - Each proposal gets branch `ml-opt/<slug>`
 
 **If not a git repo (fallback):**

@@ -23,6 +23,8 @@ From the orchestrator:
 - `iteration`: Which tuning iteration this is (1, 2, 3, ...)
 - `primary_metric`: The metric to optimize (e.g., "loss", "accuracy", "psnr")
 - `lower_is_better`: Whether lower metric values are better (True for loss, False for accuracy)
+- `remaining_budget`: Maximum number of experiments that can still be run. Cap proposals at `min(num_gpus, remaining_budget)`. If remaining_budget ≤ 0, recommend stopping.
+- `code_branches`: List of validated code branches from the implementation manifest (e.g., `["ml-opt/perceptual-loss"]`), or `[]` for HP-only. In iteration 1, generate one config per branch (with baseline HPs) plus one for the original code, instead of spanning the search space.
 
 ## Step 1: Load Past Results
 
@@ -68,6 +70,10 @@ This is the core of LLM-driven HP tuning. Think through the following:
 
 ### Iteration 1 (Exploration)
 If this is the first tuning iteration (only baseline exists):
+
+**If `code_branches` is non-empty:** Generate one config per branch using baseline HPs, plus one config for the original code (no branch). This tests each code change in isolation before HP tuning. Assign each config a `code_branch` and `code_proposal` field. Cap total configs at `min(len(code_branches) + 1, remaining_budget)`.
+
+**If `code_branches` is empty (HP-only):**
 - Propose configs that span the search space
 - Focus on learning rate first (highest impact)
 - One config per order of magnitude of LR
@@ -99,10 +105,11 @@ Reasoning:
 
 Before finalizing, check each proposed config:
 
-1. **GPU memory:** Will the batch size fit? (Check against baseline profiling)
-2. **Not a duplicate:** Has this exact config been tried before?
-3. **Within search space:** All values within defined ranges
-4. **Sensible combinations:** LR and batch size follow linear scaling rule
+1. **Budget cap:** Total proposals must not exceed `min(num_gpus, remaining_budget)`. If `remaining_budget ≤ 0`, skip proposal generation and recommend stopping.
+2. **GPU memory:** Will the batch size fit? (Check against baseline profiling)
+3. **Not a duplicate:** Has this exact config been tried before?
+4. **Within search space:** All values within defined ranges
+5. **Sensible combinations:** LR and batch size follow linear scaling rule
 
 ## Step 5: Write Proposed Configs
 

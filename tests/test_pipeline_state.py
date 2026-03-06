@@ -76,6 +76,30 @@ def test_save_and_load_state(tmp_path):
     datetime.fromisoformat(state["timestamp"])
 
 
+def test_save_and_load_state_with_user_choices(tmp_path):
+    """Save state with user_choices, load it back, verify choices persist."""
+    choices = {
+        "primary_metric": "accuracy",
+        "divergence_metric": "loss",
+        "lower_is_better": False,
+        "target_value": 0.95,
+    }
+    save_state(5, 1, ["exp-001"], str(tmp_path), user_choices=choices)
+    state = load_state(str(tmp_path))
+    assert state is not None
+    assert state["user_choices"] == choices
+    assert state["user_choices"]["primary_metric"] == "accuracy"
+    assert state["user_choices"]["lower_is_better"] is False
+
+
+def test_save_state_without_user_choices_has_no_key(tmp_path):
+    """Save state without user_choices omits the key entirely."""
+    save_state(3, 1, [], str(tmp_path))
+    state = load_state(str(tmp_path))
+    assert state is not None
+    assert "user_choices" not in state
+
+
 def test_validate_phase2_valid(tmp_path):
     """Phase 2 passes when results/ directory exists."""
     (tmp_path / "results").mkdir()

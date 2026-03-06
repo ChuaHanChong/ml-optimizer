@@ -31,6 +31,7 @@ def rank_by_metric(results: dict[str, dict], metric: str, lower_is_better: bool 
                 "exp_id": exp_id,
                 "value": metrics[metric],
                 "config": data.get("config", {}),
+                "status": data.get("status"),
             })
     ranked.sort(key=lambda x: x["value"], reverse=not lower_is_better)
     return ranked

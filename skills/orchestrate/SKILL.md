@@ -233,11 +233,20 @@ If no manifest exists, run HP-only experiments on the current code.
 
 ### Pre-Loop: Save Pipeline State
 
+Save Phase 0 user choices into pipeline state so they persist across interruptions:
+
 ```bash
 python3 -c "
-import sys; sys.path.insert(0, '$HOME/.claude/plugins/ml-optimizer/scripts')
+import sys, json; sys.path.insert(0, '$HOME/.claude/plugins/ml-optimizer/scripts')
 from pipeline_state import save_state
-save_state(5, 0, [], '<exp_root>')
+save_state(5, 0, [], '<exp_root>', user_choices={
+    'primary_metric': '<primary_metric>',
+    'divergence_metric': '<divergence_metric>',
+    'lower_is_better': <lower_is_better>,
+    'target_value': <target_value or None>,
+    'train_command': '<train_command>',
+    'eval_command': '<eval_command or None>',
+})
 "
 ```
 
@@ -269,8 +278,10 @@ When the implementation manifest contains multiple code branches:
      - `iteration`: Current loop iteration (1-based)
      - `primary_metric`: The metric to optimize (from Phase 0)
      - `lower_is_better`: Whether lower values are better
+     - `remaining_budget`: How many more experiments can be run before hitting the budget limit. Calculated as `(num_gpus × 5) - total_experiments_so_far`. HP-tune must cap proposals at `min(num_gpus, remaining_budget)`.
+     - `code_branches`: List of validated code branches from the implementation manifest (e.g., `["ml-opt/perceptual-loss", "ml-opt/cosine-scheduler"]`), or `[]` for HP-only optimization. HP-tune uses this in iteration 1 to generate one config per branch + one for baseline.
    - It reads past results and proposes the next batch of configs
-   - Number of configs = number of available GPUs (for parallel execution)
+   - Number of configs = `min(num_gpus, remaining_budget)` (capped to prevent budget overshoot)
 
 2. **Run experiments:**
    - For each proposed config, invoke `ml-optimizer:experiment` skill
@@ -310,7 +321,11 @@ When the implementation manifest contains multiple code branches:
    - **Safety limit:** Maximum total experiments budget (default: `num_gpus × 5 iterations`). After budget exhausted, force exit and report. This replaces the rigid 5-iteration limit to account for varying GPU counts.
 
 ### Parallel GPU Dispatch Pattern:
-When dispatching experiments across multiple GPUs, use the Agent tool with `subagent_type: "general-purpose"` for each experiment:
+When dispatching experiments across multiple GPUs, use the Agent tool with `subagent_type: "general-purpose"` for each experiment.
+
+**If manifest strategy is `"file_backup"` (non-git project):** dispatch ONE experiment at a time (sequential). Wait for each to complete before starting the next. File-backup proposals share the same working directory and cannot run in parallel.
+
+**Otherwise (git_branch strategy or HP-only):** dispatch all experiments in parallel:
 
 ```
 For each config in proposed_configs:
@@ -395,8 +410,9 @@ All state is persisted in the `experiments/` directory:
 The orchestrator can be stopped and resumed:
 1. On start, check for `pipeline-state.json` via `pipeline_state.load_state()`
 2. If state exists and status is "running", run `pipeline_state.cleanup_stale()` to handle interrupted experiments
-3. Resume from the recorded phase and iteration
-4. Read all past results to understand what has been tried
+3. Restore Phase 0 user choices from `state["user_choices"]` (primary_metric, divergence_metric, lower_is_better, target_value, train_command, eval_command) — do NOT re-ask the user
+4. Resume from the recorded phase and iteration
+5. Read all past results to understand what has been tried
 
 ### State Validation
 

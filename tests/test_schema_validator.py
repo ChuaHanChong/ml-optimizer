@@ -358,6 +358,58 @@ def test_validate_baseline_non_numeric_metric():
     assert any("notes" in e and "numeric" in e for e in result["errors"])
 
 
+def test_validate_result_nan_metric():
+    """A result with NaN metric value should fail."""
+    data = {
+        "exp_id": "exp-001",
+        "status": "completed",
+        "config": {"lr": 0.001},
+        "metrics": {"loss": float("nan")},
+    }
+    result = validate_result(data)
+    assert result["valid"] is False
+    assert any("loss" in e and "finite" in e for e in result["errors"])
+
+
+def test_validate_result_inf_metric():
+    """A result with Inf metric value should fail."""
+    data = {
+        "exp_id": "exp-001",
+        "status": "completed",
+        "config": {"lr": 0.001},
+        "metrics": {"loss": float("inf")},
+    }
+    result = validate_result(data)
+    assert result["valid"] is False
+    assert any("loss" in e and "finite" in e for e in result["errors"])
+
+
+def test_validate_baseline_nan_metric():
+    """A baseline with NaN metric value should fail."""
+    data = {
+        "exp_id": "baseline",
+        "status": "completed",
+        "config": {"lr": 0.001},
+        "metrics": {"loss": float("nan")},
+    }
+    result = validate_baseline(data)
+    assert result["valid"] is False
+    assert any("loss" in e and "finite" in e for e in result["errors"])
+
+
+def test_validate_result_neg_inf_metric():
+    """A result with -Inf metric value should fail."""
+    data = {
+        "exp_id": "exp-001",
+        "status": "completed",
+        "config": {"lr": 0.001},
+        "metrics": {"loss": float("-inf")},
+    }
+    result = validate_result(data)
+    assert result["valid"] is False
+    assert any("loss" in e and "finite" in e for e in result["errors"])
+
+
 def test_cli_validate_valid(run_main, tmp_path):
     """CLI validates a valid result file."""
     f = tmp_path / "exp.json"

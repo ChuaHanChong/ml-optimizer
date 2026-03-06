@@ -247,6 +247,23 @@ def test_detect_explosion_zero_average():
     assert result is None
 
 
+def test_check_divergence_drift_over_plateau():
+    """Gradual drift is detected before plateau (higher priority)."""
+    # Steadily increasing loss over 60 steps with no plateau pattern
+    values = [1.0 + i * 0.05 for i in range(60)]
+    # The last 20 values also form a plateau-like flatness at coarse scale,
+    # but the drift check runs first (lines 181-186 before 188-192)
+    result = check_divergence(
+        values,
+        gradual_drift_window=50,
+        gradual_drift_min_slope=0.01,
+        gradual_drift_min_r_squared=0.05,
+        plateau_patience=20,
+    )
+    assert result["diverged"] is True
+    assert "drift" in result["reason"].lower()
+
+
 def test_mixed_plateau_then_explosion():
     """Plateau followed by explosion: explosion detected first (higher priority)."""
     values = [1.0] * 30 + [50.0]

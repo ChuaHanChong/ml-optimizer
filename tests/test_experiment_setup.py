@@ -165,6 +165,19 @@ def test_generate_train_script_default_log_file(tmp_path):
     assert "experiments/logs/exp-001/train.log" in content
 
 
+def test_cleanup_stale_experiments_pending(tmp_path):
+    """Stale pending experiments should also be marked as failed."""
+    stale_file = tmp_path / "exp-001.json"
+    stale_file.write_text(json.dumps({"exp_id": "exp-001", "status": "pending"}))
+    stale_mtime = time.time() - 3 * 3600
+    os.utime(str(stale_file), (stale_mtime, stale_mtime))
+
+    cleaned = cleanup_stale_experiments(str(tmp_path), timeout_hours=2.0)
+    assert cleaned == ["exp-001"]
+    data = json.loads(stale_file.read_text())
+    assert data["status"] == "failed"
+
+
 def test_cleanup_stale_nonexistent_dir():
     """cleanup_stale_experiments on nonexistent dir returns empty list."""
     assert cleanup_stale_experiments("/nonexistent/dir") == []

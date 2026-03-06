@@ -143,10 +143,13 @@ How would you like to proceed?
 
 ## Phase 4: Research (Optional)
 
-If the user chose research, invoke the `ml-optimizer:research` skill:
-- Pass the model type, task, and current performance
-- Pass any user-provided papers or links
-- Wait for research findings
+If the user chose research, invoke the `ml-optimizer:research` skill with parameters:
+- `model_type`: Type of model (from Phase 1)
+- `task`: What the model does (from Phase 0/1)
+- `current_metrics`: Current baseline performance numbers
+- `problem_description`: What needs improvement (from Phase 0)
+- `user_papers`: Any user-provided paper URLs or links (optional)
+Wait for research findings.
 
 ### User Checkpoint (Post-Research)
 
@@ -264,6 +267,8 @@ When the implementation manifest contains multiple code branches:
      - `num_gpus`: Number of available GPUs (determines batch size)
      - `search_space`: HP search space dict from the plan
      - `iteration`: Current loop iteration (1-based)
+     - `primary_metric`: The metric to optimize (from Phase 0)
+     - `lower_is_better`: Whether lower values are better
    - It reads past results and proposes the next batch of configs
    - Number of configs = number of available GPUs (for parallel execution)
 
@@ -289,8 +294,12 @@ When the implementation manifest contains multiple code branches:
    - Save pipeline state after each batch completes
 
 5. **Analyze results:**
-   - Invoke the `ml-optimizer:analyze` skill
-   - Pass `primary_metric` and `lower_is_better` from Phase 0 (NOT "loss")
+   - Invoke the `ml-optimizer:analyze` skill with parameters:
+     - `project_root`: Project root directory
+     - `batch_number`: Current loop iteration (1-based)
+     - `primary_metric`: From Phase 0 (NOT "loss" — see Metric Routing Rule)
+     - `lower_is_better`: Based on metric type
+     - `target_value`: From Phase 0 (or null)
    - It compares all experiments, ranks them, identifies patterns
    - It recommends: continue tuning, try different approach, or stop
 
@@ -307,7 +316,7 @@ When dispatching experiments across multiple GPUs, use the Agent tool with `suba
 For each config in proposed_configs:
   Agent(
     description: "Run experiment {exp_id}",
-    prompt: "Use the ml-optimizer:experiment skill to run experiment {exp_id} with config: {config_json}. GPU: {gpu_id}. Project root: {project_root}. Code branch: {code_branch or null}. Code proposal: {code_proposal or null}.",
+    prompt: "Use the ml-optimizer:experiment skill to run experiment {exp_id} with config: {config_json}. GPU: {gpu_id}. Project root: {project_root}. Train command: {train_command}. Eval command: {eval_command or null}. Code branch: {code_branch or null}. Code proposal: {code_proposal or null}.",
     subagent_type: "general-purpose",
     run_in_background: true
   )
@@ -322,7 +331,7 @@ Example for analytical dispatch:
 ```
 Agent(
   description: "Analyze batch {N} results",
-  prompt: "Ultrathink. Use the ml-optimizer:analyze skill to analyze batch {N}. ...",
+  prompt: "Ultrathink. Use the ml-optimizer:analyze skill to analyze batch {N}. Project root: {project_root}. Primary metric: {primary_metric}. Lower is better: {lower_is_better}. Target: {target_value or null}.",
   subagent_type: "general-purpose"
 )
 ```
@@ -331,7 +340,12 @@ Agent(
 
 After the experiment loop exits:
 
-1. Invoke the `ml-optimizer:report` skill
+1. Invoke the `ml-optimizer:report` skill with parameters:
+   - `project_root`: Project root directory
+   - `primary_metric`: The metric that was optimized
+   - `lower_is_better`: Whether lower is better
+   - `model_description`: Brief model description (from Phase 1)
+   - `task_description`: What the model does (from Phase 0/1)
 2. It generates a comprehensive final report
 3. Present the summary to the user:
 

@@ -274,6 +274,18 @@ def test_validate_file_valid_baseline(tmp_path):
     assert result["valid"] is True
 
 
+def test_validate_file_valid_manifest(tmp_path):
+    """validate_file dispatches to validate_manifest for manifest schema."""
+    f = tmp_path / "manifest.json"
+    f.write_text(json.dumps({
+        "original_branch": "main",
+        "strategy": "git_branch",
+        "proposals": [{"name": "test", "slug": "test", "status": "validated"}],
+    }))
+    result = validate_file(str(f), "manifest")
+    assert result["valid"] is True
+
+
 def test_validate_file_unknown_schema(tmp_path):
     """validate_file returns error for unknown schema type."""
     f = tmp_path / "data.json"

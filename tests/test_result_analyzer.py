@@ -33,6 +33,18 @@ def test_load_results_nonexistent():
     assert load_results("/nonexistent/dir") == {}
 
 
+def test_load_results_mixed_valid_and_corrupt(tmp_path):
+    """load_results silently skips corrupt JSON, loads valid files."""
+    (tmp_path / "exp-001.json").write_text('{"metrics": {"loss": 0.5}}')
+    (tmp_path / "exp-002.json").write_text("{bad json")
+    (tmp_path / "exp-003.json").write_text('{"metrics": {"loss": 0.3}}')
+    results = load_results(str(tmp_path))
+    assert len(results) == 2
+    assert "exp-001" in results
+    assert "exp-003" in results
+    assert "exp-002" not in results
+
+
 def test_rank_by_metric():
     results = {
         "baseline": {"metrics": {"loss": 1.0}},

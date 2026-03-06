@@ -21,6 +21,8 @@ From the orchestrator:
 - `num_gpus`: Number of GPUs available (determines batch size)
 - `search_space`: Defined HP ranges from the optimization plan
 - `iteration`: Which tuning iteration this is (1, 2, 3, ...)
+- `primary_metric`: The metric to optimize (e.g., "loss", "accuracy", "psnr")
+- `lower_is_better`: Whether lower metric values are better (True for loss, False for accuracy)
 
 ## Step 1: Load Past Results
 

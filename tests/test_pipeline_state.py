@@ -303,6 +303,21 @@ def test_cleanup_stale_invalid_timestamp(tmp_path):
     assert cleaned == []
 
 
+def test_cleanup_stale_missing_timestamp(tmp_path):
+    """State file with status=running but no timestamp key: no crash, no cleanup."""
+    state = {
+        "phase": 5,
+        "iteration": 1,
+        "running_experiments": [],
+        "status": "running",
+        # No "timestamp" key at all
+    }
+    (tmp_path / "pipeline-state.json").write_text(json.dumps(state))
+    cleaned = cleanup_stale(str(tmp_path), timeout_hours=2.0)
+    # Missing timestamp → .get returns "" → fromisoformat raises → caught → skip
+    assert cleaned == []
+
+
 def test_cleanup_stale_exp_files_stale(tmp_path):
     """Stale running exp-*.json in results/ are marked as failed."""
     results_dir = tmp_path / "results"

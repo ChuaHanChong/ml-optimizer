@@ -79,8 +79,20 @@ def validate_phase_requirements(phase: int, exp_root: str) -> dict:
     }
 
 
-def save_state(phase: int, iteration: int, running_exp_ids: list[str], exp_root: str) -> str:
+def save_state(
+    phase: int,
+    iteration: int,
+    running_exp_ids: list[str],
+    exp_root: str,
+    *,
+    user_choices: dict | None = None,
+) -> str:
     """Write pipeline-state.json to exp_root.
+
+    Args:
+        user_choices: Optional dict of Phase 0 user choices to persist
+            (e.g., primary_metric, divergence_metric, lower_is_better,
+            target_value). These are preserved across pipeline resumptions.
 
     Returns the path to the state file.
     """
@@ -94,6 +106,8 @@ def save_state(phase: int, iteration: int, running_exp_ids: list[str], exp_root:
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "status": "running",
     }
+    if user_choices:
+        state["user_choices"] = user_choices
 
     state_path = root / "pipeline-state.json"
     state_path.write_text(json.dumps(state, indent=2))
@@ -193,16 +207,33 @@ if __name__ == "__main__":
         if len(sys.argv) < 4:
             print("Usage: pipeline_state.py <exp_root> validate <phase>")
             sys.exit(1)
-        phase = int(sys.argv[3])
+        try:
+            phase = int(sys.argv[3])
+        except ValueError:
+            print(f"Error: invalid phase '{sys.argv[3]}' (expected integer)")
+            sys.exit(1)
         print(json.dumps(validate_phase_requirements(phase, exp_root), indent=2))
 
     elif action == "save":
         if len(sys.argv) < 5:
-            print("Usage: pipeline_state.py <exp_root> save <phase> <iteration>")
+            print("Usage: pipeline_state.py <exp_root> save <phase> <iteration> [running_ids_json]")
             sys.exit(1)
-        phase = int(sys.argv[3])
-        iteration = int(sys.argv[4])
-        path = save_state(phase, iteration, [], exp_root)
+        try:
+            phase = int(sys.argv[3])
+        except ValueError:
+            print(f"Error: invalid phase '{sys.argv[3]}' (expected integer)")
+            sys.exit(1)
+        try:
+            iteration = int(sys.argv[4])
+        except ValueError:
+            print(f"Error: invalid iteration '{sys.argv[4]}' (expected integer)")
+            sys.exit(1)
+        try:
+            running_ids = json.loads(sys.argv[5]) if len(sys.argv) > 5 else []
+        except json.JSONDecodeError:
+            print(f"Error: invalid running_ids JSON '{sys.argv[5]}'")
+            sys.exit(1)
+        path = save_state(phase, iteration, running_ids, exp_root)
         print(f"State saved to {path}")
 
     elif action == "load":

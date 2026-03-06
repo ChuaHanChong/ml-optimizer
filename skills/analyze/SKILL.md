@@ -5,6 +5,8 @@ description: "Analyze ML experiment results after a batch completes. Ranks exper
 
 # Experiment Analysis
 
+Use extended thinking for all analytical reasoning in this skill. Ultrathink. Think through HP interaction effects, trend detection across batches, and the continue/pivot/stop decision with full consideration of alternatives and edge cases.
+
 Analyze completed experiment results to determine what worked, what didn't, and what to do next.
 
 ## Inputs Expected
@@ -37,7 +39,7 @@ This returns:
 Before analysis, filter out non-completed experiments:
 - Exclude experiments with `status: "diverged"` or `status: "failed"` from correlation analysis
 - Include diverged/failed experiments in the failure analysis section (they provide boundary information)
-- The result_analyzer now filters by status automatically, but verify the output
+- Note: `rank_by_metric()` includes all experiments (with a `status` field for filtering); only `identify_correlations()` auto-filters to completed experiments
 
 ## Step 2: Deep Analysis
 
@@ -54,10 +56,10 @@ Beyond what the script provides, reason about:
 - Are there boundary conditions being hit? (OOM, NaN at high LR)
 
 ### HP Impact Assessment
-For each hyperparameter that was varied:
-- **High impact:** Changing this HP caused >5% metric change
-- **Medium impact:** 1-5% metric change
-- **Low impact:** <1% metric change
+For each hyperparameter that was varied, use **relative** (percentage) thresholds to classify impact. These thresholds are relative to the baseline value, making them meaningful across different metric scales:
+- **High impact:** Changing this HP caused >5% relative metric change vs baseline
+- **Medium impact:** 1-5% relative metric change vs baseline
+- **Low impact:** <1% relative metric change vs baseline
 - **Unknown:** Not enough variation to determine
 
 ### Interaction Effects

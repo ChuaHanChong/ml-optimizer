@@ -11,6 +11,7 @@ from result_analyzer import load_results, rank_by_metric
 
 FIXTURES = Path(__file__).parent / "fixtures"
 SAMPLE_FINDINGS = FIXTURES / "sample_research_findings.md"
+SAMPLE_FINDINGS_REF = FIXTURES / "sample_research_findings_with_reference.md"
 
 
 # --- Research → Implement contract ---
@@ -132,3 +133,26 @@ def test_manifest_schema_for_orchestrate():
     assert validated[0]["name"] == "Perceptual Loss"
     # Must have branch info
     assert "branch" in validated[0]
+
+
+# --- Research → Implement contract (strategy fields) ---
+
+def test_research_proposals_have_strategy_fields():
+    """All proposals must include implementation_strategy field."""
+    proposals = parse_research_proposals(str(SAMPLE_FINDINGS_REF))
+    for proposal in proposals:
+        assert "implementation_strategy" in proposal, \
+            f"Proposal {proposal['name']} missing implementation_strategy"
+        assert proposal["implementation_strategy"] in ("from_scratch", "from_reference"), \
+            f"Proposal {proposal['name']} has invalid strategy: {proposal['implementation_strategy']}"
+
+
+def test_research_proposals_reference_fields_when_from_reference():
+    """from_reference proposals must have reference_repo and reference_files."""
+    proposals = parse_research_proposals(str(SAMPLE_FINDINGS_REF))
+    for proposal in proposals:
+        if proposal["implementation_strategy"] == "from_reference":
+            assert proposal["reference_repo"], \
+                f"from_reference proposal {proposal['name']} missing reference_repo"
+            assert len(proposal["reference_files"]) > 0, \
+                f"from_reference proposal {proposal['name']} missing reference_files"

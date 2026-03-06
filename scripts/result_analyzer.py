@@ -31,6 +31,7 @@ def rank_by_metric(results: dict[str, dict], metric: str, lower_is_better: bool 
                 "exp_id": exp_id,
                 "value": metrics[metric],
                 "config": data.get("config", {}),
+                "status": data.get("status"),
             })
     ranked.sort(key=lambda x: x["value"], reverse=not lower_is_better)
     return ranked
@@ -65,6 +66,9 @@ def spearman_correlation(x: list, y: list) -> float:
     n = len(x)
     rx = _rank(x)
     ry = _rank(y)
+    # Constant ranks have no variance — correlation is undefined; return 0.0
+    if len(set(rx)) == 1 or len(set(ry)) == 1:
+        return 0.0
     d_sq_sum = sum((rx[i] - ry[i]) ** 2 for i in range(n))
     rho = 1 - 6 * d_sq_sum / (n * (n ** 2 - 1))
     return rho
@@ -88,12 +92,15 @@ def compute_deltas(results: dict[str, dict], baseline_id: str, metric: str) -> l
         if metric in metrics:
             val = metrics[metric]
             delta = val - baseline_val
-            pct = delta / (abs(baseline_val) + 1e-10) * 100
+            if abs(baseline_val) < 1e-8:
+                delta_pct = None
+            else:
+                delta_pct = round(delta / abs(baseline_val) * 100, 2)
             deltas.append({
                 "exp_id": exp_id,
                 "value": val,
                 "delta": delta,
-                "delta_pct": round(pct, 2),
+                "delta_pct": delta_pct,
                 "config": data.get("config", {}),
             })
     return deltas
@@ -129,32 +136,57 @@ def identify_correlations(results: dict[str, dict], metric: str, lower_is_better
     for e in entries:
         all_keys.update(e["config"].keys())
 
+    def _is_numeric(v):
+        try:
+            float(v)
+            return True
+        except (ValueError, TypeError):
+            return False
+
     for key in sorted(all_keys):
         top_vals = [e["config"].get(key) for e in top_half if key in e["config"]]
         bottom_vals = [e["config"].get(key) for e in bottom_half if key in e["config"]]
-        if top_vals and bottom_vals:
-            # Numeric comparison
+        if not top_vals or not bottom_vals:
+            continue
+
+        # Filter to numeric-coercible values
+        all_hp = [(e["config"][key], e["metric_value"]) for e in entries if key in e["config"]]
+        numeric_pairs = []
+        for hp_val, met_val in all_hp:
             try:
-                top_avg = sum(float(v) for v in top_vals) / len(top_vals)
-                bottom_avg = sum(float(v) for v in bottom_vals) / len(bottom_vals)
-                # Compute Spearman correlation between this HP and the metric
-                hp_values = [float(e["config"][key]) for e in entries if key in e["config"]]
-                metric_values = [e["metric_value"] for e in entries if key in e["config"]]
-                rho = spearman_correlation(hp_values, metric_values)
-                correlations.append({
-                    "param": key,
-                    "top_avg": top_avg,
-                    "bottom_avg": bottom_avg,
-                    "direction": "lower" if top_avg < bottom_avg else "higher",
-                    "spearman_rho": round(rho, 4),
-                })
+                numeric_pairs.append((float(hp_val), met_val))
             except (ValueError, TypeError):
-                # Categorical — report most common values
-                correlations.append({
-                    "param": key,
-                    "top_common": max(set(top_vals), key=top_vals.count) if top_vals else None,
-                    "bottom_common": max(set(bottom_vals), key=bottom_vals.count) if bottom_vals else None,
-                })
+                continue
+
+        if len(numeric_pairs) >= max(2, len(all_hp) // 2):
+            # Majority numeric: compute numeric correlation on the numeric subset
+            hp_values = [p[0] for p in numeric_pairs]
+            metric_values = [p[1] for p in numeric_pairs]
+            numeric_top = [v for v in top_vals if _is_numeric(v)]
+            numeric_bottom = [v for v in bottom_vals if _is_numeric(v)]
+            top_avg = sum(float(v) for v in numeric_top) / len(numeric_top) if numeric_top else None
+            bottom_avg = sum(float(v) for v in numeric_bottom) / len(numeric_bottom) if numeric_bottom else None
+            rho = spearman_correlation(hp_values, metric_values)
+            corr_entry = {
+                "param": key,
+                "spearman_rho": round(rho, 4),
+            }
+            if top_avg is not None:
+                corr_entry["top_avg"] = top_avg
+            if bottom_avg is not None:
+                corr_entry["bottom_avg"] = bottom_avg
+            if top_avg is not None and bottom_avg is not None:
+                corr_entry["direction"] = "lower" if top_avg < bottom_avg else "higher"
+            if len(numeric_pairs) < len(all_hp):
+                corr_entry["note"] = f"{len(all_hp) - len(numeric_pairs)} non-numeric values excluded"
+            correlations.append(corr_entry)
+        else:
+            # Categorical — report most common values
+            correlations.append({
+                "param": key,
+                "top_common": max(set(top_vals), key=top_vals.count) if top_vals else None,
+                "bottom_common": max(set(bottom_vals), key=bottom_vals.count) if bottom_vals else None,
+            })
 
     return {"correlations": correlations}
 
@@ -183,5 +215,5 @@ if __name__ == "__main__":
     results_dir = sys.argv[1]
     metric = sys.argv[2]
     baseline_id = sys.argv[3] if len(sys.argv) > 3 else "baseline"
-    lower = sys.argv[4].lower() != "false" if len(sys.argv) > 4 else True
+    lower = sys.argv[4].lower() not in ("false", "0", "no") if len(sys.argv) > 4 else True
     print(json.dumps(analyze(results_dir, metric, baseline_id, lower), indent=2))

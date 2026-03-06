@@ -187,3 +187,151 @@ def test_plot_hp_sensitivity_no_data(tmp_path):
 def test_plot_hp_sensitivity_no_results(tmp_path):
     chart = plot_hp_sensitivity(str(tmp_path / "nonexistent"), "loss", "lr")
     assert "No results" in chart
+
+
+# --- Additional edge cases ---
+
+
+def test_ascii_line_chart_resampling():
+    """Line chart with >60 values triggers resampling."""
+    values = [i * 0.1 for i in range(100)]
+    chart = ascii_line_chart(values, width=60)
+    assert chart
+    assert "*" in chart
+
+
+def test_plot_improvement_timeline_higher_is_better(tmp_path):
+    """Timeline with higher_is_better uses max for best-so-far."""
+    _write_results(tmp_path, {
+        "exp-001": {"metrics": {"acc": 70.0}, "config": {}},
+        "exp-002": {"metrics": {"acc": 80.0}, "config": {}},
+        "exp-003": {"metrics": {"acc": 75.0}, "config": {}},
+    })
+    chart = plot_improvement_timeline(str(tmp_path), "acc", lower_is_better=False)
+    assert chart
+    assert "Best-so-far" in chart
+
+
+def test_plot_improvement_timeline_metric_not_found(tmp_path):
+    """Timeline returns error when metric not found."""
+    _write_results(tmp_path, {
+        "exp-001": {"metrics": {"accuracy": 0.9}, "config": {}},
+    })
+    chart = plot_improvement_timeline(str(tmp_path), "loss")
+    assert "not found" in chart
+
+
+def test_plot_hp_sensitivity_non_numeric_hp(tmp_path):
+    """HP sensitivity skips non-numeric HP values."""
+    _write_results(tmp_path, {
+        "exp-001": {"metrics": {"loss": 0.5}, "config": {"optimizer": "adam"}},
+        "exp-002": {"metrics": {"loss": 0.3}, "config": {"optimizer": "sgd"}},
+    })
+    chart = plot_hp_sensitivity(str(tmp_path), "loss", "optimizer")
+    assert "No numeric data" in chart
+
+
+# --- CLI tests ---
+
+
+def test_plot_metric_comparison_baseline_case_insensitive(tmp_path):
+    """Baseline marker [B] should work regardless of case."""
+    _write_results(tmp_path, {
+        "Baseline": {"metrics": {"loss": 1.0}, "config": {"lr": 0.01}},
+        "exp-001": {"metrics": {"loss": 0.7}, "config": {"lr": 0.001}},
+    })
+    chart = plot_metric_comparison(str(tmp_path), "loss")
+    assert "[B]" in chart
+
+
+def test_ascii_line_chart_resampling_preserves_data_points():
+    """Resampling with large dataset should produce valid chart with expected row count."""
+    values = [i * 0.1 for i in range(150)]
+    chart = ascii_line_chart(values, width=40, height=10)
+    data_rows = [line for line in chart.split("\n") if "|" in line]
+    assert len(data_rows) == 10
+    assert "*" in chart
+
+
+def test_cli_comparison(run_main, tmp_path):
+    """CLI comparison mode works."""
+    _write_results(tmp_path, {
+        "exp-001": {"metrics": {"loss": 0.5}, "config": {}},
+    })
+    r = run_main("plot_results.py", str(tmp_path), "loss", "comparison")
+    assert r.returncode == 0
+    assert "loss" in r.stdout
+
+
+def test_cli_timeline(run_main, tmp_path):
+    """CLI timeline mode works."""
+    _write_results(tmp_path, {
+        "exp-001": {"metrics": {"loss": 0.5}, "config": {}},
+        "exp-002": {"metrics": {"loss": 0.3}, "config": {}},
+    })
+    r = run_main("plot_results.py", str(tmp_path), "loss", "timeline")
+    assert r.returncode == 0
+
+
+def test_cli_sensitivity(run_main, tmp_path):
+    """CLI sensitivity mode works."""
+    _write_results(tmp_path, {
+        "exp-001": {"metrics": {"loss": 0.5}, "config": {"lr": 0.01}},
+        "exp-002": {"metrics": {"loss": 0.3}, "config": {"lr": 0.001}},
+    })
+    r = run_main("plot_results.py", str(tmp_path), "loss", "sensitivity", "lr")
+    assert r.returncode == 0
+
+
+def test_ascii_bar_chart_nan_values():
+    """Bar chart with NaN values renders without error."""
+    labels = ["a", "b", "c"]
+    values = [5.0, float("nan"), 10.0]
+    chart = ascii_bar_chart(labels, values)
+    assert "a" in chart
+    assert "c" in chart
+    assert "\u2588" in chart
+
+
+def test_ascii_line_chart_nan_values():
+    """Line chart with NaN values renders without error."""
+    values = [1.0, float("nan"), 3.0, 4.0, float("nan"), 6.0]
+    chart = ascii_line_chart(values, height=5)
+    assert "*" in chart
+
+
+def test_ascii_line_chart_all_nan():
+    """All-NaN values returns empty string."""
+    assert ascii_line_chart([float("nan")] * 5) == ""
+
+
+def test_ascii_bar_chart_inf_values():
+    """Bar chart with Inf values renders without error."""
+    labels = ["a", "b"]
+    values = [float("inf"), 5.0]
+    chart = ascii_bar_chart(labels, values)
+    assert "b" in chart
+
+
+def test_ascii_line_chart_resampling_includes_last():
+    """After resampling, the last original data point is represented."""
+    values = list(range(100))
+    chart = ascii_line_chart(values, width=40, height=10)
+    # The chart should include the last value (99) in its rendering
+    assert chart
+    assert "99" in chart  # Last value appears in y-axis labels
+
+
+def test_cli_unknown_mode(run_main, tmp_path):
+    """CLI with unknown mode exits 1."""
+    (tmp_path / "exp-001.json").write_text('{"metrics": {"loss": 0.5}, "config": {}}')
+    r = run_main("plot_results.py", str(tmp_path), "loss", "badmode")
+    assert r.returncode == 1
+    assert "Unknown" in r.stdout
+
+
+def test_cli_no_args(run_main):
+    """CLI with no args prints usage and exits 1."""
+    r = run_main("plot_results.py")
+    assert r.returncode == 1
+    assert "Usage" in r.stdout

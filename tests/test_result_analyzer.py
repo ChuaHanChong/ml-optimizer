@@ -33,6 +33,18 @@ def test_load_results_nonexistent():
     assert load_results("/nonexistent/dir") == {}
 
 
+def test_load_results_mixed_valid_and_corrupt(tmp_path):
+    """load_results silently skips corrupt JSON, loads valid files."""
+    (tmp_path / "exp-001.json").write_text('{"metrics": {"loss": 0.5}}')
+    (tmp_path / "exp-002.json").write_text("{bad json")
+    (tmp_path / "exp-003.json").write_text('{"metrics": {"loss": 0.3}}')
+    results = load_results(str(tmp_path))
+    assert len(results) == 2
+    assert "exp-001" in results
+    assert "exp-003" in results
+    assert "exp-002" not in results
+
+
 def test_rank_by_metric():
     results = {
         "baseline": {"metrics": {"loss": 1.0}},
@@ -43,6 +55,35 @@ def test_rank_by_metric():
     assert len(ranked) == 3
     assert ranked[0]["exp_id"] == "exp-001"
     assert ranked[1]["exp_id"] == "exp-002"
+
+
+def test_rank_by_metric_includes_status():
+    """Ranked entries include the experiment status field."""
+    results = {
+        "baseline": {"metrics": {"loss": 1.0}, "status": "completed"},
+        "exp-001": {"metrics": {"loss": 0.5}, "status": "completed"},
+        "exp-002": {"metrics": {"loss": 0.7}, "status": "failed"},
+        "exp-003": {"metrics": {"loss": 0.3}, "status": "diverged"},
+    }
+    ranked = rank_by_metric(results, "loss", lower_is_better=True)
+    assert len(ranked) == 4
+    # Each entry has a status field
+    for entry in ranked:
+        assert "status" in entry
+    # Find the failed one
+    failed = next(r for r in ranked if r["exp_id"] == "exp-002")
+    assert failed["status"] == "failed"
+    diverged = next(r for r in ranked if r["exp_id"] == "exp-003")
+    assert diverged["status"] == "diverged"
+
+
+def test_rank_by_metric_status_none_when_missing():
+    """Status is None when experiment data has no status field."""
+    results = {
+        "exp-001": {"metrics": {"loss": 0.5}},
+    }
+    ranked = rank_by_metric(results, "loss")
+    assert ranked[0]["status"] is None
 
 
 def test_rank_by_metric_higher_better():
@@ -141,10 +182,9 @@ def test_compute_deltas_zero_baseline():
     }
     deltas = compute_deltas(results, "baseline", "loss")
     assert len(deltas) == 2
-    # Should not raise and should produce finite percentages
+    # When baseline is zero, delta_pct should be None (undefined percentage)
     for d in deltas:
-        assert isinstance(d["delta_pct"], float)
-        assert d["delta_pct"] != 0  # With epsilon guard, pct should be non-zero when delta is non-zero
+        assert d["delta_pct"] is None
     exp1 = next(d for d in deltas if d["exp_id"] == "exp-001")
     assert exp1["delta"] == 0.5
 
@@ -207,3 +247,122 @@ def test_spearman_correlation():
     # Tied values
     rho = spearman_correlation([1, 1, 2, 3], [10, 10, 20, 30])
     assert rho > 0.9  # Should still be strongly positive
+
+
+def test_compute_deltas_baseline_missing_metric():
+    """When baseline exists but lacks the requested metric, return empty list."""
+    results = {
+        "baseline": {"metrics": {"accuracy": 85.0}},
+        "exp-001": {"metrics": {"loss": 0.5}, "config": {"lr": 0.001}},
+    }
+    deltas = compute_deltas(results, "baseline", "loss")
+    assert deltas == []
+
+
+def test_identify_correlations_categorical_values():
+    """Categorical HP values trigger the except branch with top_common/bottom_common."""
+    results = {
+        "exp-001": {"metrics": {"loss": 0.3}, "config": {"optimizer": "adam"}, "status": "completed"},
+        "exp-002": {"metrics": {"loss": 0.5}, "config": {"optimizer": "sgd"}, "status": "completed"},
+        "exp-003": {"metrics": {"loss": 0.4}, "config": {"optimizer": "adam"}, "status": "completed"},
+        "exp-004": {"metrics": {"loss": 0.7}, "config": {"optimizer": "sgd"}, "status": "completed"},
+    }
+    corr = identify_correlations(results, "loss", lower_is_better=True)
+    assert len(corr["correlations"]) > 0
+    opt_corr = next(c for c in corr["correlations"] if c["param"] == "optimizer")
+    assert "top_common" in opt_corr
+    assert "bottom_common" in opt_corr
+
+
+# --- CLI tests ---
+
+
+def test_cli_analyze(run_main, tmp_path):
+    """CLI analyzes results directory."""
+    _write_results(tmp_path, {
+        "baseline": {"metrics": {"loss": 1.0}, "config": {"lr": 0.001}},
+        "exp-001": {"metrics": {"loss": 0.5}, "config": {"lr": 0.0001}},
+    })
+    r = run_main("result_analyzer.py", str(tmp_path), "loss")
+    assert r.returncode == 0
+    output = json.loads(r.stdout)
+    assert output["num_experiments"] == 2
+
+
+def test_spearman_constant_x():
+    """All-identical x values should return 0.0 (no variance)."""
+    rho = spearman_correlation([5, 5, 5, 5, 5], [1, 2, 3, 4, 5])
+    assert rho == 0.0
+    # Also test constant y
+    rho2 = spearman_correlation([1, 2, 3, 4, 5], [7, 7, 7, 7, 7])
+    assert rho2 == 0.0
+
+
+def test_rank_by_metric_with_nan():
+    """NaN metric values should not crash ranking."""
+    results = {
+        "exp-001": {"metrics": {"loss": 0.5}},
+        "exp-002": {"metrics": {"loss": float("nan")}},
+        "exp-003": {"metrics": {"loss": 0.3}},
+    }
+    ranked = rank_by_metric(results, "loss", lower_is_better=True)
+    assert len(ranked) == 3
+    # NaN sorts to the end with lower_is_better=True (key comparison)
+    # Main assertion: no crash
+    assert all("exp_id" in r for r in ranked)
+
+
+def test_cli_lower_is_better_parsing(run_main, tmp_path):
+    """CLI correctly parses 'false' as lower_is_better=False."""
+    _write_results(tmp_path, {
+        "baseline": {"metrics": {"accuracy": 70.0}, "config": {"lr": 0.001}},
+        "exp-001": {"metrics": {"accuracy": 85.0}, "config": {"lr": 0.0001}},
+    })
+    r = run_main("result_analyzer.py", str(tmp_path), "accuracy", "baseline", "false")
+    assert r.returncode == 0
+    output = json.loads(r.stdout)
+    # With lower_is_better=False, higher accuracy should rank first
+    assert output["ranking"][0]["exp_id"] == "exp-001"
+
+
+def test_identify_correlations_mixed_numeric_string():
+    """Mixed numeric/string HP values: numeric majority gets numeric correlation."""
+    results = {
+        "exp-001": {"metrics": {"loss": 0.3}, "config": {"lr": 0.0001}, "status": "completed"},
+        "exp-002": {"metrics": {"loss": 0.5}, "config": {"lr": 0.001}, "status": "completed"},
+        "exp-003": {"metrics": {"loss": 0.4}, "config": {"lr": 0.0005}, "status": "completed"},
+        "exp-004": {"metrics": {"loss": 0.7}, "config": {"lr": 0.01}, "status": "completed"},
+        "exp-005": {"metrics": {"loss": 0.6}, "config": {"lr": "adaptive"}, "status": "completed"},
+    }
+    corr = identify_correlations(results, "loss", lower_is_better=True)
+    assert len(corr["correlations"]) > 0
+    lr_corr = next(c for c in corr["correlations"] if c["param"] == "lr")
+    # Should compute numeric correlation (not categorical)
+    assert "spearman_rho" in lr_corr
+    assert "top_common" not in lr_corr
+    # Should note the excluded non-numeric value
+    assert "note" in lr_corr
+    assert "1 non-numeric" in lr_corr["note"]
+
+
+def test_identify_correlations_mostly_string():
+    """Mostly-string HP values fall to categorical treatment."""
+    results = {
+        "exp-001": {"metrics": {"loss": 0.3}, "config": {"optim": "adam"}, "status": "completed"},
+        "exp-002": {"metrics": {"loss": 0.5}, "config": {"optim": "sgd"}, "status": "completed"},
+        "exp-003": {"metrics": {"loss": 0.4}, "config": {"optim": "adam"}, "status": "completed"},
+        "exp-004": {"metrics": {"loss": 0.7}, "config": {"optim": "rmsprop"}, "status": "completed"},
+        "exp-005": {"metrics": {"loss": 0.6}, "config": {"optim": "1"}, "status": "completed"},
+    }
+    corr = identify_correlations(results, "loss", lower_is_better=True)
+    opt_corr = next(c for c in corr["correlations"] if c["param"] == "optim")
+    # Only 1 out of 5 is numeric — should be categorical
+    assert "top_common" in opt_corr
+    assert "spearman_rho" not in opt_corr
+
+
+def test_cli_no_args(run_main):
+    """CLI with no args prints usage and exits 1."""
+    r = run_main("result_analyzer.py")
+    assert r.returncode == 1
+    assert "Usage" in r.stdout

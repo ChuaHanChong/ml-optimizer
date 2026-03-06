@@ -1,13 +1,20 @@
 """Tests for implement_utils.py."""
 
 import json
+import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
 from implement_utils import (
+    _extract_reference_files,
+    analyze_reference_structure,
     backup_files,
+    cleanup_reference_repo,
+    clone_reference_repo,
+    create_proposal_branch,
     detect_conflicts,
     get_current_branch,
     is_git_repo,
@@ -20,6 +27,7 @@ from implement_utils import (
 
 FIXTURES = Path(__file__).parent / "fixtures"
 SAMPLE_FINDINGS = FIXTURES / "sample_research_findings.md"
+SAMPLE_FINDINGS_REF = FIXTURES / "sample_research_findings_with_reference.md"
 
 
 # --- slugify ---
@@ -34,6 +42,13 @@ def test_slugify_special_chars():
 
 def test_slugify_uppercase_and_extra_spaces():
     assert slugify("  SWIN   Transformer  ") == "swin-transformer"
+
+
+def test_slugify_empty_input():
+    """Empty string, all-punctuation, and whitespace-only input produce 'proposal'."""
+    assert slugify("") == "proposal"
+    assert slugify("!!!") == "proposal"
+    assert slugify("   ") == "proposal"
 
 
 # --- parse_research_proposals ---
@@ -190,3 +205,245 @@ def test_get_current_branch():
     branch = get_current_branch(project_root)
     assert isinstance(branch, str)
     assert len(branch) > 0
+
+
+# --- _extract_reference_files ---
+
+def test_extract_reference_files_backtick():
+    body = "- **Reference files:** `basicsr/models/restormer_arch.py`, `basicsr/losses/loss.py`"
+    result = _extract_reference_files(body)
+    assert result == ["basicsr/models/restormer_arch.py", "basicsr/losses/loss.py"]
+
+
+def test_extract_reference_files_comma():
+    body = "- **Reference files:** models/arch.py, models/loss.py"
+    result = _extract_reference_files(body)
+    assert result == ["models/arch.py", "models/loss.py"]
+
+
+def test_extract_reference_files_missing():
+    body = "- **Complexity:** Low\n- **Risk:** None"
+    result = _extract_reference_files(body)
+    assert result == []
+
+
+# --- parse_research_proposals with reference fields ---
+
+def test_parse_proposals_with_reference_repo():
+    proposals = parse_research_proposals(str(SAMPLE_FINDINGS_REF))
+    # Proposal 1 is from_reference
+    p1 = proposals[0]
+    assert p1["implementation_strategy"] == "from_reference"
+    assert "github.com/swz30/Restormer" in p1["reference_repo"]
+    assert len(p1["reference_files"]) == 2
+    assert "basicsr/models/archs/restormer_arch.py" in p1["reference_files"]
+    # Proposal 2 is from_scratch
+    p2 = proposals[1]
+    assert p2["implementation_strategy"] == "from_scratch"
+    assert p2["reference_repo"] == ""
+    assert p2["reference_files"] == []
+
+
+def test_parse_proposals_backward_compat():
+    """Old fixture without strategy fields gets safe defaults."""
+    proposals = parse_research_proposals(str(SAMPLE_FINDINGS))
+    for p in proposals:
+        assert p["implementation_strategy"] == "from_scratch"
+        assert p["reference_repo"] == ""
+        assert p["reference_files"] == []
+
+
+# --- clone_reference_repo ---
+
+def test_clone_reference_repo_invalid_url():
+    result = clone_reference_repo("https://bitbucket.org/user/repo", "/tmp/test-clone")
+    assert result["success"] is False
+    assert "URL must be" in result["error"]
+
+
+# --- analyze_reference_structure ---
+
+def test_analyze_reference_structure(tmp_path):
+    # Create a mock repo directory
+    (tmp_path / "model.py").write_text("import torch\nfrom torch import nn\nclass MyModel(nn.Module):\n    pass\n")
+    (tmp_path / "train.py").write_text("import torch\nfor epoch in range(10):\n    pass\n")
+    (tmp_path / "utils.py").write_text("import os\ndef helper(): pass\n")
+    (tmp_path / "test_model.py").write_text("# should be skipped\n")
+    (tmp_path / "requirements.txt").write_text("torch>=2.0\nnumpy\n")
+    (tmp_path / "README.md").write_text("# My Model\nA great model for doing things.\n")
+
+    result = analyze_reference_structure(str(tmp_path))
+    assert result["framework"] == "pytorch"
+    assert "model.py" in result["python_files"]
+    assert "train.py" in result["python_files"]
+    assert "utils.py" in result["python_files"]
+    assert "test_model.py" not in result["python_files"]
+    assert "model.py" in result["model_files"]
+    assert "train.py" in result["training_files"]
+    assert "torch>=2.0" in result["requirements"]
+    assert "numpy" in result["requirements"]
+    assert "My Model" in result["readme_summary"]
+
+
+# --- cleanup_reference_repo ---
+
+def test_cleanup_reference_repo(tmp_path):
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    (repo_dir / "file.py").write_text("x = 1\n")
+    assert cleanup_reference_repo(str(repo_dir)) is True
+    assert not repo_dir.exists()
+
+
+def test_cleanup_reference_repo_nonexistent(tmp_path):
+    assert cleanup_reference_repo(str(tmp_path / "nonexistent")) is False
+
+
+# --- create_proposal_branch ---
+
+
+def test_create_proposal_branch(tmp_path):
+    """Create a proposal branch in a real git repo."""
+    subprocess.run(["git", "init", "-b", "main", str(tmp_path)], capture_output=True, check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", "test@test.com"], capture_output=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "Test"], capture_output=True)
+    (tmp_path / "file.txt").write_text("hello")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "."], capture_output=True)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-m", "init"], capture_output=True)
+    branch = create_proposal_branch(str(tmp_path), "test-feature", "main")
+    assert branch == "ml-opt/test-feature"
+    result = subprocess.run(
+        ["git", "-C", str(tmp_path), "rev-parse", "--abbrev-ref", "HEAD"],
+        capture_output=True, text=True,
+    )
+    assert result.stdout.strip() == "ml-opt/test-feature"
+
+
+# --- validate_imports failure ---
+
+
+def test_validate_imports_failure(tmp_path):
+    """Importing a module that fails should return passed=False."""
+    bad_mod = tmp_path / "bad_mod.py"
+    bad_mod.write_text("import nonexistent_module_xyz_123\n")
+    result = validate_imports(str(bad_mod), str(tmp_path))
+    assert result["passed"] is False
+    assert result["error"] is not None
+
+
+# --- _extract_files section break ---
+
+
+def test_extract_files_section_break():
+    """_extract_files stops at ### section boundary."""
+    from implement_utils import _extract_files
+    body = """**What to change:**
+- `models/classifier.py` — modify forward pass
+### Next Section
+- `should/not/appear.py`
+"""
+    files = _extract_files(body)
+    assert "models/classifier.py" in files
+    assert "should/not/appear.py" not in files
+
+
+# --- _extract_steps section break ---
+
+
+def test_extract_steps_section_break():
+    """_extract_steps stops at ** section boundary."""
+    from implement_utils import _extract_steps
+    body = """**Implementation steps:**
+1. First step
+2. Second step
+**Risk:**
+3. Not a step
+"""
+    steps = _extract_steps(body)
+    assert len(steps) == 2
+    assert steps[0] == "First step"
+
+
+# --- clone_reference_repo ---
+
+
+def test_clone_reference_repo_success():
+    """Successful clone returns success."""
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    with patch("implement_utils.subprocess.run", return_value=mock_result):
+        result = clone_reference_repo("https://github.com/user/repo", "/tmp/dest")
+    assert result["success"] is True
+    assert result["path"] == "/tmp/dest"
+
+
+def test_clone_reference_repo_failure():
+    """Clone returning nonzero exit code returns error."""
+    mock_result = MagicMock()
+    mock_result.returncode = 1
+    mock_result.stderr = "fatal: not found"
+    with patch("implement_utils.subprocess.run", return_value=mock_result):
+        result = clone_reference_repo("https://github.com/user/repo", "/tmp/dest")
+    assert result["success"] is False
+    assert "not found" in result["error"]
+
+
+def test_clone_reference_repo_timeout():
+    """Clone timeout returns error."""
+    with patch("implement_utils.subprocess.run", side_effect=subprocess.TimeoutExpired("git", 120)):
+        result = clone_reference_repo("https://github.com/user/repo", "/tmp/dest")
+    assert result["success"] is False
+    assert "timed out" in result["error"].lower()
+
+
+# --- analyze_reference_structure edge cases ---
+
+
+def test_analyze_no_requirements(tmp_path):
+    """Repo without requirements.txt returns empty requirements."""
+    (tmp_path / "model.py").write_text("import torch\nclass M(torch.nn.Module): pass\n")
+    result = analyze_reference_structure(str(tmp_path))
+    assert result["requirements"] == []
+
+
+def test_analyze_readme_priority(tmp_path):
+    """README.rst is found when README.md doesn't exist."""
+    (tmp_path / "model.py").write_text("x = 1\n")
+    (tmp_path / "README.rst").write_text("My RST Readme\n==============\n")
+    result = analyze_reference_structure(str(tmp_path))
+    assert "My RST Readme" in result["readme_summary"]
+
+
+# --- CLI tests ---
+
+
+def test_cli_no_args(run_main):
+    """CLI with no args prints usage and exits 1."""
+    r = run_main("implement_utils.py")
+    assert r.returncode == 1
+    assert "Usage" in r.stdout
+
+
+def test_cli_parse_proposals(run_main):
+    """CLI parses proposals from fixture file."""
+    r = run_main("implement_utils.py", str(SAMPLE_FINDINGS), '[1,3]')
+    assert r.returncode == 0
+    output = json.loads(r.stdout)
+    assert "proposals" in output
+    assert len(output["proposals"]) == 2
+
+
+def test_cli_invalid_selected_json(run_main):
+    """CLI with invalid selected JSON exits cleanly."""
+    r = run_main("implement_utils.py", "/dev/null", "{bad")
+    assert r.returncode == 1
+    assert "Error" in r.stdout
+
+
+def test_cli_analyze(run_main, tmp_path):
+    """CLI analyze subcommand works."""
+    (tmp_path / "model.py").write_text("import torch\n")
+    r = run_main("implement_utils.py", "analyze", str(tmp_path))
+    assert r.returncode == 0
+    output = json.loads(r.stdout)
+    assert "python_files" in output

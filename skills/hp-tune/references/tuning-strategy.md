@@ -42,6 +42,10 @@ Tune hyperparameters in this order, as earlier ones have the largest impact:
 ### 6. Data Augmentation (Lower Priority for HP Tuning)
 - Usually better to get the right LR first, then tune augmentation
 - Exception: if baseline is clearly overfitting
+- **Vision:** Random crop, flip, color jitter, CutMix, MixUp
+- **NLP:** Back-translation, synonym replacement, random deletion, token masking
+- **Audio:** SpecAugment, time stretching, pitch shifting, noise injection
+- **Tabular/Graph:** Feature dropout, edge dropout, node feature masking
 
 ## Reasoning Framework
 
@@ -53,6 +57,15 @@ When proposing new configs, reason about:
 4. **Extrapolation:** If the best was at the edge of the search space, extend it
 5. **Interaction effects:** LR and batch size interact (linear scaling rule)
 6. **Diminishing returns:** If last 3 experiments improved by <1%, consider stopping
+
+### Branch-Aware Tuning
+
+When experiments run on different code branches (from the implement skill), results must be analyzed per-branch:
+
+- **Group by `code_branch`:** Before analyzing trends, partition results by their `code_branch` field. Experiments on `ml-opt/perceptual-loss` and experiments on baseline code are independent groups.
+- **Analyze separately:** HP sensitivities may differ between branches. `lr=0.001` might be optimal on one branch but diverge on another due to different gradient magnitudes from code changes.
+- **Don't cross-compare HPs:** A config that works well on branch A is not evidence that it will work on branch B. Only compare experiments within the same branch.
+- **Branch performance ranking:** After sufficient experiments per branch, compare the *best result from each branch* to identify which code changes are most promising. Focus future HP tuning budget on the best-performing branches.
 
 ## Batch Sizing Strategy
 
@@ -75,6 +88,15 @@ When optimizing for multiple metrics simultaneously (e.g., accuracy AND latency)
 4. **Sequential:** First optimize the primary metric, then fine-tune the secondary without regressing.
 
 When `secondary_metric` is provided, include both metrics in the ranking and note trade-offs.
+
+## Multi-Loss Training
+
+When the model uses multiple loss terms (e.g., reconstruction + perceptual + adversarial):
+
+1. **Identify the dominant loss:** Which loss term contributes most to the total gradient? Start by tuning its weight.
+2. **Loss weight tuning order:** Keep one loss fixed (usually the primary task loss) and tune weights of auxiliary losses.
+3. **Relative scaling:** Auxiliary loss weights should typically be 0.001x–0.1x the primary loss magnitude.
+4. **Diagnostic:** If one loss decreases while another increases, the weights are imbalanced. Monitor component losses alongside the combined total.
 
 ## Effective Hyperparameters
 
@@ -103,6 +125,25 @@ Consider these alongside traditional HPs when tuning.
 - DO NOT use weight decay on generator
 - Betas: (0.0, 0.9) for Adam (not the default 0.9, 0.999)
 
+### NLP / Language Models
+- Batch size: largest that fits (gradient accumulation for effective batch 256+)
+- LR: 1e-5 to 5e-5 (fine-tuning), 1e-4 to 1e-3 (pre-training)
+- Warmup: 6–10% of total steps
+- Weight decay: 0.01–0.1
+- Key HP: sequence length (affects memory quadratically for attention models)
+
+### Audio / Speech Models
+- Batch size: often measured in seconds of audio, not samples
+- LR: 1e-4 to 3e-4 typical
+- Spectrogram parameters (n_fft, hop_length) are effectively HPs
+- Data augmentation: SpecAugment (time/frequency masking)
+
+### Graph Neural Networks
+- Number of layers: 2–4 (over-smoothing with too many)
+- Hidden dimension: 32–256
+- Dropout: 0.3–0.6 (higher than vision/NLP due to small datasets)
+- LR: 1e-3 to 1e-2
+
 ## Anti-Patterns to Avoid
 
 - Don't change all HPs at once — change 1-2 per experiment for interpretability
@@ -110,3 +151,21 @@ Consider these alongside traditional HPs when tuning.
 - Don't repeat identical configs (check past results first)
 - Don't use extremely large LR just because loss is high — check if the metric is appropriate
 - Don't tune past diminishing returns — know when to stop
+
+## Constraint Handling
+
+### Hard Constraints
+Parameters that cannot be violated (will cause failure):
+- **GPU memory:** Batch size × per-sample memory must fit. Proposals exceeding this should be rejected before dispatch.
+- **Training time:** If the user set a max training time per experiment, estimate duration from baseline profiling and reject configs that would exceed it.
+
+### Soft Constraints
+Parameters the user prefers but can be relaxed if justified:
+- **Frozen parameters:** User may say "don't change the optimizer". Respect unless analysis strongly suggests otherwise — then ask.
+- **Search space bounds:** If the best result is at the boundary of the defined search space, propose extending the range and explain why.
+
+### Constraint Propagation
+When one constraint changes, propagate effects:
+- Increasing batch size → may need to reduce model size or enable gradient checkpointing
+- Enabling mixed precision → doubles effective batch size capacity → may want to increase batch size
+- Changing optimizer → may need to re-tune learning rate from scratch

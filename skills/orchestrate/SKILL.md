@@ -5,6 +5,8 @@ description: "Core ML optimization orchestrator. Understands model problems, dis
 
 # ML Optimization Orchestrator
 
+Use extended thinking for all analytical reasoning in this skill. Ultrathink. Think through phase transition decisions, branch pruning strategy, error recovery options, and cost/time budget trade-offs before acting.
+
 You are an ML optimization orchestrator. You coordinate the full optimization pipeline: understanding the model, establishing baselines, researching improvements, tuning hyperparameters, running experiments, monitoring for divergence, and producing final reports.
 
 ## Important Files
@@ -39,7 +41,9 @@ You are an ML optimization orchestrator. You coordinate the full optimization pi
       - HP tuning only (fastest, no code changes)
       - HP tuning + architecture research (slower, potentially bigger gains)
       - Let me decide based on analysis
-   7. **Anything else** I should know about this model or training setup?
+   7. **Divergence metric name:** What metric should be monitored for training divergence? (default: "loss". Common alternatives: "train_loss", "val_loss", "objective", "nll_loss", "perplexity" for LLMs). **Must be a lower-is-better metric** — divergence detection assumes lower values mean better training. For RL tasks where "reward" is the primary metric, still use "loss" for divergence monitoring.
+   8. **Optimization type:** Are you optimizing training performance or inference performance? (This plugin focuses on **training** optimization — inference optimization like quantization, pruning, or ONNX conversion is out of scope.)
+   9. **Anything else** I should know about this model or training setup?
    ```
 
 3. **Record user responses:**
@@ -54,8 +58,13 @@ You are an ML optimization orchestrator. You coordinate the full optimization pi
 
 1. **Locate model code:**
    - Use Glob to find Python files: `**/*.py`
-   - Look for model definitions (classes inheriting from `nn.Module`, `LightningModule`, etc.)
-   - Look for training scripts (files with `train` in the name, `main.py`, etc.)
+   - Look for model definitions:
+     - PyTorch: `nn.Module`, `torch.nn.Module`
+     - Lightning: `LightningModule`, `pl.LightningModule`
+     - TF/Keras: `tf.keras.Model`, `keras.Model`, `tf.Module`
+     - JAX/Flax: `flax.linen.Module`, `nn.Module` (Flax)
+     - HuggingFace: `PreTrainedModel`, `Trainer`
+   - Look for training scripts (files with `train` in the name, `main.py`, `run.py`, etc.)
 
 2. **Locate training config:**
    - Use Glob to find: `**/*.yaml`, `**/*.yml`, `**/*.json`
@@ -134,10 +143,13 @@ How would you like to proceed?
 
 ## Phase 4: Research (Optional)
 
-If the user chose research, invoke the `ml-optimizer:research` skill:
-- Pass the model type, task, and current performance
-- Pass any user-provided papers or links
-- Wait for research findings
+If the user chose research, invoke the `ml-optimizer:research` skill with parameters:
+- `model_type`: Type of model (from Phase 1)
+- `task`: What the model does (from Phase 0/1)
+- `current_metrics`: Current baseline performance numbers
+- `problem_description`: What needs improvement (from Phase 0)
+- `user_papers`: Any user-provided paper URLs or links (optional)
+Wait for research findings.
 
 ### User Checkpoint (Post-Research)
 
@@ -176,7 +188,15 @@ If the user selected research proposals that require code changes (not just HP t
    Install them? (The experiment will fail without them.)
    ```
 
-4. **If conflicts detected** → Inform user which proposals touch the same files. Each is on its own branch, so experiments run independently, but merging winners later may need manual conflict resolution.
+4. **If license warnings flagged** → Use AskUserQuestion to surface to user:
+   ```
+   The following proposals adapted code from reference repositories with license concerns:
+   - <proposal_name>: <license_warning details>
+
+   Please review before proceeding. Continue with these proposals?
+   ```
+
+5. **If conflicts detected** → Inform user which proposals touch the same files. Each is on its own branch, so experiments run independently, but merging winners later may need manual conflict resolution.
 
 ## Phase 5: Experiment Loop (Autonomous)
 
@@ -213,21 +233,32 @@ If no manifest exists, run HP-only experiments on the current code.
 
 ### Pre-Loop: Save Pipeline State
 
+Save Phase 0 user choices into pipeline state so they persist across interruptions:
+
 ```bash
 python3 -c "
-import sys; sys.path.insert(0, '$HOME/.claude/plugins/ml-optimizer/scripts')
+import sys, json; sys.path.insert(0, '$HOME/.claude/plugins/ml-optimizer/scripts')
 from pipeline_state import save_state
-save_state(5, 0, [], '<exp_root>')
+save_state(5, 0, [], '<exp_root>', user_choices={
+    'primary_metric': '<primary_metric>',
+    'divergence_metric': '<divergence_metric>',
+    'lower_is_better': <lower_is_better>,
+    'target_value': <target_value or None>,
+    'train_command': '<train_command>',
+    'eval_command': '<eval_command or None>',
+})
 "
 ```
 
 ### Metric Routing Rule
 
-**Critical:** Always monitor `"loss"` for divergence detection — it is the universal safety signal. Use `primary_metric` (which may be "accuracy", "psnr", "f1", etc.) only for the analyze and hp-tune skills.
+**Critical:** Use the user's `divergence_metric` (from Phase 0 Q7, default: `"loss"`) for divergence detection. Use `primary_metric` (which may be "accuracy", "psnr", "f1", etc.) only for the analyze and hp-tune skills.
 
-- Monitor skill: `metric_to_watch = "loss"`, `lower_is_better = True`
+- Monitor skill: `metric_to_watch = <divergence_metric>`, `lower_is_better = True`
 - Analyze skill: `primary_metric` from user's Phase 0 answer, `lower_is_better` based on metric type
 - HP-tune skill: uses `primary_metric` for ranking
+
+If the monitor skill cannot find `<divergence_metric>` in the logs, it will attempt auto-detection via a fallback chain (see monitor skill for details).
 
 ### Branch Dispatch Strategy
 
@@ -245,8 +276,12 @@ When the implementation manifest contains multiple code branches:
      - `num_gpus`: Number of available GPUs (determines batch size)
      - `search_space`: HP search space dict from the plan
      - `iteration`: Current loop iteration (1-based)
+     - `primary_metric`: The metric to optimize (from Phase 0)
+     - `lower_is_better`: Whether lower values are better
+     - `remaining_budget`: How many more experiments can be run before hitting the budget limit. Calculated as `(num_gpus × 5) - total_experiments_so_far`. HP-tune must cap proposals at `min(num_gpus, remaining_budget)`.
+     - `code_branches`: List of validated code branches from the implementation manifest (e.g., `["ml-opt/perceptual-loss", "ml-opt/cosine-scheduler"]`), or `[]` for HP-only optimization. HP-tune uses this in iteration 1 to generate one config per branch + one for baseline.
    - It reads past results and proposes the next batch of configs
-   - Number of configs = number of available GPUs (for parallel execution)
+   - Number of configs = `min(num_gpus, remaining_budget)` (capped to prevent budget overshoot)
 
 2. **Run experiments:**
    - For each proposed config, invoke `ml-optimizer:experiment` skill
@@ -260,7 +295,7 @@ When the implementation manifest contains multiple code branches:
      - `exp_ids`: Corresponding experiment IDs
      - `project_root`: Project root directory
      - `poll_interval`: Seconds between checks (default: 30)
-     - `metric_to_watch`: `"loss"` (always — see Metric Routing Rule)
+     - `metric_to_watch`: `<divergence_metric>` from Phase 0 (default: `"loss"` — see Metric Routing Rule)
      - `lower_is_better`: `true` (always for loss-based divergence monitoring)
    - If divergence detected: the experiment is stopped automatically
    - Record divergence reason in experiment results
@@ -270,25 +305,33 @@ When the implementation manifest contains multiple code branches:
    - Save pipeline state after each batch completes
 
 5. **Analyze results:**
-   - Invoke the `ml-optimizer:analyze` skill
-   - Pass `primary_metric` and `lower_is_better` from Phase 0 (NOT "loss")
+   - Invoke the `ml-optimizer:analyze` skill with parameters:
+     - `project_root`: Project root directory
+     - `batch_number`: Current loop iteration (1-based)
+     - `primary_metric`: From Phase 0 (NOT "loss" — see Metric Routing Rule)
+     - `lower_is_better`: Based on metric type
+     - `target_value`: From Phase 0 (or null)
    - It compares all experiments, ranks them, identifies patterns
-   - It recommends: continue tuning, try different approach, or stop
+   - It recommends: continue, pivot, or stop
 
 6. **Decision:**
    - If analyze says **continue**: loop back to step 1
-   - If analyze says **try different approach**: adjust the strategy, loop back to step 1
+   - If analyze says **pivot**: adjust the strategy, loop back to step 1
    - If analyze says **stop**: exit loop
-   - **Safety limit:** Maximum total experiments budget (default: `num_gpus × 5 iterations`). After budget exhausted, force exit and report. This replaces the rigid 5-iteration limit to account for varying GPU counts.
+   - **Safety limit:** Maximum total experiments budget (default: `num_gpus × 5`). After budget exhausted, force exit and report. This replaces the rigid 5-iteration limit to account for varying GPU counts.
 
 ### Parallel GPU Dispatch Pattern:
-When dispatching experiments across multiple GPUs, use the Agent tool with `subagent_type: "general-purpose"` for each experiment:
+When dispatching experiments across multiple GPUs, use the Agent tool with `subagent_type: "general-purpose"` for each experiment.
+
+**If manifest strategy is `"file_backup"` (non-git project):** dispatch ONE experiment at a time (sequential). Wait for each to complete before starting the next. File-backup proposals share the same working directory and cannot run in parallel.
+
+**Otherwise (git_branch strategy or HP-only):** dispatch all experiments in parallel:
 
 ```
 For each config in proposed_configs:
   Agent(
     description: "Run experiment {exp_id}",
-    prompt: "Use the ml-optimizer:experiment skill to run experiment {exp_id} with config: {config_json}. GPU: {gpu_id}. Project root: {project_root}. Code branch: {code_branch or null}. Code proposal: {code_proposal or null}.",
+    prompt: "Use the ml-optimizer:experiment skill to run experiment {exp_id} with config: {config_json}. GPU: {gpu_id}. Project root: {project_root}. Train command: {train_command}. Eval command: {eval_command or null}. Code branch: {code_branch or null}. Code proposal: {code_proposal or null}.",
     subagent_type: "general-purpose",
     run_in_background: true
   )
@@ -296,11 +339,28 @@ For each config in proposed_configs:
 
 Then wait for all agents to complete before invoking analyze.
 
+### Thinking Depth for Agent Dispatch:
+When dispatching agents via the Agent tool, include "ultrathink" in the prompt for **analytical** agents (hp-tune, research, analyze, implement) to trigger maximum reasoning depth. Do NOT include it for **procedural** agents (experiment, monitor) — these are execution-focused and don't benefit from extended thinking.
+
+Example for analytical dispatch:
+```
+Agent(
+  description: "Analyze batch {N} results",
+  prompt: "Ultrathink. Use the ml-optimizer:analyze skill to analyze batch {N}. Project root: {project_root}. Primary metric: {primary_metric}. Lower is better: {lower_is_better}. Target: {target_value or null}.",
+  subagent_type: "general-purpose"
+)
+```
+
 ## Phase 6: Report
 
 After the experiment loop exits:
 
-1. Invoke the `ml-optimizer:report` skill
+1. Invoke the `ml-optimizer:report` skill with parameters:
+   - `project_root`: Project root directory
+   - `primary_metric`: The metric that was optimized
+   - `lower_is_better`: Whether lower is better
+   - `model_description`: Brief model description (from Phase 1)
+   - `task_description`: What the model does (from Phase 0/1)
 2. It generates a comprehensive final report
 3. Present the summary to the user:
 
@@ -350,9 +410,19 @@ All state is persisted in the `experiments/` directory:
 The orchestrator can be stopped and resumed:
 1. On start, check for `pipeline-state.json` via `pipeline_state.load_state()`
 2. If state exists and status is "running", run `pipeline_state.cleanup_stale()` to handle interrupted experiments
-3. Resume from the recorded phase and iteration
-4. Read all past results to understand what has been tried
+3. Restore Phase 0 user choices from `state["user_choices"]` (primary_metric, divergence_metric, lower_is_better, target_value, train_command, eval_command) — do NOT re-ask the user
+4. Resume from the recorded phase and iteration
+5. Read all past results to understand what has been tried
 
 ### State Validation
 
 Before each phase transition, validate prerequisites via `pipeline_state.validate_phase_requirements()`. This prevents cascading failures from missing or corrupted data.
+
+## Unsupported Scenarios
+
+The following are currently out of scope. If the user requests them, explain the limitation clearly:
+
+- **Inference optimization:** Quantization, pruning, ONNX export, TensorRT — these require a fundamentally different toolchain. Recommend dedicated tools instead.
+- **Multi-machine distributed training:** This plugin operates on a single machine with multiple GPUs. Cross-node training requires a different dispatch mechanism.
+- **Reinforcement learning:** The default tuning strategy assumes supervised/self-supervised training with a loss metric. RL workflows may work if a suitable divergence metric (e.g., negative reward, policy loss) is specified in Phase 0 Q7, but reward-shaped optimization may require a different approach for best results.
+- **Multi-seed ensembling:** The pipeline runs one seed per experiment. Multi-seed evaluation would require significant orchestrator changes.

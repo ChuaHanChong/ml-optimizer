@@ -8,11 +8,6 @@ Fail-fast validation for implemented code changes. Run checks in order — stop 
 
 Run `py_compile` on every modified file.
 
-```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/implement_utils.py validate_syntax <file1> <file2> ...
-```
-
-Or in Python:
 ```python
 from implement_utils import validate_syntax
 results = validate_syntax(modified_files)
@@ -37,6 +32,10 @@ result = validate_imports(module_path, project_root)
 
 **If new dependencies are needed:** Flag them — do NOT install automatically. Report to user for confirmation.
 
+**Addendum for adapted reference code (`from_reference`):** If an import fails, distinguish between:
+- **Missing module from reference repo** (adaptation incomplete): The adapted code still references a module from the original repo. Fix by extracting the missing dependency or reimplementing the needed functionality.
+- **External package not installed** (new dependency): The reference code depends on a pip package not in the target project. Add to `new_dependencies` in the manifest.
+
 ---
 
 ## Level 3: Model Instantiates (Recommended)
@@ -44,10 +43,17 @@ result = validate_imports(module_path, project_root)
 Verify the model can be created with the existing config after code changes.
 
 ```python
-# Load the project's config
-# Instantiate the model class
-# Check it creates without errors
+# PyTorch / Lightning
 model = ModelClass(**config_params)
+
+# TF/Keras
+model = tf.keras.Model(...)  # or model = create_model(config)
+
+# JAX/Flax
+variables = model.init(jax.random.PRNGKey(0), dummy_input)
+
+# HuggingFace
+model = AutoModel.from_config(config)
 ```
 
 **Pass criteria:** Model object is created without runtime errors.
@@ -60,11 +66,21 @@ model = ModelClass(**config_params)
 Run a dummy forward pass and check output shape matches expected.
 
 ```python
+# PyTorch / Lightning
 import torch
-dummy_input = torch.randn(1, C, H, W)  # Match expected input shape
+dummy_input = torch.randn(1, C, H, W)
 with torch.no_grad():
     output = model(dummy_input)
 assert output.shape == expected_shape
+
+# TF/Keras
+import numpy as np
+dummy_input = np.random.randn(1, H, W, C).astype('float32')  # Note: channels-last
+output = model(dummy_input)
+
+# JAX/Flax
+dummy_input = jax.random.normal(jax.random.PRNGKey(0), (1, H, W, C))
+output = model.apply(variables, dummy_input)
 ```
 
 **Pass criteria:** Output tensor has the expected shape.
@@ -77,11 +93,21 @@ assert output.shape == expected_shape
 Compute the loss with dummy data and check for NaN/Inf.
 
 ```python
+# PyTorch / Lightning
 pred = model(dummy_input)
 loss = loss_fn(pred, dummy_target)
 assert not torch.isnan(loss), "Loss is NaN"
 assert not torch.isinf(loss), "Loss is Inf"
-assert loss.item() > 0, "Loss is non-positive (unexpected)"
+
+# TF/Keras
+loss = loss_fn(dummy_target, pred)
+assert not tf.math.is_nan(loss), "Loss is NaN"
+assert not tf.math.is_inf(loss), "Loss is Inf"
+
+# JAX
+import jnp
+assert not jnp.isnan(loss), "Loss is NaN"
+assert not jnp.isinf(loss), "Loss is Inf"
 ```
 
 **Pass criteria:** Loss is a finite, reasonable number.
@@ -94,11 +120,23 @@ assert loss.item() > 0, "Loss is non-positive (unexpected)"
 Verify gradients propagate through new layers.
 
 ```python
+# PyTorch / Lightning
 loss.backward()
 for name, param in model.named_parameters():
     if param.requires_grad:
         assert param.grad is not None, f"No gradient for {name}"
         assert not torch.isnan(param.grad).any(), f"NaN gradient for {name}"
+
+# JAX
+grads = jax.grad(loss_fn)(params, dummy_input, dummy_target)
+jax.tree_util.tree_map(lambda g: assert not jnp.isnan(g).any(), grads)
+
+# TF/Keras (GradientTape)
+with tf.GradientTape() as tape:
+    loss = loss_fn(dummy_target, model(dummy_input))
+grads = tape.gradient(loss, model.trainable_variables)
+for g, v in zip(grads, model.trainable_variables):
+    assert g is not None, f"No gradient for {v.name}"
 ```
 
 **Pass criteria:** All trainable parameters have non-NaN gradients.
@@ -111,6 +149,7 @@ for name, param in model.named_parameters():
 Check that the modified model fits in GPU memory at the expected batch size.
 
 ```python
+# PyTorch / Lightning
 import torch
 torch.cuda.reset_peak_memory_stats()
 model = model.cuda()
@@ -119,6 +158,9 @@ with torch.no_grad():
     output = model(dummy_input)
 peak_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
 print(f"Peak GPU memory: {peak_mb:.0f} MiB")
+
+# TF/Keras — use nvidia-smi or tf.config.experimental.get_memory_info()
+# JAX — use jax.local_devices()[0].memory_stats()
 ```
 
 **Pass criteria:** Peak memory is within available GPU memory with headroom for gradients (~2-3x forward pass).

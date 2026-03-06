@@ -4,6 +4,7 @@
 import json
 import re
 import sys
+import warnings
 from pathlib import Path
 
 
@@ -128,10 +129,11 @@ def parse_log(filepath: str, fmt: str | None = None) -> list[dict]:
     if not path.exists():
         return []
 
-    lines = path.read_text().strip().split("\n")
+    lines = path.read_text(errors="replace").strip().split("\n")
     if not lines:
         return []
 
+    auto_detected = fmt is None
     if fmt is None:
         fmt = detect_format(lines)
 
@@ -144,7 +146,13 @@ def parse_log(filepath: str, fmt: str | None = None) -> list[dict]:
     elif fmt == "tqdm":
         return [m for line in lines if (m := parse_tqdm_line(line))]
     else:
-        return [m for line in lines if (m := parse_kv_line(line))]
+        result = [m for line in lines if (m := parse_kv_line(line))]
+        if auto_detected and not result and lines:
+            warnings.warn(
+                f"No metrics found in {filepath}; auto-detected format 'kv' may be incorrect",
+                stacklevel=2,
+            )
+        return result
 
 
 def extract_metric_trajectory(records: list[dict], metric: str) -> list[float]:

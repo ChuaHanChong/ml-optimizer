@@ -14,8 +14,8 @@ From the orchestrator:
 - `exp_ids`: Corresponding experiment IDs
 - `project_root`: Project root directory
 - `poll_interval`: How often to check (default: 30 seconds)
-- `metric_to_watch`: Which metric to monitor (default: "loss")
-- `lower_is_better`: Whether lower values are better for the watched metric (default: true). **Note:** The orchestrator should always pass `"loss"` with `lower_is_better=true` for divergence detection. The `primary_metric` (accuracy, PSNR, etc.) is used by analyze/hp-tune, not by monitor.
+- `metric_to_watch`: Which metric to monitor for divergence (default: "loss"). The orchestrator passes the user's chosen divergence metric from Phase 0. Common values: `"loss"`, `"train_loss"`, `"val_loss"`, `"objective"`, `"nll_loss"`, `"total_loss"`.
+- `lower_is_better`: Whether lower values are better for the watched metric (default: true). The `primary_metric` (accuracy, PSNR, etc.) is used by analyze/hp-tune, not by monitor.
 - `explosion_threshold`: Threshold multiplier for explosion detection (default: 5.0). Override based on model type.
 - `plateau_patience`: Steps without improvement before plateau alarm (default: 20). Override based on model type.
 
@@ -50,6 +50,15 @@ python3 ~/.claude/plugins/ml-optimizer/scripts/parse_logs.py experiments/logs/<e
 
 Extract the metric trajectory (all values of the watched metric over time).
 
+### 2b.1: Metric Name Fallback
+
+If the watched metric is not found in the parsed records, attempt auto-detection:
+
+1. **Case-insensitive match:** Try `metric_to_watch.lower()` against all keys lowercased
+2. **Prefix variants:** Try `train_<metric>`, `val_<metric>`, `<metric>_train` (e.g., `loss` → `train_loss`, `val_loss`)
+3. **Substring match:** Look for any key containing `metric_to_watch` as a substring (e.g., `"loss"` matches `"total_loss"`)
+4. **Report missing:** If no match found after all fallbacks, log a warning and report the available metric names to the orchestrator. Do not treat this as divergence.
+
 ### 2c: Check for Divergence
 
 Run divergence detection on the extracted trajectory, passing `lower_is_better`:
@@ -73,13 +82,19 @@ If divergence is detected:
 
 1. **Kill the training process:**
    ```bash
-   # Find and kill the training process
-   # Option 1: PID file
+   # Option 1: PID file (preferred — most reliable)
    kill $(cat experiments/logs/<exp_id>/pid) 2>/dev/null
 
-   # Option 2: Pattern match
-   pkill -f "<exp_id>"
+   # Option 2: Safe pattern match — verify process is a training process before killing
+   # First find candidates, then verify cmdline contains python/train before killing
+   for pid in $(pgrep -f "<exp_id>"); do
+     cmdline=$(cat /proc/$pid/cmdline 2>/dev/null | tr '\0' ' ')
+     if echo "$cmdline" | grep -qE 'python|train'; then
+       kill "$pid"
+     fi
+   done
    ```
+   **Warning:** Never use bare `pkill -f "<exp_id>"` — it could match unrelated processes.
 
 2. **Record the divergence:**
    - Read the current experiment result file
@@ -131,6 +146,8 @@ The monitor exits when:
 - **NaN/Inf detection:** Always enabled, immediate kill
 - **Explosion threshold:** 5x rolling average over 10-step window
 - **Plateau patience:** 20 evaluation checkpoints with min_delta=1e-6
+
+See also `hp-tune/references/tuning-strategy.md` for per-model-type HP guidance that informs threshold selection.
 
 ### Recommended thresholds by model type
 | Model Type | Explosion Threshold | Plateau Patience | Notes |

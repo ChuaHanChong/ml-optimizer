@@ -2,7 +2,19 @@
 
 Patterns for applying research proposals to ML codebases. Each category covers: where to look, what to read first, how to make the minimal reversible change, and common pitfalls.
 
-> **Note:** These patterns use PyTorch syntax. Adapt for JAX, TensorFlow, etc.
+## Framework Detection
+
+Before applying any pattern, determine the project's ML framework by scanning imports:
+
+| Framework | Detection Pattern | Key Differences |
+|-----------|------------------|-----------------|
+| **PyTorch** | `import torch`, `from torch` | `nn.Module`, manual training loop |
+| **TensorFlow/Keras** | `import tensorflow`, `from keras` | `tf.keras.Model`, `model.fit()` |
+| **JAX/Flax** | `import jax`, `from flax` | Functional style, explicit state |
+| **PyTorch Lightning** | `import lightning`, `import pytorch_lightning` | `LightningModule`, callbacks |
+| **HuggingFace Transformers** | `from transformers`, `Trainer` | `Trainer` API, `compute_metrics` |
+
+Use the matching framework's syntax when applying patterns below. The examples use PyTorch; see **Framework Adaptations** subsections for alternatives.
 
 ---
 
@@ -37,6 +49,12 @@ loss = loss_l1 + self.config.perceptual_weight * loss_perceptual
 - **Scale mismatch:** Different losses may have very different magnitudes. Start with a small weight (0.01-0.1) and tune.
 - **Input range:** VGG expects [0,1] or ImageNet-normalized inputs. Check your model's output range.
 
+### Framework Adaptations
+- **TF/Keras:** Add loss in `model.compile(loss=...)` or compute in `train_step()`. Use `tf.stop_gradient()` instead of `requires_grad=False`.
+- **JAX/Flax:** Losses are pure functions. Pass as argument to the training step function. Use `jax.lax.stop_gradient()`.
+- **Lightning:** Override `training_step()` return value. Log via `self.log('loss_perceptual', ...)`.
+- **HF Trainer:** Override `compute_loss()` in a custom `Trainer` subclass.
+
 ---
 
 ## 2. Architecture Changes
@@ -68,6 +86,12 @@ x = self.next_block(x)
 - **Weight initialization:** New layers use random weights. Consider specific initialization if needed.
 - **Checkpoint compatibility:** Adding layers breaks loading from existing checkpoints. Handle with `strict=False` or key mapping.
 
+### Framework Adaptations
+- **TF/Keras:** Subclass `tf.keras.Model` or use `tf.keras.layers.Layer`. Use `model.summary()` to verify shapes.
+- **JAX/Flax:** Define new `nn.Module` in Flax. Initialize params explicitly with `module.init()`.
+- **Lightning:** Same as PyTorch but changes go in the `LightningModule`. Use `self.example_input_array` for shape verification.
+- **HF Transformers:** Modify the model config class and `forward()`. Use `AutoModel.from_config()` for testing.
+
 ---
 
 ## 3. Data Augmentation Changes
@@ -95,6 +119,12 @@ if self.is_training:
 - **Paired data:** For image restoration, augmentations must be applied consistently to both input and target (e.g., same crop, same flip).
 - **Data type:** Some augmentations expect PIL images, others expect tensors. Apply in the right order.
 - **Reproducibility:** Set random seeds for augmentations if reproducibility matters.
+
+### Framework Adaptations
+- **TF/Keras:** Use `tf.image` ops or `tf.keras.layers` preprocessing layers. Apply in `tf.data.Dataset.map()`.
+- **JAX:** Use `jax.random` for stochastic augmentations. Pass PRNG keys explicitly.
+- **Lightning:** Use `LightningDataModule` to centralize augmentation logic.
+- **HF Transformers:** Use `datasets.map()` with custom transform functions.
 
 ---
 
@@ -131,6 +161,12 @@ scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
 - **Warmup conflicts:** If adding warmup, ensure it doesn't conflict with an existing scheduler.
 - **Weight decay + bias:** AdamW applies weight decay to all params by default. Consider excluding bias and normalization parameters.
 
+### Framework Adaptations
+- **TF/Keras:** Configure optimizer in `model.compile()`. Use `tf.keras.optimizers.schedules` for schedulers.
+- **JAX/Optax:** Use `optax.chain()` to compose optimizer + scheduler. State is explicit — pass and return it.
+- **Lightning:** Override `configure_optimizers()` to return optimizer and scheduler dicts.
+- **HF Trainer:** Set optimizer/scheduler via `TrainingArguments` or override `create_optimizer()`.
+
 ---
 
 ## 5. Regularization Changes
@@ -162,6 +198,11 @@ self.stoch_depth = StochasticDepth(p=0.1, mode="row")
 - **Too aggressive:** High dropout (>0.3) in generative models usually hurts. Start conservative.
 - **Label smoothing + other losses:** Label smoothing changes the loss landscape. May need to adjust learning rate.
 - **Stacking regularizers:** Combining multiple regularization techniques can over-regularize. Add one at a time.
+
+### Framework Adaptations
+- **TF/Keras:** Use `tf.keras.layers.Dropout`. Keras handles train/eval mode automatically.
+- **JAX/Flax:** Use `nn.Dropout` with `deterministic` flag. Pass `rngs={'dropout': key}` during training.
+- **Lightning:** Same as PyTorch. Lightning handles `model.train()`/`model.eval()` automatically.
 
 ---
 
@@ -196,6 +237,12 @@ for batch in dataloader:
 - **Custom losses with reduce ops:** Some custom losses break in float16. Use `torch.cuda.amp.autocast(enabled=False)` for problematic operations.
 - **Gradient overflow:** GradScaler handles this, but very high LR + AMP can cause more frequent skipped steps.
 - **BN statistics:** Batch norm accumulates in float32 automatically, but verify if using custom normalization.
+
+### Framework Adaptations
+- **TF/Keras:** Use `tf.keras.mixed_precision.set_global_policy('mixed_float16')`. No manual scaler needed.
+- **JAX:** Use `jax.default_matmul_precision('float16')` or explicit `jnp.float16` casts. Use `jmp` library for policies.
+- **Lightning:** Set `Trainer(precision='16-mixed')`. No code changes needed in the model.
+- **HF Trainer:** Set `TrainingArguments(fp16=True)` or `bf16=True`.
 
 ---
 
@@ -235,3 +282,110 @@ dataloader = DataLoader(dataset, sampler=sampler)
 - **Metrics logging:** Only log from rank 0 to avoid duplicate entries.
 - **Random seeds:** Set different seeds per rank for data augmentation, same seed for model init.
 - **Batch size:** Per-GPU batch size × num_GPUs = effective batch size. Adjust LR accordingly.
+
+### Framework Adaptations
+- **TF/Keras:** Use `tf.distribute.MirroredStrategy()`. Wrap model creation in `strategy.scope()`.
+- **JAX:** Use `jax.pmap()` for data parallelism. Shard data across devices with `jax.device_put_sharded()`.
+- **Lightning:** Set `Trainer(strategy='ddp', devices=N)`. No model code changes needed.
+- **HF Trainer:** Set `TrainingArguments(...)` and launch with `torchrun` or `accelerate launch`.
+
+---
+
+## 8. From-Scratch Implementation (Paper-Based)
+
+When a research proposal has `implementation_strategy: from_scratch`, implement directly from the paper's method description, pseudocode, and algorithm.
+
+### Prerequisites
+- Paper URL or method description available
+- Algorithm description, pseudocode, or equations from the paper
+- Target framework understood (use Framework Detection table above)
+
+### Process
+
+1. **Extract algorithm:** Read the paper's method section, pseudocode, and equations. Map mathematical notation to code constructs (e.g., summation → loop or `torch.sum`, element-wise product → `*`).
+
+2. **Map to project structure:** Determine which pattern category (1-7) the change falls into. Identify where in the existing codebase to insert the new code.
+
+3. **Implement incrementally:**
+   - Core computation first (the algorithm itself as a function or module)
+   - Wire into existing code (integrate at the identified insertion point)
+   - Add config parameters (expose tunable values through the project's config system)
+
+4. **Handle ambiguity:** When the paper is unclear:
+   - Prefer the simpler interpretation
+   - Add comments: `# [ml-opt] Paper ambiguous on <detail>, using <chosen_approach>`
+   - Flag in the implementation manifest notes
+
+### Pitfalls
+- **Notation mismatch:** Paper uses math notation that doesn't directly translate. Map carefully: subscripts → indexing, superscripts → powers, Greek letters → descriptive variable names.
+- **Missing details:** Papers often omit initialization, normalization, or edge cases. Use standard defaults from the framework.
+- **Scale differences:** Paper may test on different data scales. Verify that constants (learning rates, thresholds) are appropriate for the target dataset.
+- **Framework mismatch:** Paper's pseudocode may assume different tensor layout (channels-first vs channels-last). Adapt accordingly.
+
+### When to Escalate
+- No pseudocode AND ambiguous method section — flag as `implementation_error`
+- Required operations unavailable in the target framework
+- Method requires fundamentally different training paradigm not described in the proposal
+
+---
+
+## 9. From-Reference-Repo Implementation (Code Adaptation)
+
+When a research proposal has `implementation_strategy: from_reference`, clone the paper's reference repository and adapt relevant code into the user's project.
+
+### Prerequisites
+- Reference repo URL verified and accessible
+- Relevant files identified (from research proposal's `reference_files` field)
+- Both the reference framework and target framework understood
+
+### Process
+
+1. **Clone and analyze:**
+   ```bash
+   python3 ~/.claude/plugins/ml-optimizer/scripts/implement_utils.py clone <repo_url> <dest_dir>
+   python3 ~/.claude/plugins/ml-optimizer/scripts/implement_utils.py analyze <dest_dir>
+   ```
+   Review the analysis output: framework, relevant files, dependencies.
+
+2. **Understand reference code:** Read the relevant files identified by the research agent. Identify:
+   - Core implementation (the algorithm/module to extract)
+   - Internal dependencies (other files in the repo that the core code imports)
+   - External dependencies (pip packages not in the target project)
+
+3. **Assess adaptation complexity:**
+   - **Direct copy:** Same framework, minimal dependencies → copy and adjust imports
+   - **Translation required:** Different framework → rewrite using equivalent APIs
+   - **Extraction required:** Code deeply entangled with repo infrastructure → extract logic, reimplement wrapper
+
+4. **Adapt:** Extract only the relevant functions/classes. For each:
+   - Adapt import statements to the target project
+   - Translate framework-specific calls if needed (e.g., `tf.nn.relu` → `F.relu`)
+   - Match tensor conventions (shape ordering, dtype, device handling)
+   - Preserve numerical behavior (same initialization, same constants)
+
+5. **Track provenance:** Add comments to all adapted code:
+   ```python
+   # [ml-opt] Adapted from <repo_url>, file: <original_path>
+   # [ml-opt] License: <license_type>
+   ```
+
+6. **Cleanup:** Remove the cloned repo after extraction:
+   ```bash
+   python3 -c "
+   import sys; sys.path.insert(0, '$HOME/.claude/plugins/ml-optimizer/scripts')
+   from implement_utils import cleanup_reference_repo
+   cleanup_reference_repo('<dest_dir>')
+   "
+   ```
+
+### Pitfalls
+- **License issues:** Always check the LICENSE file before adapting code. Flag repos with no license or restrictive licenses (GPL, proprietary) in the manifest as `license_warning`.
+- **Dependency bloat:** Reference code may import heavy packages not needed for the core algorithm. Extract only what's necessary.
+- **Version mismatch:** Reference code may use older API versions (e.g., deprecated PyTorch ops). Update to current equivalents.
+- **Hidden state/registries:** Some frameworks use global registries or module-level state. Ensure adapted code doesn't depend on repo-specific initialization.
+
+### When to Escalate
+- No license file found — flag `license_warning` and inform user
+- Extraction would require rewriting >50% of the reference code
+- Framework translation is infeasible (e.g., JAX functional style → TF eager with heavy Keras integration)
+- Core implementation has unresolvable internal dependencies (imports 10+ repo-specific modules)

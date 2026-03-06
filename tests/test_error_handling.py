@@ -119,8 +119,8 @@ def test_compute_deltas_zero_baseline():
     }
     deltas = compute_deltas(results, "baseline", "loss")
     assert len(deltas) == 1
-    # Should produce a percentage without division by zero error
-    assert isinstance(deltas[0]["delta_pct"], float)
+    # When baseline is zero, delta_pct is None (undefined percentage)
+    assert deltas[0]["delta_pct"] is None
 
 
 # --- experiment_setup error handling ---

@@ -151,3 +151,94 @@ def test_cleanup_stale_experiments(tmp_path):
     # Completed experiment should be untouched
     done_data = json.loads(done_file.read_text())
     assert done_data["status"] == "completed"
+
+
+# --- Additional edge cases ---
+
+
+def test_generate_train_script_default_log_file(tmp_path):
+    """Log file defaults to experiments/logs/<exp_id>/train.log when not specified."""
+    script_path = generate_train_script(
+        str(tmp_path), "exp-001", "python train.py", gpu_id=0,
+    )
+    content = Path(script_path).read_text()
+    assert "experiments/logs/exp-001/train.log" in content
+
+
+def test_cleanup_stale_experiments_pending(tmp_path):
+    """Stale pending experiments should also be marked as failed."""
+    stale_file = tmp_path / "exp-001.json"
+    stale_file.write_text(json.dumps({"exp_id": "exp-001", "status": "pending"}))
+    stale_mtime = time.time() - 3 * 3600
+    os.utime(str(stale_file), (stale_mtime, stale_mtime))
+
+    cleaned = cleanup_stale_experiments(str(tmp_path), timeout_hours=2.0)
+    assert cleaned == ["exp-001"]
+    data = json.loads(stale_file.read_text())
+    assert data["status"] == "failed"
+
+
+def test_cleanup_stale_nonexistent_dir():
+    """cleanup_stale_experiments on nonexistent dir returns empty list."""
+    assert cleanup_stale_experiments("/nonexistent/dir") == []
+
+
+def test_cleanup_stale_corrupt_json(tmp_path):
+    """Corrupt experiment JSON files are skipped."""
+    (tmp_path / "exp-001.json").write_text("{bad")
+    stale_mtime = time.time() - 3 * 3600
+    os.utime(str(tmp_path / "exp-001.json"), (stale_mtime, stale_mtime))
+    cleaned = cleanup_stale_experiments(str(tmp_path), timeout_hours=2.0)
+    assert cleaned == []
+
+
+# --- CLI tests ---
+
+
+def test_concurrent_setup_unique_ids(tmp_path):
+    """Multiple concurrent setup() calls should produce unique experiment IDs."""
+    import concurrent.futures
+
+    project_root = str(tmp_path)
+
+    def do_setup(i):
+        return setup(project_root, f"python train.py --seed {i}", config={"seed": i})
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        futures = [executor.submit(do_setup, i) for i in range(8)]
+        results = [f.result() for f in concurrent.futures.as_completed(futures)]
+
+    exp_ids = [r["exp_id"] for r in results]
+    assert len(exp_ids) == len(set(exp_ids)), f"Duplicate IDs found: {exp_ids}"
+    for r in results:
+        assert Path(r["config_path"]).exists()
+
+
+def test_cli_setup(run_main, tmp_path):
+    """CLI sets up experiment structure."""
+    r = run_main("experiment_setup.py", str(tmp_path), "python train.py")
+    assert r.returncode == 0
+    output = json.loads(r.stdout)
+    assert output["exp_id"] == "exp-001"
+
+
+def test_cli_invalid_gpu_id(run_main, tmp_path):
+    """CLI with non-integer gpu_id exits cleanly."""
+    r = run_main("experiment_setup.py", str(tmp_path), "echo hi", "abc")
+    assert r.returncode == 1
+    assert "Error" in r.stdout
+    assert "gpu_id" in r.stdout
+
+
+def test_cli_invalid_config_json(run_main, tmp_path):
+    """CLI with invalid config JSON exits cleanly."""
+    r = run_main("experiment_setup.py", str(tmp_path), "echo hi", "0", "{bad")
+    assert r.returncode == 1
+    assert "Error" in r.stdout
+
+
+def test_cli_no_args(run_main):
+    """CLI with no args prints usage and exits 1."""
+    r = run_main("experiment_setup.py")
+    assert r.returncode == 1
+    assert "Usage" in r.stdout

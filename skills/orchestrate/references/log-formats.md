@@ -30,6 +30,34 @@
 }
 ```
 
+## Baseline Result JSON (`experiments/results/baseline.json`)
+```json
+{
+  "exp_id": "baseline",
+  "status": "completed",
+  "config": {
+    "lr": 0.001,
+    "batch_size": 32,
+    "weight_decay": 0.01,
+    "scheduler": "cosine",
+    "epochs": 100
+  },
+  "metrics": {
+    "loss": 1.0,
+    "accuracy": 75.0
+  },
+  "profiling": {
+    "gpu_memory_used_mib": 4200,
+    "gpu_memory_total_mib": 24576,
+    "throughput_samples_per_sec": 120.5,
+    "estimated_max_batch_size": 128
+  },
+  "eval_command": "python eval.py --checkpoint best.pt",
+  "train_command": "python train.py --config config.yaml",
+  "notes": "Baseline evaluation - current model state"
+}
+```
+
 ## Dev Notes (`experiments/dev_notes.md`)
 
 An append-only journal file. Each entry is dated:
@@ -55,23 +83,43 @@ Session task log.
 ```markdown
 # Research Findings
 
-## Problem
-[Description of the problem being solved]
+## Problem Statement
+[Description of what we're trying to improve]
+
+## Current Performance
+[Baseline metrics]
 
 ## Sources Consulted
 - [Paper/URL 1]: [Key takeaway]
 
-## Proposals (ranked by expected impact)
+## Proposals (Ranked by Priority)
 
-### Proposal 1: [Name]
-- **Technique:** [What to change]
-- **Expected improvement:** [Estimate]
+### Proposal 1: [Name] (Priority: X/10)
+- **Type:** code_change | hp_only
+- **Source:** [Paper title and URL]
+- **Technique:** [Category] - [Description]
+- **What to change:**
+  - [Specific file and function to modify]
+  - [What the change looks like]
+- **Expected improvement:** [X% on metric]
 - **Complexity:** Low/Medium/High
-- **Implementation:** [Brief description of code changes needed]
+- **Risk:** [What could go wrong]
+- **Implementation steps:**
+  1. [Step 1]
+  2. [Step 2]
+- **Implementation strategy:** from_scratch | from_reference
+- **Reference repo:** [GitHub URL] (only for from_reference)
+- **Reference files:** `path/to/relevant.py` (only for from_reference)
 
-### Proposal 2: [Name]
+### Proposal 2: [Name] (Priority: Y/10)
 ...
 ```
+
+Proposal types:
+- `"code_change"`: Requires modifying model/training code (routed to implement skill)
+- `"hp_only"`: Can be achieved via hyperparameter/config changes only (routed directly to hp-tune)
+
+Priority score: `(impact * confidence) / (11 - min(feasibility, 10))` where impact, confidence, and feasibility are each scored 1-10.
 
 ## Pipeline State (`experiments/pipeline-state.json`)
 ```json
@@ -80,15 +128,19 @@ Session task log.
   "iteration": 2,
   "running_experiments": ["exp-003", "exp-004"],
   "timestamp": "2025-01-15T14:30:00Z",
-  "status": "running|interrupted|completed"
+  "status": "running|interrupted|completed",
+  "user_choices": {
+    "primary_metric": "accuracy",
+    "divergence_metric": "loss",
+    "lower_is_better": false,
+    "target_value": 0.95,
+    "train_command": "python train.py --config config.yaml",
+    "eval_command": "python eval.py --checkpoint best.pt"
+  }
 }
 ```
 
-## Research Proposal Type Field
-
-Each proposal in `research-findings.md` should include a `type` field:
-- `"code_change"`: Requires modifying model/training code (routed to implement skill)
-- `"hp_only"`: Can be achieved via hyperparameter/config changes only (routed directly to hp-tune)
+The `user_choices` field persists Phase 0 decisions so they survive orchestrator interruptions without re-asking the user.
 
 ## Batch Analysis (`experiments/reports/batch-<N>-analysis.md`)
 ```markdown

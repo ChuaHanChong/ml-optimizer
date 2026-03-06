@@ -1,7 +1,7 @@
 ---
 name: experiment-agent
 description: "Subagent for running a single ML training experiment. Handles script generation, training execution on a specific GPU, log monitoring, and result parsing."
-tools: "Bash, Read, Write, Edit, Glob, Grep"
+tools: "Bash, Read, Write, Glob, Grep"
 ---
 
 # Experiment Agent

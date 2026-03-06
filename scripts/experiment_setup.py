@@ -193,6 +193,16 @@ if __name__ == "__main__":
         sys.exit(1)
     project_root = sys.argv[1]
     train_command = sys.argv[2]
-    gpu_id = int(sys.argv[3]) if len(sys.argv) > 3 else 0
-    config = json.loads(sys.argv[4]) if len(sys.argv) > 4 else {}
+    try:
+        gpu_id = int(sys.argv[3]) if len(sys.argv) > 3 else 0
+    except ValueError:
+        print(f"Error: invalid gpu_id '{sys.argv[3]}' (expected integer)")
+        print('Usage: experiment_setup.py <project_root> <train_command> [gpu_id] [config_json]')
+        sys.exit(1)
+    try:
+        config = json.loads(sys.argv[4]) if len(sys.argv) > 4 else {}
+    except json.JSONDecodeError:
+        print(f"Error: invalid config JSON '{sys.argv[4]}'")
+        print('Usage: experiment_setup.py <project_root> <train_command> [gpu_id] [config_json]')
+        sys.exit(1)
     print(json.dumps(setup(project_root, train_command, gpu_id, config), indent=2))

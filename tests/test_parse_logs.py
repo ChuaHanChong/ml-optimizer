@@ -251,6 +251,36 @@ def test_cli_parse_log(run_main):
     assert len(output) == 8
 
 
+def test_parse_log_non_utf8(tmp_path):
+    """Non-UTF-8 log files are handled gracefully (no crash)."""
+    f = tmp_path / "binary.log"
+    f.write_bytes(b"epoch=1 loss=0.5\nloss=\xff\xfe 0.3\nepoch=3 loss=0.2\n")
+    records = parse_log(str(f))
+    # Should extract at least the parseable lines without raising
+    assert isinstance(records, list)
+    assert len(records) >= 1
+
+
+def test_parse_log_tqdm_fixture():
+    """Parse the tqdm fixture file and verify metric extraction."""
+    fixture = Path(__file__).parent / "fixtures" / "tqdm_log.txt"
+    records = parse_log(str(fixture))
+    assert len(records) > 0
+    # Lines with loss= and acc= in tqdm format should be parsed
+    assert any("loss" in r for r in records)
+    assert any("acc" in r for r in records)
+
+
+def test_parse_log_python_logging_fixture():
+    """Parse the Python logging fixture file and verify metric extraction."""
+    fixture = Path(__file__).parent / "fixtures" / "python_logging_log.txt"
+    records = parse_log(str(fixture))
+    assert len(records) > 0
+    # Lines with epoch=, loss=, accuracy= should be parsed
+    assert any("loss" in r for r in records)
+    assert any("accuracy" in r for r in records)
+
+
 def test_cli_no_args(run_main):
     """CLI with no args prints usage and exits 1."""
     r = run_main("parse_logs.py")

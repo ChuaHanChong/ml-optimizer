@@ -61,7 +61,7 @@ Four subagent types with specified tool access:
 - **research-agent**: WebSearch, WebFetch, Read, Write, Bash, Glob, Grep
 - **tuning-agent**: Read, Write, Bash, Glob, Grep
 - **implement-agent**: Bash, Read, Write, Edit, Glob, Grep, WebFetch
-- **experiment-agent**: Bash, Read, Write, Edit, Glob, Grep
+- **experiment-agent**: Bash, Read, Write, Glob, Grep
 
 Analytical agents (hp-tune, research, analyze, implement) use "ultrathink" prompting. Procedural agents (experiment, monitor) do not.
 

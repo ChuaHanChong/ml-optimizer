@@ -28,9 +28,9 @@ def _run_main(script_name, *args):
     try:
         with redirect_stdout(out), redirect_stderr(err):
             runpy.run_path(script, run_name="__main__")
-        return type("R", (), {"returncode": 0, "stdout": out.getvalue()})
+        return type("R", (), {"returncode": 0, "stdout": out.getvalue(), "stderr": err.getvalue()})
     except SystemExit as e:
-        return type("R", (), {"returncode": e.code or 0, "stdout": out.getvalue()})
+        return type("R", (), {"returncode": e.code or 0, "stdout": out.getvalue(), "stderr": err.getvalue()})
     finally:
         sys.argv = old_argv
 

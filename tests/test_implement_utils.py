@@ -44,6 +44,13 @@ def test_slugify_uppercase_and_extra_spaces():
     assert slugify("  SWIN   Transformer  ") == "swin-transformer"
 
 
+def test_slugify_empty_input():
+    """Empty string, all-punctuation, and whitespace-only input produce 'proposal'."""
+    assert slugify("") == "proposal"
+    assert slugify("!!!") == "proposal"
+    assert slugify("   ") == "proposal"
+
+
 # --- parse_research_proposals ---
 
 def test_parse_research_proposals():
@@ -424,6 +431,13 @@ def test_cli_parse_proposals(run_main):
     output = json.loads(r.stdout)
     assert "proposals" in output
     assert len(output["proposals"]) == 2
+
+
+def test_cli_invalid_selected_json(run_main):
+    """CLI with invalid selected JSON exits cleanly."""
+    r = run_main("implement_utils.py", "/dev/null", "{bad")
+    assert r.returncode == 1
+    assert "Error" in r.stdout
 
 
 def test_cli_analyze(run_main, tmp_path):

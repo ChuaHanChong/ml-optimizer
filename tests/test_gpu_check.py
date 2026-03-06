@@ -167,3 +167,19 @@ def test_cli_with_args(run_main):
     r = run_main("gpu_check.py", "50", "90")
     output = json.loads(r.stdout)
     assert "gpus" in output or "error" in output
+
+
+def test_cli_invalid_threshold(run_main):
+    """CLI with non-integer threshold exits cleanly."""
+    r = run_main("gpu_check.py", "not_a_number")
+    assert r.returncode == 1
+    assert "Error" in r.stdout
+    assert "util_threshold" in r.stdout
+
+
+def test_cli_invalid_memory_threshold(run_main):
+    """CLI with non-float memory threshold exits cleanly."""
+    r = run_main("gpu_check.py", "30", "abc")
+    assert r.returncode == 1
+    assert "Error" in r.stdout
+    assert "memory_threshold" in r.stdout

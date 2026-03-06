@@ -80,6 +80,16 @@ def run(util_threshold: int = 30, memory_threshold: float = 80.0) -> dict:
 
 
 if __name__ == "__main__":
-    threshold = int(sys.argv[1]) if len(sys.argv) > 1 else 30
-    mem_threshold = float(sys.argv[2]) if len(sys.argv) > 2 else 80.0
+    try:
+        threshold = int(sys.argv[1]) if len(sys.argv) > 1 else 30
+    except ValueError:
+        print(f"Error: invalid util_threshold '{sys.argv[1]}' (expected integer)")
+        print("Usage: gpu_check.py [util_threshold] [memory_threshold]")
+        sys.exit(1)
+    try:
+        mem_threshold = float(sys.argv[2]) if len(sys.argv) > 2 else 80.0
+    except ValueError:
+        print(f"Error: invalid memory_threshold '{sys.argv[2]}' (expected number)")
+        print("Usage: gpu_check.py [util_threshold] [memory_threshold]")
+        sys.exit(1)
     print(json.dumps(run(threshold, mem_threshold), indent=2))

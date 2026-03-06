@@ -114,6 +114,9 @@ Located in `scripts/`:
 | `result_analyzer.py` | Compare experiments, rank by metric, find HP correlations |
 | `experiment_setup.py` | Create experiment directories, generate IDs and scripts |
 | `implement_utils.py` | Proposal parsing, branch management, syntax validation, manifest writing |
+| `pipeline_state.py` | Pipeline state save/load/validate and stale experiment cleanup |
+| `schema_validator.py` | Validate experiment result, baseline, and manifest JSON schemas |
+| `plot_results.py` | ASCII bar/line charts for metric comparison and HP sensitivity |
 
 ## Running Tests
 
@@ -124,7 +127,7 @@ python -m pytest tests/ -v
 
 ## Agent Definitions
 
-The plugin defines three subagent types in `agents/`:
+The plugin defines four subagent types in `agents/`:
 
 - **research-agent** — Paper search and technique extraction
 - **tuning-agent** — HP reasoning and config proposal

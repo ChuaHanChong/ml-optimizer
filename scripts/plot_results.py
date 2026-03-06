@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """ASCII visualization of experiment results."""
 
+import math
 import sys
 from pathlib import Path
 
@@ -26,7 +27,11 @@ def ascii_bar_chart(
     if not labels or not values:
         return ""
 
-    max_val = max(abs(v) for v in values) if values else 1
+    finite = [v for v in values if math.isfinite(v)]
+    if not finite:
+        return ""
+
+    max_val = max(abs(v) for v in finite)
     if max_val == 0:
         max_val = 1
 
@@ -39,7 +44,10 @@ def ascii_bar_chart(
         lines.append("=" * (label_width + 3 + width + 10))
 
     for label, value in zip(labels, values):
-        bar_len = int(abs(value) / max_val * width)
+        if math.isfinite(value):
+            bar_len = int(abs(value) / max_val * width)
+        else:
+            bar_len = 0
         bar = "\u2588" * bar_len
         lines.append(f"{label:>{label_width}} | {bar} {value:.4g}")
 
@@ -62,8 +70,12 @@ def ascii_line_chart(
     if not values:
         return ""
 
-    min_val = min(values)
-    max_val = max(values)
+    finite = [v for v in values if math.isfinite(v)]
+    if not finite:
+        return ""
+
+    min_val = min(finite)
+    max_val = max(finite)
     val_range = max_val - min_val
     if val_range == 0:
         val_range = 1
@@ -74,6 +86,7 @@ def ascii_line_chart(
     if n > width:
         step = n / width
         sampled = [values[int(i * step)] for i in range(width)]
+        sampled[-1] = values[-1]
     else:
         sampled = list(values)
 
@@ -91,6 +104,8 @@ def ascii_line_chart(
     grid = [[" "] * num_cols for _ in range(height)]
 
     for col_idx, v in enumerate(sampled):
+        if not math.isfinite(v):
+            continue
         row = int((v - min_val) / val_range * (height - 1))
         row = min(row, height - 1)
         grid[row][col_idx] = "*"

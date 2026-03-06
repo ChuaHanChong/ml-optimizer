@@ -7,6 +7,8 @@ description: "Apply research proposals as code changes. Creates isolated git bra
 
 Apply research proposals as actual code changes with git branch isolation, progressive validation, and a structured manifest for the experiment loop.
 
+Use extended thinking for all analytical reasoning in this skill. Ultrathink. Think through implementation approaches, potential side effects, validation strategies, and backwards compatibility before making code changes.
+
 ## Important Files
 
 - Implementation patterns: `references/implementation-patterns.md` (in this skill's directory)

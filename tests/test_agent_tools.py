@@ -37,6 +37,12 @@ def test_implement_agent_has_all_essential_tools():
     assert not missing, f"implement-agent missing tools: {missing}"
 
 
+def test_experiment_agent_no_edit():
+    """Experiment agent should NOT have Edit tool (risk of accidental code modification)."""
+    tools = _parse_tools(AGENTS_DIR / "experiment-agent.md")
+    assert "Edit" not in tools, f"experiment-agent should not have Edit tool. Has: {tools}"
+
+
 def test_all_agents_have_read():
     """Every agent should at minimum have Read access."""
     for agent_file in AGENTS_DIR.glob("*.md"):

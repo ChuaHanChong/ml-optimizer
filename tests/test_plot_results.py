@@ -283,6 +283,53 @@ def test_cli_sensitivity(run_main, tmp_path):
     assert r.returncode == 0
 
 
+def test_ascii_bar_chart_nan_values():
+    """Bar chart with NaN values renders without error."""
+    labels = ["a", "b", "c"]
+    values = [5.0, float("nan"), 10.0]
+    chart = ascii_bar_chart(labels, values)
+    assert "a" in chart
+    assert "c" in chart
+    assert "\u2588" in chart
+
+
+def test_ascii_line_chart_nan_values():
+    """Line chart with NaN values renders without error."""
+    values = [1.0, float("nan"), 3.0, 4.0, float("nan"), 6.0]
+    chart = ascii_line_chart(values, height=5)
+    assert "*" in chart
+
+
+def test_ascii_line_chart_all_nan():
+    """All-NaN values returns empty string."""
+    assert ascii_line_chart([float("nan")] * 5) == ""
+
+
+def test_ascii_bar_chart_inf_values():
+    """Bar chart with Inf values renders without error."""
+    labels = ["a", "b"]
+    values = [float("inf"), 5.0]
+    chart = ascii_bar_chart(labels, values)
+    assert "b" in chart
+
+
+def test_ascii_line_chart_resampling_includes_last():
+    """After resampling, the last original data point is represented."""
+    values = list(range(100))
+    chart = ascii_line_chart(values, width=40, height=10)
+    # The chart should include the last value (99) in its rendering
+    assert chart
+    assert "99" in chart  # Last value appears in y-axis labels
+
+
+def test_cli_unknown_mode(run_main, tmp_path):
+    """CLI with unknown mode exits 1."""
+    (tmp_path / "exp-001.json").write_text('{"metrics": {"loss": 0.5}, "config": {}}')
+    r = run_main("plot_results.py", str(tmp_path), "loss", "badmode")
+    assert r.returncode == 1
+    assert "Unknown" in r.stdout
+
+
 def test_cli_no_args(run_main):
     """CLI with no args prints usage and exits 1."""
     r = run_main("plot_results.py")

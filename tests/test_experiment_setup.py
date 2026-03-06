@@ -209,6 +209,21 @@ def test_cli_setup(run_main, tmp_path):
     assert output["exp_id"] == "exp-001"
 
 
+def test_cli_invalid_gpu_id(run_main, tmp_path):
+    """CLI with non-integer gpu_id exits cleanly."""
+    r = run_main("experiment_setup.py", str(tmp_path), "echo hi", "abc")
+    assert r.returncode == 1
+    assert "Error" in r.stdout
+    assert "gpu_id" in r.stdout
+
+
+def test_cli_invalid_config_json(run_main, tmp_path):
+    """CLI with invalid config JSON exits cleanly."""
+    r = run_main("experiment_setup.py", str(tmp_path), "echo hi", "0", "{bad")
+    assert r.returncode == 1
+    assert "Error" in r.stdout
+
+
 def test_cli_no_args(run_main):
     """CLI with no args prints usage and exits 1."""
     r = run_main("experiment_setup.py")

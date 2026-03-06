@@ -398,6 +398,22 @@ def test_cli_cleanup(run_main, tmp_path):
     assert "nothing to clean" in r.stdout.lower()
 
 
+def test_cli_validate_non_integer_phase(run_main, tmp_path):
+    """CLI validate with non-integer phase exits cleanly."""
+    r = run_main("pipeline_state.py", str(tmp_path), "validate", "abc")
+    assert r.returncode == 1
+    assert "Error" in r.stdout
+    assert "phase" in r.stdout.lower()
+
+
+def test_cli_save_invalid_args(run_main, tmp_path):
+    """CLI save with non-integer iteration exits cleanly."""
+    r = run_main("pipeline_state.py", str(tmp_path), "save", "5", "not_int")
+    assert r.returncode == 1
+    assert "Error" in r.stdout
+    assert "iteration" in r.stdout.lower()
+
+
 def test_cli_unknown_action(run_main, tmp_path):
     """CLI with unknown action exits 1."""
     r = run_main("pipeline_state.py", str(tmp_path), "bogus")

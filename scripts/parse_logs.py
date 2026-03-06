@@ -129,7 +129,7 @@ def parse_log(filepath: str, fmt: str | None = None) -> list[dict]:
     if not path.exists():
         return []
 
-    lines = path.read_text().strip().split("\n")
+    lines = path.read_text(errors="replace").strip().split("\n")
     if not lines:
         return []
 

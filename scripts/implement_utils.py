@@ -20,7 +20,8 @@ def slugify(name: str) -> str:
     slug = re.sub(r"[^a-z0-9\s-]", "", slug)
     slug = re.sub(r"[\s_]+", "-", slug)
     slug = re.sub(r"-+", "-", slug)
-    return slug.strip("-")
+    slug = slug.strip("-")
+    return slug or "proposal"
 
 
 def is_git_repo(project_root: str) -> bool:
@@ -410,7 +411,13 @@ if __name__ == "__main__":
             print('  selected_json: JSON array of 1-based indices, e.g. "[1,3]"')
             sys.exit(1)
         findings_path = sys.argv[1]
-        selected = json.loads(sys.argv[2])
+        try:
+            selected = json.loads(sys.argv[2])
+        except json.JSONDecodeError:
+            print(f"Error: invalid JSON '{sys.argv[2]}'")
+            print('Usage: implement_utils.py <findings_path> <selected_json>')
+            print('  selected_json: JSON array of 1-based indices, e.g. "[1,3]"')
+            sys.exit(1)
         proposals = parse_research_proposals(findings_path, selected)
         conflicts = detect_conflicts(proposals)
         print(json.dumps({"proposals": proposals, "conflicts": conflicts}, indent=2))

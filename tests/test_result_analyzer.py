@@ -248,6 +248,78 @@ def test_cli_analyze(run_main, tmp_path):
     assert output["num_experiments"] == 2
 
 
+def test_spearman_constant_x():
+    """All-identical x values should return 0.0 (no variance)."""
+    rho = spearman_correlation([5, 5, 5, 5, 5], [1, 2, 3, 4, 5])
+    assert rho == 0.0
+    # Also test constant y
+    rho2 = spearman_correlation([1, 2, 3, 4, 5], [7, 7, 7, 7, 7])
+    assert rho2 == 0.0
+
+
+def test_rank_by_metric_with_nan():
+    """NaN metric values should not crash ranking."""
+    results = {
+        "exp-001": {"metrics": {"loss": 0.5}},
+        "exp-002": {"metrics": {"loss": float("nan")}},
+        "exp-003": {"metrics": {"loss": 0.3}},
+    }
+    ranked = rank_by_metric(results, "loss", lower_is_better=True)
+    assert len(ranked) == 3
+    # NaN sorts to the end with lower_is_better=True (key comparison)
+    # Main assertion: no crash
+    assert all("exp_id" in r for r in ranked)
+
+
+def test_cli_lower_is_better_parsing(run_main, tmp_path):
+    """CLI correctly parses 'false' as lower_is_better=False."""
+    _write_results(tmp_path, {
+        "baseline": {"metrics": {"accuracy": 70.0}, "config": {"lr": 0.001}},
+        "exp-001": {"metrics": {"accuracy": 85.0}, "config": {"lr": 0.0001}},
+    })
+    r = run_main("result_analyzer.py", str(tmp_path), "accuracy", "baseline", "false")
+    assert r.returncode == 0
+    output = json.loads(r.stdout)
+    # With lower_is_better=False, higher accuracy should rank first
+    assert output["ranking"][0]["exp_id"] == "exp-001"
+
+
+def test_identify_correlations_mixed_numeric_string():
+    """Mixed numeric/string HP values: numeric majority gets numeric correlation."""
+    results = {
+        "exp-001": {"metrics": {"loss": 0.3}, "config": {"lr": 0.0001}, "status": "completed"},
+        "exp-002": {"metrics": {"loss": 0.5}, "config": {"lr": 0.001}, "status": "completed"},
+        "exp-003": {"metrics": {"loss": 0.4}, "config": {"lr": 0.0005}, "status": "completed"},
+        "exp-004": {"metrics": {"loss": 0.7}, "config": {"lr": 0.01}, "status": "completed"},
+        "exp-005": {"metrics": {"loss": 0.6}, "config": {"lr": "adaptive"}, "status": "completed"},
+    }
+    corr = identify_correlations(results, "loss", lower_is_better=True)
+    assert len(corr["correlations"]) > 0
+    lr_corr = next(c for c in corr["correlations"] if c["param"] == "lr")
+    # Should compute numeric correlation (not categorical)
+    assert "spearman_rho" in lr_corr
+    assert "top_common" not in lr_corr
+    # Should note the excluded non-numeric value
+    assert "note" in lr_corr
+    assert "1 non-numeric" in lr_corr["note"]
+
+
+def test_identify_correlations_mostly_string():
+    """Mostly-string HP values fall to categorical treatment."""
+    results = {
+        "exp-001": {"metrics": {"loss": 0.3}, "config": {"optim": "adam"}, "status": "completed"},
+        "exp-002": {"metrics": {"loss": 0.5}, "config": {"optim": "sgd"}, "status": "completed"},
+        "exp-003": {"metrics": {"loss": 0.4}, "config": {"optim": "adam"}, "status": "completed"},
+        "exp-004": {"metrics": {"loss": 0.7}, "config": {"optim": "rmsprop"}, "status": "completed"},
+        "exp-005": {"metrics": {"loss": 0.6}, "config": {"optim": "1"}, "status": "completed"},
+    }
+    corr = identify_correlations(results, "loss", lower_is_better=True)
+    opt_corr = next(c for c in corr["correlations"] if c["param"] == "optim")
+    # Only 1 out of 5 is numeric — should be categorical
+    assert "top_common" in opt_corr
+    assert "spearman_rho" not in opt_corr
+
+
 def test_cli_no_args(run_main):
     """CLI with no args prints usage and exits 1."""
     r = run_main("result_analyzer.py")

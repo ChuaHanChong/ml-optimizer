@@ -193,16 +193,32 @@ if __name__ == "__main__":
         if len(sys.argv) < 4:
             print("Usage: pipeline_state.py <exp_root> validate <phase>")
             sys.exit(1)
-        phase = int(sys.argv[3])
+        try:
+            phase = int(sys.argv[3])
+        except ValueError:
+            print(f"Error: invalid phase '{sys.argv[3]}' (expected integer)")
+            sys.exit(1)
         print(json.dumps(validate_phase_requirements(phase, exp_root), indent=2))
 
     elif action == "save":
         if len(sys.argv) < 5:
             print("Usage: pipeline_state.py <exp_root> save <phase> <iteration> [running_ids_json]")
             sys.exit(1)
-        phase = int(sys.argv[3])
-        iteration = int(sys.argv[4])
-        running_ids = json.loads(sys.argv[5]) if len(sys.argv) > 5 else []
+        try:
+            phase = int(sys.argv[3])
+        except ValueError:
+            print(f"Error: invalid phase '{sys.argv[3]}' (expected integer)")
+            sys.exit(1)
+        try:
+            iteration = int(sys.argv[4])
+        except ValueError:
+            print(f"Error: invalid iteration '{sys.argv[4]}' (expected integer)")
+            sys.exit(1)
+        try:
+            running_ids = json.loads(sys.argv[5]) if len(sys.argv) > 5 else []
+        except json.JSONDecodeError:
+            print(f"Error: invalid running_ids JSON '{sys.argv[5]}'")
+            sys.exit(1)
         path = save_state(phase, iteration, running_ids, exp_root)
         print(f"State saved to {path}")
 

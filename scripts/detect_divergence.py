@@ -94,12 +94,14 @@ def detect_gradual_drift(
     window: int = 50,
     min_slope_ratio: float = 0.1,
     lower_is_better: bool = True,
+    min_r_squared: float = 0.1,
 ) -> dict | None:
     """Detect gradual metric drift via linear regression over a rolling window.
 
     Computes slope of the last *window* finite values using least-squares.
     Flags when the total drift exceeds *min_slope_ratio* times the first
-    value's magnitude, in the wrong direction.
+    value's magnitude, in the wrong direction, AND the R² of the fit
+    exceeds *min_r_squared* (to filter out noise-driven false positives).
     """
     finite = [(i, v) for i, v in enumerate(values) if math.isfinite(v)]
     if len(finite) < window:
@@ -119,6 +121,18 @@ def detect_gradual_drift(
     if denom == 0:
         return None
     slope = (n * sxy - sx * sy) / denom
+    intercept = (sy - slope * sx) / n
+
+    # R² goodness-of-fit check: filter out noise-driven false positives
+    y_mean = sy / n
+    ss_tot = sum((y - y_mean) ** 2 for y in ys)
+    if ss_tot > 0:
+        ss_res = sum((y - (slope * x + intercept)) ** 2 for x, y in zip(xs, ys))
+        r_squared = 1 - ss_res / ss_tot
+    else:
+        r_squared = 0.0
+    if r_squared < min_r_squared:
+        return None
 
     # Total drift over the window
     total_drift = slope * (xs[-1] - xs[0])
@@ -147,6 +161,7 @@ def check_divergence(
     lower_is_better: bool = True,
     gradual_drift_window: int = 50,
     gradual_drift_min_slope: float = 0.1,
+    gradual_drift_min_r_squared: float = 0.1,
 ) -> dict:
     """Run all divergence checks on a metric trajectory."""
     if not values:
@@ -164,7 +179,8 @@ def check_divergence(
         return result
 
     result = detect_gradual_drift(
-        values, gradual_drift_window, gradual_drift_min_slope, lower_is_better
+        values, gradual_drift_window, gradual_drift_min_slope, lower_is_better,
+        gradual_drift_min_r_squared,
     )
     if result:
         return result
@@ -186,5 +202,10 @@ if __name__ == "__main__":
         sys.exit(1)
     higher_is_better = "--higher-is-better" in sys.argv
     args = [a for a in sys.argv[1:] if a != "--higher-is-better"]
-    values = json.loads(args[0])
+    try:
+        values = json.loads(args[0])
+    except json.JSONDecodeError:
+        print(f"Error: invalid JSON '{args[0]}'")
+        print('Usage: detect_divergence.py <json-array-of-values> [--higher-is-better]')
+        sys.exit(1)
     print(json.dumps(check_divergence(values, lower_is_better=not higher_is_better), indent=2))

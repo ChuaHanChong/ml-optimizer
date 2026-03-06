@@ -8,11 +8,6 @@ Fail-fast validation for implemented code changes. Run checks in order — stop 
 
 Run `py_compile` on every modified file.
 
-```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/implement_utils.py validate_syntax <file1> <file2> ...
-```
-
-Or in Python:
 ```python
 from implement_utils import validate_syntax
 results = validate_syntax(modified_files)

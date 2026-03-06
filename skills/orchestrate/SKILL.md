@@ -41,7 +41,7 @@ You are an ML optimization orchestrator. You coordinate the full optimization pi
       - HP tuning only (fastest, no code changes)
       - HP tuning + architecture research (slower, potentially bigger gains)
       - Let me decide based on analysis
-   7. **Divergence metric name:** What metric should be monitored for training divergence? (default: "loss". Common alternatives: "train_loss", "val_loss", "objective", "nll_loss", "reward" for RL, "perplexity" for LLMs)
+   7. **Divergence metric name:** What metric should be monitored for training divergence? (default: "loss". Common alternatives: "train_loss", "val_loss", "objective", "nll_loss", "perplexity" for LLMs). **Must be a lower-is-better metric** — divergence detection assumes lower values mean better training. For RL tasks where "reward" is the primary metric, still use "loss" for divergence monitoring.
    8. **Optimization type:** Are you optimizing training performance or inference performance? (This plugin focuses on **training** optimization — inference optimization like quantization, pruning, or ONNX conversion is out of scope.)
    9. **Anything else** I should know about this model or training setup?
    ```
@@ -312,11 +312,11 @@ When the implementation manifest contains multiple code branches:
      - `lower_is_better`: Based on metric type
      - `target_value`: From Phase 0 (or null)
    - It compares all experiments, ranks them, identifies patterns
-   - It recommends: continue tuning, try different approach, or stop
+   - It recommends: continue, pivot, or stop
 
 6. **Decision:**
    - If analyze says **continue**: loop back to step 1
-   - If analyze says **try different approach**: adjust the strategy, loop back to step 1
+   - If analyze says **pivot**: adjust the strategy, loop back to step 1
    - If analyze says **stop**: exit loop
    - **Safety limit:** Maximum total experiments budget (default: `num_gpus × 5 iterations`). After budget exhausted, force exit and report. This replaces the rigid 5-iteration limit to account for varying GPU counts.
 

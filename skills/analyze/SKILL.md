@@ -39,7 +39,7 @@ This returns:
 Before analysis, filter out non-completed experiments:
 - Exclude experiments with `status: "diverged"` or `status: "failed"` from correlation analysis
 - Include diverged/failed experiments in the failure analysis section (they provide boundary information)
-- The result_analyzer now filters by status automatically, but verify the output
+- Note: `rank_by_metric()` includes all experiments (with a `status` field for filtering); only `identify_correlations()` auto-filters to completed experiments
 
 ## Step 2: Deep Analysis
 

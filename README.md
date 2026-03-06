@@ -17,7 +17,7 @@ The ml-optimizer plugin understands your ML model, establishes baselines, resear
 
 ### Required
 
-- **Python 3.8+**
+- **Python 3.10+**
 - **Claude Code** — the plugin runs inside Claude Code sessions
 - **git** — used for branch isolation when implementing research proposals
 
@@ -95,11 +95,15 @@ The plugin creates this structure in your project:
 
 ```
 <project>/experiments/
-  logs/<exp-id>/          # Raw training logs
-  reports/                # All Markdown reports (analysis, research findings, final report)
-  scripts/<exp-id>.sh     # Bash scripts used
-  results/<exp-id>.json   # Parsed metrics
-  dev_notes.md            # Running log of session tasks by date
+  logs/<exp-id>/                        # Raw training logs
+  reports/                              # Markdown reports (analysis, research, final)
+  scripts/<exp-id>.sh                   # Generated training scripts
+  results/baseline.json                 # Baseline metrics and GPU profiling
+  results/<exp-id>.json                 # Per-experiment results
+  results/proposed-configs/             # HP config proposals from hp-tune
+  results/implementation-manifest.json  # Validated proposal branches
+  pipeline-state.json                   # Resumable pipeline state
+  dev_notes.md                          # Running session log
 ```
 
 ## Python Utilities

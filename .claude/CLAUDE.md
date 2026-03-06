@@ -114,7 +114,7 @@ The orchestrator can be stopped and resumed. On restart it reads `pipeline-state
 ## Key Design Patterns
 
 - **Non-git fallback**: If the target project isn't a git repo, the implement skill uses file backups instead of branches. This forces sequential (not parallel) experiment execution.
-- **Experiment budget**: Default max experiments = `num_gpus * 5 iterations`. The orchestrator passes `remaining_budget` to hp-tune, which caps proposals at `min(num_gpus, remaining_budget)` to prevent overshoot. The analyze skill recommends stop when diminishing returns detected.
+- **Experiment budget**: Default max experiments = `num_gpus * 5`. The orchestrator passes `remaining_budget` to hp-tune, which caps proposals at `min(num_gpus, remaining_budget)` to prevent overshoot. The analyze skill recommends stop when diminishing returns detected.
 - **Proposal priority scoring**: `(impact * confidence) / (11 - min(feasibility, 10))` — feasibility clamped to [1,10] to prevent division by zero.
 - **Spearman correlation**: `result_analyzer.py` uses rank correlation with average-rank tie-breaking to identify HP-metric relationships (no scipy dependency).
 - **Dual implementation strategy**: Research proposals include an `implementation_strategy` field (`from_scratch` or `from_reference`). The implement agent dispatches accordingly — either implementing from paper descriptions (Section 8) or cloning and adapting reference repos (Section 9). Strategy is decided by the research agent based on repo availability and quality.

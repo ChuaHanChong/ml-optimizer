@@ -2,6 +2,7 @@
 
 ## Goal
 - **Primary metric:** [e.g., accuracy, loss, F1]
+- **Divergence metric:** [default: "loss" — must be lower-is-better]
 - **Target:** [e.g., improve accuracy from 85% to 90%]
 - **Constraints:** [e.g., must fit in 24GB GPU, training < 48h]
 

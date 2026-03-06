@@ -318,7 +318,7 @@ When the implementation manifest contains multiple code branches:
    - If analyze says **continue**: loop back to step 1
    - If analyze says **pivot**: adjust the strategy, loop back to step 1
    - If analyze says **stop**: exit loop
-   - **Safety limit:** Maximum total experiments budget (default: `num_gpus × 5 iterations`). After budget exhausted, force exit and report. This replaces the rigid 5-iteration limit to account for varying GPU counts.
+   - **Safety limit:** Maximum total experiments budget (default: `num_gpus × 5`). After budget exhausted, force exit and report. This replaces the rigid 5-iteration limit to account for varying GPU counts.
 
 ### Parallel GPU Dispatch Pattern:
 When dispatching experiments across multiple GPUs, use the Agent tool with `subagent_type: "general-purpose"` for each experiment.

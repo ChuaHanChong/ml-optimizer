@@ -58,6 +58,15 @@ When proposing new configs, reason about:
 5. **Interaction effects:** LR and batch size interact (linear scaling rule)
 6. **Diminishing returns:** If last 3 experiments improved by <1%, consider stopping
 
+### Branch-Aware Tuning
+
+When experiments run on different code branches (from the implement skill), results must be analyzed per-branch:
+
+- **Group by `code_branch`:** Before analyzing trends, partition results by their `code_branch` field. Experiments on `ml-opt/perceptual-loss` and experiments on baseline code are independent groups.
+- **Analyze separately:** HP sensitivities may differ between branches. `lr=0.001` might be optimal on one branch but diverge on another due to different gradient magnitudes from code changes.
+- **Don't cross-compare HPs:** A config that works well on branch A is not evidence that it will work on branch B. Only compare experiments within the same branch.
+- **Branch performance ranking:** After sufficient experiments per branch, compare the *best result from each branch* to identify which code changes are most promising. Focus future HP tuning budget on the best-performing branches.
+
 ## Batch Sizing Strategy
 
 When proposing N experiments (one per GPU):

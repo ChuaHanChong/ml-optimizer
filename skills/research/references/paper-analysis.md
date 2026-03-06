@@ -93,7 +93,9 @@ This prevents wasting effort on re-implementing techniques from prior optimizati
 
 ## Output Format
 
-Rank proposals by: (expected impact * feasibility) / complexity
+Rank proposals by priority score: `(impact * confidence) / (11 - min(feasibility, 10))`
+
+Note: Clamp feasibility to [1, 10] range to prevent division by zero. Higher feasibility = easier to implement = higher priority.
 
 ```markdown
 ### Proposal: [Name]

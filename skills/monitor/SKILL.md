@@ -118,6 +118,11 @@ If divergence is detected:
    - Action: Training process killed
    ```
 
+4. **Log to error tracker:**
+   ```bash
+   python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"divergence","severity":"warning","source":"monitor","message":"<divergence reason>","exp_id":"<exp_id>","context":{"divergence_type":"<nan|explosion|plateau|drift>","step":<step>,"metric_to_watch":"<metric>"}}'
+   ```
+
 ### 2e: Report Status
 
 For healthy experiments, report status:

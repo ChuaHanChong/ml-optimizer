@@ -125,6 +125,25 @@ Output:
 }
 ```
 
+## Step 3.5: Log Inefficiency Observations
+
+After each analysis, log notable inefficiencies to the error tracker:
+
+### If all experiments in batch diverged or failed:
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"warning","source":"analyze","message":"All <N> experiments in batch <batch> diverged/failed — wasted budget","phase":5,"iteration":<batch_number>,"context":{"experiments_wasted":<N>}}'
+```
+
+### If recommending stop due to diminishing returns:
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"analyze","message":"Diminishing returns: last <N> batches showed <X%> improvement","phase":5,"context":{"total_experiments":<N>}}'
+```
+
+### If a code branch consistently underperforms baseline:
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"analyze","message":"Branch <branch> underperforms baseline across all HP configs","code_branch":"<branch>","context":{"experiments_on_branch":<N>,"best_vs_baseline":"<delta%>"}}'
+```
+
 ## Step 4: Write Batch Analysis Report
 
 Write to `experiments/reports/batch-<N>-analysis.md`:

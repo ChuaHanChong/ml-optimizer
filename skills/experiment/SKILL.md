@@ -188,6 +188,10 @@ Return to the orchestrator:
   - Capture the error output
   - Write results with `"status": "failed"` and error message in notes
   - Do NOT retry automatically — let the orchestrator decide
+  - Log to error tracker:
+    ```bash
+    python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"training_failure","severity":"critical","source":"experiment","message":"<error description>","exp_id":"<exp_id>","config":<config_json>,"stack_trace":"<last 20 lines of stderr>"}'
+    ```
 
 - **Divergence detected (by monitor):**
   - Training is killed by the monitor skill
@@ -197,7 +201,15 @@ Return to the orchestrator:
   - Common cause: batch size too large
   - Write results with `"status": "failed"` and note the OOM error
   - The hp-tune skill will adjust batch size in next iteration
+  - Log to error tracker:
+    ```bash
+    python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"training_failure","severity":"critical","source":"experiment","message":"GPU OOM with batch_size=<batch_size>","exp_id":"<exp_id>","config":<config_json>,"context":{"error_type":"oom","batch_size":<batch_size>}}'
+    ```
 
 - **Config override not working:**
   - If CLI args don't override correctly, try config file approach
   - If neither works, report the issue back to orchestrator
+  - Log to error tracker:
+    ```bash
+    python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"config_error","severity":"warning","source":"experiment","message":"Config override failed: <method tried>","exp_id":"<exp_id>"}'
+    ```

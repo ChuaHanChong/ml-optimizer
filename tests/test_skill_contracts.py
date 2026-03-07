@@ -8,6 +8,18 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
 from implement_utils import parse_research_proposals
 from result_analyzer import load_results, rank_by_metric
+from error_tracker import (
+    create_event,
+    log_event,
+    detect_patterns,
+    summarize_session,
+    compute_success_metrics,
+    compute_proposal_outcomes,
+    rank_suggestions,
+    log_suggestion,
+    get_suggestion_history,
+    VALID_CATEGORIES,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 SAMPLE_FINDINGS = FIXTURES / "sample_research_findings.md"
@@ -156,6 +168,125 @@ def test_research_proposals_reference_fields_when_from_reference():
                 f"from_reference proposal {proposal['name']} missing reference_repo"
             assert len(proposal["reference_files"]) > 0, \
                 f"from_reference proposal {proposal['name']} missing reference_files"
+
+
+# --- Error tracker → Review contract ---
+
+
+def test_review_summary_output_has_required_fields(tmp_path):
+    """summarize_session() output must have fields the review skill expects."""
+    log_event(str(tmp_path), create_event("training_failure", "critical", "experiment", "crash"))
+    log_event(str(tmp_path), create_event("divergence", "warning", "monitor", "nan"))
+    summary = summarize_session(str(tmp_path))
+    required = {"total_events", "by_category", "by_severity", "patterns_detected"}
+    missing = required - set(summary.keys())
+    assert not missing, f"Summary missing fields: {missing}"
+
+
+def test_review_patterns_output_has_required_fields():
+    """detect_patterns() output must have fields the review skill expects."""
+    events = [
+        create_event("divergence", "warning", "monitor", "NaN",
+                      config={"lr": 0.1, "batch_size": 32}),
+        create_event("divergence", "warning", "monitor", "NaN",
+                      config={"lr": 0.2, "batch_size": 32}),
+        create_event("divergence", "warning", "monitor", "NaN",
+                      config={"lr": 0.05, "batch_size": 64}),
+    ]
+    patterns = detect_patterns(events)
+    required = {"pattern_id", "description", "occurrences", "suggested_action"}
+    for p in patterns:
+        missing = required - set(p.keys())
+        assert not missing, f"Pattern {p.get('pattern_id', '?')} missing fields: {missing}"
+
+
+def _write_result(results_dir, exp_id, status, config, metrics, **extra):
+    """Helper to write a minimal experiment result JSON."""
+    data = {"exp_id": exp_id, "status": status, "config": config, "metrics": metrics}
+    data.update(extra)
+    (results_dir / f"{exp_id}.json").write_text(json.dumps(data))
+
+
+def test_review_success_metrics_output_schema(tmp_path):
+    """compute_success_metrics() output must have fields the review skill expects."""
+    results = tmp_path / "results"
+    results.mkdir()
+    _write_result(results, "baseline", "completed", {}, {"acc": 70.0})
+    _write_result(results, "exp-001", "completed", {}, {"acc": 75.0})
+    m = compute_success_metrics(str(tmp_path), "acc", lower_is_better=False)
+    required = {"total_experiments", "completed", "failed", "diverged",
+                "success_rate", "improvement_rate", "top_configs", "worst_configs"}
+    missing = required - set(m.keys())
+    assert not missing, f"Success metrics missing fields: {missing}"
+
+
+def test_review_proposal_outcomes_output_schema(tmp_path):
+    """compute_proposal_outcomes() output must have fields the review skill expects."""
+    results = tmp_path / "results"
+    results.mkdir()
+    _write_result(results, "baseline", "completed", {}, {"acc": 70.0})
+    p = compute_proposal_outcomes(str(tmp_path), "acc", lower_is_better=False)
+    required = {"research_proposals", "hp_proposals", "implementation_stats"}
+    missing = required - set(p.keys())
+    assert not missing, f"Proposal outcomes missing fields: {missing}"
+
+
+def test_review_category_to_file_mapping_complete():
+    """Every VALID_CATEGORIES entry must have a known mapping to a plugin file.
+
+    This canary test fails if someone adds a category without updating the
+    review skill's Step 1.5 mapping table.
+    """
+    # This mapping mirrors skills/review/SKILL.md Step 1.5 table
+    mapped_categories = {
+        "agent_failure", "divergence", "training_failure",
+        "implementation_error", "pipeline_inefficiency", "config_error",
+        "research_failure", "timeout", "resource_error",
+    }
+    unmapped = set(VALID_CATEGORIES) - mapped_categories
+    assert not unmapped, (
+        f"Categories {unmapped} are in VALID_CATEGORIES but not mapped in "
+        f"review skill Step 1.5. Update both the skill and this test."
+    )
+
+
+def test_review_rank_suggestions_output_schema():
+    """rank_suggestions() output must have pattern fields plus score."""
+    patterns = [
+        {"pattern_id": "oom_batch_size", "description": "OOM", "occurrences": 2,
+         "suggested_action": "reduce bs"},
+    ]
+    ranked = rank_suggestions(patterns)
+    assert len(ranked) == 1
+    required = {"pattern_id", "description", "occurrences", "suggested_action", "score"}
+    missing = required - set(ranked[0].keys())
+    assert not missing, f"Ranked suggestion missing fields: {missing}"
+
+
+def test_review_rank_includes_significance_when_total_provided():
+    """rank_suggestions with total_experiments must include significance field."""
+    patterns = [
+        {"pattern_id": "oom_batch_size", "description": "OOM", "occurrences": 5,
+         "suggested_action": "reduce bs"},
+    ]
+    ranked = rank_suggestions(patterns, total_experiments=50)
+    assert "significance" in ranked[0], "significance field missing when total_experiments provided"
+    assert ranked[0]["significance"] == 0.1
+    # Without total_experiments, no significance
+    ranked_no_total = rank_suggestions(patterns)
+    assert "significance" not in ranked_no_total[0]
+
+
+def test_review_suggestion_history_schema(tmp_path):
+    """log_suggestion and get_suggestion_history produce expected schema."""
+    log_suggestion(str(tmp_path), "wasted_budget", scope="session")
+    history = get_suggestion_history(str(tmp_path))
+    assert len(history) == 1
+    required = {"pattern_id", "timestamp", "scope", "iteration"}
+    missing = required - set(history[0].keys())
+    assert not missing, f"Suggestion history entry missing fields: {missing}"
+    assert isinstance(history[0]["iteration"], int)
+    assert history[0]["iteration"] >= 1
 
 
 # --- Prerequisites → Orchestrate contract ---

@@ -22,9 +22,10 @@ No build step. No linter configured. Python 3.10+ required. The `scripts/` direc
 
 ```
 .claude-plugin/plugin.json  — Plugin metadata (name, version)
-skills/                     — 10 skill definitions (SKILL.md files)
+skills/                     — 11 skill definitions (SKILL.md files)
 agents/                     — 5 subagent definitions
 scripts/                    — Python utilities (stdlib only)
+memory/                     — Cross-project error patterns (persistent)
 tests/                      — pytest test suite
 ```
 
@@ -45,7 +46,9 @@ Phase 6: Experiment loop (autonomous):
          experiment → run training (parallel across GPUs)
          monitor → watch for divergence
          analyze → decide continue/pivot/stop
+         review → Mid-pipeline review (auto-triggered after 3+ consecutive all-fail batches)
 Phase 7: report → Final optimization report
+         review → Self-improvement analysis (optional, end-of-session)
 ```
 
 ### Metric Routing Rule
@@ -81,8 +84,9 @@ All scripts work as both importable modules and CLI tools:
 | `implement_utils.py` | `python3 scripts/implement_utils.py <findings.md> '<indices_json>'` — parse proposals; also `clone <url> <dest>` and `analyze <path>` subcommands |
 | `pipeline_state.py` | `python3 scripts/pipeline_state.py <exp_root> validate|save|load|cleanup` |
 | `schema_validator.py` | Validates JSON result files against expected schemas |
-| `prerequisites_check.py` | `python3 scripts/prerequisites_check.py scan-imports|check-packages|detect-env|detect-format|detect-format-project|validate-data|bulk-install-cmd|gpu-install-cmd` — dataset, environment, and GPU-aware install validation |
 | `plot_results.py` | Generates result visualizations |
+| `prerequisites_check.py` | `python3 scripts/prerequisites_check.py scan-imports\|check-packages\|detect-env\|detect-format\|detect-format-project\|validate-data\|bulk-install-cmd\|gpu-install-cmd` — dataset, environment, and GPU-aware install validation |
+| `error_tracker.py` | `python3 scripts/error_tracker.py <exp_root> log\|show\|patterns\|summary\|sync\|success\|proposals\|rank\|cleanup\|log-suggestion\|suggestion-history` — error tracking, pattern detection, success metrics, proposal outcomes, suggestion ranking, suggestion history |
 
 ### State & Output (in target project)
 
@@ -98,6 +102,9 @@ experiments/
   pipeline-state.json                — Resumable pipeline state
   logs/<exp-id>/train.log            — Raw training logs
   reports/                           — Analysis reports, research findings
+  reports/error-log.json             — Structured error event log
+  reports/suggestion-history.json    — Suggestion feedback loop (tracks what was suggested)
+  reports/session-review.md          — Self-improvement review (from review skill)
   scripts/<exp-id>.sh                — Generated training scripts
   dev_notes.md                       — Running session log
 ```
@@ -116,7 +123,7 @@ The orchestrator can be stopped and resumed. On restart it reads `pipeline-state
 
 ## Test Fixtures
 
-`tests/fixtures/` contains a minimal PyTorch project (`tiny_resnet_cifar10/`), sample training logs (normal, divergent, OOM, tqdm, noisy), sample research findings (with and without reference repos), and sample result/config files. Used by the 359-test pytest suite.
+`tests/fixtures/` contains a minimal PyTorch project (`tiny_resnet_cifar10/`), sample training logs (normal, divergent, OOM, tqdm, noisy), sample research findings (with and without reference repos), sample result/config files, and a sample error log (`sample_error_log.json`). Used by the pytest suite.
 
 ## Gotchas
 
@@ -124,3 +131,4 @@ The orchestrator can be stopped and resumed. On restart it reads `pipeline-state
 - **`implement_utils.py` has three CLI modes**: default (parse proposals), `clone <url> <dest>`, and `analyze <path>`. Each has different argument patterns.
 - **Metric routing is split**: Monitor/divergence always uses loss (lower-is-better). Analyze/hp-tune use the user's `primary_metric`. Mixing these up causes silent wrong behavior.
 - **Branch experiments are independent**: Results on `ml-opt/branch-a` tell you nothing about what HPs will work on `ml-opt/branch-b`. The tuning agent must group by `code_branch` before analyzing trends.
+- **Mid-pipeline review auto-triggers**: After 3+ consecutive all-fail batches in Phase 6, the orchestrator automatically invokes the review skill with `scope: "session"` to suggest course corrections. It can also be invoked manually at end of session.

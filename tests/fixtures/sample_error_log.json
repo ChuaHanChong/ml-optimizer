@@ -1,0 +1,134 @@
+{
+  "project_id": "abc123def456",
+  "session_start": "2026-03-06T10:00:00+00:00",
+  "events": [
+    {
+      "event_id": "err-001-1709712345",
+      "timestamp": "2026-03-06T10:05:00+00:00",
+      "category": "training_failure",
+      "severity": "critical",
+      "source": "experiment",
+      "message": "GPU OOM at step 15 with batch_size=256",
+      "exp_id": "exp-001",
+      "config": {"lr": 0.01, "batch_size": 256}
+    },
+    {
+      "event_id": "err-002-1709712400",
+      "timestamp": "2026-03-06T10:10:00+00:00",
+      "category": "divergence",
+      "severity": "warning",
+      "source": "monitor",
+      "message": "NaN detected at step 42",
+      "exp_id": "exp-002",
+      "config": {"lr": 0.1, "batch_size": 32},
+      "context": {"divergence_type": "nan", "step": 42}
+    },
+    {
+      "event_id": "err-003-1709712500",
+      "timestamp": "2026-03-06T10:15:00+00:00",
+      "category": "divergence",
+      "severity": "warning",
+      "source": "monitor",
+      "message": "Explosion detected at step 100",
+      "exp_id": "exp-003",
+      "config": {"lr": 0.05, "batch_size": 32},
+      "context": {"divergence_type": "explosion", "step": 100}
+    },
+    {
+      "event_id": "err-004-1709712600",
+      "timestamp": "2026-03-06T10:20:00+00:00",
+      "category": "divergence",
+      "severity": "warning",
+      "source": "monitor",
+      "message": "NaN detected at step 8",
+      "exp_id": "exp-004",
+      "config": {"lr": 0.2, "batch_size": 64},
+      "context": {"divergence_type": "nan", "step": 8}
+    },
+    {
+      "event_id": "err-005-1709712700",
+      "timestamp": "2026-03-06T10:25:00+00:00",
+      "category": "training_failure",
+      "severity": "critical",
+      "source": "experiment",
+      "message": "GPU OOM with batch_size=256",
+      "exp_id": "exp-005",
+      "config": {"lr": 0.001, "batch_size": 256}
+    },
+    {
+      "event_id": "err-006-1709712800",
+      "timestamp": "2026-03-06T10:30:00+00:00",
+      "category": "pipeline_inefficiency",
+      "severity": "warning",
+      "source": "analyze",
+      "message": "All 3 experiments in batch 2 diverged — wasted budget",
+      "context": {"experiments_wasted": 3}
+    },
+    {
+      "event_id": "err-007-1709712900",
+      "timestamp": "2026-03-06T10:35:00+00:00",
+      "category": "implementation_error",
+      "severity": "warning",
+      "source": "implement",
+      "message": "Syntax validation failed for proposal perceptual-loss",
+      "context": {"proposal_name": "perceptual-loss"}
+    },
+    {
+      "event_id": "err-008-1709713000",
+      "timestamp": "2026-03-06T10:40:00+00:00",
+      "category": "pipeline_inefficiency",
+      "severity": "info",
+      "source": "hp-tune",
+      "message": "Regenerated 2 proposals due to duplication",
+      "phase": 5,
+      "iteration": 3
+    },
+    {
+      "event_id": "err-009-1709713100",
+      "timestamp": "2026-03-06T10:45:00+00:00",
+      "category": "research_failure",
+      "severity": "warning",
+      "source": "research",
+      "message": "No relevant results for query: diffusion model optimization",
+      "phase": 4,
+      "context": {"query": "diffusion model optimization", "search_type": "web"}
+    },
+    {
+      "event_id": "err-010-1709713200",
+      "timestamp": "2026-03-06T10:50:00+00:00",
+      "category": "timeout",
+      "severity": "critical",
+      "source": "orchestrate",
+      "message": "Research agent timed out after 600s",
+      "agent": "research-agent",
+      "phase": 4,
+      "duration_seconds": 600
+    },
+    {
+      "event_id": "err-011-1709713300",
+      "timestamp": "2026-03-06T10:55:00+00:00",
+      "category": "resource_error",
+      "severity": "info",
+      "source": "baseline",
+      "message": "GPU profiling failed — no GPU detected or nvidia-smi error",
+      "phase": 2
+    }
+  ],
+  "summary": {
+    "total_events": 11,
+    "by_category": {
+      "training_failure": 2,
+      "divergence": 3,
+      "pipeline_inefficiency": 2,
+      "implementation_error": 1,
+      "research_failure": 1,
+      "timeout": 1,
+      "resource_error": 1
+    },
+    "by_severity": {
+      "critical": 3,
+      "warning": 5,
+      "info": 3
+    }
+  }
+}

@@ -230,3 +230,27 @@ Return to the orchestrator:
 - **Package install fails:** Record error, classify as critical/non-critical
 - **Permission errors:** Report and suggest user fix manually
 - **No internet for auto-download datasets:** Warn that CIFAR10/MNIST etc. will need network access during training
+
+## Error Tracking
+
+At the following points, log an error event using the error tracker:
+
+### When data path doesn't exist or validation fails:
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"resource_error","severity":"critical","source":"prerequisites","message":"Data path does not exist: <path>","phase":2,"context":{"path":"<path>","path_type":"<train|val>"}}'
+```
+
+### When data format validation fails:
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"resource_error","severity":"warning","source":"prerequisites","message":"Data format validation failed: <reason>","phase":2,"context":{"format_detected":"<format>","validation_error":"<reason>"}}'
+```
+
+### When package installation fails:
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"config_error","severity":"<critical|warning>","source":"prerequisites","message":"Package install failed: <package>","phase":2,"context":{"package":"<package>","manager":"<env_manager>","is_critical":<true|false>}}'
+```
+
+### When environment detection or setup fails:
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"resource_error","severity":"warning","source":"prerequisites","message":"Environment detection failed: <error>","phase":2,"context":{"env_manager":"<env_manager>","env_name":"<env_name>"}}'
+```

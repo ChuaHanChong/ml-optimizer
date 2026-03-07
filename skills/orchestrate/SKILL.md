@@ -13,7 +13,7 @@ You are an ML optimization orchestrator. You coordinate the full optimization pi
 
 - Plan template: `references/plan-template.md` (in this skill's directory)
 - Log format specs: `references/log-formats.md` (in this skill's directory)
-- Python scripts: `~/.claude/plugins/ml-optimizer/scripts/` (gpu_check.py, parse_logs.py, detect_divergence.py, result_analyzer.py, experiment_setup.py, implement_utils.py, pipeline_state.py, schema_validator.py, plot_results.py, prerequisites_check.py)
+- Python scripts: `~/.claude/plugins/ml-optimizer/scripts/` (gpu_check.py, parse_logs.py, detect_divergence.py, result_analyzer.py, experiment_setup.py, implement_utils.py, pipeline_state.py, schema_validator.py, plot_results.py, error_tracker.py, prerequisites_check.py)
 
 ## Phase 0: Discovery & Planning (MANDATORY)
 
@@ -197,6 +197,7 @@ If the user chose research, invoke the `ml-optimizer:research` skill with parame
 - `current_metrics`: Current baseline performance numbers
 - `problem_description`: What needs improvement (from Phase 0)
 - `user_papers`: Any user-provided paper URLs or links (optional)
+- `exp_root`: Path to experiments/ directory (for error logging)
 Wait for research findings.
 
 ### User Checkpoint (Post-Research)
@@ -374,6 +375,25 @@ When the implementation manifest contains multiple code branches:
    - If analyze says **stop**: exit loop
    - **Safety limit:** Maximum total experiments budget (default: `num_gpus × 5`). After budget exhausted, force exit and report. This replaces the rigid 5-iteration limit to account for varying GPU counts.
 
+7. **Mid-pipeline review check** (after step 6, before looping):
+   Run pattern detection:
+   ```bash
+   python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> patterns
+   ```
+   If `wasted_budget` pattern has occurrences ≥ 3, OR if the last 2 consecutive batches both had zero successful experiments:
+   - Invoke `ml-optimizer:review` with:
+     - `project_root`, `exp_root`, `primary_metric`, `lower_is_better`
+     - `scope`: `"session"` (fast, no cross-project)
+   - Read the review output's top suggestions
+   - Apply relevant course corrections:
+     - If review suggests narrowing LR range: pass constrained `search_space` to hp-tune
+     - If review suggests pruning a branch: remove it from `code_branches`
+     - If review suggests stopping: follow the stop recommendation
+   - Log the mid-pipeline review:
+     ```bash
+     python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"orchestrate","message":"Mid-pipeline review triggered after consecutive failures","phase":6,"iteration":<iteration>,"context":{"trigger":"consecutive_failures"}}'
+     ```
+
 ### Parallel GPU Dispatch Pattern:
 When dispatching experiments across multiple GPUs, use the Agent tool with `subagent_type: "general-purpose"` for each experiment.
 
@@ -416,7 +436,19 @@ After the experiment loop exits:
    - `model_description`: Brief model description (from Phase 1)
    - `task_description`: What the model does (from Phase 0/1)
 2. It generates a comprehensive final report
-3. Present the summary to the user:
+3. Sync errors to cross-project memory:
+   ```bash
+   python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> sync ~/.claude/plugins/ml-optimizer
+   ```
+4. Ask the user about self-improvement review:
+   ```
+   AskUserQuestion: "Would you like a self-improvement review? It analyzes what worked, what didn't, and suggests plugin improvements for future sessions."
+   Options: ["Yes, run review", "No, skip"]
+   ```
+   If yes, invoke `ml-optimizer:review` with:
+   - `project_root`, `exp_root`, `primary_metric`, `lower_is_better`
+   - `scope`: "both"
+5. Present the summary to the user:
 
 ```
 Optimization complete!
@@ -437,6 +469,32 @@ Full report: experiments/reports/final-report.md
 - **Training crashes:** Record the error, skip to next experiment in batch
 - **All experiments diverge:** Stop loop, report to user with AskUserQuestion
 - **Script not found:** Ask user to provide the correct training command
+
+## Error Tracking
+
+At each of the following points, log an error event using the error tracker script:
+
+### After agent failures (any phase):
+When an agent dispatch fails (crash, timeout, invalid output):
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"agent_failure","severity":"critical","source":"orchestrate","message":"<failure description>","agent":"<agent_type>","phase":<phase>,"iteration":<iteration>}'
+```
+
+### After analyze recommends stop or pivot (Phase 6):
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"warning","source":"orchestrate","message":"<analyze recommendation and reason>","phase":6,"iteration":<iteration>,"context":{"action":"<continue|pivot|stop>","reason":"<from analyze>"}}'
+```
+
+### On pipeline resumption from interrupted state:
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"orchestrate","message":"Pipeline resumed from interrupted state","phase":<resumed_phase>}'
+```
+
+### After review skill failure (Phase 6 or Phase 7):
+If the review skill crashes or produces invalid output:
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"agent_failure","severity":"warning","source":"orchestrate","message":"Review skill failed: <error description>","phase":<phase>}'
+```
 
 ## Directory Structure Created
 

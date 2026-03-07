@@ -1,9 +1,8 @@
 """Tests for skill interface contracts — verify data flows between skills correctly."""
 
 import json
-from pathlib import Path
 
-from conftest import _write_result
+from conftest import FIXTURES, _write_result
 
 from implement_utils import parse_research_proposals
 from result_analyzer import load_results, rank_by_metric
@@ -20,7 +19,6 @@ from error_tracker import (
     VALID_CATEGORIES,
 )
 
-FIXTURES = Path(__file__).parent / "fixtures"
 SAMPLE_FINDINGS = FIXTURES / "sample_research_findings.md"
 SAMPLE_FINDINGS_REF = FIXTURES / "sample_research_findings_with_reference.md"
 

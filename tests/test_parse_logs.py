@@ -1,11 +1,9 @@
 """Tests for parse_logs.py."""
 
 import json
-from pathlib import Path
 
+from conftest import FIXTURES
 from parse_logs import parse_kv_line, parse_json_line, parse_csv_lines, parse_python_logging_line, parse_tqdm_line, detect_format, parse_log, extract_metric_trajectory
-
-FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def test_parse_kv_line():
@@ -275,7 +273,7 @@ def test_parse_log_non_utf8(tmp_path):
 
 def test_parse_log_tqdm_fixture():
     """Parse the tqdm fixture file and verify metric extraction."""
-    fixture = Path(__file__).parent / "fixtures" / "tqdm_log.txt"
+    fixture = FIXTURES / "tqdm_log.txt"
     records = parse_log(str(fixture))
     assert len(records) > 0
     # Lines with loss= and acc= in tqdm format should be parsed
@@ -285,7 +283,7 @@ def test_parse_log_tqdm_fixture():
 
 def test_parse_log_python_logging_fixture():
     """Parse the Python logging fixture file and verify metric extraction."""
-    fixture = Path(__file__).parent / "fixtures" / "python_logging_log.txt"
+    fixture = FIXTURES / "python_logging_log.txt"
     records = parse_log(str(fixture))
     assert len(records) > 0
     # Lines with epoch=, loss=, accuracy= should be parsed

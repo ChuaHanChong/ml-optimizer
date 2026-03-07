@@ -21,12 +21,11 @@ from result_analyzer import analyze, rank_by_metric, compute_deltas
 from pipeline_state import save_state, load_state, validate_phase_requirements, cleanup_stale
 from schema_validator import validate_result, validate_baseline, validate_manifest, validate_file
 from plot_results import plot_metric_comparison, plot_improvement_timeline, plot_hp_sensitivity
+from conftest import FIXTURES, _write_result
 from implement_utils import (
     parse_research_proposals, detect_conflicts, validate_syntax,
     write_manifest, backup_files, is_git_repo,
 )
-
-FIXTURES = Path(__file__).parent / "fixtures"
 RESNET_FIXTURE = FIXTURES / "tiny_resnet_cifar10"
 
 
@@ -412,12 +411,7 @@ class TestPhase6Report:
             ("exp-001", 1.5, 45.0, 0.001),
             ("exp-002", 1.8, 38.0, 0.1),
         ]:
-            (results_dir / f"{name}.json").write_text(json.dumps({
-                "exp_id": name,
-                "config": {"lr": lr},
-                "metrics": {"loss": loss, "accuracy": acc},
-                "status": "completed",
-            }))
+            _write_result(results_dir, name, "completed", {"lr": lr}, {"loss": loss, "accuracy": acc})
 
         analysis = analyze(str(results_dir), "loss", baseline_id="baseline")
         assert analysis["num_experiments"] >= 3
@@ -845,12 +839,7 @@ class TestPlotIntegration:
             ("exp-003", 1.3, 50.0, 0.005, 128),
             ("exp-004", 1.6, 42.0, 0.01, 32),
         ]:
-            (d / f"{name}.json").write_text(json.dumps({
-                "exp_id": name,
-                "config": {"lr": lr, "batch_size": bs},
-                "metrics": {"loss": loss, "accuracy": acc},
-                "status": "completed",
-            }))
+            _write_result(d, name, "completed", {"lr": lr, "batch_size": bs}, {"loss": loss, "accuracy": acc})
         return str(d)
 
     def test_metric_comparison_chart(self, results_dir):

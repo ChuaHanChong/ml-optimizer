@@ -11,6 +11,7 @@ import pytest
 
 # Make scripts importable from all test files
 SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
+FIXTURES = Path(__file__).parent / "fixtures"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 

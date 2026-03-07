@@ -2,7 +2,9 @@
 """State validation and pipeline resumption utilities."""
 
 import json
+import os
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -130,7 +132,14 @@ def save_state(
         state["user_choices"] = user_choices
 
     state_path = root / "pipeline-state.json"
-    state_path.write_text(json.dumps(state, indent=2))
+    tmp_fd, tmp_path = tempfile.mkstemp(dir=str(root), suffix=".tmp")
+    try:
+        with os.fdopen(tmp_fd, "w") as f:
+            json.dump(state, f, indent=2)
+        os.replace(tmp_path, str(state_path))
+    except BaseException:
+        os.unlink(tmp_path)
+        raise
     return str(state_path)
 
 
@@ -180,7 +189,16 @@ def cleanup_stale(exp_root: str, timeout_hours: float = 2.0) -> list[str]:
                 if elapsed > timeout_hours:
                     state["status"] = "interrupted"
                     state["interrupted_at"] = now.isoformat()
-                    state_path.write_text(json.dumps(state, indent=2))
+                    tmp_fd, tmp_path = tempfile.mkstemp(
+                        dir=str(root), suffix=".tmp"
+                    )
+                    try:
+                        with os.fdopen(tmp_fd, "w") as f:
+                            json.dump(state, f, indent=2)
+                        os.replace(tmp_path, str(state_path))
+                    except BaseException:
+                        os.unlink(tmp_path)
+                        raise
                     cleaned.append("pipeline-state.json marked as interrupted")
             except (ValueError, TypeError):
                 pass
@@ -204,7 +222,16 @@ def cleanup_stale(exp_root: str, timeout_hours: float = 2.0) -> list[str]:
                 if elapsed > timeout_hours:
                     data["status"] = "failed"
                     data["note"] = "Marked as stale: exceeded timeout"
-                    exp_file.write_text(json.dumps(data, indent=2))
+                    tmp_fd, tmp_path = tempfile.mkstemp(
+                        dir=str(results_dir), suffix=".tmp"
+                    )
+                    try:
+                        with os.fdopen(tmp_fd, "w") as f:
+                            json.dump(data, f, indent=2)
+                        os.replace(tmp_path, str(exp_file))
+                    except BaseException:
+                        os.unlink(tmp_path)
+                        raise
                     cleaned.append(f"{exp_file.name} marked as failed (stale)")
             except (ValueError, TypeError):
                 continue

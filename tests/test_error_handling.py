@@ -2,15 +2,13 @@
 
 import json
 import math
-from pathlib import Path
 
+from conftest import FIXTURES
 from parse_logs import parse_log, parse_kv_line, extract_metric_trajectory
 from detect_divergence import check_divergence, detect_nan_inf, detect_explosion, detect_plateau
 from result_analyzer import load_results, analyze, compute_deltas
 from experiment_setup import next_experiment_id
 from gpu_check import parse_nvidia_smi, check_availability
-
-FIXTURES = Path(__file__).parent / "fixtures"
 
 
 # --- parse_logs error handling ---

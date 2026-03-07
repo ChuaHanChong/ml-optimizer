@@ -3,6 +3,8 @@
 import json
 import math
 
+import pytest
+
 from detect_divergence import detect_nan_inf, detect_explosion, detect_plateau, detect_gradual_drift, check_divergence
 
 
@@ -109,20 +111,17 @@ def test_detect_plateau_all_nan():
     assert result is None
 
 
-def test_detect_plateau_higher_is_better():
-    # Accuracy steadily improving — should NOT trigger plateau
-    values = [50, 55, 60, 65, 70, 75, 80, 85, 90]
-    result = detect_plateau(values, patience=5, lower_is_better=False)
-    assert result is None
-
-
-def test_detect_plateau_higher_is_better_stalled():
-    # Accuracy stuck at 80 for 25 steps — SHOULD trigger plateau
-    values = [50, 55, 60, 65, 70, 75, 80] + [80] * 25
-    result = detect_plateau(values, patience=20, lower_is_better=False)
-    assert result is not None
-    assert result["diverged"] is True
-    assert "plateau" in result["reason"].lower()
+@pytest.mark.parametrize("values,patience,should_diverge", [
+    ([50, 55, 60, 65, 70, 75, 80, 85, 90], 5, False),
+    ([50, 55, 60, 65, 70, 75, 80] + [80] * 25, 20, True),
+])
+def test_detect_plateau_higher_is_better(values, patience, should_diverge):
+    result = detect_plateau(values, patience=patience, lower_is_better=False)
+    if should_diverge:
+        assert result is not None and result["diverged"] is True
+        assert "plateau" in result["reason"].lower()
+    else:
+        assert result is None
 
 
 def test_detect_explosion_higher_is_better():

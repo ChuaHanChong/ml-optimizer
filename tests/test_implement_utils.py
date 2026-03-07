@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
+from conftest import FIXTURES
 from implement_utils import (
     _extract_reference_files,
     analyze_reference_structure,
@@ -21,8 +22,6 @@ from implement_utils import (
     validate_syntax,
     write_manifest,
 )
-
-FIXTURES = Path(__file__).parent / "fixtures"
 SAMPLE_FINDINGS = FIXTURES / "sample_research_findings.md"
 SAMPLE_FINDINGS_REF = FIXTURES / "sample_research_findings_with_reference.md"
 

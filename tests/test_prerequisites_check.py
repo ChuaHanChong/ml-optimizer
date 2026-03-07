@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from conftest import FIXTURES
 from prerequisites_check import (
     scan_imports,
     check_missing_packages,
@@ -24,8 +25,6 @@ from prerequisites_check import (
     _wrap_for_conda,
     IMPORT_TO_PACKAGE,
 )
-
-FIXTURES = Path(__file__).parent / "fixtures"
 TINY_RESNET = FIXTURES / "tiny_resnet_cifar10"
 
 

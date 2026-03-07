@@ -4,7 +4,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from conftest import _write_result
+from conftest import FIXTURES, _write_result
 
 from error_tracker import (
     validate_event,
@@ -27,8 +27,6 @@ from error_tracker import (
     VALID_SEVERITIES,
     VALID_SOURCES,
 )
-
-FIXTURES = Path(__file__).parent / "fixtures"
 
 
 # ---------------------------------------------------------------------------

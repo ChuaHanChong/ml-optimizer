@@ -180,6 +180,7 @@ user_choices = {
     "env_name": ...,
     "divergence_lower_is_better": ...,  # True for loss-like metrics, False for reward-like metrics
     "model_category": ...,              # "supervised", "rl", "generative", or null
+    "user_papers": ...,                 # List of user-provided paper URLs, or null
 }
 ```
 
@@ -187,6 +188,7 @@ user_choices = {
 
 Invoke the `ml-optimizer:baseline` skill:
 - Pass the training command, eval command, and project root
+- Pass `model_category` from user_choices so baseline applies RL-specific or generative-specific evaluation
 - If `prepared_train_path` exists in `user_choices`, pass it so baseline uses the prepared data
 - If `prepared_val_path` exists in `user_choices`, pass it similarly
 - Wait for baseline results
@@ -418,6 +420,7 @@ When the implementation manifest contains multiple code branches:
      - `poll_interval`: Seconds between checks (default: 30)
      - `metric_to_watch`: `<divergence_metric>` from Phase 0 (default: `"loss"` — see Metric Routing Rule)
      - `lower_is_better`: `<divergence_lower_is_better>` from user_choices (True for loss-like metrics, False for reward-like metrics)
+     - `model_category`: From user_choices (e.g., "rl", "generative", or null for supervised)
    - If divergence detected: the experiment is stopped automatically
    - Record divergence reason in experiment results
 

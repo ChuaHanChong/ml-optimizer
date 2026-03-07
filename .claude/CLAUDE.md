@@ -6,6 +6,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A Claude Code plugin that orchestrates autonomous ML model optimization. It dispatches specialized agents for research, hyperparameter tuning, experiment execution, and result analysis. The plugin uses LLM-driven HP tuning (Claude reasons about results directly — no Optuna/grid search).
 
+## Usage
+
+In a Claude Code session, type:
+```
+/optimize <model-path-or-description>
+```
+This invokes `commands/optimize.md`, which delegates to the `ml-optimizer:orchestrate` skill.
+
 ## Running Tests
 
 ```bash
@@ -22,10 +30,11 @@ No build step. No linter configured. Python 3.10+ required. The `scripts/` direc
 
 ```
 .claude-plugin/plugin.json  — Plugin metadata (name, version)
-skills/                     — 11 skill definitions (SKILL.md files)
+commands/optimize.md        — /optimize slash command (entry point)
+skills/                     — Skill definitions (SKILL.md files)
 agents/                     — 5 subagent definitions
 scripts/                    — Python utilities (stdlib only)
-memory/                     — Cross-project error patterns (persistent)
+memory/                     — Placeholder for future cross-project patterns
 tests/                      — pytest test suite
 ```
 
@@ -123,7 +132,7 @@ The orchestrator can be stopped and resumed. On restart it reads `pipeline-state
 
 ## Test Fixtures
 
-`tests/fixtures/` contains a minimal PyTorch project (`tiny_resnet_cifar10/`), sample training logs (normal, divergent, OOM, tqdm, noisy), sample research findings (with and without reference repos), sample result/config files, and a sample error log (`sample_error_log.json`). Used by the pytest suite.
+`tests/fixtures/` contains a minimal PyTorch project (`tiny_resnet_cifar10/`), sample training logs (normal, divergent, OOM, tqdm, noisy, python-logging, partial), sample research findings (with and without reference repos), sample result/config files, dataset loader scripts (CSV, ImageFolder, HuggingFace), and a sample error log (`sample_error_log.json`). Used by the pytest suite.
 
 ## Gotchas
 

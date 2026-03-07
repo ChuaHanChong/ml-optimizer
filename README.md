@@ -62,6 +62,7 @@ Use the ml-optimizer:orchestrate skill to optimize my model
 | Skill | Description |
 |-------|-------------|
 | `orchestrate` | Core coordinator — runs the full optimization pipeline |
+| `prerequisites` | Validates dataset format, prepares data, installs dependencies |
 | `baseline` | Establishes baseline metrics and profiles GPU usage |
 | `research` | Searches for ML techniques via web and paper analysis |
 | `implement` | Applies research proposals as code changes with git isolation and validation |
@@ -70,23 +71,28 @@ Use the ml-optimizer:orchestrate skill to optimize my model
 | `monitor` | Watches training logs for divergence (NaN, explosion, plateau) |
 | `analyze` | Post-batch analysis — ranks results, recommends next action |
 | `report` | Generates comprehensive final optimization report |
+| `review` | Self-improvement analysis and mid-pipeline course correction |
 
 ## Workflow
 
 ```
-1. Understand model (read code + config)
-2. Establish baseline
+0. Discovery (plan mode, user Q&A — data paths, env manager)
+1. Understand model (read code + config, check GPUs)
+2. Prerequisites (validate dataset, prepare data, install deps)
+3. Establish baseline
    -> User checkpoint: review baseline, choose direction
-3. Optional research
+4. Optional research
    -> User checkpoint: review findings, pick proposals
-3.5. Implement proposals (if code changes needed)
+4.5. Implement proposals (if code changes needed)
    -> Creates git branches, applies changes, validates
-4. Experiment loop (autonomous, branch-aware):
+5. Experiment loop (autonomous, branch-aware):
    a. hp-tune proposes configs
    b. experiment runs training (parallel across GPUs)
    c. monitor watches for divergence
    d. analyze decides: continue/pivot/stop
-5. Generate final report
+   e. review auto-triggers after 3+ consecutive all-fail batches
+6. Generate final report
+   -> Optional review for self-improvement analysis
 ```
 
 ## Project Directory Structure
@@ -97,11 +103,16 @@ The plugin creates this structure in your project:
 <project>/experiments/
   logs/<exp-id>/                        # Raw training logs
   reports/                              # Markdown reports (analysis, research, final)
+  reports/error-log.json                # Structured error event log
+  reports/suggestion-history.json       # Suggestion feedback loop
+  reports/session-review.md             # Self-improvement review
   scripts/<exp-id>.sh                   # Generated training scripts
+  results/prerequisites.json            # Prerequisites check report
   results/baseline.json                 # Baseline metrics and GPU profiling
   results/<exp-id>.json                 # Per-experiment results
   results/proposed-configs/             # HP config proposals from hp-tune
   results/implementation-manifest.json  # Validated proposal branches
+  prepared-data/                        # Prepared dataset (if preprocessing needed)
   pipeline-state.json                   # Resumable pipeline state
   dev_notes.md                          # Running session log
 ```
@@ -121,6 +132,8 @@ Located in `scripts/`:
 | `pipeline_state.py` | Pipeline state save/load/validate and stale experiment cleanup |
 | `schema_validator.py` | Validate experiment result, baseline, and manifest JSON schemas |
 | `plot_results.py` | ASCII bar/line charts for metric comparison and HP sensitivity |
+| `prerequisites_check.py` | Dataset format detection, environment validation, GPU-aware install commands |
+| `error_tracker.py` | Error tracking, pattern detection, success metrics, suggestion ranking |
 
 ## Running Tests
 
@@ -131,9 +144,10 @@ python -m pytest tests/ -v
 
 ## Agent Definitions
 
-The plugin defines four subagent types in `agents/`:
+The plugin defines five subagent types in `agents/`:
 
 - **research-agent** — Paper search and technique extraction
 - **tuning-agent** — HP reasoning and config proposal
 - **implement-agent** — Code change application and validation
 - **experiment-agent** — Single experiment execution on a GPU
+- **prerequisites-agent** — Dataset validation, environment setup, dependency installation

@@ -144,6 +144,22 @@ Consider these alongside traditional HPs when tuning.
 - Dropout: 0.3–0.6 (higher than vision/NLP due to small datasets)
 - LR: 1e-3 to 1e-2
 
+### Diffusion Models (DDPM, DDIM, Stable Diffusion)
+- LR: 1e-5 to 3e-4 (1e-4 from scratch, 1e-5 for fine-tuning)
+- Batch size: as large as fits — diffusion benefits from large batches
+- EMA decay: 0.9999 (critical — do not skip)
+- Noise schedule: cosine usually better than linear for fewer timesteps
+- Warmup: 5000-10000 steps
+- **Failure modes:** blurry outputs (LR too high or no EMA), mode collapse (batch too small), very slow convergence is NORMAL
+- **Interactions:** T (timesteps) × LR, batch size × EMA decay
+
+### Variational Autoencoders (VAE)
+- LR: 1e-4 to 1e-3
+- KL weight (beta): Start 0.0001, anneal to 1.0 (beta-VAE annealing)
+- Latent dimension: 32-512 depending on data complexity
+- **Failure modes:** posterior collapse (KL dominates too early → use annealing), blurry reconstructions (beta too high)
+- **Interactions:** beta × latent_dim (higher dim tolerates higher beta), LR × beta (high LR + high beta → collapse)
+
 ### Tree-Based & Ensemble Models (XGBoost, LightGBM, RandomForest, GradientBoosting)
 
 These models have fundamentally different hyperparameters. Batch size, dropout, and attention heads do not apply.

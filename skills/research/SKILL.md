@@ -145,6 +145,13 @@ Note: Clamp feasibility to [1, 10] range to prevent division by zero when feasib
 
 Sort proposals by priority score, highest first.
 
+### User Paper Priority Bonus
+
+If a proposal originated from a user-provided paper (`user_papers` input):
+- Add +2 to `confidence` score (capped at 10) before computing priority
+- Rationale: user identified the paper as relevant — strong signal
+- Still apply feasibility and impact scoring objectively
+
 ## Step 5: Write Research Findings
 
 Write to `experiments/reports/research-findings.md`:

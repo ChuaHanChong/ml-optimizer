@@ -54,10 +54,11 @@ Before building the training command, verify:
    ```
    Warn if less than 5 GB free.
 
-2. **Timeout estimation:** If baseline profiling data is available, estimate total training time:
-   - Read `experiments/results/baseline.json` → `profiling.throughput_samples_per_sec`
-   - Estimate: `total_time = (dataset_size * epochs) / throughput`
-   - If estimated time exceeds 4 hours, warn the orchestrator
+2. **Timeout enforcement:** Compute a timeout for the training command:
+   - If `baseline.json` has `profiling.throughput_samples_per_sec`: `timeout_seconds = int(1.5 × (dataset_size × epochs) / throughput)`
+   - If profiling unavailable: `timeout_seconds = 14400` (4 hours default)
+   - Cap at 86400 (24 hours maximum)
+   - Store `timeout_seconds` for use in Step 3 script generation
 
 ## Step 2: Build Training Command
 
@@ -100,6 +101,15 @@ python3 ~/.claude/plugins/ml-optimizer/scripts/experiment_setup.py \
 ```
 
 Or write the script manually using the Write tool, following templates in `references/script-templates.md`.
+
+**Timeout wrapper:** The training command in the bash script must be wrapped with `timeout`:
+```bash
+timeout --signal=SIGTERM --kill-after=60 {timeout_seconds} {train_command} 2>&1 | tee experiments/logs/{exp_id}/train.log
+EXIT_CODE=${PIPESTATUS[0]}
+if [ $EXIT_CODE -eq 124 ]; then
+    echo "TIMEOUT: Training exceeded {timeout_seconds}s limit" >> experiments/logs/{exp_id}/train.log
+fi
+```
 
 The script must:
 - Set `CUDA_VISIBLE_DEVICES=<gpu_id>`
@@ -213,3 +223,10 @@ Return to the orchestrator:
     ```bash
     python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"config_error","severity":"warning","source":"experiment","message":"Config override failed: <method tried>","exp_id":"<exp_id>"}'
     ```
+
+- **Training timeout:**
+  - The `timeout` command kills the process with SIGTERM (then SIGKILL after 60s)
+  - Parse any partial results from the log before the timeout
+  - Write results with `"status": "timeout"` and note the timeout duration
+  - Log to error tracker with `category: "timeout"`, `severity: "warning"`, `source: "experiment"`
+  - The monitor skill will also detect the process death and mark accordingly

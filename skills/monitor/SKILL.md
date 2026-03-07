@@ -163,6 +163,23 @@ See also `hp-tune/references/tuning-strategy.md` for per-model-type HP guidance 
 | Diffusion model | 10.0 | 40 | Slow convergence is normal |
 | Fine-tuning | 3.0 | 15 | Should converge faster |
 
+### RL Model Monitoring
+
+When `model_category = "rl"`, apply these adjustments:
+
+| Metric | Polarity | Divergence Signal |
+|--------|----------|-------------------|
+| policy_loss / actor_loss | lower is better | Standard: NaN/explosion/plateau |
+| value_loss / critic_loss | lower is better | Standard: NaN/explosion/plateau |
+| reward / episode_return | higher is better | Collapse: drops >50% from rolling max over 100 episodes |
+| entropy | context-dependent | Entropy collapse: drops below 0.01 |
+
+When `divergence_metric` is a reward metric (`lower_is_better = False`):
+- Reward plateau patience should be higher (50+ episodes) — RL is inherently noisy
+- Do NOT kill on short-term reward drops (exploration causes temporary dips)
+- Only flag divergence if reward collapses to <10% of historical max sustained over 50+ episodes
+- NaN/Inf detection still applies normally
+
 ### Common divergence patterns
 - **NaN in first 10 steps:** Learning rate too high. Note this for hp-tune.
 - **Loss explosion after good start:** Possible learning rate schedule issue or gradient accumulation bug.

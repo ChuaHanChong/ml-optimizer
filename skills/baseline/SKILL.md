@@ -161,6 +161,15 @@ Return to the orchestrator:
 - GPU profiling results
 - Any issues encountered
 
+## RL Baseline Evaluation
+
+When `model_category = "rl"`:
+
+1. **Evaluation method:** Run N evaluation episodes (default: 100) with the current policy. Compute mean, std, min, max episode reward.
+2. **Profiling:** Measure steps/second and episodes/hour. Set `throughput_samples_per_sec = null`. Record `steps_per_second` and `episodes_per_hour` in profiling.
+3. **Timeout estimation:** Use `total_timesteps / steps_per_second` instead of epoch-based estimation.
+4. **Config extraction:** Capture RL-specific HPs: `gamma`, `learning_rate`, `n_steps`/`buffer_size`, `batch_size`, `entropy_coef`, `clip_range` (PPO), `tau` (SAC/TD3).
+
 ## Error Handling
 
 - **Eval command fails:** Report the error output, ask user for correct command

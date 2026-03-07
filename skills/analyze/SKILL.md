@@ -86,25 +86,33 @@ Output:
 }
 ```
 
-### Try Different Approach
+### Try Different Approach (Pivot)
 **When:** Current HP tuning has plateaued but goal not reached
-- Last 2+ batches showed <1% improvement
-- Research proposals haven't been tried yet
-- Architectural changes might help more than HP tuning
 
-Provide concrete pivot actions (not just "try different approach"):
-- "Switch from HP-only tuning to research + code changes"
-- "Try a different code branch that hasn't been tested with this HP range"
-- "Increase batch size and retune LR with linear scaling"
-- "Add data augmentation (current model appears to be overfitting)"
+**Pivot Decision Tree** — evaluate conditions in order:
+
+1. **Budget check:** If `remaining_budget < 3`, do NOT pivot to research. Recommend stop with current best.
+2. **Branch coverage:**
+   - Untested branches exist → "Test untested code branches with baseline HPs"
+   - All branches tested but some with only 1-2 configs → "Increase HP exploration on promising branches (within 5% of best)"
+3. **Research status:**
+   - No research done AND `remaining_budget >= 5` → "Switch to research + code changes — HP tuning alone has plateaued"
+   - Research done but not all proposals implemented AND `remaining_budget >= 3` → "Implement next-priority research proposal"
+4. **Failure pattern:**
+   - >50% of recent experiments diverged → "Narrow search space — constrain LR to [best_lr × 0.5, best_lr × 2.0]"
+   - All experiments within 1% of each other → "Try qualitatively different change (different optimizer, scheduler, data augmentation)"
+   - Overfitting detected (train improving, val flat/degrading) → "Add regularization (weight_decay, dropout, data augmentation)"
+5. **Default:** "Continue with hybrid exploration/exploitation batch" with diminishing-returns warning.
 
 Output:
 ```json
 {
   "action": "pivot",
-  "reason": "<why current approach is insufficient>",
+  "reason": "<which condition from the decision tree triggered>",
+  "pivot_type": "<branch_test|hp_expand|research|narrow_space|qualitative_change|regularization>",
   "suggestion": "<specific actionable next step>",
-  "remaining_potential": "<estimated room for improvement>"
+  "remaining_potential": "<estimated room for improvement>",
+  "budget_remaining": "<N>"
 }
 ```
 

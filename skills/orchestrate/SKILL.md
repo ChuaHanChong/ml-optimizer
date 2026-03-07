@@ -41,7 +41,7 @@ You are an ML optimization orchestrator. You coordinate the full optimization pi
       - HP tuning only (fastest, no code changes)
       - HP tuning + architecture research (slower, potentially bigger gains)
       - Let me decide based on analysis
-   7. **Divergence metric name** _(skip for scikit-learn, XGBoost, or LightGBM — these train in a single fit() call with no iterative loss stream)_: What metric should be monitored for training divergence? (default: "loss". Common alternatives: "train_loss", "val_loss", "objective", "nll_loss", "perplexity" for LLMs). **Must be a lower-is-better metric** — divergence detection assumes lower values mean better training. For RL tasks where "reward" is the primary metric, still use "loss" for divergence monitoring.
+   7. **Divergence metric name** _(skip for scikit-learn, XGBoost, or LightGBM — these train in a single fit() call with no iterative loss stream)_: What metric should be monitored for training divergence? (default: "loss". Common alternatives: "train_loss", "val_loss", "objective", "nll_loss", "perplexity" for LLMs). **Must be a lower-is-better metric** — divergence detection assumes lower values mean better training. For RL tasks: if a policy/value loss is logged, use it. If only reward is logged, set divergence_metric to the reward metric name and note that the monitor skill will use reward-based heuristics (higher-is-better divergence detection).
    8. **Optimization type:** Are you optimizing training performance or inference performance? (This plugin focuses on **training** optimization — inference optimization like quantization, pruning, or ONNX conversion is out of scope.)
    9. **Anything else** I should know about this model or training setup?
    10. **Dataset location:** Where are your training and validation datasets?
@@ -98,6 +98,17 @@ You are an ML optimization orchestrator. You coordinate the full optimization pi
      - Divergence monitoring is typically unnecessary (training is fast, no iterative loss to watch)
      - The experiment budget should use the CPU fallback: `max(num_gpus, 1) × 5`
      - Set `divergence_metric` to `null` (do not ask Q7) and skip the monitor skill during Phase 6. Divergence detection is only meaningful for frameworks with iterative training loops.
+   - **RL detection:** If the codebase imports `gym`, `gymnasium`, `stable-baselines3`, `ray.rllib`, `tianshou`, or `cleanrl`:
+     - Set `model_category = "rl"` in user_choices
+     - The primary_metric is likely "reward" or "episode_return" — confirm with user
+     - Divergence metric: use policy/value loss if logged; otherwise use reward with `divergence_lower_is_better = False`
+     - Baseline eval: use average reward over N episodes (see baseline skill RL section)
+     - Training is episodic — throughput is measured in steps/sec or episodes/hour
+   - **Generative model detection:** If the codebase contains GAN discriminator/generator pairs, diffusion schedulers (`DDPMScheduler`, `noise_scheduler`), or VAE encoder/decoder with KL loss:
+     - Set `model_category = "generative"` with sub-type `"gan"`, `"diffusion"`, or `"vae"`
+     - For GANs: primary_metric is often FID or IS — confirm with user. Divergence metric: generator_loss or discriminator_loss
+     - For diffusion: primary_metric is often FID or LPIPS. Divergence metric: denoising loss
+     - For VAE: primary_metric is reconstruction quality. Watch for KL collapse (kl_term → 0)
 
 6. **Create optimization plan:**
    - Read `references/plan-template.md` for the template structure
@@ -143,7 +154,7 @@ Invoke the `ml-optimizer:prerequisites` skill with:
 **Check results** from `experiments/results/prerequisites.json`:
 - `ready_for_baseline = true` → proceed to Phase 3
 - `status = "partial"` → inform user of issues, ask if they want to proceed anyway or fix first
-- `status = "failed"` → stop and report. Cannot run baseline without valid data and environment
+- `status = "failed"` → run Phase 3 failure recovery (see below). If recovery also fails, stop and report.
 
 **If dataset was prepared** to a new directory:
 1. Read `prerequisites.json` → `dataset.prepared` field
@@ -167,6 +178,8 @@ user_choices = {
     "prepared_val_path": ...,    # from prerequisites.json, or null if no prep needed
     "env_manager": ...,
     "env_name": ...,
+    "divergence_lower_is_better": ...,  # True for loss-like metrics, False for reward-like metrics
+    "model_category": ...,              # "supervised", "rl", "generative", or null
 }
 ```
 
@@ -178,6 +191,24 @@ Invoke the `ml-optimizer:baseline` skill:
 - If `prepared_val_path` exists in `user_choices`, pass it similarly
 - Wait for baseline results
 - Store in `experiments/results/baseline.json`
+
+### Phase 3 Failure Recovery
+
+If baseline fails, diagnose from the error message in baseline.json or error tracker log:
+
+| Error Pattern | Action |
+|---------------|--------|
+| `FileNotFoundError` / data path invalid | Re-run Phase 2 (prerequisites) to validate paths |
+| `ModuleNotFoundError` / missing package | Re-run Phase 2 to install dependencies |
+| `CUDA out of memory` / OOM | Reduce batch size to 50% of current, retry baseline |
+| `RuntimeError: NCCL` / distributed error | Try single-GPU: set `CUDA_VISIBLE_DEVICES=0` |
+| Training script timed out / no output for >30 min | Reduce epochs/steps to minimum for baseline profiling |
+| `SyntaxError` / `IndentationError` | Code issue in user's project — report to user, cannot proceed |
+| Unknown error | Show full error via AskUserQuestion, ask for guidance |
+
+**Retry logic:** Attempt up to 2 retries with adjustments from the table above. Log each retry to the error tracker.
+
+**Skip-baseline fallback:** If all retries fail, offer to create a synthetic baseline.json with user-provided metric values. Mark profiling fields as `null`. This allows the experiment loop to proceed without throughput-based timeout estimation.
 
 ## Phase 4: User Checkpoint (Post-Baseline)
 
@@ -196,6 +227,15 @@ How would you like to proceed?
 3. I have research/papers to share (provide your own findings)
 4. Skip to experiments with specific configs
 ```
+
+### Phase 4, Option 3: User-Provided Papers
+
+If the user selects option 3:
+1. Use AskUserQuestion to collect paper URLs/paths (one per line)
+2. Store as `user_papers` list in pipeline state user_choices
+3. When invoking `ml-optimizer:research` in Phase 5, pass `user_papers`
+4. The research skill will analyze user papers FIRST before running web searches
+5. User-provided papers get a +2 confidence bonus in proposal ranking
 
 ## Phase 5: Research (Optional)
 
@@ -323,6 +363,13 @@ save_state(6, 0, [], '<exp_root>', user_choices={
 
 If the monitor skill cannot find `<divergence_metric>` in the logs, it will attempt auto-detection via a fallback chain (see monitor skill for details).
 
+### Polarity Conflict Rule
+
+- When `primary_metric == divergence_metric` (e.g., both "loss"): no conflict, both lower-is-better.
+- When they differ (e.g., primary="accuracy", divergence="loss"): no conflict, independent polarity.
+- When `divergence_metric` is higher-is-better (e.g., "reward" for RL): override monitor's `lower_is_better` to `False`. Divergence means metric dropped sharply, not exploded.
+- Store `divergence_lower_is_better` as a separate field in user_choices.
+
 ### Branch Dispatch Strategy
 
 When the implementation manifest contains multiple code branches:
@@ -346,6 +393,17 @@ When the implementation manifest contains multiple code branches:
    - It reads past results and proposes the next batch of configs
    - Number of configs = `min(max(num_gpus, 1), remaining_budget)` (capped to prevent budget overshoot)
 
+   ### HP-Tune Failure Recovery
+
+   If hp-tune crashes or produces invalid configs:
+
+   1. **Validate output:** Check each proposed config has required fields (`exp_id`, `config`, `gpu_id`), values are within search space bounds, and no duplicates of previously-tried configs.
+   2. **If validation fails:** Retry hp-tune once with a simplified prompt: "Propose {N} configs within these ranges: {search_space}. Return valid JSON only."
+   3. **If retry also fails:** Fall back to random sampling — pick `lr` uniformly from search space log-range, `batch_size` from allowed set, other HPs at baseline values. The orchestrator constructs the JSON directly.
+   4. **If all fallbacks fail:** Ask user to provide configs manually via AskUserQuestion.
+
+   Log each fallback step to error tracker with `category: "agent_failure"`, `source: "orchestrate"`.
+
 2. **Run experiments:**
    - For each proposed config, invoke `ml-optimizer:experiment` skill
    - Pass `code_branch` and `code_proposal` from the manifest (or null for HP-only)
@@ -359,7 +417,7 @@ When the implementation manifest contains multiple code branches:
      - `project_root`: Project root directory
      - `poll_interval`: Seconds between checks (default: 30)
      - `metric_to_watch`: `<divergence_metric>` from Phase 0 (default: `"loss"` — see Metric Routing Rule)
-     - `lower_is_better`: `true` (always for loss-based divergence monitoring)
+     - `lower_is_better`: `<divergence_lower_is_better>` from user_choices (True for loss-like metrics, False for reward-like metrics)
    - If divergence detected: the experiment is stopped automatically
    - Record divergence reason in experiment results
 
@@ -544,5 +602,7 @@ The following are currently out of scope. If the user requests them, explain the
 
 - **Inference optimization:** Quantization, pruning, ONNX export, TensorRT — these require a fundamentally different toolchain. Recommend dedicated tools instead.
 - **Multi-machine distributed training:** This plugin operates on a single machine with multiple GPUs. Cross-node training requires a different dispatch mechanism.
-- **Reinforcement learning:** The default tuning strategy assumes supervised/self-supervised training with a loss metric. RL workflows may work if a suitable divergence metric (e.g., negative reward, policy loss) is specified in Phase 0 Q7, but reward-shaped optimization may require a different approach for best results.
+- **Reinforcement learning (partial support):** RL workflows are supported with caveats. The plugin can tune RL hyperparameters and detect training divergence via policy loss or reward collapse. However, RL-specific features like reward shaping, curriculum learning, and multi-agent coordination are not orchestrated. If the user's RL setup logs standard metrics (loss, reward), the pipeline works.
 - **Multi-seed ensembling:** The pipeline runs one seed per experiment. Multi-seed evaluation would require significant orchestrator changes.
+- **Federated learning:** The plugin assumes all training data is locally accessible. Cross-device coordination and aggregation protocols are outside scope.
+- **Multi-objective Pareto optimization:** The plugin optimizes a single `primary_metric`. For multi-objective needs, use weighted scoring in hp-tune or run separate optimization sessions per metric.

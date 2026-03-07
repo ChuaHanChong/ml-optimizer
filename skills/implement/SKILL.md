@@ -326,9 +326,18 @@ New dependencies needed (install before experiments):
 
 ## Error Handling
 
-- **File not found:** If a file listed in the proposal doesn't exist, report it and skip that file. Mark the proposal as `implementation_error`.
-- **Syntax validation fails:** Keep the branch as-is (for debugging). Mark as `validation_failed`. The experiment skill will skip it.
-- **Import validation fails:** Check if a new dependency is needed. Flag it in `new_dependencies`. Mark as `validation_failed`.
+- **File not found:** If a file listed in the proposal doesn't exist, report it and skip that file. Mark the proposal as `implementation_error`. Log to error tracker:
+  ```bash
+  python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"implementation_error","severity":"warning","source":"implement","message":"File not found: <file_path> for proposal <name>","context":{"proposal_name":"<name>","proposal_slug":"<slug>"}}'
+  ```
+- **Syntax validation fails:** Keep the branch as-is (for debugging). Mark as `validation_failed`. The experiment skill will skip it. Log to error tracker:
+  ```bash
+  python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"implementation_error","severity":"warning","source":"implement","message":"Syntax validation failed for proposal <name>","context":{"proposal_name":"<name>","proposal_slug":"<slug>","files_modified":["<files>"]}}'
+  ```
+- **Import validation fails:** Check if a new dependency is needed. Flag it in `new_dependencies`. Mark as `validation_failed`. Log to error tracker:
+  ```bash
+  python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"implementation_error","severity":"warning","source":"implement","message":"Import validation failed for proposal <name>","context":{"proposal_name":"<name>","proposal_slug":"<slug>","implementation_strategy":"<strategy>"}}'
+  ```
 - **Git conflicts on branch creation:** If `ml-opt/<slug>` already exists, use a while loop to find an available name: `ml-opt/<slug>-2`, `ml-opt/<slug>-3`, etc.
 - **Not a git repo and no backup possible:** Report to user, do not proceed with modifications.
 

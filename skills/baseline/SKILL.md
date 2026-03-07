@@ -143,3 +143,22 @@ Return to the orchestrator:
 - **Eval command fails:** Report the error output, ask user for correct command
 - **No GPU available:** Run CPU-only baseline, note that throughput estimates won't be representative
 - **Metrics not parseable:** Show raw output, manually extract key numbers, note which metrics were found
+
+## Error Tracking
+
+At the following points, log an error event using the error tracker:
+
+### When evaluation command fails:
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"training_failure","severity":"critical","source":"baseline","message":"Baseline eval command failed: <error>","phase":2,"context":{"command":"<eval_command>","exit_code":<code>}}'
+```
+
+### When metrics are not parseable from output:
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"config_error","severity":"warning","source":"baseline","message":"Could not parse metrics from baseline output","phase":2,"context":{"output_preview":"<first 200 chars>"}}'
+```
+
+### When GPU profiling fails:
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"resource_error","severity":"info","source":"baseline","message":"GPU profiling failed — no GPU detected or nvidia-smi error","phase":2}'
+```

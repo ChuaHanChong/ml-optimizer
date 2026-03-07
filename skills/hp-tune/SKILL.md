@@ -111,6 +111,18 @@ Before finalizing, check each proposed config:
 4. **Within search space:** All values within defined ranges
 5. **Sensible combinations:** LR and batch size follow linear scaling rule
 
+## Step 4.5: Log Tuning Issues
+
+### If proposals duplicate previously tried configs (caught in step 4.3):
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"hp-tune","message":"Regenerated <N> proposals due to duplication with past configs","phase":5,"iteration":<iteration>}'
+```
+
+### If remaining_budget <= 0:
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"warning","source":"hp-tune","message":"Budget exhausted with <N> experiments completed","phase":5,"iteration":<iteration>,"context":{"total_experiments":<N>}}'
+```
+
 ## Step 5: Write Proposed Configs
 
 Create a directory for proposed configs:

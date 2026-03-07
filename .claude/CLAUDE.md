@@ -22,29 +22,33 @@ No build step. No linter configured. Python 3.10+ required. The `scripts/` direc
 
 ```
 .claude-plugin/plugin.json  — Plugin metadata (name, version)
-skills/                     — 9 skill definitions (SKILL.md files)
-agents/                     — 4 subagent definitions
+skills/                     — 11 skill definitions (SKILL.md files)
+agents/                     — 5 subagent definitions
 scripts/                    — Python utilities (stdlib only)
+memory/                     — Cross-project error patterns (persistent)
 tests/                      — pytest test suite
 ```
 
 ### Skill Pipeline (Orchestrator Flow)
 
-The `orchestrate` skill coordinates a 6-phase pipeline. Each skill is invoked via `ml-optimizer:<skill-name>`:
+The `orchestrate` skill coordinates a 7-phase pipeline. Each skill is invoked via `ml-optimizer:<skill-name>`:
 
 ```
-Phase 0: Discovery (plan mode, user Q&A)
+Phase 0: Discovery (plan mode, user Q&A — includes data paths and env manager)
 Phase 1: Understand model (read code, check GPUs)
-Phase 2: baseline → Establish baseline metrics
-Phase 3: User checkpoint
-Phase 4: research → Find techniques via web/papers
-Phase 4.5: implement → Apply proposals as git branches
-Phase 5: Experiment loop (autonomous):
+Phase 2: prerequisites → Validate dataset format, prepare data, install dependencies
+Phase 3: baseline → Establish baseline metrics
+Phase 4: User checkpoint
+Phase 5: research → Find techniques via web/papers
+Phase 5.5: implement → Apply proposals as git branches
+Phase 6: Experiment loop (autonomous):
          hp-tune → propose configs
          experiment → run training (parallel across GPUs)
          monitor → watch for divergence
          analyze → decide continue/pivot/stop
-Phase 6: report → Final optimization report
+         review → Mid-pipeline review (auto-triggered after 3+ consecutive all-fail batches)
+Phase 7: report → Final optimization report
+         review → Self-improvement analysis (optional, end-of-session)
 ```
 
 ### Metric Routing Rule
@@ -57,13 +61,14 @@ The implement skill creates `ml-opt/<slug>` branches per research proposal. The 
 
 ### Agent Definitions (`agents/`)
 
-Four subagent types with specified tool access:
+Five subagent types with specified tool access:
 - **research-agent**: WebSearch, WebFetch, Read, Write, Bash, Glob, Grep
 - **tuning-agent**: Read, Write, Bash, Glob, Grep
 - **implement-agent**: Bash, Read, Write, Edit, Glob, Grep, WebFetch
 - **experiment-agent**: Bash, Read, Write, Glob, Grep
+- **prerequisites-agent**: Bash, Read, Write, Glob, Grep
 
-Analytical agents (hp-tune, research, analyze, implement) use "ultrathink" prompting. Procedural agents (experiment, monitor) do not.
+Analytical agents (hp-tune, research, analyze, implement) use "ultrathink" prompting. Procedural agents (experiment, monitor, prerequisites) do not.
 
 ### Python Scripts (`scripts/`)
 
@@ -80,26 +85,33 @@ All scripts work as both importable modules and CLI tools:
 | `pipeline_state.py` | `python3 scripts/pipeline_state.py <exp_root> validate|save|load|cleanup` |
 | `schema_validator.py` | Validates JSON result files against expected schemas |
 | `plot_results.py` | Generates result visualizations |
+| `prerequisites_check.py` | `python3 scripts/prerequisites_check.py scan-imports\|check-packages\|detect-env\|detect-format\|detect-format-project\|validate-data\|bulk-install-cmd\|gpu-install-cmd` — dataset, environment, and GPU-aware install validation |
+| `error_tracker.py` | `python3 scripts/error_tracker.py <exp_root> log\|show\|patterns\|summary\|sync\|success\|proposals\|rank\|cleanup\|log-suggestion\|suggestion-history` — error tracking, pattern detection, success metrics, proposal outcomes, suggestion ranking, suggestion history |
 
 ### State & Output (in target project)
 
 The plugin creates `experiments/` in the user's project:
 ```
 experiments/
+  results/prerequisites.json         — Prerequisites check report
   results/baseline.json              — Baseline metrics
   results/exp-*.json                 — Per-experiment results
   results/implementation-manifest.json — Validated proposal branches
   results/proposed-configs/          — HP config proposals
+  prepared-data/                     — Prepared dataset (if preprocessing needed)
   pipeline-state.json                — Resumable pipeline state
   logs/<exp-id>/train.log            — Raw training logs
   reports/                           — Analysis reports, research findings
+  reports/error-log.json             — Structured error event log
+  reports/suggestion-history.json    — Suggestion feedback loop (tracks what was suggested)
+  reports/session-review.md          — Self-improvement review (from review skill)
   scripts/<exp-id>.sh                — Generated training scripts
   dev_notes.md                       — Running session log
 ```
 
 ### Pipeline Resumption
 
-The orchestrator can be stopped and resumed. On restart it reads `pipeline-state.json` and uses `cleanup_stale()` to handle interrupted experiments (marks them as failed after a timeout). Phase validation via `validate_phase_requirements()` prevents cascading failures. Pipeline state persists Phase 0 user choices (`primary_metric`, `divergence_metric`, `lower_is_better`, `target_value`, `train_command`, `eval_command`) via `save_state(user_choices={...})` so they survive interruptions without re-asking the user.
+The orchestrator can be stopped and resumed. On restart it reads `pipeline-state.json` and uses `cleanup_stale()` to handle interrupted experiments (marks them as failed after a timeout). Phase validation via `validate_phase_requirements()` prevents cascading failures. Pipeline state persists Phase 0 user choices (`primary_metric`, `divergence_metric`, `lower_is_better`, `target_value`, `train_command`, `eval_command`, `train_data_path`, `val_data_path`, `prepared_train_path`, `prepared_val_path`, `env_manager`, `env_name`) via `save_state(user_choices={...})` so they survive interruptions without re-asking the user.
 
 ## Key Design Patterns
 
@@ -111,7 +123,7 @@ The orchestrator can be stopped and resumed. On restart it reads `pipeline-state
 
 ## Test Fixtures
 
-`tests/fixtures/` contains a minimal PyTorch project (`tiny_resnet_cifar10/`), sample training logs (normal, divergent, OOM, tqdm, noisy), sample research findings (with and without reference repos), and sample result/config files. Used by the 359-test pytest suite.
+`tests/fixtures/` contains a minimal PyTorch project (`tiny_resnet_cifar10/`), sample training logs (normal, divergent, OOM, tqdm, noisy), sample research findings (with and without reference repos), sample result/config files, and a sample error log (`sample_error_log.json`). Used by the pytest suite.
 
 ## Gotchas
 
@@ -119,3 +131,4 @@ The orchestrator can be stopped and resumed. On restart it reads `pipeline-state
 - **`implement_utils.py` has three CLI modes**: default (parse proposals), `clone <url> <dest>`, and `analyze <path>`. Each has different argument patterns.
 - **Metric routing is split**: Monitor/divergence always uses loss (lower-is-better). Analyze/hp-tune use the user's `primary_metric`. Mixing these up causes silent wrong behavior.
 - **Branch experiments are independent**: Results on `ml-opt/branch-a` tell you nothing about what HPs will work on `ml-opt/branch-b`. The tuning agent must group by `code_branch` before analyzing trends.
+- **Mid-pipeline review auto-triggers**: After 3+ consecutive all-fail batches in Phase 6, the orchestrator automatically invokes the review skill with `scope: "session"` to suggest course corrections. It can also be invoked manually at end of session.

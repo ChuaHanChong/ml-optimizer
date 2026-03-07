@@ -22,6 +22,7 @@ From the orchestrator:
 - `current_metrics`: Current performance numbers
 - `problem_description`: What needs improvement
 - `user_papers`: Optional list of paper URLs or files provided by the user
+- `exp_root`: Path to experiments/ directory (for error logging)
 
 ## Step 1: Analyze User-Provided Papers (if any)
 
@@ -195,3 +196,27 @@ Return:
 - **Paper behind paywall:** Note the limitation, extract what's available from abstract
 - **No relevant results:** Broaden search terms, try related tasks/model types
 - **Contradictory findings:** Note both perspectives, let the user decide
+
+## Error Tracking
+
+At the following points, log an error event using the error tracker:
+
+### When WebSearch returns no useful results for a query:
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"research_failure","severity":"warning","source":"research","message":"No relevant results for query: <query>","phase":4,"context":{"query":"<query>","search_type":"web"}}'
+```
+
+### When all searches fail to produce any actionable proposals:
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"research_failure","severity":"critical","source":"research","message":"No actionable proposals found after <N> searches","phase":4,"context":{"searches_attempted":<N>}}'
+```
+
+### When a reference repo URL is unreachable or fails quality checks:
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"research_failure","severity":"warning","source":"research","message":"Reference repo unavailable: <url>","phase":4,"context":{"url":"<url>","proposal_name":"<name>"}}'
+```
+
+### When a paper is behind a paywall (info only):
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"research_failure","severity":"info","source":"research","message":"Paper behind paywall, only abstract available: <title>","phase":4,"context":{"paper_title":"<title>"}}'
+```

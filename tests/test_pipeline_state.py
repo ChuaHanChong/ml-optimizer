@@ -1,4 +1,12 @@
-"""Tests for pipeline_state.py."""
+"""Tests for pipeline_state.py.
+
+Phase numbering (after prerequisites addition):
+  Phase 2: prerequisites (no file requirements)
+  Phase 3: baseline (results/ dir, prerequisites.json warning)
+  Phase 4: checkpoint (baseline.json with metrics+config)
+  Phase 5: research (baseline.json exists)
+  Phase 6: experiment loop (baseline.json valid + manifest check)
+"""
 
 import json
 import sys
@@ -10,8 +18,160 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 from pipeline_state import validate_phase_requirements, save_state, load_state, cleanup_stale
 
 
-def test_validate_phase_requirements_phase5_valid(tmp_path):
-    """Phase 5 validates when baseline.json has proper schema."""
+# --- Phase 2: Prerequisites (no file requirements) ---
+
+
+def test_validate_phase2_always_valid(tmp_path):
+    """Phase 2 (prerequisites) has no file-based requirements."""
+    result = validate_phase_requirements(2, str(tmp_path))
+    assert result["valid"] is True
+    assert result["phase"] == 2
+    assert result["missing"] == []
+
+
+# --- Phase 3: Baseline (results/ dir + prerequisites warning) ---
+
+
+def test_validate_phase3_valid(tmp_path):
+    """Phase 3 passes when results/ directory exists."""
+    (tmp_path / "results").mkdir()
+    result = validate_phase_requirements(3, str(tmp_path))
+    assert result["valid"] is True
+    assert result["phase"] == 3
+    assert result["missing"] == []
+
+
+def test_validate_phase3_missing_results(tmp_path):
+    """Phase 3 fails when results/ directory does not exist."""
+    result = validate_phase_requirements(3, str(tmp_path))
+    assert result["valid"] is False
+    assert any("results" in m for m in result["missing"])
+
+
+def test_validate_phase3_prerequisites_not_ready_blocks(tmp_path):
+    """Phase 3 blocks when prerequisites.json says not ready for baseline."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    prereq = {"status": "failed", "dataset": {}, "environment": {}, "ready_for_baseline": False}
+    (results_dir / "prerequisites.json").write_text(json.dumps(prereq))
+    result = validate_phase_requirements(3, str(tmp_path))
+    assert result["valid"] is False
+    assert any("prerequisites" in m.lower() or "ready_for_baseline" in m.lower() for m in result["missing"])
+
+
+def test_validate_phase3_prerequisites_ready_no_warning(tmp_path):
+    """Phase 3 has no warning when prerequisites.json says ready."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    prereq = {"status": "ready", "dataset": {}, "environment": {}, "ready_for_baseline": True}
+    (results_dir / "prerequisites.json").write_text(json.dumps(prereq))
+    result = validate_phase_requirements(3, str(tmp_path))
+    assert result["valid"] is True
+    assert result["warnings"] == []
+
+
+def test_validate_phase3_prerequisites_corrupt_json_warns(tmp_path):
+    """Phase 3 warns when prerequisites.json is corrupt JSON."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    (results_dir / "prerequisites.json").write_text("{bad json")
+    result = validate_phase_requirements(3, str(tmp_path))
+    assert result["valid"] is True
+    assert any("prerequisites.json" in w for w in result["warnings"])
+
+
+def test_validate_phase3_no_prerequisites_file_ok(tmp_path):
+    """Phase 3 is fine without prerequisites.json (backward compat)."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    result = validate_phase_requirements(3, str(tmp_path))
+    assert result["valid"] is True
+    assert result["warnings"] == []
+
+
+# --- Phase 4: Checkpoint (baseline.json with metrics+config) ---
+
+
+def test_validate_phase4_valid(tmp_path):
+    """Phase 4 passes when baseline.json has metrics and config."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    baseline = {"metrics": {"loss": 0.5}, "config": {"lr": 0.001}}
+    (results_dir / "baseline.json").write_text(json.dumps(baseline))
+
+    result = validate_phase_requirements(4, str(tmp_path))
+    assert result["valid"] is True
+    assert result["missing"] == []
+
+
+def test_validate_phase4_missing_keys(tmp_path):
+    """Phase 4 fails when baseline.json is missing required keys."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    baseline = {"metrics": {"loss": 0.5}}  # missing 'config'
+    (results_dir / "baseline.json").write_text(json.dumps(baseline))
+
+    result = validate_phase_requirements(4, str(tmp_path))
+    assert result["valid"] is False
+    assert any("config" in m for m in result["missing"])
+
+
+def test_validate_phase4_corrupt_json(tmp_path):
+    """Phase 4 fails when baseline.json is corrupt JSON."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    (results_dir / "baseline.json").write_text("{bad json")
+    result = validate_phase_requirements(4, str(tmp_path))
+    assert result["valid"] is False
+    assert any("not valid JSON" in m for m in result["missing"])
+
+
+def test_validate_phase4_missing_baseline_file(tmp_path):
+    """Phase 4 fails when baseline.json does not exist."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    result = validate_phase_requirements(4, str(tmp_path))
+    assert result["valid"] is False
+    assert any("baseline.json" in m for m in result["missing"])
+
+
+def test_validate_phase4_missing_metrics_key(tmp_path):
+    """Phase 4 fails when baseline.json has config but not metrics."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    (results_dir / "baseline.json").write_text(json.dumps({"config": {"lr": 0.001}}))
+    result = validate_phase_requirements(4, str(tmp_path))
+    assert result["valid"] is False
+    assert any("metrics" in m for m in result["missing"])
+
+
+# --- Phase 5: Research (baseline.json exists) ---
+
+
+def test_validate_phase5_valid(tmp_path):
+    """Phase 5 passes when baseline.json exists."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    (results_dir / "baseline.json").write_text(json.dumps({"metrics": {}, "config": {}}))
+
+    result = validate_phase_requirements(5, str(tmp_path))
+    assert result["valid"] is True
+    assert result["missing"] == []
+
+
+def test_validate_phase5_missing_baseline(tmp_path):
+    """Phase 5 fails when baseline.json does not exist."""
+    (tmp_path / "results").mkdir()
+    result = validate_phase_requirements(5, str(tmp_path))
+    assert result["valid"] is False
+    assert any("baseline.json" in m for m in result["missing"])
+
+
+# --- Phase 6: Experiment loop (baseline valid + manifest check) ---
+
+
+def test_validate_phase6_valid(tmp_path):
+    """Phase 6 validates when baseline.json has proper schema."""
     results_dir = tmp_path / "results"
     results_dir.mkdir()
     baseline = {
@@ -20,27 +180,27 @@ def test_validate_phase_requirements_phase5_valid(tmp_path):
     }
     (results_dir / "baseline.json").write_text(json.dumps(baseline))
 
-    result = validate_phase_requirements(5, str(tmp_path))
+    result = validate_phase_requirements(6, str(tmp_path))
     assert result["valid"] is True
-    assert result["phase"] == 5
+    assert result["phase"] == 6
     assert result["missing"] == []
     assert result["warnings"] == []
 
 
-def test_validate_phase_requirements_phase5_missing_baseline(tmp_path):
-    """Phase 5 fails when baseline.json does not exist."""
+def test_validate_phase6_missing_baseline(tmp_path):
+    """Phase 6 fails when baseline.json does not exist."""
     results_dir = tmp_path / "results"
     results_dir.mkdir()
 
-    result = validate_phase_requirements(5, str(tmp_path))
+    result = validate_phase_requirements(6, str(tmp_path))
     assert result["valid"] is False
-    assert result["phase"] == 5
+    assert result["phase"] == 6
     assert len(result["missing"]) > 0
     assert any("baseline.json" in m for m in result["missing"])
 
 
-def test_validate_phase_requirements_phase5_invalid_manifest(tmp_path):
-    """Phase 5 warns when implementation-manifest.json lacks 'proposals' key."""
+def test_validate_phase6_invalid_manifest(tmp_path):
+    """Phase 6 warns when implementation-manifest.json lacks 'proposals' key."""
     results_dir = tmp_path / "results"
     results_dir.mkdir()
     baseline = {
@@ -51,12 +211,56 @@ def test_validate_phase_requirements_phase5_invalid_manifest(tmp_path):
     manifest = {"items": ["something"]}
     (results_dir / "implementation-manifest.json").write_text(json.dumps(manifest))
 
-    result = validate_phase_requirements(5, str(tmp_path))
+    result = validate_phase_requirements(6, str(tmp_path))
     assert result["valid"] is True
-    assert result["phase"] == 5
+    assert result["phase"] == 6
     assert result["missing"] == []
     assert len(result["warnings"]) > 0
     assert any("proposals" in w for w in result["warnings"])
+
+
+def test_validate_phase6_corrupt_json(tmp_path):
+    """Phase 6 fails when baseline.json is corrupt JSON."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    (results_dir / "baseline.json").write_text("{bad")
+    result = validate_phase_requirements(6, str(tmp_path))
+    assert result["valid"] is False
+    assert any("not valid JSON" in m for m in result["missing"])
+
+
+def test_validate_phase6_missing_metrics_key(tmp_path):
+    """Phase 6 fails when baseline.json is missing metrics."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    (results_dir / "baseline.json").write_text(json.dumps({"config": {"lr": 0.001}}))
+    result = validate_phase_requirements(6, str(tmp_path))
+    assert result["valid"] is False
+    assert any("metrics" in m for m in result["missing"])
+
+
+def test_validate_phase6_missing_config_key(tmp_path):
+    """Phase 6 fails when baseline.json is missing config."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    (results_dir / "baseline.json").write_text(json.dumps({"metrics": {"loss": 0.5}}))
+    result = validate_phase_requirements(6, str(tmp_path))
+    assert result["valid"] is False
+    assert any("config" in m for m in result["missing"])
+
+
+def test_validate_phase6_corrupt_manifest(tmp_path):
+    """Phase 6 warns when manifest is corrupt JSON."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    (results_dir / "baseline.json").write_text(json.dumps({"metrics": {"loss": 0.5}, "config": {"lr": 0.001}}))
+    (results_dir / "implementation-manifest.json").write_text("{bad")
+    result = validate_phase_requirements(6, str(tmp_path))
+    assert result["valid"] is True
+    assert any("not valid JSON" in w for w in result["warnings"])
+
+
+# --- save_state / load_state ---
 
 
 def test_save_and_load_state(tmp_path):
@@ -84,7 +288,7 @@ def test_save_and_load_state_with_user_choices(tmp_path):
         "lower_is_better": False,
         "target_value": 0.95,
     }
-    save_state(5, 1, ["exp-001"], str(tmp_path), user_choices=choices)
+    save_state(6, 1, ["exp-001"], str(tmp_path), user_choices=choices)
     state = load_state(str(tmp_path))
     assert state is not None
     assert state["user_choices"] == choices
@@ -100,65 +304,6 @@ def test_save_state_without_user_choices_has_no_key(tmp_path):
     assert "user_choices" not in state
 
 
-def test_validate_phase2_valid(tmp_path):
-    """Phase 2 passes when results/ directory exists."""
-    (tmp_path / "results").mkdir()
-    result = validate_phase_requirements(2, str(tmp_path))
-    assert result["valid"] is True
-    assert result["phase"] == 2
-    assert result["missing"] == []
-
-
-def test_validate_phase2_missing_results(tmp_path):
-    """Phase 2 fails when results/ directory does not exist."""
-    result = validate_phase_requirements(2, str(tmp_path))
-    assert result["valid"] is False
-    assert any("results" in m for m in result["missing"])
-
-
-def test_validate_phase3_valid(tmp_path):
-    """Phase 3 passes when baseline.json has metrics and config."""
-    results_dir = tmp_path / "results"
-    results_dir.mkdir()
-    baseline = {"metrics": {"loss": 0.5}, "config": {"lr": 0.001}}
-    (results_dir / "baseline.json").write_text(json.dumps(baseline))
-
-    result = validate_phase_requirements(3, str(tmp_path))
-    assert result["valid"] is True
-    assert result["missing"] == []
-
-
-def test_validate_phase3_missing_keys(tmp_path):
-    """Phase 3 fails when baseline.json is missing required keys."""
-    results_dir = tmp_path / "results"
-    results_dir.mkdir()
-    baseline = {"metrics": {"loss": 0.5}}  # missing 'config'
-    (results_dir / "baseline.json").write_text(json.dumps(baseline))
-
-    result = validate_phase_requirements(3, str(tmp_path))
-    assert result["valid"] is False
-    assert any("config" in m for m in result["missing"])
-
-
-def test_validate_phase4_valid(tmp_path):
-    """Phase 4 passes when baseline.json exists."""
-    results_dir = tmp_path / "results"
-    results_dir.mkdir()
-    (results_dir / "baseline.json").write_text(json.dumps({"metrics": {}, "config": {}}))
-
-    result = validate_phase_requirements(4, str(tmp_path))
-    assert result["valid"] is True
-    assert result["missing"] == []
-
-
-def test_validate_phase4_missing_baseline(tmp_path):
-    """Phase 4 fails when baseline.json does not exist."""
-    (tmp_path / "results").mkdir()
-    result = validate_phase_requirements(4, str(tmp_path))
-    assert result["valid"] is False
-    assert any("baseline.json" in m for m in result["missing"])
-
-
 def test_load_state_corrupt_json(tmp_path):
     """Loading corrupt JSON returns None."""
     (tmp_path / "pipeline-state.json").write_text("{invalid json")
@@ -166,11 +311,19 @@ def test_load_state_corrupt_json(tmp_path):
     assert state is None
 
 
+def test_load_state_no_file(tmp_path):
+    """Loading state when no file exists returns None."""
+    assert load_state(str(tmp_path)) is None
+
+
+# --- cleanup_stale ---
+
+
 def test_cleanup_stale_skips_recent(tmp_path):
     """A recently-updated running state should NOT be cleaned up."""
     recent_time = datetime.now(timezone.utc) - timedelta(minutes=5)
     state = {
-        "phase": 5,
+        "phase": 6,
         "iteration": 1,
         "running_experiments": ["exp-001"],
         "timestamp": recent_time.isoformat(),
@@ -190,7 +343,7 @@ def test_cleanup_stale(tmp_path):
     """A stale pipeline-state.json (3 hours old) gets marked as interrupted."""
     stale_time = datetime.now(timezone.utc) - timedelta(hours=3)
     state = {
-        "phase": 4,
+        "phase": 5,
         "iteration": 1,
         "running_experiments": ["exp-001"],
         "timestamp": stale_time.isoformat(),
@@ -208,87 +361,6 @@ def test_cleanup_stale(tmp_path):
     assert "interrupted_at" in updated
 
 
-# --- Validation error paths ---
-
-
-def test_validate_phase3_corrupt_json(tmp_path):
-    """Phase 3 fails when baseline.json is corrupt JSON."""
-    results_dir = tmp_path / "results"
-    results_dir.mkdir()
-    (results_dir / "baseline.json").write_text("{bad json")
-    result = validate_phase_requirements(3, str(tmp_path))
-    assert result["valid"] is False
-    assert any("not valid JSON" in m for m in result["missing"])
-
-
-def test_validate_phase3_missing_baseline_file(tmp_path):
-    """Phase 3 fails when baseline.json does not exist."""
-    results_dir = tmp_path / "results"
-    results_dir.mkdir()
-    result = validate_phase_requirements(3, str(tmp_path))
-    assert result["valid"] is False
-    assert any("baseline.json" in m for m in result["missing"])
-
-
-def test_validate_phase3_missing_metrics_key(tmp_path):
-    """Phase 3 fails when baseline.json has config but not metrics."""
-    results_dir = tmp_path / "results"
-    results_dir.mkdir()
-    (results_dir / "baseline.json").write_text(json.dumps({"config": {"lr": 0.001}}))
-    result = validate_phase_requirements(3, str(tmp_path))
-    assert result["valid"] is False
-    assert any("metrics" in m for m in result["missing"])
-
-
-def test_validate_phase5_corrupt_json(tmp_path):
-    """Phase 5 fails when baseline.json is corrupt JSON."""
-    results_dir = tmp_path / "results"
-    results_dir.mkdir()
-    (results_dir / "baseline.json").write_text("{bad")
-    result = validate_phase_requirements(5, str(tmp_path))
-    assert result["valid"] is False
-    assert any("not valid JSON" in m for m in result["missing"])
-
-
-def test_validate_phase5_missing_metrics_key(tmp_path):
-    """Phase 5 fails when baseline.json is missing metrics."""
-    results_dir = tmp_path / "results"
-    results_dir.mkdir()
-    (results_dir / "baseline.json").write_text(json.dumps({"config": {"lr": 0.001}}))
-    result = validate_phase_requirements(5, str(tmp_path))
-    assert result["valid"] is False
-    assert any("metrics" in m for m in result["missing"])
-
-
-def test_validate_phase5_missing_config_key(tmp_path):
-    """Phase 5 fails when baseline.json is missing config."""
-    results_dir = tmp_path / "results"
-    results_dir.mkdir()
-    (results_dir / "baseline.json").write_text(json.dumps({"metrics": {"loss": 0.5}}))
-    result = validate_phase_requirements(5, str(tmp_path))
-    assert result["valid"] is False
-    assert any("config" in m for m in result["missing"])
-
-
-def test_validate_phase5_corrupt_manifest(tmp_path):
-    """Phase 5 warns when manifest is corrupt JSON."""
-    results_dir = tmp_path / "results"
-    results_dir.mkdir()
-    (results_dir / "baseline.json").write_text(json.dumps({"metrics": {"loss": 0.5}, "config": {"lr": 0.001}}))
-    (results_dir / "implementation-manifest.json").write_text("{bad")
-    result = validate_phase_requirements(5, str(tmp_path))
-    assert result["valid"] is True
-    assert any("not valid JSON" in w for w in result["warnings"])
-
-
-# --- load_state / cleanup_stale ---
-
-
-def test_load_state_no_file(tmp_path):
-    """Loading state when no file exists returns None."""
-    assert load_state(str(tmp_path)) is None
-
-
 def test_cleanup_stale_corrupt_state_json(tmp_path):
     """Corrupt pipeline-state.json is handled gracefully."""
     (tmp_path / "pipeline-state.json").write_text("{bad")
@@ -300,7 +372,7 @@ def test_cleanup_stale_naive_timestamp(tmp_path):
     """Naive timestamp (no tzinfo) is treated as UTC."""
     naive_time = (datetime.now(timezone.utc) - timedelta(hours=3)).replace(tzinfo=None)
     state = {
-        "phase": 5,
+        "phase": 6,
         "iteration": 1,
         "running_experiments": [],
         "timestamp": naive_time.isoformat(),
@@ -315,7 +387,7 @@ def test_cleanup_stale_naive_timestamp(tmp_path):
 def test_cleanup_stale_invalid_timestamp(tmp_path):
     """Invalid timestamp string is handled gracefully (no crash)."""
     state = {
-        "phase": 5,
+        "phase": 6,
         "iteration": 1,
         "running_experiments": [],
         "timestamp": "not-a-date",
@@ -330,7 +402,7 @@ def test_cleanup_stale_invalid_timestamp(tmp_path):
 def test_cleanup_stale_missing_timestamp(tmp_path):
     """State file with status=running but no timestamp key: no crash, no cleanup."""
     state = {
-        "phase": 5,
+        "phase": 6,
         "iteration": 1,
         "running_experiments": [],
         "status": "running",
@@ -400,7 +472,7 @@ def test_cli_validate(run_main, tmp_path):
     results_dir = tmp_path / "results"
     results_dir.mkdir()
     (results_dir / "baseline.json").write_text(json.dumps({"metrics": {"loss": 0.5}, "config": {"lr": 0.001}}))
-    r = run_main("pipeline_state.py", str(tmp_path), "validate", "3")
+    r = run_main("pipeline_state.py", str(tmp_path), "validate", "4")
     assert r.returncode == 0
     output = json.loads(r.stdout)
     assert output["valid"] is True
@@ -447,7 +519,7 @@ def test_cli_validate_non_integer_phase(run_main, tmp_path):
 
 def test_cli_save_invalid_args(run_main, tmp_path):
     """CLI save with non-integer iteration exits cleanly."""
-    r = run_main("pipeline_state.py", str(tmp_path), "save", "5", "not_int")
+    r = run_main("pipeline_state.py", str(tmp_path), "save", "6", "not_int")
     assert r.returncode == 1
     assert "Error" in r.stdout
     assert "iteration" in r.stdout.lower()
@@ -458,3 +530,17 @@ def test_cli_unknown_action(run_main, tmp_path):
     r = run_main("pipeline_state.py", str(tmp_path), "bogus")
     assert r.returncode == 1
     assert "unknown" in r.stdout.lower()
+
+
+# --- Phase 3: prerequisites.json blocks when ready_for_baseline=false ---
+
+
+def test_validate_phase3_blocks_on_failed_prerequisites(tmp_path):
+    """Phase 3 should BLOCK (not just warn) when prerequisites say not ready."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    prereq = {"status": "failed", "dataset": {}, "environment": {}, "ready_for_baseline": False}
+    (results_dir / "prerequisites.json").write_text(json.dumps(prereq))
+    result = validate_phase_requirements(3, str(tmp_path))
+    assert result["valid"] is False
+    assert any("prerequisites" in m.lower() or "ready_for_baseline" in m.lower() for m in result["missing"])

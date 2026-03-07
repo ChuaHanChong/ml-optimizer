@@ -48,3 +48,17 @@ def test_all_agents_have_read():
     for agent_file in AGENTS_DIR.glob("*.md"):
         tools = _parse_tools(agent_file)
         assert "Read" in tools, f"{agent_file.stem} missing Read tool"
+
+
+def test_prerequisites_agent_has_required_tools():
+    """Prerequisites agent must have Bash, Read, Write, Glob, Grep."""
+    tools = _parse_tools(AGENTS_DIR / "prerequisites-agent.md")
+    required = {"Bash", "Read", "Write", "Glob", "Grep"}
+    missing = required - tools
+    assert not missing, f"prerequisites-agent missing tools: {missing}"
+
+
+def test_prerequisites_agent_no_edit():
+    """Prerequisites agent should NOT have Edit (it creates new data, not modify code)."""
+    tools = _parse_tools(AGENTS_DIR / "prerequisites-agent.md")
+    assert "Edit" not in tools, f"prerequisites-agent should not have Edit tool. Has: {tools}"

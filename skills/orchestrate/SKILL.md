@@ -13,7 +13,7 @@ You are an ML optimization orchestrator. You coordinate the full optimization pi
 
 - Plan template: `references/plan-template.md` (in this skill's directory)
 - Log format specs: `references/log-formats.md` (in this skill's directory)
-- Python scripts: `~/.claude/plugins/ml-optimizer/scripts/` (gpu_check.py, parse_logs.py, detect_divergence.py, result_analyzer.py, experiment_setup.py, implement_utils.py, pipeline_state.py, schema_validator.py, plot_results.py)
+- Python scripts: `~/.claude/plugins/ml-optimizer/scripts/` (gpu_check.py, parse_logs.py, detect_divergence.py, result_analyzer.py, experiment_setup.py, implement_utils.py, pipeline_state.py, schema_validator.py, plot_results.py, prerequisites_check.py)
 
 ## Phase 0: Discovery & Planning (MANDATORY)
 
@@ -44,6 +44,10 @@ You are an ML optimization orchestrator. You coordinate the full optimization pi
    7. **Divergence metric name:** What metric should be monitored for training divergence? (default: "loss". Common alternatives: "train_loss", "val_loss", "objective", "nll_loss", "perplexity" for LLMs). **Must be a lower-is-better metric** — divergence detection assumes lower values mean better training. For RL tasks where "reward" is the primary metric, still use "loss" for divergence monitoring.
    8. **Optimization type:** Are you optimizing training performance or inference performance? (This plugin focuses on **training** optimization — inference optimization like quantization, pruning, or ONNX conversion is out of scope.)
    9. **Anything else** I should know about this model or training setup?
+   10. **Dataset location:** Where are your training and validation datasets?
+       - Directory path(s), or "embedded in code" if the training script downloads/generates data
+   11. **Environment:** Which environment manager do you use?
+       - conda (environment name?) / uv / pip / venv / poetry / other
    ```
 
 3. **Record user responses:**
@@ -116,14 +120,58 @@ You are an ML optimization orchestrator. You coordinate the full optimization pi
    Does this match your expectations? Any adjustments?
    ```
 
-## Phase 2: Establish Baseline
+## Phase 2: Prerequisites Check
+
+Invoke the `ml-optimizer:prerequisites` skill with:
+- `project_root`: Project root directory
+- `framework`: ML framework detected in Phase 1
+- `training_script`: Path to the main training script from Phase 1
+- `config_path`: Path to training config from Phase 1 (if found)
+- `train_data_path`: From Phase 0 Q10
+- `val_data_path`: From Phase 0 Q10 (if separate)
+- `env_manager`: From Phase 0 Q11
+- `env_name`: From Phase 0 Q11 (if conda)
+
+**Check results** from `experiments/results/prerequisites.json`:
+- `ready_for_baseline = true` → proceed to Phase 3
+- `status = "partial"` → inform user of issues, ask if they want to proceed anyway or fix first
+- `status = "failed"` → stop and report. Cannot run baseline without valid data and environment
+
+**If dataset was prepared** to a new directory:
+1. Read `prerequisites.json` → `dataset.prepared` field
+2. If `true`, extract `dataset.prepared_train_path` and `dataset.prepared_val_path`
+3. Store these as `prepared_train_path` and `prepared_val_path` in `user_choices` (see below)
+4. When invoking baseline (Phase 3) and experiments (Phase 6), pass these prepared paths so training uses the prepared data instead of the original paths
+5. **Training command update:** If the training command contains the original `train_data_path` as a CLI argument, substitute the prepared path. For example: if `train_command` is `python train.py --data_dir /original/path`, replace it with `python train.py --data_dir /prepared/path`. If data paths are in a config file, create a modified config copy.
+
+Persist Phase 0 user choices including data/env info in `user_choices`:
+```
+user_choices = {
+    "primary_metric": ...,
+    "divergence_metric": ...,
+    "lower_is_better": ...,
+    "target_value": ...,
+    "train_command": ...,
+    "eval_command": ...,
+    "train_data_path": ...,
+    "val_data_path": ...,
+    "prepared_train_path": ...,  # from prerequisites.json, or null if no prep needed
+    "prepared_val_path": ...,    # from prerequisites.json, or null if no prep needed
+    "env_manager": ...,
+    "env_name": ...,
+}
+```
+
+## Phase 3: Establish Baseline
 
 Invoke the `ml-optimizer:baseline` skill:
 - Pass the training command, eval command, and project root
+- If `prepared_train_path` exists in `user_choices`, pass it so baseline uses the prepared data
+- If `prepared_val_path` exists in `user_choices`, pass it similarly
 - Wait for baseline results
 - Store in `experiments/results/baseline.json`
 
-## Phase 3: User Checkpoint (Post-Baseline)
+## Phase 4: User Checkpoint (Post-Baseline)
 
 Use AskUserQuestion to show baseline results and ask for direction:
 
@@ -141,7 +189,7 @@ How would you like to proceed?
 4. Skip to experiments with specific configs
 ```
 
-## Phase 4: Research (Optional)
+## Phase 5: Research (Optional)
 
 If the user chose research, invoke the `ml-optimizer:research` skill with parameters:
 - `model_type`: Type of model (from Phase 1)
@@ -166,7 +214,7 @@ Which proposals should I pursue?
 - [4] Skip research, just tune HPs
 ```
 
-## Phase 4.5: Implement Research Proposals
+## Phase 5.5: Implement Research Proposals
 
 If the user selected research proposals that require code changes (not just HP tuning):
 
@@ -198,7 +246,7 @@ If the user selected research proposals that require code changes (not just HP t
 
 5. **If conflicts detected** → Inform user which proposals touch the same files. Each is on its own branch, so experiments run independently, but merging winners later may need manual conflict resolution.
 
-## Phase 5: Experiment Loop (Autonomous)
+## Phase 6: Experiment Loop (Autonomous)
 
 This loop runs autonomously without user checkpoints until complete or blocked.
 
@@ -210,7 +258,7 @@ Before starting the experiment loop, validate all prerequisites:
 python3 -c "
 import sys; sys.path.insert(0, '$HOME/.claude/plugins/ml-optimizer/scripts')
 from pipeline_state import validate_phase_requirements
-import json; print(json.dumps(validate_phase_requirements(5, '<exp_root>')))
+import json; print(json.dumps(validate_phase_requirements(6, '<exp_root>')))
 "
 ```
 
@@ -239,13 +287,19 @@ Save Phase 0 user choices into pipeline state so they persist across interruptio
 python3 -c "
 import sys, json; sys.path.insert(0, '$HOME/.claude/plugins/ml-optimizer/scripts')
 from pipeline_state import save_state
-save_state(5, 0, [], '<exp_root>', user_choices={
+save_state(6, 0, [], '<exp_root>', user_choices={
     'primary_metric': '<primary_metric>',
     'divergence_metric': '<divergence_metric>',
     'lower_is_better': <lower_is_better>,
     'target_value': <target_value or None>,
     'train_command': '<train_command>',
     'eval_command': '<eval_command or None>',
+    'train_data_path': '<train_data_path>',
+    'val_data_path': '<val_data_path or None>',
+    'prepared_train_path': '<prepared_train_path or None>',
+    'prepared_val_path': '<prepared_val_path or None>',
+    'env_manager': '<env_manager>',
+    'env_name': '<env_name or None>',
 })
 "
 ```
@@ -331,7 +385,7 @@ When dispatching experiments across multiple GPUs, use the Agent tool with `suba
 For each config in proposed_configs:
   Agent(
     description: "Run experiment {exp_id}",
-    prompt: "Use the ml-optimizer:experiment skill to run experiment {exp_id} with config: {config_json}. GPU: {gpu_id}. Project root: {project_root}. Train command: {train_command}. Eval command: {eval_command or null}. Code branch: {code_branch or null}. Code proposal: {code_proposal or null}.",
+    prompt: "Use the ml-optimizer:experiment skill to run experiment {exp_id} with config: {config_json}. GPU: {gpu_id}. Project root: {project_root}. Train command: {train_command}. Eval command: {eval_command or null}. Code branch: {code_branch or null}. Code proposal: {code_proposal or null}. Prepared train path: {prepared_train_path or null}. Prepared val path: {prepared_val_path or null}.",
     subagent_type: "general-purpose",
     run_in_background: true
   )
@@ -351,7 +405,7 @@ Agent(
 )
 ```
 
-## Phase 6: Report
+## Phase 7: Report
 
 After the experiment loop exits:
 
@@ -410,7 +464,7 @@ All state is persisted in the `experiments/` directory:
 The orchestrator can be stopped and resumed:
 1. On start, check for `pipeline-state.json` via `pipeline_state.load_state()`
 2. If state exists and status is "running", run `pipeline_state.cleanup_stale()` to handle interrupted experiments
-3. Restore Phase 0 user choices from `state["user_choices"]` (primary_metric, divergence_metric, lower_is_better, target_value, train_command, eval_command) — do NOT re-ask the user
+3. Restore Phase 0 user choices from `state["user_choices"]` (primary_metric, divergence_metric, lower_is_better, target_value, train_command, eval_command, train_data_path, val_data_path, prepared_train_path, prepared_val_path, env_manager, env_name) — do NOT re-ask the user
 4. Resume from the recorded phase and iteration
 5. Read all past results to understand what has been tried
 

@@ -639,29 +639,33 @@ class TestPipelineStateIntegration:
 
     def test_validate_phase_sequence(self, tmp_path):
         exp_root = str(tmp_path / "exp")
-        # Phase 2 needs results/ dir
+        # Phase 2 (prerequisites) — always valid, no file requirements
         result = validate_phase_requirements(2, exp_root)
+        assert result["valid"]
+
+        # Phase 3 (baseline) needs results/ dir
+        result = validate_phase_requirements(3, exp_root)
         assert not result["valid"]
         # Create results dir
         (tmp_path / "exp" / "results").mkdir(parents=True)
-        assert validate_phase_requirements(2, exp_root)["valid"]
-
-        # Phase 3 needs baseline.json with metrics + config
-        assert not validate_phase_requirements(3, exp_root)["valid"]
-        baseline = {"exp_id": "baseline", "config": {"lr": 0.01}, "metrics": {"loss": 1.5}, "status": "completed"}
-        (tmp_path / "exp" / "results" / "baseline.json").write_text(json.dumps(baseline))
         assert validate_phase_requirements(3, exp_root)["valid"]
 
-        # Phase 4 needs baseline.json
+        # Phase 4 (checkpoint) needs baseline.json with metrics + config
+        assert not validate_phase_requirements(4, exp_root)["valid"]
+        baseline = {"exp_id": "baseline", "config": {"lr": 0.01}, "metrics": {"loss": 1.5}, "status": "completed"}
+        (tmp_path / "exp" / "results" / "baseline.json").write_text(json.dumps(baseline))
         assert validate_phase_requirements(4, exp_root)["valid"]
 
-        # Phase 5 needs baseline.json with metrics+config
+        # Phase 5 (research) needs baseline.json
         assert validate_phase_requirements(5, exp_root)["valid"]
 
-    def test_invalid_phase5_without_baseline(self, tmp_path):
+        # Phase 6 (experiment loop) needs baseline.json with metrics+config
+        assert validate_phase_requirements(6, exp_root)["valid"]
+
+    def test_invalid_phase6_without_baseline(self, tmp_path):
         exp_root = str(tmp_path / "exp")
         (tmp_path / "exp" / "results").mkdir(parents=True)
-        result = validate_phase_requirements(5, exp_root)
+        result = validate_phase_requirements(6, exp_root)
         assert not result["valid"]
         assert any("baseline" in m for m in result["missing"])
 

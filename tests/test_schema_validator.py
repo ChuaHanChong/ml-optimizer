@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
-from schema_validator import validate_result, validate_baseline, validate_manifest, validate_file
+from schema_validator import validate_result, validate_baseline, validate_manifest, validate_file, validate_prerequisites
 
 
 def test_validate_result_valid():
@@ -425,3 +425,232 @@ def test_cli_no_args(run_main):
     r = run_main("schema_validator.py")
     assert r.returncode == 1
     assert "Usage" in r.stdout
+
+
+# --- validate_prerequisites tests ---
+
+
+def test_validate_prerequisites_valid():
+    """A fully valid prerequisites report passes validation."""
+    data = {
+        "status": "ready",
+        "dataset": {
+            "train_path": "/data/train",
+            "format_detected": "image_folder",
+            "validation_passed": True,
+        },
+        "environment": {
+            "manager": "conda",
+            "packages_installed": ["torch"],
+            "all_imports_resolved": True,
+        },
+        "ready_for_baseline": True,
+    }
+    result = validate_prerequisites(data)
+    assert result["valid"] is True
+    assert result["errors"] == []
+    assert result["warnings"] == []
+
+
+def test_validate_prerequisites_partial_status():
+    """A prerequisites report with partial status passes validation."""
+    data = {
+        "status": "partial",
+        "dataset": {"notes": "format unknown"},
+        "environment": {"notes": "missing packages"},
+        "ready_for_baseline": False,
+    }
+    result = validate_prerequisites(data)
+    assert result["valid"] is True
+
+
+def test_validate_prerequisites_missing_required_field():
+    """A prerequisites report missing 'dataset' fails validation."""
+    data = {
+        "status": "ready",
+        "environment": {},
+        "ready_for_baseline": True,
+    }
+    result = validate_prerequisites(data)
+    assert result["valid"] is False
+    assert any("dataset" in e for e in result["errors"])
+
+
+def test_validate_prerequisites_invalid_status():
+    """A prerequisites report with invalid status fails."""
+    data = {
+        "status": "unknown",
+        "dataset": {},
+        "environment": {},
+        "ready_for_baseline": True,
+    }
+    result = validate_prerequisites(data)
+    assert result["valid"] is False
+    assert any("unknown" in e for e in result["errors"])
+
+
+def test_validate_prerequisites_non_dict_dataset():
+    """A prerequisites report with non-dict dataset fails."""
+    data = {
+        "status": "ready",
+        "dataset": "not a dict",
+        "environment": {},
+        "ready_for_baseline": True,
+    }
+    result = validate_prerequisites(data)
+    assert result["valid"] is False
+    assert any("dataset" in e and "dict" in e for e in result["errors"])
+
+
+def test_validate_prerequisites_non_dict_environment():
+    """A prerequisites report with non-dict environment fails."""
+    data = {
+        "status": "ready",
+        "dataset": {},
+        "environment": ["not", "a", "dict"],
+        "ready_for_baseline": True,
+    }
+    result = validate_prerequisites(data)
+    assert result["valid"] is False
+    assert any("environment" in e and "dict" in e for e in result["errors"])
+
+
+def test_validate_prerequisites_non_bool_ready_for_baseline():
+    """A prerequisites report with non-bool ready_for_baseline fails."""
+    data = {
+        "status": "ready",
+        "dataset": {},
+        "environment": {},
+        "ready_for_baseline": "yes",
+    }
+    result = validate_prerequisites(data)
+    assert result["valid"] is False
+    assert any("ready_for_baseline" in e and "boolean" in e for e in result["errors"])
+
+
+def test_validate_prerequisites_non_dict_input():
+    """Non-dict input to validate_prerequisites fails."""
+    result = validate_prerequisites("string")
+    assert result["valid"] is False
+    assert any("dict" in e.lower() for e in result["errors"])
+
+
+def test_validate_prerequisites_warns_missing_train_path():
+    """Missing dataset.train_path produces a warning, not an error."""
+    data = {
+        "status": "ready",
+        "dataset": {"format_detected": "csv"},
+        "environment": {"manager": "pip"},
+        "ready_for_baseline": True,
+    }
+    result = validate_prerequisites(data)
+    assert result["valid"] is True
+    assert any("train_path" in w for w in result["warnings"])
+
+
+def test_validate_prerequisites_warns_missing_prepared_path():
+    """When dataset.prepared=True but no prepared_train_path, produce a warning."""
+    data = {
+        "status": "ready",
+        "dataset": {"train_path": "/data/train", "prepared": True},
+        "environment": {"manager": "conda"},
+        "ready_for_baseline": True,
+    }
+    result = validate_prerequisites(data)
+    assert result["valid"] is True
+    assert any("prepared_train_path" in w for w in result["warnings"])
+
+
+def test_validate_prerequisites_warns_missing_env_manager():
+    """Missing environment.manager produces a warning."""
+    data = {
+        "status": "ready",
+        "dataset": {"train_path": "/data/train"},
+        "environment": {"packages_installed": ["torch"]},
+        "ready_for_baseline": True,
+    }
+    result = validate_prerequisites(data)
+    assert result["valid"] is True
+    assert any("manager" in w for w in result["warnings"])
+
+
+def test_validate_prerequisites_no_warnings_when_complete():
+    """Fully populated prerequisites report has no warnings."""
+    data = {
+        "status": "ready",
+        "dataset": {
+            "train_path": "/data/train",
+            "val_path": "/data/val",
+            "prepared": False,
+        },
+        "environment": {"manager": "conda", "packages_installed": ["torch"]},
+        "ready_for_baseline": True,
+    }
+    result = validate_prerequisites(data)
+    assert result["valid"] is True
+    assert result["warnings"] == []
+
+
+def test_validate_prerequisites_warns_empty_prepared_path():
+    """Empty prepared_train_path triggers a warning."""
+    data = {
+        "status": "ready",
+        "dataset": {
+            "train_path": "/data/train",
+            "prepared": True,
+            "prepared_train_path": "",
+        },
+        "environment": {"manager": "conda"},
+        "ready_for_baseline": True,
+    }
+    result = validate_prerequisites(data)
+    assert result["valid"] is True
+    assert "dataset.prepared_train_path is empty" in result["warnings"]
+
+
+def test_validate_prerequisites_warns_empty_prepared_val_path():
+    """Empty prepared_val_path triggers a warning."""
+    data = {
+        "status": "ready",
+        "dataset": {
+            "train_path": "/data/train",
+            "prepared": True,
+            "prepared_train_path": "/prep/train",
+            "prepared_val_path": "",
+        },
+        "environment": {"manager": "conda"},
+        "ready_for_baseline": True,
+    }
+    result = validate_prerequisites(data)
+    assert result["valid"] is True
+    assert "dataset.prepared_val_path is empty" in result["warnings"]
+
+
+def test_validate_prerequisites_warns_non_string_prepared_train_path():
+    """Non-string prepared_train_path triggers a warning."""
+    data = {
+        "status": "ready",
+        "dataset": {
+            "train_path": "/data/train",
+            "prepared": True,
+            "prepared_train_path": 123,
+        },
+        "environment": {"manager": "conda"},
+        "ready_for_baseline": True,
+    }
+    result = validate_prerequisites(data)
+    assert result["valid"] is True
+    assert "dataset.prepared_train_path should be a string" in result["warnings"]
+
+
+def test_validate_file_valid_prerequisites(tmp_path):
+    """validate_file dispatches to validate_prerequisites for prerequisites schema."""
+    f = tmp_path / "prerequisites.json"
+    f.write_text(json.dumps({
+        "status": "ready",
+        "dataset": {},
+        "environment": {},
+        "ready_for_baseline": True,
+    }))
+    result = validate_file(str(f), "prerequisites")
+    assert result["valid"] is True

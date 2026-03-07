@@ -13,6 +13,9 @@ Before applying any pattern, determine the project's ML framework by scanning im
 | **JAX/Flax** | `import jax`, `from flax` | Functional style, explicit state |
 | **PyTorch Lightning** | `import lightning`, `import pytorch_lightning` | `LightningModule`, callbacks |
 | **HuggingFace Transformers** | `from transformers`, `Trainer` | `Trainer` API, `compute_metrics` |
+| **scikit-learn** | `import sklearn`, `from sklearn` | `BaseEstimator`, `Pipeline`, `fit()`/`predict()` |
+| **XGBoost** | `import xgboost`, `from xgboost` | `xgb.XGBClassifier`, `DMatrix`, `xgb.train()` |
+| **LightGBM** | `import lightgbm`, `from lightgbm` | `lgb.LGBMClassifier`, `lgb.Dataset`, `lgb.train()` |
 
 Use the matching framework's syntax when applying patterns below. The examples use PyTorch; see **Framework Adaptations** subsections for alternatives.
 

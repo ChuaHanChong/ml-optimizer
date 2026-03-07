@@ -2,11 +2,8 @@
 
 import json
 import subprocess
-import sys
 from pathlib import Path
 from unittest.mock import patch, MagicMock
-
-sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
 from implement_utils import (
     _extract_reference_files,
@@ -331,6 +328,14 @@ def test_validate_imports_failure(tmp_path):
     assert result["error"] is not None
 
 
+def test_validate_imports_syntax_error(tmp_path):
+    """Module with syntax error returns passed=False."""
+    (tmp_path / "syntax_err.py").write_text("def f(\n")
+    result = validate_imports(str(tmp_path / "syntax_err.py"), str(tmp_path))
+    assert result["passed"] is False
+    assert result["error"] is not None
+
+
 # --- _extract_files section break ---
 
 
@@ -404,6 +409,26 @@ def test_analyze_no_requirements(tmp_path):
     (tmp_path / "model.py").write_text("import torch\nclass M(torch.nn.Module): pass\n")
     result = analyze_reference_structure(str(tmp_path))
     assert result["requirements"] == []
+
+
+def test_analyze_reference_sklearn_framework(tmp_path):
+    """sklearn framework is detected in reference structure analysis."""
+    (tmp_path / "model.py").write_text(
+        "from sklearn.ensemble import RandomForestClassifier\n"
+        "class MyModel(RandomForestClassifier): pass\n"
+    )
+    result = analyze_reference_structure(str(tmp_path))
+    assert result["framework"] == "sklearn"
+
+
+def test_analyze_reference_xgboost_framework(tmp_path):
+    """XGBoost framework is detected in reference structure analysis."""
+    (tmp_path / "train.py").write_text(
+        "import xgboost as xgb\n"
+        "model = xgb.XGBClassifier()\n"
+    )
+    result = analyze_reference_structure(str(tmp_path))
+    assert result["framework"] == "xgboost"
 
 
 def test_analyze_readme_priority(tmp_path):

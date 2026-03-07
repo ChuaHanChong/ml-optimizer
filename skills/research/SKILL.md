@@ -84,6 +84,29 @@ Construct targeted searches based on the model type and task:
 
 Run at least 3 searches. For each promising result, use WebFetch to get more details.
 
+### Tabular ML search queries (for scikit-learn, XGBoost, LightGBM)
+
+When the model is tree-based or ensemble, replace or supplement the DL-centric queries above with:
+
+6. **Feature engineering:**
+   ```
+   WebSearch(query: "<task> feature engineering tabular data <current_year-1> <current_year>")
+   ```
+7. **Ensemble methods:**
+   ```
+   WebSearch(query: "<model_type> ensemble stacking blending tabular <task>")
+   ```
+8. **Tree model tuning:**
+   ```
+   WebSearch(query: "<model_type> hyperparameter tuning best practices <task>")
+   ```
+9. **Feature selection:**
+   ```
+   WebSearch(query: "feature selection <task> tabular data importance permutation")
+   ```
+
+The DL queries (architecture improvements, loss functions) are unlikely useful for tree-based models. Focus on data preprocessing, feature engineering, and ensemble strategies instead.
+
 ## Step 3: Analyze Found Papers
 
 For each relevant paper or technique found:

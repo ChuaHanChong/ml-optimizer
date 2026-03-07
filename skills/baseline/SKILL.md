@@ -79,6 +79,17 @@ This creates:
 
 ## Step 4: Profile Training
 
+### Framework-Specific Profiling
+
+**For non-iterative frameworks (scikit-learn, XGBoost without GPU, LightGBM without GPU):**
+- Skip GPU memory profiling and throughput estimation below.
+- Instead, measure total `fit()` wall-clock time and record as `profiling.fit_duration_seconds` in baseline.json.
+- Set `profiling.throughput_samples_per_sec` and `profiling.estimated_max_batch_size` to `null`.
+- If the framework supports GPU (XGBoost `tree_method="gpu_hist"`, LightGBM `device="gpu"`), still run `gpu_check.py`.
+
+**For iterative frameworks (PyTorch, TensorFlow, JAX, Lightning, HuggingFace Trainer):**
+- Proceed with the profiling steps below.
+
 Run a short training session to measure GPU resource usage:
 
 1. **GPU memory profiling:**

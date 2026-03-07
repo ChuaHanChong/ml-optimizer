@@ -38,6 +38,7 @@ IMPORT_TO_PACKAGE: dict[str, str] = {
     "socks": "PySocks",
     "dotenv": "python-dotenv",
     "comet_ml": "comet-ml",
+    "lightning": "pytorch-lightning",
 }
 
 # Directories to skip when scanning imports
@@ -280,6 +281,16 @@ _FORMAT_PATTERNS: dict[str, list[str]] = {
     "auto_download": [
         "download=True",
     ],
+    "sklearn": [
+        "train_test_split", "cross_val_score", "load_iris", "load_digits",
+        "load_wine", "load_breast_cancer", "fetch_openml",
+    ],
+    "xgboost": [
+        "DMatrix", "xgb.DMatrix", "xgboost.DMatrix",
+    ],
+    "lightgbm": [
+        "lgb.Dataset", "lightgbm.Dataset",
+    ],
 }
 
 
@@ -384,6 +395,7 @@ def detect_dataset_format(training_script: str) -> dict:
     priority = [
         "cifar", "mnist", "huggingface",
         "image_folder", "csv", "hdf5", "tfrecord", "parquet",
+        "sklearn", "xgboost", "lightgbm",
         "numpy", "torch_tensor",
         "auto_download",
     ]
@@ -404,7 +416,8 @@ def detect_dataset_format(training_script: str) -> dict:
     total_matches = sum(len(v) for v in found.values())
     if total_matches >= 2:
         confidence = "high"
-    elif primary in ("image_folder", "csv", "hdf5", "tfrecord", "parquet"):
+    elif primary in ("image_folder", "csv", "hdf5", "tfrecord", "parquet",
+                      "sklearn", "xgboost", "lightgbm"):
         confidence = "high"
     elif primary in ("cifar", "mnist"):
         confidence = "medium"
@@ -763,6 +776,7 @@ _TORCH_CUDA_URLS: dict[str, str] = {
     "12.1": "https://download.pytorch.org/whl/cu121",
     "12.4": "https://download.pytorch.org/whl/cu124",
     "12.6": "https://download.pytorch.org/whl/cu126",
+    "12.8": "https://download.pytorch.org/whl/cu128",
 }
 
 _TORCH_PACKAGES = {"torch", "torchvision", "torchaudio"}

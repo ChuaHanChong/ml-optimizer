@@ -1,10 +1,8 @@
 """Tests for schema_validator.py."""
 
 import json
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
+import pytest
 
 from schema_validator import validate_result, validate_baseline, validate_manifest, validate_file, validate_prerequisites
 
@@ -122,9 +120,15 @@ def test_validate_result_empty_metrics():
     assert result["errors"] == []
 
 
-def test_validate_result_non_dict_input():
-    """A non-dict input should fail validation."""
-    result = validate_result("not a dict")
+@pytest.mark.parametrize("validator,bad_input", [
+    (validate_result, "not a dict"),
+    (validate_baseline, "string"),
+    (validate_manifest, [1, 2, 3]),
+    (validate_prerequisites, "string"),
+])
+def test_validate_non_dict_input(validator, bad_input):
+    """Non-dict input should fail validation for all validators."""
+    result = validator(bad_input)
     assert result["valid"] is False
     assert any("dict" in e.lower() for e in result["errors"])
 
@@ -189,13 +193,6 @@ def test_validate_result_non_dict_config():
     assert any("config" in e and "dict" in e for e in result["errors"])
 
 
-def test_validate_baseline_non_dict_input():
-    """Non-dict baseline input fails."""
-    result = validate_baseline("string")
-    assert result["valid"] is False
-    assert any("dict" in e.lower() for e in result["errors"])
-
-
 def test_validate_baseline_invalid_status():
     """Baseline with invalid status fails."""
     data = {"exp_id": "baseline", "status": "bogus", "config": {}, "metrics": {}}
@@ -218,13 +215,6 @@ def test_validate_baseline_non_dict_config():
     result = validate_baseline(data)
     assert result["valid"] is False
     assert any("config" in e and "dict" in e for e in result["errors"])
-
-
-def test_validate_manifest_non_dict_input():
-    """Non-dict manifest input fails."""
-    result = validate_manifest([1, 2, 3])
-    assert result["valid"] is False
-    assert any("dict" in e.lower() for e in result["errors"])
 
 
 def test_validate_manifest_non_list_proposals():
@@ -330,6 +320,21 @@ def test_validate_manifest_valid_implementation_strategies():
         }
         result = validate_manifest(data)
         assert result["valid"] is True, f"Strategy '{strategy}' should be valid"
+
+
+def test_validate_manifest_from_reference_without_repo():
+    """from_reference proposal without reference_repo still passes (field is optional)."""
+    data = {
+        "original_branch": "main",
+        "strategy": "git_branch",
+        "proposals": [{
+            "name": "X",
+            "slug": "x",
+            "status": "validated",
+            "implementation_strategy": "from_reference",
+        }],
+    }
+    assert validate_manifest(data)["valid"] is True
 
 
 def test_validate_result_non_numeric_metric():
@@ -526,13 +531,6 @@ def test_validate_prerequisites_non_bool_ready_for_baseline():
     result = validate_prerequisites(data)
     assert result["valid"] is False
     assert any("ready_for_baseline" in e and "boolean" in e for e in result["errors"])
-
-
-def test_validate_prerequisites_non_dict_input():
-    """Non-dict input to validate_prerequisites fails."""
-    result = validate_prerequisites("string")
-    assert result["valid"] is False
-    assert any("dict" in e.lower() for e in result["errors"])
 
 
 def test_validate_prerequisites_warns_missing_train_path():

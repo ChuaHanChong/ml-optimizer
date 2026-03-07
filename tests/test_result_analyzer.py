@@ -1,18 +1,10 @@
 """Tests for result_analyzer.py."""
 
 import json
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
+from conftest import _write_results
 
 from result_analyzer import load_results, rank_by_metric, compute_deltas, identify_correlations, analyze, spearman_correlation
-
-
-def _write_results(tmp_path, experiments: dict):
-    """Helper to write experiment result files."""
-    for name, data in experiments.items():
-        (tmp_path / f"{name}.json").write_text(json.dumps(data))
 
 
 def test_load_results(tmp_path):
@@ -189,6 +181,18 @@ def test_compute_deltas_zero_baseline():
     assert exp1["delta"] == 0.5
 
 
+def test_compute_deltas_near_zero_baseline():
+    """Baseline within 1e-8 threshold returns delta_pct=None."""
+    results = {
+        "baseline": {"metrics": {"loss": 5e-10}},
+        "exp-001": {"metrics": {"loss": 0.5}, "config": {"lr": 0.001}},
+    }
+    deltas = compute_deltas(results, "baseline", "loss")
+    assert len(deltas) == 1
+    assert deltas[0]["delta_pct"] is None
+    assert abs(deltas[0]["delta"] - 0.5) < 1e-6
+
+
 def test_identify_correlations_with_status():
     """Experiments with status 'diverged' should be excluded from correlation analysis."""
     results = {
@@ -312,6 +316,20 @@ def test_rank_by_metric_with_nan():
     assert all("exp_id" in r for r in ranked)
 
 
+def test_rank_by_metric_partial_metric_coverage():
+    """rank_by_metric returns only experiments that have the requested metric."""
+    results = {
+        "exp-001": {"metrics": {"loss": 0.5, "accuracy": 90.0}},
+        "exp-002": {"metrics": {"loss": 0.3}},
+        "exp-003": {"metrics": {"loss": 0.4}},
+        "exp-004": {"metrics": {"loss": 0.7, "accuracy": 80.0}},
+    }
+    ranked = rank_by_metric(results, "accuracy", lower_is_better=False)
+    assert len(ranked) == 2
+    assert ranked[0]["exp_id"] == "exp-001"
+    assert ranked[1]["exp_id"] == "exp-004"
+
+
 def test_cli_lower_is_better_parsing(run_main, tmp_path):
     """CLI correctly parses 'false' as lower_is_better=False."""
     _write_results(tmp_path, {
@@ -359,6 +377,21 @@ def test_identify_correlations_mostly_string():
     # Only 1 out of 5 is numeric — should be categorical
     assert "top_common" in opt_corr
     assert "spearman_rho" not in opt_corr
+
+
+def test_identify_correlations_constant_metric():
+    """When all experiments have the same metric value, Spearman rho should be 0."""
+    results = {
+        "exp-001": {"metrics": {"loss": 0.5}, "config": {"lr": 0.0001}, "status": "completed"},
+        "exp-002": {"metrics": {"loss": 0.5}, "config": {"lr": 0.001}, "status": "completed"},
+        "exp-003": {"metrics": {"loss": 0.5}, "config": {"lr": 0.0005}, "status": "completed"},
+        "exp-004": {"metrics": {"loss": 0.5}, "config": {"lr": 0.01}, "status": "completed"},
+    }
+    corr = identify_correlations(results, "loss", lower_is_better=True)
+    assert "correlations" in corr
+    if corr["correlations"]:
+        lr_corr = next(c for c in corr["correlations"] if c["param"] == "lr")
+        assert lr_corr["spearman_rho"] == 0.0
 
 
 def test_cli_no_args(run_main):

@@ -1,10 +1,9 @@
 """Tests for skill interface contracts — verify data flows between skills correctly."""
 
 import json
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
+from conftest import _write_result
 
 from implement_utils import parse_research_proposals
 from result_analyzer import load_results, rank_by_metric
@@ -198,13 +197,6 @@ def test_review_patterns_output_has_required_fields():
     for p in patterns:
         missing = required - set(p.keys())
         assert not missing, f"Pattern {p.get('pattern_id', '?')} missing fields: {missing}"
-
-
-def _write_result(results_dir, exp_id, status, config, metrics, **extra):
-    """Helper to write a minimal experiment result JSON."""
-    data = {"exp_id": exp_id, "status": status, "config": config, "metrics": metrics}
-    data.update(extra)
-    (results_dir / f"{exp_id}.json").write_text(json.dumps(data))
 
 
 def test_review_success_metrics_output_schema(tmp_path):

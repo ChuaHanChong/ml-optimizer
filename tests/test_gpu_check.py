@@ -2,11 +2,7 @@
 
 import json
 import subprocess
-import sys
-from pathlib import Path
 from unittest.mock import patch, MagicMock
-
-sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
 from gpu_check import parse_nvidia_smi, check_availability, get_free_gpus, run
 

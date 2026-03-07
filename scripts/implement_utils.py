@@ -269,8 +269,15 @@ def analyze_reference_structure(repo_path: str) -> dict:
         "jax": [r"import jax", r"from jax", r"from flax"],
         "lightning": [r"import lightning", r"import pytorch_lightning"],
         "transformers": [r"from transformers"],
+        "sklearn": [r"import sklearn", r"from sklearn"],
+        "xgboost": [r"import xgboost", r"from xgboost"],
+        "lightgbm": [r"import lightgbm", r"from lightgbm"],
     }
-    model_patterns = [r"class\s+\w+\(.*(?:nn\.Module|Model|LightningModule)", r"class\s+\w+Model"]
+    model_patterns = [
+        r"class\s+\w+\(.*(?:nn\.Module|Model|LightningModule)",
+        r"class\s+\w+Model",
+        r"class\s+\w+\(.*(?:BaseEstimator|ClassifierMixin|RegressorMixin|TransformerMixin)",
+    ]
     training_patterns = ["train", "main", "run"]
 
     for dirpath, dirnames, filenames in os.walk(repo_path):

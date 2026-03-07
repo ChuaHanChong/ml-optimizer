@@ -1,10 +1,8 @@
 """Tests for plot_results.py."""
 
 import json
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
+from conftest import _write_results
 
 from plot_results import (
     ascii_bar_chart,
@@ -13,12 +11,6 @@ from plot_results import (
     plot_improvement_timeline,
     plot_hp_sensitivity,
 )
-
-
-def _write_results(tmp_path, experiments: dict):
-    """Helper to write experiment result files."""
-    for name, data in experiments.items():
-        (tmp_path / f"{name}.json").write_text(json.dumps(data))
 
 
 # ---------- ascii_bar_chart ----------
@@ -189,6 +181,16 @@ def test_plot_hp_sensitivity_no_results(tmp_path):
     assert "No results" in chart
 
 
+def test_plot_hp_sensitivity_identical_hp_values(tmp_path):
+    """HP sensitivity with all-identical HP values renders without error."""
+    _write_results(tmp_path, {
+        "exp-001": {"metrics": {"loss": 0.5}, "config": {"lr": 0.001}},
+        "exp-002": {"metrics": {"loss": 0.3}, "config": {"lr": 0.001}},
+    })
+    chart = plot_hp_sensitivity(str(tmp_path), "loss", "lr")
+    assert chart and "*" in chart
+
+
 # --- Additional edge cases ---
 
 
@@ -283,6 +285,15 @@ def test_cli_sensitivity(run_main, tmp_path):
     assert r.returncode == 0
 
 
+def test_cli_sensitivity_missing_hp_name(run_main, tmp_path):
+    """CLI sensitivity mode without hp_name exits with error."""
+    _write_results(tmp_path, {
+        "exp-001": {"metrics": {"loss": 0.5}, "config": {"lr": 0.01}},
+    })
+    r = run_main("plot_results.py", str(tmp_path), "loss", "sensitivity")
+    assert r.returncode == 1
+
+
 def test_ascii_bar_chart_nan_values():
     """Bar chart with NaN values renders without error."""
     labels = ["a", "b", "c"]
@@ -313,6 +324,18 @@ def test_ascii_bar_chart_inf_values():
     assert "b" in chart
 
 
+def test_ascii_bar_chart_negative_values():
+    """Bar chart handles negative values without error."""
+    chart = ascii_bar_chart(["a", "b", "c"], [-5.0, -10.0, 3.0])
+    assert chart and "a" in chart and "-10" in chart
+
+
+def test_ascii_bar_chart_all_negative():
+    """Bar chart where all values are negative still renders."""
+    chart = ascii_bar_chart(["x", "y"], [-3.0, -7.0])
+    assert chart and "\u2588" in chart
+
+
 def test_ascii_line_chart_resampling_includes_last():
     """After resampling, the last original data point is represented."""
     values = list(range(100))
@@ -320,6 +343,22 @@ def test_ascii_line_chart_resampling_includes_last():
     # The chart should include the last value (99) in its rendering
     assert chart
     assert "99" in chart  # Last value appears in y-axis labels
+
+
+def test_plot_metric_comparison_large_dataset(tmp_path):
+    """plot_metric_comparison handles 100+ experiments without error."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    for i in range(120):
+        (results_dir / f"exp-{i:04d}.json").write_text(json.dumps({
+            "exp_id": f"exp-{i:04d}",
+            "config": {"lr": 0.001 * (i + 1)},
+            "metrics": {"loss": 2.0 - i * 0.01},
+            "status": "completed",
+        }))
+    chart = plot_metric_comparison(str(results_dir), "loss")
+    assert chart
+    assert len(chart) > 0
 
 
 def test_cli_unknown_mode(run_main, tmp_path):

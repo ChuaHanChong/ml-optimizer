@@ -9,7 +9,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 from prerequisites_check import (
     scan_imports,
     check_missing_packages,
@@ -152,6 +151,7 @@ class TestPipName:
         assert pip_name("socks") == "PySocks"
         assert pip_name("dotenv") == "python-dotenv"
         assert pip_name("comet_ml") == "comet-ml"
+        assert pip_name("lightning") == "pytorch-lightning"
 
     def test_unknown_returns_same(self):
         assert pip_name("torch") == "torch"
@@ -163,42 +163,19 @@ class TestPipName:
 # =========================================================================
 
 class TestDetectEnvManager:
-    def test_conda_environment_yml(self, tmp_path):
-        (tmp_path / "environment.yml").write_text("name: myenv\n")
+    @pytest.mark.parametrize("filename,content,expected_manager", [
+        ("environment.yml", "name: myenv\n", "conda"),
+        ("environment.yaml", "name: myenv\n", "conda"),
+        ("uv.lock", "", "uv"),
+        ("pyproject.toml", "[tool.poetry]\nname = 'myproject'\n", "poetry"),
+        ("requirements.txt", "torch\nnumpy\n", "pip"),
+        ("setup.py", "from setuptools import setup\n", "pip"),
+        ("pyproject.toml", "[build-system]\n", "pip"),
+    ])
+    def test_single_file_detection(self, tmp_path, filename, content, expected_manager):
+        (tmp_path / filename).write_text(content)
         result = detect_env_manager(str(tmp_path))
-        assert result["manager"] == "conda"
-
-    def test_conda_environment_yaml(self, tmp_path):
-        (tmp_path / "environment.yaml").write_text("name: myenv\n")
-        result = detect_env_manager(str(tmp_path))
-        assert result["manager"] == "conda"
-
-    def test_uv_lock(self, tmp_path):
-        (tmp_path / "uv.lock").write_text("")
-        result = detect_env_manager(str(tmp_path))
-        assert result["manager"] == "uv"
-
-    def test_poetry_pyproject(self, tmp_path):
-        (tmp_path / "pyproject.toml").write_text(
-            "[tool.poetry]\nname = 'myproject'\n"
-        )
-        result = detect_env_manager(str(tmp_path))
-        assert result["manager"] == "poetry"
-
-    def test_pip_requirements_txt(self, tmp_path):
-        (tmp_path / "requirements.txt").write_text("torch\nnumpy\n")
-        result = detect_env_manager(str(tmp_path))
-        assert result["manager"] == "pip"
-
-    def test_pip_setup_py(self, tmp_path):
-        (tmp_path / "setup.py").write_text("from setuptools import setup\n")
-        result = detect_env_manager(str(tmp_path))
-        assert result["manager"] == "pip"
-
-    def test_pip_generic_pyproject(self, tmp_path):
-        (tmp_path / "pyproject.toml").write_text("[build-system]\n")
-        result = detect_env_manager(str(tmp_path))
-        assert result["manager"] == "pip"
+        assert result["manager"] == expected_manager
 
     def test_conda_takes_priority_over_pip(self, tmp_path):
         (tmp_path / "environment.yml").write_text("name: env\n")
@@ -307,6 +284,86 @@ class TestDetectDatasetFormat:
         script.write_text("import h5py\nf = h5py.File('data.h5', 'r')\n")
         result = detect_dataset_format(str(script))
         assert result["format"] == "hdf5"
+
+    def test_sklearn_format_detection(self, tmp_path):
+        """sklearn train_test_split pattern is detected."""
+        script = tmp_path / "train_sklearn.py"
+        script.write_text(
+            "from sklearn.model_selection import train_test_split\n"
+            "import pandas as pd\n"
+            "df = pd.read_csv('data.csv')\n"
+            "X_train, X_test = train_test_split(df)\n"
+        )
+        result = detect_dataset_format(str(script))
+        assert result["format"] in ("sklearn", "csv")
+        assert len(result["patterns_found"]) > 0
+
+    def test_xgboost_dmatrix_detection(self, tmp_path):
+        """XGBoost DMatrix pattern is detected."""
+        script = tmp_path / "train_xgb.py"
+        script.write_text(
+            "import xgboost as xgb\n"
+            "dtrain = xgb.DMatrix(data, label=labels)\n"
+        )
+        result = detect_dataset_format(str(script))
+        assert result["format"] == "xgboost"
+        assert "DMatrix" in result["patterns_found"]
+
+    def test_lightgbm_dataset_detection(self, tmp_path):
+        """LightGBM lgb.Dataset pattern is detected."""
+        script = tmp_path / "train_lgb.py"
+        script.write_text(
+            "import lightgbm as lgb\n"
+            "dtrain = lgb.Dataset(data, label=labels)\n"
+        )
+        result = detect_dataset_format(str(script))
+        assert result["format"] == "lightgbm"
+
+    def test_tfrecord_detection(self, tmp_path):
+        """TFRecordDataset pattern is detected."""
+        script = tmp_path / "train_tf.py"
+        script.write_text(
+            "import tensorflow as tf\n"
+            "dataset = tf.data.TFRecordDataset('train.tfrecord')\n"
+        )
+        result = detect_dataset_format(str(script))
+        assert result["format"] == "tfrecord"
+        assert "TFRecordDataset" in result["patterns_found"]
+
+    def test_parquet_detection(self, tmp_path):
+        """read_parquet pattern is detected."""
+        script = tmp_path / "data_loader.py"
+        script.write_text(
+            "import pandas as pd\n"
+            "df = pd.read_parquet('data.parquet')\n"
+        )
+        result = detect_dataset_format(str(script))
+        assert result["format"] == "parquet"
+        assert "read_parquet" in result["patterns_found"]
+
+    def test_auto_download_detection(self, tmp_path):
+        """download=True pattern is detected as auto_download."""
+        script = tmp_path / "train.py"
+        script.write_text(
+            "import torchvision\n"
+            "dataset = torchvision.datasets.STL10(root='./data', download=True)\n"
+        )
+        result = detect_dataset_format(str(script))
+        assert result["format"] == "auto_download"
+        assert "download=True" in result["patterns_found"]
+
+    def test_multiple_formats_detected(self, tmp_path):
+        """When multiple format patterns found, all are captured in patterns_found."""
+        script = tmp_path / "multi_data.py"
+        script.write_text(
+            "import h5py\n"
+            "import pandas as pd\n"
+            "df = pd.read_csv('meta.csv')\n"
+            "f = h5py.File('data.h5', 'r')\n"
+        )
+        result = detect_dataset_format(str(script))
+        assert result["format"] in ("csv", "hdf5")
+        assert len(result["patterns_found"]) >= 2
 
 
 # =========================================================================
@@ -530,6 +587,7 @@ class TestGpuInstallCommand:
         assert "cu118" in result["install_command"]
 
     def test_best_torch_cuda_tag_picks_highest_compatible(self):
+        assert _best_torch_cuda_tag("12.8") == "12.8"
         assert _best_torch_cuda_tag("12.4") == "12.4"
         assert _best_torch_cuda_tag("12.3") == "12.1"
         assert _best_torch_cuda_tag("11.8") == "11.8"
@@ -828,6 +886,13 @@ class TestBestTorchCudaTagEdgeCases:
 
     def test_none_input(self):
         assert _best_torch_cuda_tag(None) is None
+
+    @pytest.mark.parametrize("malformed", [
+        "12.x", "x.4", ".", "12.", ".4", "cuda12.1", "12.1.2",
+    ])
+    def test_malformed_cuda_versions_return_none(self, malformed):
+        """Various malformed CUDA version strings all return None."""
+        assert _best_torch_cuda_tag(malformed) is None
 
 
 # =========================================================================

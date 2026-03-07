@@ -1,10 +1,7 @@
 """Tests for parse_logs.py."""
 
 import json
-import sys
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
 from parse_logs import parse_kv_line, parse_json_line, parse_csv_lines, parse_python_logging_line, parse_tqdm_line, detect_format, parse_log, extract_metric_trajectory
 
@@ -154,6 +151,21 @@ def test_parse_kv_line_unparseable_value():
     metrics = parse_kv_line(line)
     assert "loss" not in metrics
     assert metrics.get("lr") == 0.001
+
+
+def test_parse_huggingface_trainer_log(tmp_path):
+    """HuggingFace Trainer JSON logs are parsed correctly."""
+    f = tmp_path / "trainer.log"
+    f.write_text(
+        '{"loss": 2.345, "learning_rate": 5e-05, "epoch": 0.5, "step": 100}\n'
+        '{"loss": 1.876, "learning_rate": 4.5e-05, "epoch": 1.0, "step": 200}\n'
+        '{"eval_loss": 1.5, "eval_accuracy": 0.82, "epoch": 1.0, "step": 200}\n'
+    )
+    records = parse_log(str(f))
+    assert len(records) == 3
+    assert records[0]["loss"] == 2.345
+    assert records[0]["learning_rate"] == 5e-05
+    assert records[2]["eval_accuracy"] == 0.82
 
 
 def test_parse_tqdm_line_non_numeric():

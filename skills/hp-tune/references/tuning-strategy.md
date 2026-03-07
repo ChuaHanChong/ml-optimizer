@@ -144,6 +144,36 @@ Consider these alongside traditional HPs when tuning.
 - Dropout: 0.3–0.6 (higher than vision/NLP due to small datasets)
 - LR: 1e-3 to 1e-2
 
+### Tree-Based & Ensemble Models (XGBoost, LightGBM, RandomForest, GradientBoosting)
+
+These models have fundamentally different hyperparameters. Batch size, dropout, and attention heads do not apply.
+
+**Tuning order (priority):**
+1. **n_estimators / num_boost_round** (100–10000): Use early stopping. Start with 500.
+2. **max_depth** (3–12): Complexity control. XGBoost default 6.
+3. **learning_rate / eta** (0.01–0.3): Boosting step size. 0.1 for exploration, 0.01–0.03 for final.
+4. **min_samples_leaf / min_child_weight** (1–100): Leaf regularization. Start 5–20.
+5. **subsample / bagging_fraction** (0.5–1.0): Row sampling. Default 0.8.
+6. **colsample_bytree / feature_fraction** (0.3–1.0): Column sampling. Default 0.8.
+7. **num_leaves** (LightGBM only, 15–255): ~2^max_depth.
+8. **reg_alpha / reg_lambda** (0–10): L1/L2 regularization. Start at 0.
+
+**Key differences from neural network tuning:**
+- No batch size, no LR schedule, no dropout
+- Early stopping replaces epoch counting: `early_stopping_rounds=50`
+- Training is fast → run more experiments within budget
+- Feature engineering often matters more than HP tuning
+
+**Interaction effects:**
+- `learning_rate` × `n_estimators`: lower LR needs more trees
+- `max_depth` × `num_leaves`: don't set both high in LightGBM
+- `subsample` × `colsample_bytree`: compound to reduce data per tree
+
+**scikit-learn RandomForest/GradientBoosting:**
+- `n_estimators` (100–2000), `max_depth` (5–30 or None), `min_samples_split` (2–20), `min_samples_leaf` (1–10)
+- `max_features` ("sqrt", "log2", 0.3–1.0): Column sampling per split
+- No learning_rate for RandomForest; GradientBoosting uses 0.01–0.3
+
 ## Anti-Patterns to Avoid
 
 - Don't change all HPs at once — change 1-2 per experiment for interpretability

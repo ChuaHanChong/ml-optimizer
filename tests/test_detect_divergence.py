@@ -2,10 +2,6 @@
 
 import json
 import math
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
 from detect_divergence import detect_nan_inf, detect_explosion, detect_plateau, detect_gradual_drift, check_divergence
 
@@ -223,6 +219,21 @@ def test_detect_gradual_drift_oscillating():
     values = [0.5 + 0.1 * m.sin(i * 0.3) for i in range(100)]
     result = detect_gradual_drift(values, window=50, min_slope_ratio=0.1)
     assert result is None
+
+
+def test_detect_gradual_drift_all_identical_values():
+    """All-identical metric values should NOT trigger drift (ss_tot=0)."""
+    values = [0.5] * 60
+    result = detect_gradual_drift(values, window=50, min_slope_ratio=0.1)
+    assert result is None
+
+
+def test_check_divergence_all_identical_values():
+    """All-identical values: no NaN, no explosion, no drift, but plateau triggers."""
+    values = [0.5] * 25
+    result = check_divergence(values, plateau_patience=20)
+    assert result["diverged"] is True
+    assert "plateau" in result["reason"].lower()
 
 
 def test_detect_gradual_drift_too_short():

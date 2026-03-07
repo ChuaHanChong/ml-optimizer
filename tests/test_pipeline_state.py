@@ -9,11 +9,8 @@ Phase numbering (after prerequisites addition):
 """
 
 import json
-import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
 from pipeline_state import validate_phase_requirements, save_state, load_state, cleanup_stale
 
@@ -455,6 +452,19 @@ def test_cleanup_stale_exp_files_bad_timestamp(tmp_path):
     (results_dir / "exp-001.json").write_text(json.dumps(exp))
     cleaned = cleanup_stale(str(tmp_path), timeout_hours=2.0)
     assert cleaned == []
+
+
+def test_cleanup_stale_exp_files_naive_timestamp(tmp_path):
+    """Timezone-naive timestamps in exp-*.json files are treated as UTC."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    naive_time = (datetime.now(timezone.utc) - timedelta(hours=3)).replace(tzinfo=None)
+    exp = {"status": "running", "timestamp": naive_time.isoformat(), "exp_id": "exp-002"}
+    (results_dir / "exp-002.json").write_text(json.dumps(exp))
+    cleaned = cleanup_stale(str(tmp_path), timeout_hours=2.0)
+    assert any("exp-002" in c for c in cleaned)
+    data = json.loads((results_dir / "exp-002.json").read_text())
+    assert data["status"] == "failed"
 
 
 # --- CLI tests ---

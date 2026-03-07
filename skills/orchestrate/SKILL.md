@@ -41,7 +41,7 @@ You are an ML optimization orchestrator. You coordinate the full optimization pi
       - HP tuning only (fastest, no code changes)
       - HP tuning + architecture research (slower, potentially bigger gains)
       - Let me decide based on analysis
-   7. **Divergence metric name:** What metric should be monitored for training divergence? (default: "loss". Common alternatives: "train_loss", "val_loss", "objective", "nll_loss", "perplexity" for LLMs). **Must be a lower-is-better metric** — divergence detection assumes lower values mean better training. For RL tasks where "reward" is the primary metric, still use "loss" for divergence monitoring.
+   7. **Divergence metric name** _(skip for scikit-learn, XGBoost, or LightGBM — these train in a single fit() call with no iterative loss stream)_: What metric should be monitored for training divergence? (default: "loss". Common alternatives: "train_loss", "val_loss", "objective", "nll_loss", "perplexity" for LLMs). **Must be a lower-is-better metric** — divergence detection assumes lower values mean better training. For RL tasks where "reward" is the primary metric, still use "loss" for divergence monitoring.
    8. **Optimization type:** Are you optimizing training performance or inference performance? (This plugin focuses on **training** optimization — inference optimization like quantization, pruning, or ONNX conversion is out of scope.)
    9. **Anything else** I should know about this model or training setup?
    10. **Dataset location:** Where are your training and validation datasets?
@@ -68,6 +68,9 @@ You are an ML optimization orchestrator. You coordinate the full optimization pi
      - TF/Keras: `tf.keras.Model`, `keras.Model`, `tf.Module`
      - JAX/Flax: `flax.linen.Module`, `nn.Module` (Flax)
      - HuggingFace: `PreTrainedModel`, `Trainer`
+     - scikit-learn: `from sklearn`, `BaseEstimator`, `Pipeline`
+     - XGBoost: `import xgboost`, `xgb.XGBClassifier`, `xgb.XGBRegressor`
+     - LightGBM: `import lightgbm`, `lgb.LGBMClassifier`, `lgb.LGBMRegressor`
    - Look for training scripts (files with `train` in the name, `main.py`, `run.py`, etc.)
 
 2. **Locate training config:**
@@ -90,6 +93,11 @@ You are an ML optimization orchestrator. You coordinate the full optimization pi
    - Current training setup (optimizer, scheduler, loss function)
    - Dataset information
    - Known metrics and current performance (if available)
+   - **Tabular ML detection:** If the framework is scikit-learn, XGBoost, or LightGBM:
+     - GPU check is optional (XGBoost/LightGBM may use GPU; scikit-learn does not)
+     - Divergence monitoring is typically unnecessary (training is fast, no iterative loss to watch)
+     - The experiment budget should use the CPU fallback: `max(num_gpus, 1) × 5`
+     - Set `divergence_metric` to `null` (do not ask Q7) and skip the monitor skill during Phase 6. Divergence detection is only meaningful for frameworks with iterative training loops.
 
 6. **Create optimization plan:**
    - Read `references/plan-template.md` for the template structure
@@ -333,10 +341,10 @@ When the implementation manifest contains multiple code branches:
      - `iteration`: Current loop iteration (1-based)
      - `primary_metric`: The metric to optimize (from Phase 0)
      - `lower_is_better`: Whether lower values are better
-     - `remaining_budget`: How many more experiments can be run before hitting the budget limit. Calculated as `(num_gpus × 5) - total_experiments_so_far`. HP-tune must cap proposals at `min(num_gpus, remaining_budget)`.
+     - `remaining_budget`: How many more experiments can be run before hitting the budget limit. Calculated as `(max(num_gpus, 1) × 5) - total_experiments_so_far`. HP-tune must cap proposals at `min(max(num_gpus, 1), remaining_budget)`.
      - `code_branches`: List of validated code branches from the implementation manifest (e.g., `["ml-opt/perceptual-loss", "ml-opt/cosine-scheduler"]`), or `[]` for HP-only optimization. HP-tune uses this in iteration 1 to generate one config per branch + one for baseline.
    - It reads past results and proposes the next batch of configs
-   - Number of configs = `min(num_gpus, remaining_budget)` (capped to prevent budget overshoot)
+   - Number of configs = `min(max(num_gpus, 1), remaining_budget)` (capped to prevent budget overshoot)
 
 2. **Run experiments:**
    - For each proposed config, invoke `ml-optimizer:experiment` skill
@@ -373,7 +381,7 @@ When the implementation manifest contains multiple code branches:
    - If analyze says **continue**: loop back to step 1
    - If analyze says **pivot**: adjust the strategy, loop back to step 1
    - If analyze says **stop**: exit loop
-   - **Safety limit:** Maximum total experiments budget (default: `num_gpus × 5`). After budget exhausted, force exit and report. This replaces the rigid 5-iteration limit to account for varying GPU counts.
+   - **Safety limit:** Maximum total experiments budget (default: `max(num_gpus, 1) × 5`). After budget exhausted, force exit and report. This replaces the rigid 5-iteration limit to account for varying GPU counts. When `num_gpus=0` (CPU-only, e.g., scikit-learn), the budget is `1 × 5 = 5` experiments.
 
 7. **Mid-pipeline review check** (after step 6, before looping):
    Run pattern detection:

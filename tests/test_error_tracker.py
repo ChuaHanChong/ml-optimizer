@@ -1,11 +1,10 @@
 """Tests for error_tracker.py."""
 
 import json
-import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
+from conftest import _write_result
 
 from error_tracker import (
     validate_event,
@@ -553,13 +552,6 @@ def test_cli_invalid_json(run_main, tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def _write_result(results_dir, exp_id, status, config, metrics, **extra):
-    """Helper to write a minimal experiment result JSON."""
-    data = {"exp_id": exp_id, "status": status, "config": config, "metrics": metrics}
-    data.update(extra)
-    (results_dir / f"{exp_id}.json").write_text(json.dumps(data))
-
-
 def test_compute_success_metrics_basic(tmp_path):
     """Mixed results produce correct success/failure counts."""
     results = tmp_path / "results"
@@ -1004,6 +996,18 @@ def test_rank_suggestions_cross_project_boost():
     # wasted_budget: weight 1 * 3 * 1.5 = 4.5
     # high_lr_divergence: weight 2 * 2 * 1.0 = 4.0
     assert ranked[0]["pattern_id"] == "wasted_budget"
+
+
+def test_rank_suggestions_cross_project_boost_score_value():
+    """Cross-project boost applies 1.5x multiplier to score."""
+    patterns = [
+        {"pattern_id": "wasted_budget", "description": "waste",
+         "occurrences": 2, "suggested_action": "tighten"},
+    ]
+    ranked_no_boost = rank_suggestions(patterns)
+    cross = [{"pattern_id": "wasted_budget", "projects_affected": 2}]
+    ranked_boosted = rank_suggestions(patterns, cross_project_patterns=cross)
+    assert ranked_boosted[0]["score"] == ranked_no_boost[0]["score"] * 1.5
 
 
 def test_rank_suggestions_empty():

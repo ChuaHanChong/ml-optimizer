@@ -5,10 +5,8 @@ produce correct outputs for the review skill to consume.
 """
 
 import json
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
+from conftest import _write_result
 
 from error_tracker import (
     create_event,
@@ -22,13 +20,6 @@ from error_tracker import (
     update_cross_project,
     detect_cross_project_patterns,
 )
-
-
-def _write_result(results_dir, exp_id, status, config, metrics, **extra):
-    """Helper to write a minimal experiment result JSON."""
-    data = {"exp_id": exp_id, "status": status, "config": config, "metrics": metrics}
-    data.update(extra)
-    (results_dir / f"{exp_id}.json").write_text(json.dumps(data))
 
 
 def _create_full_session(tmp_path):

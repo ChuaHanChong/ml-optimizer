@@ -23,7 +23,7 @@ From the orchestrator:
 - `iteration`: Which tuning iteration this is (1, 2, 3, ...)
 - `primary_metric`: The metric to optimize (e.g., "loss", "accuracy", "psnr")
 - `lower_is_better`: Whether lower metric values are better (True for loss, False for accuracy)
-- `remaining_budget`: Maximum number of experiments that can still be run. Cap proposals at `min(num_gpus, remaining_budget)`. If remaining_budget ≤ 0, recommend stopping.
+- `remaining_budget`: Maximum number of experiments that can still be run. Calculated by orchestrator as `(max(num_gpus, 1) × 5) - total_experiments_so_far`. Cap proposals at `min(max(num_gpus, 1), remaining_budget)`. If remaining_budget ≤ 0, recommend stopping.
 - `code_branches`: List of validated code branches from the implementation manifest (e.g., `["ml-opt/perceptual-loss"]`), or `[]` for HP-only. In iteration 1, generate one config per branch (with baseline HPs) plus one for the original code, instead of spanning the search space.
 
 ## Step 1: Load Past Results
@@ -105,7 +105,7 @@ Reasoning:
 
 Before finalizing, check each proposed config:
 
-1. **Budget cap:** Total proposals must not exceed `min(num_gpus, remaining_budget)`. If `remaining_budget ≤ 0`, skip proposal generation and recommend stopping.
+1. **Budget cap:** Total proposals must not exceed `min(max(num_gpus, 1), remaining_budget)`. If `remaining_budget ≤ 0`, skip proposal generation and recommend stopping.
 2. **GPU memory:** Will the batch size fit? (Check against baseline profiling)
 3. **Not a duplicate:** Has this exact config been tried before?
 4. **Within search space:** All values within defined ranges

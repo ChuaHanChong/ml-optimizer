@@ -14,9 +14,6 @@ from pathlib import Path
 
 import pytest
 
-# Import plugin scripts using the same pattern as other tests
-sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-
 from parse_logs import parse_log, extract_metric_trajectory
 from detect_divergence import check_divergence
 from experiment_setup import create_experiment_dirs, next_experiment_id, setup

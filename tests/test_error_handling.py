@@ -2,10 +2,7 @@
 
 import json
 import math
-import sys
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
 from parse_logs import parse_log, parse_kv_line, extract_metric_trajectory
 from detect_divergence import check_divergence, detect_nan_inf, detect_explosion, detect_plateau

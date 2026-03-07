@@ -125,7 +125,7 @@ The orchestrator can be stopped and resumed. On restart it reads `pipeline-state
 ## Key Design Patterns
 
 - **Non-git fallback**: If the target project isn't a git repo, the implement skill uses file backups instead of branches. This forces sequential (not parallel) experiment execution.
-- **Experiment budget**: Default max experiments = `num_gpus * 5`. The orchestrator passes `remaining_budget` to hp-tune, which caps proposals at `min(num_gpus, remaining_budget)` to prevent overshoot. The analyze skill recommends stop when diminishing returns detected.
+- **Experiment budget**: Default max experiments = `max(num_gpus, 1) * 5`. When `num_gpus=0` (CPU-only, e.g., scikit-learn/XGBoost), the budget is `1 * 5 = 5` experiments. The orchestrator passes `remaining_budget` to hp-tune, which caps proposals at `min(max(num_gpus, 1), remaining_budget)` to prevent overshoot. The analyze skill recommends stop when diminishing returns detected.
 - **Proposal priority scoring**: `(impact * confidence) / (11 - min(feasibility, 10))` — feasibility clamped to [1,10] to prevent division by zero.
 - **Spearman correlation**: `result_analyzer.py` uses rank correlation with average-rank tie-breaking to identify HP-metric relationships (no scipy dependency).
 - **Dual implementation strategy**: Research proposals include an `implementation_strategy` field (`from_scratch` or `from_reference`). The implement agent dispatches accordingly — either implementing from paper descriptions (Section 8) or cloning and adapting reference repos (Section 9). Strategy is decided by the research agent based on repo availability and quality.
@@ -141,3 +141,4 @@ The orchestrator can be stopped and resumed. On restart it reads `pipeline-state
 - **Metric routing is split**: Monitor/divergence always uses loss (lower-is-better). Analyze/hp-tune use the user's `primary_metric`. Mixing these up causes silent wrong behavior.
 - **Branch experiments are independent**: Results on `ml-opt/branch-a` tell you nothing about what HPs will work on `ml-opt/branch-b`. The tuning agent must group by `code_branch` before analyzing trends.
 - **Mid-pipeline review auto-triggers**: After 3+ consecutive all-fail batches in Phase 6, the orchestrator automatically invokes the review skill with `scope: "session"` to suggest course corrections. It can also be invoked manually at end of session.
+- **Tabular ML frameworks skip divergence monitoring**: When the detected framework is scikit-learn, XGBoost, or LightGBM, the orchestrator sets `divergence_metric` to `null` and skips the monitor skill. The baseline skill skips GPU profiling and throughput estimation for these frameworks.

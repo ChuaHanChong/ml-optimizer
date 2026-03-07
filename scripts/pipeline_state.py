@@ -10,11 +10,13 @@ from pathlib import Path
 def validate_phase_requirements(phase: int, exp_root: str) -> dict:
     """Validate that prerequisites for a given pipeline phase are met.
 
-    Phase 2 (baseline): exp_root/results/ directory must exist.
-    Phase 3 (checkpoint): exp_root/results/baseline.json must exist with
+    Phase 2 (prerequisites): no file requirements.
+    Phase 3 (baseline): exp_root/results/ directory must exist.
+        If prerequisites.json exists and ready_for_baseline is false, warn.
+    Phase 4 (checkpoint): exp_root/results/baseline.json must exist with
         "metrics" and "config" keys.
-    Phase 4 (research): exp_root/results/baseline.json must exist.
-    Phase 5 (experiment loop): baseline.json must exist with metrics+config,
+    Phase 5 (research): exp_root/results/baseline.json must exist.
+    Phase 6 (experiment loop): baseline.json must exist with metrics+config,
         and if implementation-manifest.json exists it must have a "proposals" key.
     """
     root = Path(exp_root)
@@ -22,11 +24,26 @@ def validate_phase_requirements(phase: int, exp_root: str) -> dict:
     warnings: list[str] = []
 
     if phase == 2:
+        # Prerequisites phase — no file-based requirements
+        pass
+
+    elif phase == 3:
         results_dir = root / "results"
         if not results_dir.is_dir():
             missing.append("results/ directory does not exist")
+        else:
+            prereq_path = results_dir / "prerequisites.json"
+            if prereq_path.is_file():
+                try:
+                    prereq = json.loads(prereq_path.read_text())
+                    if prereq.get("ready_for_baseline") is False:
+                        missing.append(
+                            "prerequisites.json indicates ready_for_baseline=false"
+                        )
+                except (json.JSONDecodeError, OSError):
+                    warnings.append("prerequisites.json is not valid JSON")
 
-    elif phase == 3:
+    elif phase == 4:
         baseline_path = root / "results" / "baseline.json"
         if not baseline_path.is_file():
             missing.append("results/baseline.json does not exist")
@@ -41,12 +58,12 @@ def validate_phase_requirements(phase: int, exp_root: str) -> dict:
             if "config" not in data:
                 missing.append("results/baseline.json missing 'config' key")
 
-    elif phase == 4:
+    elif phase == 5:
         baseline_path = root / "results" / "baseline.json"
         if not baseline_path.is_file():
             missing.append("results/baseline.json does not exist")
 
-    elif phase == 5:
+    elif phase == 6:
         baseline_path = root / "results" / "baseline.json"
         if not baseline_path.is_file():
             missing.append("results/baseline.json does not exist")
@@ -92,7 +109,10 @@ def save_state(
     Args:
         user_choices: Optional dict of Phase 0 user choices to persist
             (e.g., primary_metric, divergence_metric, lower_is_better,
-            target_value). These are preserved across pipeline resumptions.
+            target_value, train_command, eval_command, train_data_path,
+            val_data_path, prepared_train_path, prepared_val_path,
+            env_manager, env_name). These are preserved across pipeline
+            resumptions.
 
     Returns the path to the state file.
     """

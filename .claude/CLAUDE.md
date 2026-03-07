@@ -31,7 +31,7 @@ tests/                      — pytest test suite
 
 ### Skill Pipeline (Orchestrator Flow)
 
-The `orchestrate` skill coordinates a 7-phase pipeline. Each skill is invoked via `ml-optimizer:<skill-name>`:
+The `orchestrate` skill coordinates an 8-phase pipeline. Each skill is invoked via `ml-optimizer:<skill-name>`:
 
 ```
 Phase 0: Discovery (plan mode, user Q&A — includes data paths and env manager)

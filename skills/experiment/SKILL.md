@@ -18,6 +18,8 @@ From the orchestrator or hp-tune skill:
 - `eval_command`: Evaluation command (optional)
 - `code_branch`: Git branch with code changes (optional, from implement manifest)
 - `code_proposal`: Name of the research proposal (optional, for tagging results)
+- `prepared_train_path`: Path to prepared training data (optional, from prerequisites)
+- `prepared_val_path`: Path to prepared validation data (optional, from prerequisites)
 
 ## Reference
 
@@ -62,6 +64,7 @@ Before building the training command, verify:
 Construct the full training command by overriding the base command with experiment-specific config:
 
 1. Read the base training command from `experiments/results/baseline.json`
+1.5. **Apply prepared data paths:** If `prepared_train_path` or `prepared_val_path` was provided, substitute them into the training command (replace original data path CLI args or config entries with the prepared paths). This ensures experiments use the preprocessed data.
 2. Determine how the project accepts config overrides:
    - **CLI args:** `python train.py --lr 0.001 --batch_size 16`
    - **Config file:** Modify a YAML/JSON config, then `python train.py --config <path>`

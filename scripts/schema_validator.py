@@ -39,6 +39,9 @@ PROPOSAL_OPTIONAL = [
 VALID_PROPOSAL_STATUSES = ["validated", "validation_failed", "implementation_error"]
 VALID_IMPLEMENTATION_STRATEGIES = ["from_scratch", "from_reference"]
 
+PREREQUISITES_REQUIRED = ["status", "dataset", "environment", "ready_for_baseline"]
+VALID_PREREQ_STATUSES = ["ready", "partial", "failed"]
+
 
 # ---------------------------------------------------------------------------
 # Validation helpers
@@ -182,6 +185,70 @@ def validate_manifest(data: dict) -> dict:
     return {"valid": len(errors) == 0, "errors": errors}
 
 
+def validate_prerequisites(data: dict) -> dict:
+    """Validate a prerequisites report dict.
+
+    Checks:
+    - All required fields are present.
+    - ``status`` is one of the valid prerequisite statuses.
+    - ``dataset`` and ``environment`` are dicts.
+    - ``ready_for_baseline`` is a boolean.
+    - Inner field warnings for missing ``dataset.train_path``,
+      ``dataset.prepared_train_path`` (when ``prepared`` is True),
+      and ``environment.manager``.
+
+    Returns ``{"valid": True/False, "errors": [...], "warnings": [...]}``.
+    """
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    if not isinstance(data, dict):
+        return {"valid": False, "errors": ["Data must be a dict"], "warnings": []}
+
+    errors.extend(_check_required(data, PREREQUISITES_REQUIRED))
+
+    if "status" in data and data["status"] not in VALID_PREREQ_STATUSES:
+        errors.append(
+            f"Invalid status '{data['status']}': must be one of {VALID_PREREQ_STATUSES}"
+        )
+
+    if "dataset" in data and not isinstance(data["dataset"], dict):
+        errors.append("'dataset' must be a dict")
+
+    if "environment" in data and not isinstance(data["environment"], dict):
+        errors.append("'environment' must be a dict")
+
+    if "ready_for_baseline" in data and not isinstance(data["ready_for_baseline"], bool):
+        errors.append("'ready_for_baseline' must be a boolean")
+
+    # Inner field warnings (soft checks — don't block validation)
+    ds = data.get("dataset")
+    if isinstance(ds, dict):
+        if "train_path" not in ds:
+            warnings.append("dataset.train_path is missing")
+        if ds.get("prepared") is True and "prepared_train_path" not in ds:
+            warnings.append(
+                "dataset.prepared is True but prepared_train_path is missing"
+            )
+        ptpath = ds.get("prepared_train_path")
+        if ptpath is not None and not isinstance(ptpath, str):
+            warnings.append("dataset.prepared_train_path should be a string")
+        elif isinstance(ptpath, str) and not ptpath:
+            warnings.append("dataset.prepared_train_path is empty")
+        pvpath = ds.get("prepared_val_path")
+        if pvpath is not None and not isinstance(pvpath, str):
+            warnings.append("dataset.prepared_val_path should be a string")
+        elif isinstance(pvpath, str) and not pvpath:
+            warnings.append("dataset.prepared_val_path is empty")
+
+    env = data.get("environment")
+    if isinstance(env, dict):
+        if "manager" not in env:
+            warnings.append("environment.manager is missing")
+
+    return {"valid": len(errors) == 0, "errors": errors, "warnings": warnings}
+
+
 def validate_file(filepath: str, schema_type: str) -> dict:
     """Read a JSON file and validate it against the specified schema.
 
@@ -210,6 +277,7 @@ def validate_file(filepath: str, schema_type: str) -> dict:
         "result": validate_result,
         "baseline": validate_baseline,
         "manifest": validate_manifest,
+        "prerequisites": validate_prerequisites,
     }
 
     if schema_type not in validators:

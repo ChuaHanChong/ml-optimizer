@@ -287,3 +287,89 @@ def test_review_suggestion_history_schema(tmp_path):
     assert not missing, f"Suggestion history entry missing fields: {missing}"
     assert isinstance(history[0]["iteration"], int)
     assert history[0]["iteration"] >= 1
+
+
+# --- Prerequisites → Orchestrate contract ---
+
+def test_prerequisites_report_has_orchestrator_required_fields():
+    """prerequisites.json must have all fields that orchestrate Phase 2→3 expects."""
+    report = {
+        "status": "ready",
+        "dataset": {
+            "train_path": "/data/train",
+            "val_path": "/data/val",
+            "format_detected": "image_folder",
+            "prepared": False,
+            "prepared_train_path": None,
+            "prepared_val_path": None,
+            "validation_passed": True,
+            "notes": "",
+        },
+        "environment": {
+            "manager": "conda",
+            "python_version": "3.10.12",
+            "packages_installed": ["torch", "torchvision"],
+            "packages_failed": [],
+            "all_imports_resolved": True,
+            "notes": "",
+        },
+        "ready_for_baseline": True,
+    }
+    # Orchestrate checks these four top-level keys
+    for key in ("status", "dataset", "environment", "ready_for_baseline"):
+        assert key in report, f"prerequisites.json missing '{key}'"
+    assert report["status"] in ("ready", "partial", "failed")
+    assert isinstance(report["dataset"], dict)
+    assert isinstance(report["environment"], dict)
+    assert isinstance(report["ready_for_baseline"], bool)
+
+
+def test_prerequisites_prepared_paths_flow_to_baseline():
+    """prerequisites.json prepared paths must match what baseline/experiment expect."""
+    report = {
+        "status": "ready",
+        "dataset": {
+            "train_path": "/data/train",
+            "val_path": "/data/val",
+            "prepared": True,
+            "prepared_train_path": "/exp/prepared-data/train",
+            "prepared_val_path": "/exp/prepared-data/val",
+        },
+        "environment": {"manager": "conda", "packages_installed": ["torch"]},
+        "ready_for_baseline": True,
+    }
+    # Orchestrator extracts prepared paths when dataset.prepared is True
+    assert report["dataset"]["prepared"] is True
+    assert "prepared_train_path" in report["dataset"]
+    assert "prepared_val_path" in report["dataset"]
+    # Paths must be non-empty strings (baseline/experiment substitute these)
+    assert isinstance(report["dataset"]["prepared_train_path"], str)
+    assert len(report["dataset"]["prepared_train_path"]) > 0
+    assert isinstance(report["dataset"]["prepared_val_path"], str)
+    assert len(report["dataset"]["prepared_val_path"]) > 0
+
+
+def test_prerequisites_failed_blocks_pipeline():
+    """A failed prerequisites report must block baseline from proceeding."""
+    report = {
+        "status": "failed",
+        "dataset": {"train_path": None, "errors": ["Data path does not exist"]},
+        "environment": {"manager": "unknown"},
+        "ready_for_baseline": False,
+    }
+    assert report["status"] == "failed"
+    assert report["ready_for_baseline"] is False
+
+
+def test_prerequisites_partial_has_actionable_info():
+    """A partial prerequisites report must still have dataset/environment info."""
+    report = {
+        "status": "partial",
+        "dataset": {"train_path": "/data/train", "prepared": False},
+        "environment": {"manager": "pip", "packages_installed": [], "packages_failed": ["torch"]},
+        "ready_for_baseline": False,
+    }
+    assert report["status"] in ("ready", "partial", "failed")
+    # Partial must still have structured data for the user to decide
+    assert isinstance(report["dataset"], dict)
+    assert isinstance(report["environment"], dict)

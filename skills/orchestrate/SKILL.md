@@ -44,6 +44,10 @@ You are an ML optimization orchestrator. You coordinate the full optimization pi
    7. **Divergence metric name:** What metric should be monitored for training divergence? (default: "loss". Common alternatives: "train_loss", "val_loss", "objective", "nll_loss", "perplexity" for LLMs). **Must be a lower-is-better metric** — divergence detection assumes lower values mean better training. For RL tasks where "reward" is the primary metric, still use "loss" for divergence monitoring.
    8. **Optimization type:** Are you optimizing training performance or inference performance? (This plugin focuses on **training** optimization — inference optimization like quantization, pruning, or ONNX conversion is out of scope.)
    9. **Anything else** I should know about this model or training setup?
+   10. **Dataset location:** Where are your training and validation datasets?
+       - Directory path(s), or "embedded in code" if the training script downloads/generates data
+   11. **Environment:** Which environment manager do you use?
+       - conda (environment name?) / uv / pip / venv / poetry / other
    ```
 
 3. **Record user responses:**
@@ -255,7 +259,7 @@ Before starting the experiment loop, validate all prerequisites:
 python3 -c "
 import sys; sys.path.insert(0, '$HOME/.claude/plugins/ml-optimizer/scripts')
 from pipeline_state import validate_phase_requirements
-import json; print(json.dumps(validate_phase_requirements(5, '<exp_root>')))
+import json; print(json.dumps(validate_phase_requirements(6, '<exp_root>')))
 "
 ```
 
@@ -291,11 +295,11 @@ save_state(6, 0, [], '<exp_root>', user_choices={
     'target_value': <target_value or None>,
     'train_command': '<train_command>',
     'eval_command': '<eval_command or None>',
-    'train_data_path': '<train_data_path or None>',
+    'train_data_path': '<train_data_path>',
     'val_data_path': '<val_data_path or None>',
     'prepared_train_path': '<prepared_train_path or None>',
     'prepared_val_path': '<prepared_val_path or None>',
-    'env_manager': '<env_manager or None>',
+    'env_manager': '<env_manager>',
     'env_name': '<env_name or None>',
 })
 "

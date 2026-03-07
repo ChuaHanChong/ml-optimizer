@@ -12,6 +12,8 @@ Establish baseline performance metrics for the ML model. This is always the firs
 The orchestrator provides:
 - Project root path
 - Model/training details (from understanding phase)
+- `prepared_train_path` (optional): If prerequisites prepared data, use this path instead of the original data path in the training command
+- `prepared_val_path` (optional): Same for validation data
 
 ## Step 1: Identify Evaluation Command
 
@@ -36,6 +38,16 @@ Search the project for evaluation scripts:
    - The command to run evaluation
    - What metrics it outputs
    ```
+
+## Step 1.5: Apply Prepared Data Paths (If Applicable)
+
+If the orchestrator passed `prepared_train_path` or `prepared_val_path`:
+1. Identify how the training command references data paths (CLI args like `--data_dir`, `--train_path`, `--val_path`, or config file entries)
+2. Substitute the prepared paths into the training/eval commands before running them
+3. If data paths are in a config file, create a modified copy at `experiments/logs/baseline/config.yaml` with updated paths
+4. Log in dev_notes which paths were substituted
+
+If no prepared paths were provided, use the original commands as-is.
 
 ## Step 2: Set Up Experiment Directory
 

@@ -9,6 +9,7 @@ Dependency-free — uses only the Python standard library.
 
 import hashlib
 import json
+import math
 import os
 import sys
 import tempfile
@@ -229,7 +230,9 @@ def detect_patterns(events: list[dict]) -> list[dict]:
             cfg = e.get("config", {})
             if isinstance(cfg, dict) and "lr" in cfg:
                 try:
-                    lrs.append(float(cfg["lr"]))
+                    lr_val = float(cfg["lr"])
+                    if math.isfinite(lr_val):
+                        lrs.append(lr_val)
                 except (ValueError, TypeError):
                     pass
         if lrs:
@@ -345,6 +348,8 @@ def detect_patterns(events: list[dict]) -> list[dict]:
         try:
             lr_f = float(lr_val)
         except (ValueError, TypeError):
+            continue
+        if not math.isfinite(lr_f):
             continue
         if lr_f < 0.001:
             bucket = "low"
@@ -648,12 +653,12 @@ def compute_success_metrics(
 
     if baseline is not None:
         baseline_val = baseline.get("metrics", {}).get(primary_metric)
-        if baseline_val is not None and isinstance(baseline_val, (int, float)):
+        if baseline_val is not None and isinstance(baseline_val, (int, float)) and math.isfinite(baseline_val):
             beat_count = 0
             improvements = []
             for e in completed:
                 val = e.get("metrics", {}).get(primary_metric)
-                if val is not None and isinstance(val, (int, float)):
+                if val is not None and isinstance(val, (int, float)) and math.isfinite(val):
                     if _is_better(val, baseline_val, lower_is_better):
                         beat_count += 1
                         if baseline_val != 0:
@@ -1003,7 +1008,12 @@ def _cli_main() -> None:
         events = get_events(exp_root)
         pats = detect_patterns(events)
         total = int(sys.argv[3]) if len(sys.argv) > 3 else None
-        ranked = rank_suggestions(pats, total_experiments=total)
+        cross = None
+        if len(sys.argv) > 4:
+            memory = load_cross_project(sys.argv[4])
+            if memory:
+                cross = memory.get("cross_project_patterns", [])
+        ranked = rank_suggestions(pats, total_experiments=total, cross_project_patterns=cross)
         print(json.dumps(ranked, indent=2))
 
     elif action == "cleanup":

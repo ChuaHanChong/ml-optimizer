@@ -145,8 +145,14 @@ For each issue:
 
 Rank all detected patterns by impact score:
 
+For session-only scope:
 ```bash
 python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> rank <total_experiments>
+```
+
+When scope includes cross-project (`"both"` or `"cross-project"`), pass the plugin root to enable the 1.5× cross-project boost:
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> rank <total_experiments> ~/.claude/plugins/ml-optimizer
 ```
 
 Where `<total_experiments>` is the `total_experiments` value from Step 1.6 success metrics (omit if Step 1.6 was skipped). This returns patterns sorted by score (severity weight × occurrences × cross-project boost), with a `significance` field when total_experiments is provided. Use this ranking to order your suggestions — highest score first. In Step 6, present only the top 3 most impactful suggestions to the user.

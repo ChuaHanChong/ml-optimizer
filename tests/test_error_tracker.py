@@ -646,6 +646,31 @@ def test_compute_success_metrics_top_configs(tmp_path):
     assert m["top_configs"][0]["exp_id"] == "exp-001"
 
 
+def test_compute_success_metrics_nan_baseline(tmp_path):
+    """NaN baseline metric value is treated as missing (no improvement calc)."""
+    results = tmp_path / "results"
+    results.mkdir()
+    _write_result(results, "baseline", "completed", {"lr": 0.001}, {"acc": float("nan")})
+    _write_result(results, "exp-001", "completed", {"lr": 0.01}, {"acc": 80.0})
+
+    m = compute_success_metrics(str(tmp_path), "acc", lower_is_better=False)
+    assert m["improvement_rate"] is None
+
+
+def test_compute_success_metrics_inf_experiment(tmp_path):
+    """Inf experiment metric values are excluded from improvement calculation."""
+    results = tmp_path / "results"
+    results.mkdir()
+    _write_result(results, "baseline", "completed", {"lr": 0.001}, {"acc": 70.0})
+    _write_result(results, "exp-001", "completed", {"lr": 0.01}, {"acc": float("inf")})
+    _write_result(results, "exp-002", "completed", {"lr": 0.005}, {"acc": 75.0})
+
+    m = compute_success_metrics(str(tmp_path), "acc", lower_is_better=False)
+    # Only exp-002 should count (exp-001 has inf, should be skipped)
+    assert m["improvement_rate"] is not None
+    assert m["best_improvement_pct"] is not None
+
+
 # ---------------------------------------------------------------------------
 # Proposal outcomes
 # ---------------------------------------------------------------------------
@@ -932,6 +957,21 @@ def test_detect_patterns_timeout_single():
     assert "timeout_pattern" not in ids
 
 
+def test_detect_patterns_nan_inf_lr_excluded():
+    """NaN/Inf LR values in divergence events are excluded from pattern stats."""
+    events = []
+    for lr in [0.1, 0.2, float("nan"), float("inf")]:
+        events.append(create_event(
+            "divergence", "warning", "monitor", "NaN",
+            config={"lr": lr, "batch_size": 32},
+        ))
+    patterns = detect_patterns(events)
+    lr_pattern = [p for p in patterns if p["pattern_id"] == "high_lr_divergence"]
+    assert len(lr_pattern) == 1
+    # avg should be computed from only 0.1 and 0.2 (the finite values)
+    assert "0.1500" in lr_pattern[0]["description"]
+
+
 # ---------------------------------------------------------------------------
 # Suggestion ranking (A4)
 # ---------------------------------------------------------------------------
@@ -1034,6 +1074,35 @@ def test_cli_rank_with_total_experiments(run_main, tmp_path):
     data = json.loads(r.stdout)
     assert len(data) > 0
     assert "significance" in data[0]
+
+
+def test_cli_rank_with_cross_project(run_main, tmp_path):
+    """CLI rank action with plugin_root loads cross-project patterns for boost."""
+    plugin_root = tmp_path / "plugin"
+    plugin_root.mkdir()
+    # Create two "projects" that share the same pattern to trigger cross-project detection
+    for proj_name in ["proj_a", "proj_b"]:
+        proj = tmp_path / proj_name
+        proj.mkdir()
+        for lr in [0.1, 0.2, 0.05]:
+            log_event(str(proj), create_event(
+                "divergence", "warning", "monitor", "NaN",
+                config={"lr": lr, "batch_size": 32},
+            ))
+        update_cross_project(str(plugin_root), str(proj), str(proj))
+    # Now rank from proj_a with cross-project data
+    proj_a = tmp_path / "proj_a"
+    r_boosted = run_main("error_tracker.py", str(proj_a), "rank", "50", str(plugin_root))
+    assert r_boosted.returncode == 0
+    boosted = json.loads(r_boosted.stdout)
+    # Rank without cross-project
+    r_plain = run_main("error_tracker.py", str(proj_a), "rank", "50")
+    assert r_plain.returncode == 0
+    plain = json.loads(r_plain.stdout)
+    # Cross-project boost should make scores higher
+    assert len(boosted) > 0
+    assert len(plain) > 0
+    assert boosted[0]["score"] > plain[0]["score"]
 
 
 # ---------------------------------------------------------------------------
@@ -1264,3 +1333,16 @@ def test_cli_log_suggestion(run_main, tmp_path):
     # Verify it was stored
     history = get_suggestion_history(str(tmp_path))
     assert len(history) == 1
+
+
+def test_cli_suggestion_history(run_main, tmp_path):
+    """CLI suggestion-history action returns logged suggestions."""
+    log_suggestion(str(tmp_path), "high_lr_divergence", scope="session")
+    log_suggestion(str(tmp_path), "oom_batch_size", scope="cross-project")
+    r = run_main("error_tracker.py", str(tmp_path), "suggestion-history")
+    assert r.returncode == 0
+    history = json.loads(r.stdout)
+    assert len(history) == 2
+    pattern_ids = [s["pattern_id"] for s in history]
+    assert "high_lr_divergence" in pattern_ids
+    assert "oom_batch_size" in pattern_ids

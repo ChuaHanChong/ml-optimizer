@@ -4,6 +4,8 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
 from conftest import FIXTURES, _write_result
 
 from error_tracker import (
@@ -84,27 +86,21 @@ def test_validate_event_missing_field():
 
 
 def test_validate_event_invalid_category():
-    """An event with an unknown category fails validation."""
-    ev = create_event("unknown_cat", "critical", "experiment", "x")
-    result = validate_event(ev)
-    assert result["valid"] is False
-    assert any("category" in e for e in result["errors"])
+    """create_event raises ValueError on unknown category."""
+    with pytest.raises(ValueError, match="category"):
+        create_event("unknown_cat", "critical", "experiment", "x")
 
 
 def test_validate_event_invalid_severity():
-    """An event with an unknown severity fails validation."""
-    ev = create_event("agent_failure", "fatal", "orchestrate", "x")
-    result = validate_event(ev)
-    assert result["valid"] is False
-    assert any("severity" in e for e in result["errors"])
+    """create_event raises ValueError on unknown severity."""
+    with pytest.raises(ValueError, match="severity"):
+        create_event("agent_failure", "fatal", "orchestrate", "x")
 
 
 def test_validate_event_invalid_source():
-    """An event with an unknown source fails validation."""
-    ev = create_event("agent_failure", "critical", "unknown_src", "x")
-    result = validate_event(ev)
-    assert result["valid"] is False
-    assert any("source" in e for e in result["errors"])
+    """create_event raises ValueError on unknown source."""
+    with pytest.raises(ValueError, match="source"):
+        create_event("agent_failure", "critical", "unknown_src", "x")
 
 
 def test_validate_event_non_dict():
@@ -1348,3 +1344,21 @@ def test_cli_suggestion_history(run_main, tmp_path):
     pattern_ids = [s["pattern_id"] for s in history]
     assert "high_lr_divergence" in pattern_ids
     assert "oom_batch_size" in pattern_ids
+
+
+def test_create_event_invalid_category_raises():
+    """create_event with invalid category raises ValueError."""
+    with pytest.raises(ValueError, match="Invalid.*category"):
+        create_event("bad_category", "critical", "experiment", "msg")
+
+
+def test_create_event_invalid_severity_raises():
+    """create_event with invalid severity raises ValueError."""
+    with pytest.raises(ValueError, match="Invalid.*severity"):
+        create_event("training_failure", "bad_severity", "experiment", "msg")
+
+
+def test_create_event_invalid_source_raises():
+    """create_event with invalid source raises ValueError."""
+    with pytest.raises(ValueError, match="Invalid.*source"):
+        create_event("training_failure", "critical", "bad_source", "msg")

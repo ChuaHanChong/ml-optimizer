@@ -30,7 +30,7 @@ def detect_explosion(
         if not window_vals:
             continue
         avg = sum(window_vals) / len(window_vals)
-        if avg == 0:
+        if abs(avg) < 1e-12:
             continue
         if not math.isfinite(values[i]):
             continue

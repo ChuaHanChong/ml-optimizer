@@ -86,7 +86,7 @@ All scripts work as both importable modules and CLI tools:
 | Script | CLI Usage |
 |--------|-----------|
 | `gpu_check.py` | `python3 scripts/gpu_check.py` — parse nvidia-smi |
-| `parse_logs.py` | `python3 scripts/parse_logs.py <logfile>` — parse kv/JSON/CSV logs |
+| `parse_logs.py` | `python3 scripts/parse_logs.py <logfile>` — parse kv/JSON/CSV/XGBoost logs |
 | `detect_divergence.py` | `python3 scripts/detect_divergence.py '<json_values>'` — detect NaN/explosion/plateau |
 | `result_analyzer.py` | `python3 scripts/result_analyzer.py <results_dir> <metric> [baseline_id] [lower_is_better]` |
 | `experiment_setup.py` | Generates experiment IDs and directory structure |

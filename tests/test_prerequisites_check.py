@@ -1113,3 +1113,13 @@ class TestBulkInstallCommandCondaEnvName:
         assert r.returncode == 0
         data = json.loads(r.stdout)
         assert "pip install -r" in data["install_command"]
+
+
+def test_validate_data_path_jsonl_file(tmp_path):
+    """JSONL files should be recognized as JSON format."""
+    f = tmp_path / "data.jsonl"
+    f.write_text('{"text": "hello"}\n{"text": "world"}\n')
+    result = validate_data_path(str(f), expected_format="json")
+    assert result["exists"]
+    assert result["non_empty"]
+    assert result.get("format_matches") is True

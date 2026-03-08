@@ -303,7 +303,7 @@ def test_spearman_constant_x():
 
 
 def test_rank_by_metric_with_nan():
-    """NaN metric values should not crash ranking."""
+    """NaN metric values are sorted to the end with a note field."""
     results = {
         "exp-001": {"metrics": {"loss": 0.5}},
         "exp-002": {"metrics": {"loss": float("nan")}},
@@ -311,9 +311,35 @@ def test_rank_by_metric_with_nan():
     }
     ranked = rank_by_metric(results, "loss", lower_is_better=True)
     assert len(ranked) == 3
-    # NaN sorts to the end with lower_is_better=True (key comparison)
-    # Main assertion: no crash
-    assert all("exp_id" in r for r in ranked)
+    # NaN entry should be last
+    assert ranked[2]["exp_id"] == "exp-002"
+    assert "note" in ranked[2]
+
+
+def test_rank_by_metric_inf_filtered_to_end():
+    """Inf metric values are sorted after finite values."""
+    results = {
+        "exp-001": {"metrics": {"loss": 0.5}},
+        "exp-002": {"metrics": {"loss": float("inf")}},
+        "exp-003": {"metrics": {"loss": 0.3}},
+    }
+    ranked = rank_by_metric(results, "loss", lower_is_better=True)
+    assert len(ranked) == 3
+    assert ranked[0]["exp_id"] == "exp-003"
+    assert ranked[1]["exp_id"] == "exp-001"
+    assert ranked[2]["exp_id"] == "exp-002"
+    assert "note" in ranked[2]
+
+
+def test_rank_by_metric_all_nan():
+    """All-NaN metrics: all entries returned with notes, no crash."""
+    results = {
+        "exp-001": {"metrics": {"loss": float("nan")}},
+        "exp-002": {"metrics": {"loss": float("nan")}},
+    }
+    ranked = rank_by_metric(results, "loss", lower_is_better=True)
+    assert len(ranked) == 2
+    assert all("note" in r for r in ranked)
 
 
 def test_rank_by_metric_partial_metric_coverage():

@@ -62,6 +62,27 @@ def parse_tqdm_line(line: str) -> dict:
     return metrics
 
 
+def parse_xgboost_line(line: str) -> dict:
+    """Parse XGBoost/LightGBM bracket-prefixed log lines.
+
+    Matches: [10] train-auc:0.85 val-auc:0.80
+    Also: [100] validation_0-logloss:0.345
+    """
+    m = re.match(r'^\[(\d+)\]\s+(.+)', line.strip())
+    if not m:
+        return {}
+    iteration = int(m.group(1))
+    rest = m.group(2)
+    metrics = {"iteration": float(iteration)}
+    for kv_match in re.finditer(r'([\w][\w.-]*)\s*:\s*([0-9eE.+\-]+)', rest):
+        key, value = kv_match.group(1), kv_match.group(2)
+        try:
+            metrics[key] = float(value)
+        except ValueError:
+            continue
+    return metrics
+
+
 def parse_json_line(line: str) -> dict:
     """Parse a JSON line for metrics."""
     try:
@@ -115,6 +136,11 @@ def detect_format(lines: list[str]) -> str:
         stripped = line.strip()
         if stripped and re.search(r'\d+%\|', stripped):
             return "tqdm"
+    # Check for XGBoost/LightGBM bracket format
+    for line in lines[:5]:
+        stripped = line.strip()
+        if stripped and re.match(r'^\[\d+\]\s+\S+\s*:', stripped):
+            return "xgboost"
     # Check if first non-empty line looks like CSV header
     for line in lines[:3]:
         stripped = line.strip()
@@ -145,6 +171,8 @@ def parse_log(filepath: str, fmt: str | None = None) -> list[dict]:
         return [m for line in lines if (m := parse_python_logging_line(line))]
     elif fmt == "tqdm":
         return [m for line in lines if (m := parse_tqdm_line(line))]
+    elif fmt == "xgboost":
+        return [m for line in lines if (m := parse_xgboost_line(line))]
     else:
         result = [m for line in lines if (m := parse_kv_line(line))]
         if auto_detected and not result and lines:

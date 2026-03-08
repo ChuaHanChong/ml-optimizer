@@ -3,7 +3,7 @@
 import json
 
 from conftest import FIXTURES
-from parse_logs import parse_kv_line, parse_json_line, parse_csv_lines, parse_python_logging_line, parse_tqdm_line, detect_format, parse_log, extract_metric_trajectory
+from parse_logs import parse_kv_line, parse_json_line, parse_csv_lines, parse_python_logging_line, parse_tqdm_line, parse_xgboost_line, detect_format, parse_log, extract_metric_trajectory
 
 
 def test_parse_kv_line():
@@ -296,3 +296,44 @@ def test_cli_no_args(run_main):
     r = run_main("parse_logs.py")
     assert r.returncode == 1
     assert "Usage" in r.stdout
+
+
+# --- XGBoost/LightGBM format tests ---
+
+def test_parse_xgboost_line_basic():
+    """Parse XGBoost bracket format with hyphenated keys."""
+    line = "[10]\ttrain-auc:0.85\tval-auc:0.80"
+    m = parse_xgboost_line(line)
+    assert m["iteration"] == 10.0
+    assert m["train-auc"] == 0.85
+    assert m["val-auc"] == 0.80
+
+
+def test_parse_xgboost_line_logloss():
+    """Parse LightGBM format with underscores and hyphens."""
+    line = "[100]\tvalidation_0-logloss:0.345\ttrain-logloss:0.321"
+    m = parse_xgboost_line(line)
+    assert m["iteration"] == 100.0
+    assert m["validation_0-logloss"] == 0.345
+    assert m["train-logloss"] == 0.321
+
+
+def test_parse_xgboost_line_no_match():
+    """Non-bracket line returns empty dict."""
+    assert parse_xgboost_line("epoch=1 loss=0.5") == {}
+
+
+def test_detect_format_xgboost():
+    """XGBoost bracket lines detected as 'xgboost' format."""
+    lines = ["[0]\ttrain-auc:0.50\tval-auc:0.48", "[1]\ttrain-auc:0.55\tval-auc:0.52"]
+    assert detect_format(lines) == "xgboost"
+
+
+def test_parse_log_xgboost_file(tmp_path):
+    """Full file parsing with XGBoost format."""
+    log = tmp_path / "xgb.log"
+    log.write_text("[0]\ttrain-logloss:0.693\tval-logloss:0.695\n[1]\ttrain-logloss:0.650\tval-logloss:0.660\n[2]\ttrain-logloss:0.600\tval-logloss:0.620\n")
+    records = parse_log(str(log))
+    assert len(records) == 3
+    assert records[0]["iteration"] == 0.0
+    assert records[2]["train-logloss"] == 0.600

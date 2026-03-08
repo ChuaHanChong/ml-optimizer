@@ -593,6 +593,7 @@ def validate_data_path(path: str, expected_format: str) -> dict:
         ext = p.suffix.lower()
         ext_format_map = {
             ".csv": "csv", ".tsv": "csv",
+            ".json": "json", ".jsonl": "json",
             ".h5": "hdf5", ".hdf5": "hdf5", ".hdf": "hdf5",
             ".parquet": "parquet",
             ".tfrecord": "tfrecord", ".tfrecords": "tfrecord",

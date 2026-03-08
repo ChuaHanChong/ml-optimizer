@@ -191,12 +191,13 @@ When `divergence_metric` is a reward metric (`lower_is_better = False`):
 - **Log file format unrecognized:** Try all parsers, report if none work
 - **Process already dead:** Check exit code, mark as failed if non-zero
 - **Permission errors:** Report and skip that experiment
+- **Log file exists but is empty:** If the log file has 0 bytes after 5 minutes of monitoring, report status `"no_output"` with reason `"Log file empty after 5 minutes — training may have stalled"`. Log to error tracker with `category: "training_failure"`, `severity: "warning"`, `source: "monitor"`.
 
 ## Output
 
 Return to the orchestrator a dict per experiment:
 - `exp_id`: Experiment identifier
-- `status`: One of `healthy`, `diverged`, `completed`, `failed`
+- `status`: One of `healthy`, `diverged`, `completed`, `failed`, `no_output`
 - `reason`: Divergence reason (if diverged) or `null`
 - `step`: Step at which divergence was detected (if diverged) or `-1`
 - `latest_metrics`: Dict of most recent metric values

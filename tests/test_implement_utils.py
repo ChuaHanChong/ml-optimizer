@@ -471,3 +471,25 @@ def test_cli_analyze(run_main, tmp_path):
     assert r.returncode == 0
     output = json.loads(r.stdout)
     assert "python_files" in output
+
+
+def test_parse_proposals_double_hash(tmp_path):
+    """Proposals with ## headers (instead of ###) should parse correctly."""
+    content = '''# Research Findings
+
+## Proposal 1: Test Technique (Priority: High)
+
+**Complexity:** Low
+**Implementation strategy:** from_scratch
+
+**What to change:**
+- `train.py` — modify training loop
+
+**Implementation steps:**
+1. Do the thing
+'''
+    f = tmp_path / "findings.md"
+    f.write_text(content)
+    proposals = parse_research_proposals(str(f))
+    assert len(proposals) == 1
+    assert proposals[0]["name"] == "Test Technique"

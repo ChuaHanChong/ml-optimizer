@@ -348,3 +348,18 @@ def test_cli_no_args(run_main):
     r = run_main("detect_divergence.py")
     assert r.returncode == 1
     assert "Usage" in r.stdout
+
+
+def test_detect_explosion_near_zero_no_false_positive():
+    """Near-zero average should not trigger false explosion."""
+    values = [1e-15] * 15 + [1e-10]
+    result = detect_explosion(values, window=10, threshold=5.0)
+    assert result is None
+
+
+def test_detect_explosion_small_real_average():
+    """Small but real average should still trigger explosion."""
+    values = [0.01] * 15 + [1.0]
+    result = detect_explosion(values, window=10, threshold=5.0)
+    assert result is not None
+    assert result["diverged"] is True

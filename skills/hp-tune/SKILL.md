@@ -150,6 +150,11 @@ For each proposed config, write a JSON file:
 }
 ```
 
+**Field rules:**
+- Baseline config (no code change): `"code_branch": null, "code_proposal": null`
+- Branch config: `"code_branch": "ml-opt/<slug>"` (from manifest), `"code_proposal": "<slug>"` (matching the manifest entry's `slug` field)
+- Iteration 2+: inherit from the branch being tested, or null for baseline code
+
 Use `experiment_setup.py` to generate proper experiment IDs:
 ```bash
 python3 -c "

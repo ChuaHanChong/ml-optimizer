@@ -128,7 +128,7 @@ def parse_research_proposals(findings_path: str, selected_indices: list[int] | N
 
     # Split on proposal headers
     proposal_pattern = re.compile(
-        r"^### Proposal (\d+):\s*(.+?)(?:\s*\(Priority:.*?\))?\s*$",
+        r"^#{2,3}\s+Proposal\s+(\d+):\s*(.+?)(?:\s*\(Priority:.*?\))?\s*$",
         re.MULTILINE,
     )
     matches = list(proposal_pattern.finditer(text))

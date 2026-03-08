@@ -2,6 +2,7 @@
 """Analyze and compare experiment results."""
 
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -33,8 +34,12 @@ def rank_by_metric(results: dict[str, dict], metric: str, lower_is_better: bool 
                 "config": data.get("config", {}),
                 "status": data.get("status"),
             })
-    ranked.sort(key=lambda x: x["value"], reverse=not lower_is_better)
-    return ranked
+    valid = [r for r in ranked if isinstance(r["value"], (int, float)) and math.isfinite(r["value"])]
+    invalid = [r for r in ranked if not (isinstance(r["value"], (int, float)) and math.isfinite(r["value"]))]
+    for r in invalid:
+        r["note"] = "non-finite metric value excluded from ranking"
+    valid.sort(key=lambda x: x["value"], reverse=not lower_is_better)
+    return valid + invalid
 
 
 def spearman_correlation(x: list, y: list) -> float:

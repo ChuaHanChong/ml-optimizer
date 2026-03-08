@@ -117,6 +117,10 @@ def create_event(
         if v is not None:
             event[k] = v
 
+    result = validate_event(event)
+    if not result["valid"]:
+        raise ValueError(f"Invalid event: {'; '.join(result['errors'])}")
+
     return event
 
 
@@ -940,25 +944,29 @@ def _cli_main() -> None:
             print("Error: invalid JSON", file=sys.stderr)
             sys.exit(1)
         # Create a proper event from the raw input
-        ev = create_event(
-            raw.get("category", ""),
-            raw.get("severity", ""),
-            raw.get("source", ""),
-            raw.get("message", ""),
-            exp_id=raw.get("exp_id"),
-            skill=raw.get("skill"),
-            agent=raw.get("agent"),
-            phase=raw.get("phase"),
-            iteration=raw.get("iteration"),
-            code_branch=raw.get("code_branch"),
-            config=raw.get("config"),
-            metrics=raw.get("metrics"),
-            stack_trace=raw.get("stack_trace"),
-            context=raw.get("context"),
-            resolution=raw.get("resolution"),
-            project_id=raw.get("project_id"),
-            duration_seconds=raw.get("duration_seconds"),
-        )
+        try:
+            ev = create_event(
+                raw.get("category", ""),
+                raw.get("severity", ""),
+                raw.get("source", ""),
+                raw.get("message", ""),
+                exp_id=raw.get("exp_id"),
+                skill=raw.get("skill"),
+                agent=raw.get("agent"),
+                phase=raw.get("phase"),
+                iteration=raw.get("iteration"),
+                code_branch=raw.get("code_branch"),
+                config=raw.get("config"),
+                metrics=raw.get("metrics"),
+                stack_trace=raw.get("stack_trace"),
+                context=raw.get("context"),
+                resolution=raw.get("resolution"),
+                project_id=raw.get("project_id"),
+                duration_seconds=raw.get("duration_seconds"),
+            )
+        except ValueError as e:
+            print(json.dumps({"error": str(e)}), file=sys.stderr)
+            sys.exit(1)
         path = log_event(exp_root, ev)
         print(json.dumps({"logged": True, "path": path}))
 

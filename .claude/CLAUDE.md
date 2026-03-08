@@ -87,7 +87,7 @@ All scripts work as both importable modules and CLI tools:
 |--------|-----------|
 | `gpu_check.py` | `python3 scripts/gpu_check.py` — parse nvidia-smi |
 | `parse_logs.py` | `python3 scripts/parse_logs.py <logfile>` — parse kv/JSON/CSV/XGBoost logs |
-| `detect_divergence.py` | `python3 scripts/detect_divergence.py '<json_values>'` — detect NaN/explosion/plateau |
+| `detect_divergence.py` | `python3 scripts/detect_divergence.py '<json_values>' [--higher-is-better]` — detect NaN/explosion/plateau |
 | `result_analyzer.py` | `python3 scripts/result_analyzer.py <results_dir> <metric> [baseline_id] [lower_is_better]` |
 | `experiment_setup.py` | Generates experiment IDs and directory structure |
 | `implement_utils.py` | `python3 scripts/implement_utils.py <findings.md> '<indices_json>'` — parse proposals; also `clone <url> <dest>` and `analyze <path>` subcommands |
@@ -136,7 +136,7 @@ The orchestrator can be stopped and resumed. On restart it reads `pipeline-state
 
 ## Gotchas
 
-- **`detect_divergence.py` CLI takes a JSON string, not a file path**: `python3 scripts/detect_divergence.py '[0.5, 0.4, 100.0]'` — the quotes are required.
+- **`detect_divergence.py` CLI takes a JSON string, not a file path**: `python3 scripts/detect_divergence.py '[0.5, 0.4, 100.0]'` — the quotes are required. Pass `--higher-is-better` for reward-like metrics.
 - **`implement_utils.py` has three CLI modes**: default (parse proposals), `clone <url> <dest>`, and `analyze <path>`. Each has different argument patterns.
 - **Metric routing is split**: Monitor/divergence always uses loss (lower-is-better). Analyze/hp-tune use the user's `primary_metric`. Mixing these up causes silent wrong behavior.
 - **Branch experiments are independent**: Results on `ml-opt/branch-a` tell you nothing about what HPs will work on `ml-opt/branch-b`. The tuning agent must group by `code_branch` before analyzing trends.

@@ -14,6 +14,7 @@ The orchestrator provides:
 - Model/training details (from understanding phase)
 - `prepared_train_path` (optional): If prerequisites prepared data, use this path instead of the original data path in the training command
 - `prepared_val_path` (optional): Same for validation data
+- `model_category` (optional): From user_choices — `"supervised"`, `"rl"`, `"generative"`, or null. Controls RL-specific evaluation (see RL Baseline Evaluation section) and tabular ML GPU profiling skip.
 
 ## Step 1: Identify Evaluation Command
 

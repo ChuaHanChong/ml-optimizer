@@ -373,7 +373,7 @@ save_state(6, 0, [], '<exp_root>', user_choices={
 
 **Critical:** Use the user's `divergence_metric` (from Phase 0 Q7, default: `"loss"`) for divergence detection. Use `primary_metric` (which may be "accuracy", "psnr", "f1", etc.) only for the analyze and hp-tune skills.
 
-- Monitor skill: `metric_to_watch = <divergence_metric>`, `lower_is_better = True`
+- Monitor skill: `metric_to_watch = <divergence_metric>`, `lower_is_better = <divergence_lower_is_better>`
 - Analyze skill: `primary_metric` from user's Phase 0 answer, `lower_is_better` based on metric type
 - HP-tune skill: uses `primary_metric` for ranking
 

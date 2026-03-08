@@ -1123,3 +1123,10 @@ def test_validate_data_path_jsonl_file(tmp_path):
     assert result["exists"]
     assert result["non_empty"]
     assert result.get("format_matches") is True
+
+
+def test_cli_no_args(run_main):
+    """CLI with no args prints usage and exits 1."""
+    r = run_main("prerequisites_check.py")
+    assert r.returncode == 1
+    assert "Usage" in r.stdout

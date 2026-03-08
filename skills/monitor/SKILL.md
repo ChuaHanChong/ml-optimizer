@@ -18,6 +18,7 @@ From the orchestrator:
 - `lower_is_better`: Whether lower values are better for the watched metric (default: true). The `primary_metric` (accuracy, PSNR, etc.) is used by analyze/hp-tune, not by monitor.
 - `explosion_threshold`: Threshold multiplier for explosion detection (default: 5.0). Override based on model type.
 - `plateau_patience`: Steps without improvement before plateau alarm (default: 20). Override based on model type.
+- `model_category` (optional): From user_choices — `"rl"`, `"generative"`, or null. Controls RL-specific monitoring adjustments (see RL Model Monitoring section).
 
 ## Step 1: Validate Inputs
 

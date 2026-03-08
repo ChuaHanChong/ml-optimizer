@@ -473,6 +473,13 @@ def test_cli_analyze(run_main, tmp_path):
     assert "python_files" in output
 
 
+def test_cli_clone_missing_args(run_main):
+    """CLI clone subcommand with missing args prints usage and exits 1."""
+    r = run_main("implement_utils.py", "clone")
+    assert r.returncode == 1
+    assert "Usage" in r.stdout
+
+
 def test_parse_proposals_double_hash(tmp_path):
     """Proposals with ## headers (instead of ###) should parse correctly."""
     content = '''# Research Findings

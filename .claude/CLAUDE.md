@@ -55,7 +55,7 @@ Phase 6: Experiment loop (autonomous):
          experiment → run training (parallel across GPUs)
          monitor → watch for divergence
          analyze → decide continue/pivot/stop
-         review → Mid-pipeline review (auto-triggered after 3+ consecutive all-fail batches)
+         review → Mid-pipeline review (auto-triggered after 2+ consecutive all-fail batches or wasted_budget ≥ 3)
 Phase 7: report → Final optimization report
          review → Self-improvement analysis (optional, end-of-session)
 ```
@@ -140,5 +140,5 @@ The orchestrator can be stopped and resumed. On restart it reads `pipeline-state
 - **`implement_utils.py` has three CLI modes**: default (parse proposals), `clone <url> <dest>`, and `analyze <path>`. Each has different argument patterns.
 - **Metric routing is split**: Monitor/divergence always uses loss (lower-is-better). Analyze/hp-tune use the user's `primary_metric`. Mixing these up causes silent wrong behavior.
 - **Branch experiments are independent**: Results on `ml-opt/branch-a` tell you nothing about what HPs will work on `ml-opt/branch-b`. The tuning agent must group by `code_branch` before analyzing trends.
-- **Mid-pipeline review auto-triggers**: After 3+ consecutive all-fail batches in Phase 6, the orchestrator automatically invokes the review skill with `scope: "session"` to suggest course corrections. It can also be invoked manually at end of session.
+- **Mid-pipeline review auto-triggers**: In Phase 6, the orchestrator checks error patterns after each batch. If `wasted_budget` pattern reaches ≥ 3 occurrences OR the last 2 consecutive batches had zero successful experiments, it invokes the review skill with `scope: "session"` to suggest course corrections. It can also be invoked manually at end of session.
 - **Tabular ML frameworks skip divergence monitoring**: When the detected framework is scikit-learn, XGBoost, or LightGBM, the orchestrator sets `divergence_metric` to `null` and skips the monitor skill. The baseline skill skips GPU profiling and throughput estimation for these frameworks.

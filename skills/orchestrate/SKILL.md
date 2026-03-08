@@ -160,7 +160,12 @@ Invoke the `ml-optimizer:prerequisites` skill with:
 **Check results** from `experiments/results/prerequisites.json`:
 - `ready_for_baseline = true` → proceed to Phase 3
 - `status = "partial"` → inform user of issues, ask if they want to proceed anyway or fix first
-- `status = "failed"` → run Phase 3 failure recovery (see below). If recovery also fails, stop and report.
+- `status = "failed"` → diagnose from `prerequisites.json` error details:
+  - Dataset not found / path invalid → ask user to verify `train_data_path`/`val_data_path` via AskUserQuestion
+  - Dataset format unrecognized → ask user to specify format manually
+  - Dependency install failed → show the failed packages/error, ask user to install manually
+  - Environment not found → ask user to verify `env_manager`/`env_name`
+  - If fixable, re-run Phase 2 after corrections. Otherwise stop and report.
 
 **If dataset was prepared** to a new directory:
 1. Read `prerequisites.json` → `dataset.prepared` field
@@ -348,6 +353,7 @@ save_state(6, 0, [], '<exp_root>', user_choices={
     'primary_metric': '<primary_metric>',
     'divergence_metric': '<divergence_metric>',
     'lower_is_better': <lower_is_better>,
+    'divergence_lower_is_better': <divergence_lower_is_better>,
     'target_value': <target_value or None>,
     'train_command': '<train_command>',
     'eval_command': '<eval_command or None>',
@@ -357,6 +363,8 @@ save_state(6, 0, [], '<exp_root>', user_choices={
     'prepared_val_path': '<prepared_val_path or None>',
     'env_manager': '<env_manager>',
     'env_name': '<env_name or None>',
+    'model_category': '<model_category or None>',
+    'user_papers': <user_papers or None>,
 })
 "
 ```

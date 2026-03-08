@@ -1,7 +1,6 @@
 """Tests for error handling — verifies graceful handling of edge cases and failures."""
 
 import json
-import math
 
 from conftest import FIXTURES
 from parse_logs import parse_log, parse_kv_line, extract_metric_trajectory

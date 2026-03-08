@@ -14,7 +14,7 @@ def validate_phase_requirements(phase: int, exp_root: str) -> dict:
 
     Phase 2 (prerequisites): no file requirements.
     Phase 3 (baseline): exp_root/results/ directory must exist.
-        If prerequisites.json exists and ready_for_baseline is false, warn.
+        If prerequisites.json exists and ready_for_baseline is false, fail.
     Phase 4 (checkpoint): exp_root/results/baseline.json must exist with
         "metrics" and "config" keys.
     Phase 5 (research): exp_root/results/baseline.json must exist.
@@ -89,6 +89,9 @@ def validate_phase_requirements(phase: int, exp_root: str) -> dict:
                 manifest = {}
             if "proposals" not in manifest:
                 warnings.append("implementation-manifest.json missing 'proposals' key")
+
+    else:
+        warnings.append(f"No validation rules defined for phase {phase}")
 
     return {
         "valid": len(missing) == 0,

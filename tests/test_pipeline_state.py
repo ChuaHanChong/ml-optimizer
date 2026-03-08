@@ -257,6 +257,13 @@ def test_validate_phase6_corrupt_manifest(tmp_path):
     assert any("not valid JSON" in w for w in result["warnings"])
 
 
+def test_validate_undefined_phase(tmp_path):
+    """Undefined phase returns valid=True with a warning."""
+    result = validate_phase_requirements(99, str(tmp_path))
+    assert result["valid"] is True
+    assert any("No validation rules" in w for w in result["warnings"])
+
+
 # --- save_state / load_state ---
 
 

@@ -7,6 +7,10 @@ description: "Check and prepare prerequisites before ML experiments. Validates d
 
 Verify that the user's project is ready for training experiments. This skill validates dataset paths and format, then checks and sets up the Python environment.
 
+## Reference
+
+- Dataset formats guide: `references/dataset-formats.md` (in this skill's directory)
+
 ## Inputs Expected
 
 The orchestrator provides:

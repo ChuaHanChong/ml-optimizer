@@ -408,6 +408,7 @@ When the implementation manifest contains multiple code branches:
      - `code_branches`: List of validated code branches from the implementation manifest (e.g., `["ml-opt/perceptual-loss", "ml-opt/cosine-scheduler"]`), or `[]` for HP-only optimization. HP-tune uses this in iteration 1 to generate one config per branch + one for baseline.
    - It reads past results and proposes the next batch of configs
    - Number of configs = `min(max(num_gpus, 1), remaining_budget)` (capped to prevent budget overshoot)
+   - **Check hp-tune recommendation:** If hp-tune output includes `"recommendation": "stop"`, log it to error tracker with `category: "pipeline_inefficiency"` and note it for the analyze step. Analyze makes the final continue/pivot/stop decision, but hp-tune's recommendation provides an early signal of search space exhaustion.
 
    ### HP-Tune Failure Recovery
 
@@ -435,8 +436,12 @@ When the implementation manifest contains multiple code branches:
      - `metric_to_watch`: `<divergence_metric>` from Phase 0 (default: `"loss"` — see Metric Routing Rule)
      - `lower_is_better`: `<divergence_lower_is_better>` from user_choices (True for loss-like metrics, False for reward-like metrics)
      - `model_category`: From user_choices (e.g., "rl", "generative", or null for supervised)
-   - If divergence detected: the experiment is stopped automatically
-   - Record divergence reason in experiment results
+   - Monitor status handling:
+     - `healthy`: Training is progressing normally — continue waiting
+     - `diverged`: Stop the experiment automatically, record divergence reason in experiment results
+     - `completed`: Training finished naturally during monitoring — proceed to wait/analysis
+     - `failed`: Monitor itself encountered an error — log as `agent_failure`, continue without monitoring for remaining experiments in this batch
+     - `no_output`: Log file has no parseable data yet — continue monitoring (normal for early training)
    - **If `divergence_metric` is null** (tabular ML — scikit-learn, XGBoost, LightGBM): skip the monitor skill entirely. Wait for experiments to complete naturally without divergence monitoring.
 
 4. **Wait for completion:**
@@ -457,6 +462,7 @@ When the implementation manifest contains multiple code branches:
    - If analyze says **continue**: loop back to step 1
    - If analyze says **pivot**: adjust the strategy, loop back to step 1
    - If analyze says **stop**: exit loop
+   - **If analyze output is malformed or contains an unexpected action:** Treat as `agent_failure`. Log to error tracker. Retry analyze once with a simplified prompt: "Based on the experiment results, should we continue, pivot, or stop? Respond with exactly one of: continue, pivot, stop." If retry also fails, default to `continue` if remaining_budget > 0, or `stop` if budget exhausted.
    - **Safety limit:** Maximum total experiments budget (default: `max(num_gpus, 1) × 5`). After budget exhausted, force exit and report. This replaces the rigid 5-iteration limit to account for varying GPU counts. When `num_gpus=0` (CPU-only, e.g., scikit-learn), the budget is `1 × 5 = 5` experiments.
 
 7. **Mid-pipeline review check** (after step 6, before looping):

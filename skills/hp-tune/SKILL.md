@@ -101,6 +101,15 @@ Reasoning:
 - Risk: [what could go wrong]
 ```
 
+### Categorical Hyperparameters
+
+When `search_space` includes non-numeric choices (e.g., `optimizer: ["adam", "sgd", "adamw"]`, `scheduler: ["cosine", "step"]`):
+
+- **Iteration 1:** Include each categorical option at least once across proposals (combined with reasonable numeric defaults)
+- **Iteration 2+:** Focus on the best-performing categorical values. Cross them with numeric tuning — e.g., if "adam" outperformed "sgd", try "adam" with varied learning rates
+- **Interaction effects:** Categorical choices often change the optimal numeric range (e.g., SGD needs higher LR than Adam). When switching optimizer, also broaden the LR range
+- **Grouping:** Treat categorical choices as separate "branches" in analysis — don't interpolate between them
+
 ## Step 4: Validate Proposals
 
 Before finalizing, check each proposed config:

@@ -7,7 +7,9 @@ from unittest.mock import patch, MagicMock
 
 from conftest import FIXTURES
 from implement_utils import (
+    _extract_files,
     _extract_reference_files,
+    _extract_steps,
     analyze_reference_structure,
     backup_files,
     cleanup_reference_repo,
@@ -233,6 +235,9 @@ def test_parse_proposals_with_reference_repo():
     assert "github.com/swz30/Restormer" in p1["reference_repo"]
     assert len(p1["reference_files"]) == 2
     assert "basicsr/models/archs/restormer_arch.py" in p1["reference_files"]
+    # files_to_modify must NOT include reference files
+    assert len(p1["files_to_modify"]) == 2
+    assert "basicsr/models/archs/restormer_arch.py" not in p1["files_to_modify"]
     # Proposal 2 is from_scratch
     p2 = proposals[1]
     assert p2["implementation_strategy"] == "from_scratch"
@@ -340,7 +345,6 @@ def test_validate_imports_syntax_error(tmp_path):
 
 def test_extract_files_section_break():
     """_extract_files stops at ### section boundary."""
-    from implement_utils import _extract_files
     body = """**What to change:**
 - `models/classifier.py` — modify forward pass
 ### Next Section
@@ -351,12 +355,22 @@ def test_extract_files_section_break():
     assert "should/not/appear.py" not in files
 
 
+def test_extract_files_stops_at_field_header():
+    """_extract_files stops at '- **FieldName:**' headers."""
+    body = """**What to change:**
+- `models/net.py` — modify architecture
+- **Expected improvement:** +1 dB
+- **Reference files:** `external/model.py`
+"""
+    files = _extract_files(body)
+    assert files == ["models/net.py"]
+
+
 # --- _extract_steps section break ---
 
 
 def test_extract_steps_section_break():
     """_extract_steps stops at ** section boundary."""
-    from implement_utils import _extract_steps
     body = """**Implementation steps:**
 1. First step
 2. Second step

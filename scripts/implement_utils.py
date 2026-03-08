@@ -170,13 +170,15 @@ def _extract_files(body: str) -> list[str]:
             in_section = True
             continue
         if in_section:
-            if line.strip().startswith("- ") or line.strip().startswith("* "):
-                # Look for file paths (patterns like path/to/file.py)
+            stripped = line.strip()
+            if stripped.startswith("**") or stripped.startswith("###"):
+                break
+            if re.match(r"^-\s+\*\*", stripped):
+                break  # New field header like "- **Expected improvement:**"
+            if stripped.startswith("- ") or stripped.startswith("* "):
                 path_match = re.search(r"`([^`]+\.\w+)`", line)
                 if path_match:
                     files.append(path_match.group(1))
-            elif line.strip().startswith("**") or line.strip().startswith("###"):
-                break
     return files
 
 

@@ -202,6 +202,10 @@ if __name__ == "__main__":
         sys.exit(1)
     higher_is_better = "--higher-is-better" in sys.argv
     args = [a for a in sys.argv[1:] if a != "--higher-is-better"]
+    if not args:
+        print("Usage: detect_divergence.py <json-array-of-values> [--higher-is-better]")
+        print('Example: detect_divergence.py "[0.5, 0.4, 0.3, 100.0]"')
+        sys.exit(1)
     try:
         values = json.loads(args[0])
     except json.JSONDecodeError:

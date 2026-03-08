@@ -350,6 +350,13 @@ def test_cli_no_args(run_main):
     assert "Usage" in r.stdout
 
 
+def test_cli_flag_only_no_json(run_main):
+    """CLI with --higher-is-better but no JSON array prints usage."""
+    r = run_main("detect_divergence.py", "--higher-is-better")
+    assert r.returncode == 1
+    assert "Usage" in r.stdout
+
+
 @pytest.mark.parametrize("values,should_explode", [
     ([1e-15] * 15 + [1e-10], False),
     ([0.01] * 15 + [1.0], True),

@@ -135,7 +135,7 @@ def test_plot_improvement_timeline(tmp_path):
 
 
 def test_plot_improvement_timeline_shows_improvement(tmp_path):
-    """The best-so-far series should be monotonically non-increasing for lower_is_better."""
+    """Timeline chart is produced and shows the best achieved value."""
     _write_results(tmp_path, {
         "exp-001": {"metrics": {"loss": 2.0}, "config": {}},
         "exp-002": {"metrics": {"loss": 1.5}, "config": {}},
@@ -144,8 +144,9 @@ def test_plot_improvement_timeline_shows_improvement(tmp_path):
     })
     chart = plot_improvement_timeline(str(tmp_path), "loss", lower_is_better=True)
     assert chart
-    # The chart is non-empty and contains data points
     assert "*" in chart
+    # Best value (1.0) should appear in y-axis labels
+    assert "1.0" in chart
 
 
 def test_plot_improvement_timeline_no_results(tmp_path):

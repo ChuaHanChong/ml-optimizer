@@ -202,3 +202,8 @@ Return to the orchestrator a dict per experiment:
 - `step`: Step at which divergence was detected (if diverged) or `-1`
 - `latest_metrics`: Dict of most recent metric values
 - `metric_trajectory`: List of watched metric values over time
+
+**When the watched metric is not found after fallbacks** (Step 2b.1):
+- `metric_trajectory`: `[]` (empty — watched metric was never parsed)
+- `latest_metrics`: All other available metrics from the final log line (the watched metric will be absent from this dict)
+- `reason`: `"Watched metric '<name>' not found; available: [<list>]"`

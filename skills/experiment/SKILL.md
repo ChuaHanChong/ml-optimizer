@@ -65,7 +65,11 @@ Before building the training command, verify:
 Construct the full training command by overriding the base command with experiment-specific config:
 
 1. Read the base training command from `experiments/results/baseline.json`
-1.5. **Apply prepared data paths:** If `prepared_train_path` or `prepared_val_path` was provided:
+1.4. **Validate prepared data paths:** If `prepared_train_path` or `prepared_val_path` was provided:
+   - Verify each path exists on disk (file or directory)
+   - If a path does not exist, log a warning to `experiments/dev_notes.md` and fall back to the original `train_data_path`/`val_data_path`
+   - Log to error tracker with `category: "config_error"`, `severity: "warning"`, `source: "experiment"`
+1.5. **Apply prepared data paths:** If `prepared_train_path` or `prepared_val_path` was provided (and validated in 1.4):
    a. **CLI substitution:** Check if the original `train_data_path`/`val_data_path` appears as a literal substring in the train_command. If found, replace it with the prepared path.
    b. **Config file substitution:** If not found in the train_command, read the training config file (YAML/JSON) and search for the original data path. Create a modified config copy at `experiments/logs/<exp_id>/config_modified.yaml` with the path updated.
    c. **No match:** Log a warning to dev_notes.md: "Could not find original data path in train_command or config — proceeding with original paths." Pass the prepared paths as additional CLI args if the training script accepts generic data path arguments (detected in Phase 1).

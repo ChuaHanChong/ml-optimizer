@@ -1,6 +1,9 @@
 """Tests for parse_logs.py."""
 
 import json
+import math
+
+import pytest
 
 from conftest import FIXTURES
 from parse_logs import parse_kv_line, parse_json_line, parse_csv_lines, parse_python_logging_line, parse_tqdm_line, parse_xgboost_line, detect_format, parse_log, extract_metric_trajectory
@@ -16,28 +19,17 @@ def test_parse_kv_line():
     assert metrics["accuracy"] == 35.2
 
 
-def test_parse_kv_line_with_nan():
-    import math
-    metrics = parse_kv_line("loss=nan lr=0.001")
+@pytest.mark.parametrize("input_str,check", [
+    ("loss=nan lr=0.001", lambda v: math.isnan(v)),
+    ("loss=inf lr=0.001", lambda v: math.isinf(v) and v > 0),
+    ("loss=-inf lr=0.001", lambda v: math.isinf(v) and v < 0),
+])
+def test_parse_kv_line_special_values(input_str, check):
+    """parse_kv_line handles NaN, Inf, and -Inf values."""
+    metrics = parse_kv_line(input_str)
     assert "loss" in metrics
-    assert math.isnan(metrics["loss"])
+    assert check(metrics["loss"])
     assert metrics["lr"] == 0.001
-
-
-def test_parse_kv_line_with_inf():
-    import math
-    metrics = parse_kv_line("loss=inf lr=0.001")
-    assert "loss" in metrics
-    assert math.isinf(metrics["loss"])
-    assert metrics["loss"] > 0
-
-
-def test_parse_kv_line_with_neg_inf():
-    import math
-    metrics = parse_kv_line("loss=-inf lr=0.001")
-    assert "loss" in metrics
-    assert math.isinf(metrics["loss"])
-    assert metrics["loss"] < 0
 
 
 def test_parse_json_line():
@@ -61,19 +53,14 @@ def test_parse_csv_lines():
     assert results[1]["epoch"] == 2.0
 
 
-def test_detect_format_kv():
-    lines = ["epoch=1 loss=0.5", "epoch=2 loss=0.4"]
-    assert detect_format(lines) == "kv"
-
-
-def test_detect_format_json():
-    lines = ['{"loss": 0.5}', '{"loss": 0.4}']
-    assert detect_format(lines) == "json"
-
-
-def test_detect_format_csv():
-    lines = ["loss,lr,epoch", "0.5,0.001,1"]
-    assert detect_format(lines) == "csv"
+@pytest.mark.parametrize("lines,expected_format", [
+    (["epoch=1 loss=0.5", "epoch=2 loss=0.4"], "kv"),
+    (['{"loss": 0.5}', '{"loss": 0.4}'], "json"),
+    (["loss,lr,epoch", "0.5,0.001,1"], "csv"),
+])
+def test_detect_format_basic(lines, expected_format):
+    """detect_format correctly identifies kv, json, and csv formats."""
+    assert detect_format(lines) == expected_format
 
 
 def test_parse_log_sample(tmp_path):
@@ -118,19 +105,13 @@ def test_parse_tqdm_line():
     assert metrics["acc"] == 85.2
 
 
-def test_detect_format_logging():
-    lines = [
-        "2024-01-15 10:30:45,123 INFO epoch=1 loss=2.345",
-        "2024-01-15 10:30:46,456 INFO epoch=1 loss=2.100",
-    ]
-    assert detect_format(lines) == "logging"
-
-
-def test_detect_format_tqdm():
-    lines = [
-        "100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 50/50 [00:30<00:00, 1.67it/s, loss=0.5, acc=85.2]",
-    ]
-    assert detect_format(lines) == "tqdm"
+@pytest.mark.parametrize("lines,expected_format", [
+    (["2024-01-15 10:30:45,123 INFO epoch=1 loss=2.345", "2024-01-15 10:30:46,456 INFO epoch=1 loss=2.100"], "logging"),
+    (["100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 50/50 [00:30<00:00, 1.67it/s, loss=0.5, acc=85.2]"], "tqdm"),
+])
+def test_detect_format_structured(lines, expected_format):
+    """detect_format correctly identifies logging and tqdm formats."""
+    assert detect_format(lines) == expected_format
 
 
 def test_parse_kv_line_negative_value():

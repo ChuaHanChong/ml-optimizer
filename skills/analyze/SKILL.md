@@ -40,6 +40,7 @@ Before analysis, filter out non-completed experiments:
 - Exclude experiments with `status: "diverged"` or `status: "failed"` from correlation analysis
 - Include diverged/failed experiments in the failure analysis section (they provide boundary information)
 - Note: `rank_by_metric()` includes all experiments (with a `status` field for filtering); only `identify_correlations()` auto-filters to completed experiments
+- **Branch-aware grouping:** When computing HP correlations (Step 2), group results by `code_branch` field. Experiments on different code branches should be analyzed separately — identical HPs may behave differently on different code. If `code_branch` is null or missing, treat as baseline code group.
 
 ## Step 2: Deep Analysis
 

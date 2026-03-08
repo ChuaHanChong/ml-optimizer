@@ -124,6 +124,8 @@ Write `experiments/results/baseline.json`:
     "<primary_metric>": <value>,
     ...all measured metrics (accuracy, f1, psnr, bleu, etc.)...
   },
+  "code_branch": null,
+  "code_proposal": null,
   "profiling": {
     "gpu_memory_used_mib": <value>,
     "gpu_memory_total_mib": <value>,

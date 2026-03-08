@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 from conftest import _write_results
 
 from result_analyzer import load_results, rank_by_metric, compute_deltas, identify_correlations, analyze, spearman_correlation
@@ -302,44 +304,20 @@ def test_spearman_constant_x():
     assert rho2 == 0.0
 
 
-def test_rank_by_metric_with_nan():
-    """NaN metric values are sorted to the end with a note field."""
-    results = {
-        "exp-001": {"metrics": {"loss": 0.5}},
-        "exp-002": {"metrics": {"loss": float("nan")}},
-        "exp-003": {"metrics": {"loss": 0.3}},
-    }
+@pytest.mark.parametrize("label,results,expected_last_id,all_have_note", [
+    ("nan_last", {"e1": {"metrics": {"loss": 0.5}}, "e2": {"metrics": {"loss": float("nan")}}, "e3": {"metrics": {"loss": 0.3}}}, "e2", False),
+    ("inf_last", {"e1": {"metrics": {"loss": 0.5}}, "e2": {"metrics": {"loss": float("inf")}}, "e3": {"metrics": {"loss": 0.3}}}, "e2", False),
+    ("all_nan", {"e1": {"metrics": {"loss": float("nan")}}, "e2": {"metrics": {"loss": float("nan")}}}, None, True),
+])
+def test_rank_by_metric_non_finite(label, results, expected_last_id, all_have_note):
+    """Non-finite metric values (NaN, Inf) are sorted to end with note."""
     ranked = rank_by_metric(results, "loss", lower_is_better=True)
-    assert len(ranked) == 3
-    # NaN entry should be last
-    assert ranked[2]["exp_id"] == "exp-002"
-    assert "note" in ranked[2]
-
-
-def test_rank_by_metric_inf_filtered_to_end():
-    """Inf metric values are sorted after finite values."""
-    results = {
-        "exp-001": {"metrics": {"loss": 0.5}},
-        "exp-002": {"metrics": {"loss": float("inf")}},
-        "exp-003": {"metrics": {"loss": 0.3}},
-    }
-    ranked = rank_by_metric(results, "loss", lower_is_better=True)
-    assert len(ranked) == 3
-    assert ranked[0]["exp_id"] == "exp-003"
-    assert ranked[1]["exp_id"] == "exp-001"
-    assert ranked[2]["exp_id"] == "exp-002"
-    assert "note" in ranked[2]
-
-
-def test_rank_by_metric_all_nan():
-    """All-NaN metrics: all entries returned with notes, no crash."""
-    results = {
-        "exp-001": {"metrics": {"loss": float("nan")}},
-        "exp-002": {"metrics": {"loss": float("nan")}},
-    }
-    ranked = rank_by_metric(results, "loss", lower_is_better=True)
-    assert len(ranked) == 2
-    assert all("note" in r for r in ranked)
+    assert len(ranked) == len(results)
+    if expected_last_id:
+        assert ranked[-1]["exp_id"] == expected_last_id
+        assert "note" in ranked[-1]
+    if all_have_note:
+        assert all("note" in r for r in ranked)
 
 
 def test_rank_by_metric_partial_metric_coverage():

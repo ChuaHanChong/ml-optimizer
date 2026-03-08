@@ -384,7 +384,7 @@ When the implementation manifest contains multiple code branches:
 
 - **Iteration 1:** Test each branch with baseline HPs (one experiment per branch). This determines which code changes show promise.
 - **Iteration 2:** Prune branches that performed worse than baseline. Focus experiments on surviving branches + baseline.
-- **Iterations 3+:** Focus on the best branch + HP tuning. Only keep branches within 5% of the best result.
+- **Iterations 3+:** Focus on the best branch + HP tuning. Only keep branches whose best metric is within 5% relative of the overall best: `abs(branch_best - overall_best) / abs(overall_best) <= 0.05`. If `overall_best` is zero, keep all branches.
 
 ### Loop Iteration:
 
@@ -419,7 +419,7 @@ When the implementation manifest contains multiple code branches:
    - Each experiment runs on a separate GPU
 
 3. **Monitor experiments:**
-   - Invoke `ml-optimizer:monitor` skill with parameters:
+   - **If `divergence_metric` is not null**, invoke `ml-optimizer:monitor` skill with parameters:
      - `log_files`: List of log file paths (one per running experiment)
      - `exp_ids`: Corresponding experiment IDs
      - `project_root`: Project root directory
@@ -429,6 +429,7 @@ When the implementation manifest contains multiple code branches:
      - `model_category`: From user_choices (e.g., "rl", "generative", or null for supervised)
    - If divergence detected: the experiment is stopped automatically
    - Record divergence reason in experiment results
+   - **If `divergence_metric` is null** (tabular ML — scikit-learn, XGBoost, LightGBM): skip the monitor skill entirely. Wait for experiments to complete naturally without divergence monitoring.
 
 4. **Wait for completion:**
    - All experiments in the batch must complete (or be stopped) before analysis

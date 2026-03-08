@@ -85,22 +85,15 @@ def test_validate_event_missing_field():
     assert any("source" in e for e in result["errors"])
 
 
-def test_validate_event_invalid_category():
-    """create_event raises ValueError on unknown category."""
-    with pytest.raises(ValueError, match="category"):
-        create_event("unknown_cat", "critical", "experiment", "x")
-
-
-def test_validate_event_invalid_severity():
-    """create_event raises ValueError on unknown severity."""
-    with pytest.raises(ValueError, match="severity"):
-        create_event("agent_failure", "fatal", "orchestrate", "x")
-
-
-def test_validate_event_invalid_source():
-    """create_event raises ValueError on unknown source."""
-    with pytest.raises(ValueError, match="source"):
-        create_event("agent_failure", "critical", "unknown_src", "x")
+@pytest.mark.parametrize("field,args", [
+    ("category", ("unknown_cat", "critical", "experiment", "x")),
+    ("severity", ("agent_failure", "fatal", "orchestrate", "x")),
+    ("source", ("agent_failure", "critical", "unknown_src", "x")),
+])
+def test_create_event_invalid_field_raises(field, args):
+    """create_event raises ValueError on unknown category/severity/source."""
+    with pytest.raises(ValueError, match=field):
+        create_event(*args)
 
 
 def test_validate_event_non_dict():

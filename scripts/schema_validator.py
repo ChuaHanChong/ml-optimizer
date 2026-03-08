@@ -101,7 +101,7 @@ def validate_result(data: dict) -> dict:
     if "config" in data and not isinstance(data["config"], dict):
         errors.append("'config' must be a dict")
 
-    return {"valid": len(errors) == 0, "errors": errors}
+    return {"valid": len(errors) == 0, "errors": errors, "warnings": []}
 
 
 def validate_baseline(data: dict) -> dict:
@@ -131,7 +131,7 @@ def validate_baseline(data: dict) -> dict:
     if "config" in data and not isinstance(data["config"], dict):
         errors.append("'config' must be a dict")
 
-    return {"valid": len(errors) == 0, "errors": errors}
+    return {"valid": len(errors) == 0, "errors": errors, "warnings": []}
 
 
 def validate_manifest(data: dict) -> dict:
@@ -182,7 +182,7 @@ def validate_manifest(data: dict) -> dict:
                         f"must be one of {VALID_IMPLEMENTATION_STRATEGIES}"
                     )
 
-    return {"valid": len(errors) == 0, "errors": errors}
+    return {"valid": len(errors) == 0, "errors": errors, "warnings": []}
 
 
 def validate_prerequisites(data: dict) -> dict:
@@ -290,6 +290,8 @@ def validate_file(filepath: str, schema_type: str) -> dict:
     validation = validators[schema_type](data)
     result["valid"] = validation["valid"]
     result["errors"] = validation["errors"]
+    if "warnings" in validation:
+        result["warnings"] = validation["warnings"]
     return result
 
 

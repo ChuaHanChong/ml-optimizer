@@ -57,7 +57,7 @@ If the watched metric is not found in the parsed records, attempt auto-detection
 1. **Case-insensitive match:** Try `metric_to_watch.lower()` against all keys lowercased
 2. **Prefix variants:** Try `train_<metric>`, `val_<metric>`, `<metric>_train` (e.g., `loss` → `train_loss`, `val_loss`)
 3. **Substring match:** Look for any key containing `metric_to_watch` as a substring (e.g., `"loss"` matches `"total_loss"`)
-4. **Report missing:** If no match found after all fallbacks, log a warning and report the available metric names to the orchestrator. Do not treat this as divergence.
+4. **Report missing:** If no match found after all fallbacks, log a warning and report the available metric names to the orchestrator. Do not treat this as divergence. Continue monitoring the experiment without divergence checks — return status `healthy` when the experiment completes naturally. The orchestrator should still wait for experiment completion.
 
 ### 2c: Check for Divergence
 

@@ -652,3 +652,16 @@ def test_validate_file_valid_prerequisites(tmp_path):
     }))
     result = validate_file(str(f), "prerequisites")
     assert result["valid"] is True
+
+
+def test_validate_all_validators_return_warnings_key():
+    """All validators return a 'warnings' key for API consistency."""
+    for name, validator, data in [
+        ("validate_result", validate_result, {"exp_id": "e", "status": "completed", "config": {}, "metrics": {}}),
+        ("validate_baseline", validate_baseline, {"exp_id": "b", "status": "completed", "config": {}, "metrics": {}}),
+        ("validate_manifest", validate_manifest, {"original_branch": "main", "strategy": "git_branch", "proposals": []}),
+        ("validate_prerequisites", validate_prerequisites, {"status": "ready", "dataset": {}, "environment": {}, "ready_for_baseline": True}),
+    ]:
+        out = validator(data)
+        assert "warnings" in out, f"{name} missing 'warnings' key"
+        assert isinstance(out["warnings"], list), f"{name} 'warnings' not a list"

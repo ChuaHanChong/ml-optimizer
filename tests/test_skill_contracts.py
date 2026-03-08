@@ -66,10 +66,10 @@ def test_experiment_result_matches_analyze_input(tmp_path):
     assert ranked[0]["value"] == 0.5
 
 
-# --- Baseline → Orchestrate Phase 5 contract ---
+# --- Baseline → Orchestrate Phase 6 contract ---
 
 def test_baseline_schema_for_orchestrate():
-    """baseline.json must have the fields that orchestrate Phase 5 expects."""
+    """baseline.json must have the fields that orchestrate Phase 6 expects."""
     baseline = {
         "exp_id": "baseline",
         "status": "completed",

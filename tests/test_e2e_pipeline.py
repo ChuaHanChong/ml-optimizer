@@ -1,6 +1,6 @@
 """End-to-end pipeline integration tests using Tiny ResNet on CIFAR-10.
 
-Exercises all 6 pipeline phases against a real ML model, verifying that the
+Exercises key pipeline phases against a real ML model, verifying that the
 existing Python scripts (parse_logs, detect_divergence, experiment_setup,
 result_analyzer, gpu_check) work correctly with real training output.
 """
@@ -181,13 +181,13 @@ class TestPhase1ModelUnderstanding:
 
 
 # ---------------------------------------------------------------------------
-# Phase 2: Baseline
+# Phase 3: Baseline
 # ---------------------------------------------------------------------------
 
 @pytest.mark.slow
 @pytest.mark.skipif(not _has_torch, reason="PyTorch not available")
-class TestPhase2Baseline:
-    """Phase 2: Run baseline training and verify log parsing + divergence check."""
+class TestPhase3Baseline:
+    """Phase 3: Run baseline training and verify log parsing + divergence check."""
 
     def test_baseline_training(self, project_dir, shared_data_dir, tmp_path):
         # Create experiment dirs
@@ -240,12 +240,12 @@ class TestPhase2Baseline:
 
 
 # ---------------------------------------------------------------------------
-# Phase 3: User Checkpoint
+# Phase 4: User Checkpoint
 # ---------------------------------------------------------------------------
 
 @pytest.mark.skipif(not _has_torch, reason="PyTorch not available")
-class TestPhase3UserCheckpoint:
-    """Phase 3: Verify baseline.json has all required checkpoint keys."""
+class TestPhase4UserCheckpoint:
+    """Phase 4: Verify baseline.json has all required checkpoint keys."""
 
     def test_baseline_schema(self, tmp_path):
         baseline = {
@@ -267,13 +267,13 @@ class TestPhase3UserCheckpoint:
 
 
 # ---------------------------------------------------------------------------
-# Phase 5: Experiment Loop
+# Phase 6: Experiment Loop
 # ---------------------------------------------------------------------------
 
 @pytest.mark.slow
 @pytest.mark.skipif(not _has_torch, reason="PyTorch not available")
-class TestPhase5ExperimentLoop:
-    """Phase 5: Run multiple experiments and verify analysis."""
+class TestPhase6ExperimentLoop:
+    """Phase 6: Run multiple experiments and verify analysis."""
 
     def test_experiment_loop(self, project_dir, shared_data_dir, tmp_path):
         exp_project = tmp_path / "exp_project"
@@ -362,8 +362,8 @@ class TestPhase5ExperimentLoop:
 
 @pytest.mark.slow
 @pytest.mark.skipif(not _has_torch, reason="PyTorch not available")
-class TestPhase5DivergenceDetection:
-    """Phase 5: Verify divergence detection with extreme learning rate."""
+class TestPhase6DivergenceDetection:
+    """Phase 6: Verify divergence detection with extreme learning rate."""
 
     def test_divergent_training(self, project_dir, shared_data_dir, tmp_path):
         output_dir = tmp_path / "divergent_out"
@@ -394,12 +394,12 @@ class TestPhase5DivergenceDetection:
 
 
 # ---------------------------------------------------------------------------
-# Phase 6: Report
+# Phase 7: Report
 # ---------------------------------------------------------------------------
 
 @pytest.mark.skipif(not _has_torch, reason="PyTorch not available")
-class TestPhase6Report:
-    """Phase 6: Verify analysis output has correct schema for reporting."""
+class TestPhase7Report:
+    """Phase 7: Verify analysis output has correct schema for reporting."""
 
     def test_analysis_report_schema(self, tmp_path):
         results_dir = tmp_path / "results"
@@ -466,7 +466,7 @@ class TestFullPipelineIntegration:
         assert state["phase"] == 2
         assert state["iteration"] == 0
 
-        # Phase 2: baseline training
+        # Phase 3: baseline
         baseline_output = tmp_path / "baseline_output"
         rc, stdout, stderr = run_training(
             project_dir, baseline_output, shared_data_dir,
@@ -500,11 +500,11 @@ class TestFullPipelineIntegration:
         assert validate_baseline(baseline_data)["valid"]
         assert validate_file(str(results_dir / "baseline.json"), "baseline")["valid"]
 
-        # A1: Validate phase 5 prerequisites before experiment loop
-        phase5_check = validate_phase_requirements(5, exp_root)
-        assert phase5_check["valid"], f"Phase 5 prereqs failed: {phase5_check['missing']}"
+        # A1: Validate phase 6 prerequisites before experiment loop
+        phase6_check = validate_phase_requirements(6, exp_root)
+        assert phase6_check["valid"], f"Phase 6 prereqs failed: {phase6_check['missing']}"
 
-        # Phase 5: two experiments
+        # Phase 6: experiment loop
         experiments = [
             {"lr": "0.001", "config": {"lr": 0.001}},
             {"lr": "0.05", "config": {"lr": 0.05}},
@@ -543,7 +543,7 @@ class TestFullPipelineIntegration:
             assert validate_result(exp_data)["valid"]
 
         # A1: Save state with completed experiments, verify cleanup finds nothing stale
-        save_state(phase=5, iteration=2, running_exp_ids=[], exp_root=exp_root)
+        save_state(phase=6, iteration=2, running_exp_ids=[], exp_root=exp_root)
         cleaned = cleanup_stale(exp_root, timeout_hours=2.0)
         assert len(cleaned) == 0
 

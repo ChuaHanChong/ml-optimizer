@@ -350,6 +350,19 @@ def test_validate_result_non_numeric_metric():
     assert any("model_name" in e and "numeric" in e for e in result["errors"])
 
 
+def test_validate_result_bool_metric():
+    """Boolean metric values are rejected (bool is subclass of int)."""
+    data = {
+        "exp_id": "exp-001",
+        "status": "completed",
+        "config": {},
+        "metrics": {"converged": True},
+    }
+    result = validate_result(data)
+    assert result["valid"] is False
+    assert any("numeric" in e for e in result["errors"])
+
+
 def test_validate_baseline_non_numeric_metric():
     """A baseline with a non-numeric metric value should fail."""
     data = {

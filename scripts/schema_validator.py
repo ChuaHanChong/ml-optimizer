@@ -60,7 +60,7 @@ def _check_numeric_metrics(data: dict, errors: list[str]) -> None:
     """Append errors for any non-numeric or non-finite values in data["metrics"]."""
     if "metrics" in data and isinstance(data["metrics"], dict):
         for mk, mv in data["metrics"].items():
-            if not isinstance(mv, (int, float)):
+            if isinstance(mv, bool) or not isinstance(mv, (int, float)):
                 errors.append(f"Metric '{mk}' must be numeric, got {type(mv).__name__}")
             elif isinstance(mv, float) and not math.isfinite(mv):
                 errors.append(f"Metric '{mk}' must be finite, got {mv}")

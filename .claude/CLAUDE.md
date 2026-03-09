@@ -50,14 +50,14 @@ Phase 3: baseline → Establish baseline metrics
 Phase 4: User checkpoint
 Phase 5: research → Find techniques via web/papers
 Phase 5.1: implement → Apply proposals as git branches
-Phase 6: Experiment loop (autonomous):
-         hp-tune → propose configs
+Phase 6: Experiment loop (autonomous, pipelined):
+         hp-tune → propose configs (or use speculative proposals from previous iteration)
          experiment → run training (parallel across GPUs)
-         monitor → watch for divergence
-         analyze → decide continue/pivot/stop
-         [method_proposal] → if analyze pivots to "method_proposal": research (both mode) → implement → new branches
-         [research_round] → autonomous mode only: auto-triggers research → implement every hp_batches_per_round batches
-         review → Mid-pipeline review (auto-triggered after 2+ consecutive all-fail batches or wasted_budget ≥ 3)
+         monitor → watch for divergence (concurrent with experiments)
+         analyze + speculative hp-tune → decide continue/pivot/stop + prepare next batch in parallel
+         [method_proposal] → mid-loop research + implement
+         [research_round] → autonomous cadence-based research
+         review → Mid-pipeline review (async in autonomous mode, sync in interactive)
 Phase 7: report → Final optimization report
          review → Self-improvement analysis (optional, end-of-session)
 ```
@@ -153,7 +153,11 @@ The orchestrator can be stopped and resumed. On restart it reads `pipeline-state
 - **Spearman correlation**: `result_analyzer.py` uses rank correlation with average-rank tie-breaking to identify HP-metric relationships (no scipy dependency).
 - **Dual implementation strategy**: Research proposals include an `implementation_strategy` field (`from_scratch` or `from_reference`). The implement agent dispatches accordingly — either implementing from paper descriptions (Section 8) or cloning and adapting reference repos (Section 9). Strategy is decided by the research agent based on repo availability and quality.
 - **Research skill modes**: The research skill accepts `source` (`"web"` | `"knowledge"` | `"both"`), `scope_level` (`"training"` | `"architecture"` | `"full"`), and `output_path` parameters. Knowledge mode skips web search and uses LLM training knowledge only.
-- **Autonomous mode auto-skip**: When `budget_mode == "autonomous"`, all user checkpoints after Phase 0 are auto-resolved (Phase 4 direction → method proposals, Phase 5 proposal selection → all proposals, Phase 5.1 dependencies → auto-install, license warnings → auto-accept). Decisions are logged to dev_notes and error tracker for post-session review.
+- **Autonomous mode auto-skip**: When `budget_mode == "autonomous"`, all user checkpoints after Phase 0 are auto-resolved (Phase 1 plan → auto-approve, Phase 2 partial prereqs → proceed, Phase 4 direction → method proposals, Phase 5 proposal selection → all proposals, Phase 5.1 dependencies → auto-install, license warnings → auto-accept, Phase 7 self-review → auto-run). Only unrecoverable errors (Phase 2 failed, Phase 3 unknown error) still block. Decisions are logged to dev_notes and error tracker for post-session review.
+- **Speculative hp-tune**: In Phase 6, the orchestrator starts a background hp-tune call in parallel with analyze. If analyze says "continue" and proposals pass validation (no pruned branches, within budget, no duplicates), the proposals are used immediately — eliminating 30-60s of GPU idle time per batch. If analyze says stop/pivot, speculative proposals are discarded.
+- **Parallel research**: All WebSearch calls in the research skill are issued simultaneously in a single tool-call message. WebFetch follow-ups for different URLs are also parallelized. Domain-specific query sets (NLP, CV, RL, time-series) are issued alongside generic queries.
+- **Parallel implementation**: When using git branch strategy with multiple proposals, each proposal is implemented in a separate git worktree via parallel Agent dispatches. File-backup strategy remains sequential.
+- **Async mid-pipeline review**: In autonomous mode, mid-pipeline review runs in the background while the next experiment batch starts. Suggestions are applied one batch late — acceptable trade-off vs blocking the pipeline.
 - **Configurable divergence thresholds**: `detect_divergence.py` supports per-model-category threshold overrides via `MODEL_CATEGORY_DEFAULTS` dict and `--model-category` CLI flag. RL models use `explosion_threshold=20.0` (prevents false positives on reward spikes), generative models use `plateau_patience=40` (accommodates slow convergence). Individual thresholds can also be overridden via `--explosion-threshold` and `--plateau-patience` CLI flags.
 
 ## Test Fixtures

@@ -113,10 +113,13 @@ def save_state(
 
     Args:
         user_choices: Optional dict of Phase 0 user choices to persist
-            (e.g., primary_metric, divergence_metric, lower_is_better,
-            target_value, train_command, eval_command, train_data_path,
-            val_data_path, prepared_train_path, prepared_val_path,
-            env_manager, env_name). These are preserved across pipeline
+            (e.g., primary_metric, divergence_metric, divergence_lower_is_better,
+            lower_is_better, target_value, train_command, eval_command,
+            train_data_path, val_data_path, prepared_train_path,
+            prepared_val_path, env_manager, env_name, model_category,
+            user_papers, budget_mode, difficulty, difficulty_multiplier,
+            method_proposal_scope, method_proposal_iterations,
+            hp_batches_per_round). These are preserved across pipeline
             resumptions.
 
     Returns the path to the state file.

@@ -518,8 +518,13 @@ When the implementation manifest contains multiple code branches:
 
 ### Loop Iteration:
 
-1. **Get HP configs:**
-   - Invoke the `ml-optimizer:hp-tune` skill with parameters:
+1. **Get HP configs** (use speculative proposals from previous iteration if available):
+   - **If speculative proposals are available from the previous iteration's background hp-tune:**
+     1. Validate speculative proposals before use (see "Speculative Proposal Validation" below)
+     2. If valid → use them as this iteration's configs. Skip hp-tune invocation entirely.
+     3. If invalid → discard them and invoke hp-tune synchronously as normal.
+   - **Otherwise (first iteration, or speculative proposals were discarded):**
+     - Invoke the `ml-optimizer:hp-tune` skill with parameters:
      - `project_root`: Project root directory
      - `num_gpus`: Number of available GPUs (determines batch size)
      - `search_space`: HP search space dict from the plan
@@ -571,21 +576,38 @@ When the implementation manifest contains multiple code branches:
    - All experiments in the batch must complete (or be stopped) before analysis
    - Save pipeline state after each batch completes
 
-5. **Analyze results:**
-   - Invoke the `ml-optimizer:analyze` skill with parameters:
-     - `project_root`: Project root directory
-     - `batch_number`: Current loop iteration (1-based)
-     - `primary_metric`: From Phase 0 (NOT "loss" — see Metric Routing Rule)
-     - `lower_is_better`: Based on metric type
-     - `target_value`: From Phase 0 (or null)
-     - `remaining_budget`: `max_experiments - total_experiments_so_far` (analyze uses this in its pivot decision tree to gate research pivots)
-   - It compares all experiments, ranks them, identifies patterns
-   - It recommends: continue, pivot, or stop
+5. **Analyze results + speculative hp-tune (parallel):**
+   - **Start analyze synchronously:**
+     - Invoke the `ml-optimizer:analyze` skill with parameters:
+       - `project_root`: Project root directory
+       - `batch_number`: Current loop iteration (1-based)
+       - `primary_metric`: From Phase 0 (NOT "loss" — see Metric Routing Rule)
+       - `lower_is_better`: Based on metric type
+       - `target_value`: From Phase 0 (or null)
+       - `remaining_budget`: `max_experiments - total_experiments_so_far` (analyze uses this in its pivot decision tree to gate research pivots)
+     - It compares all experiments, ranks them, identifies patterns
+     - It recommends: continue, pivot, or stop
+   - **At the SAME TIME, start speculative hp-tune in background** (only if `remaining_budget > max(num_gpus, 1)`):
+     ```
+     Agent(
+       description: "Speculative hp-tune for next batch",
+       prompt: "Ultrathink. This is a SPECULATIVE proposal — the orchestrator may discard these results if analyze recommends stop or pivot. Use the ml-optimizer:hp-tune skill with: project_root: {project_root}, num_gpus: {num_gpus}, search_space: {search_space}, iteration: {iteration + 1}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, remaining_budget: {remaining_budget - current_batch_size}, code_branches: {code_branches}.",
+       subagent_type: "general-purpose",
+       run_in_background: true
+     )
+     ```
+   - If `remaining_budget <= max(num_gpus, 1)`: skip speculative hp-tune (not enough budget for another full batch)
+   - Analyze completes first (it's synchronous). Speculative hp-tune may still be running.
 
 6. **Decision:**
-   - If analyze says **continue**: loop back to step 1
-   - If analyze says **pivot**: adjust the strategy, loop back to step 1
+   - If analyze says **continue** AND speculative proposals are available and valid:
+     - Use speculative proposals → loop back to step 2 immediately (zero GPU idle time)
+   - If analyze says **continue** BUT speculative proposals are invalid or unavailable:
+     - Discard speculative proposals (if Agent failure, log to error tracker with `category: "agent_failure", source: "orchestrate"`). Invoke hp-tune synchronously → loop back to step 2
+   - If analyze says **pivot**:
+     - Discard speculative proposals. Apply pivot adjustments → invoke hp-tune synchronously → loop back to step 2
    - If analyze says **stop**:
+     - Discard speculative proposals.
      - In `"auto"` or `"custom"` mode: exit loop
      - In `"autonomous"` mode: log the stop recommendation but continue the loop. Only force-stop if analyze recommends stop 3 consecutive times (indicating true convergence, not a one-off plateau).
    - **If analyze output is malformed or contains an unexpected action:** Treat as `agent_failure`. Log to error tracker. Retry analyze once with a simplified prompt: "Based on the experiment results, should we continue, pivot, or stop? Respond with exactly one of: continue, pivot, stop." If retry also fails, default to `continue` if remaining_budget > 0, or `stop` if budget exhausted.
@@ -684,7 +706,26 @@ When the implementation manifest contains multiple code branches:
    python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> patterns
    ```
    If `wasted_budget` pattern has occurrences ≥ 3, OR if the last 2 consecutive batches both had zero successful experiments:
-   - Invoke `ml-optimizer:review` with:
+
+   **If `budget_mode == "autonomous"`:**
+   - Start review in background via Agent with `run_in_background: true`:
+     ```
+     Agent(
+       description: "Async mid-pipeline review",
+       prompt: "Use the ml-optimizer:review skill. project_root: {project_root}, exp_root: {exp_root}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, scope: session.",
+       subagent_type: "general-purpose",
+       run_in_background: true
+     )
+     ```
+   - Continue to next loop iteration immediately (do NOT wait for review)
+   - At the START of the next loop iteration (before step 1), check if the background review has completed:
+     - If completed successfully: read suggestions and apply course corrections (narrow search space, prune branches, stop)
+     - If completed with error or no output: log as `agent_failure` to error tracker, skip course corrections for this iteration
+     - If still running: continue without waiting (suggestions will be applied in the following iteration)
+   - Log: "Mid-pipeline review started in background (autonomous mode)"
+
+   **Otherwise (interactive/auto/custom):**
+   - Invoke `ml-optimizer:review` synchronously with:
      - `project_root`, `exp_root`, `primary_metric`, `lower_is_better`
      - `scope`: `"session"` (fast, no cross-project)
    - Read the review output's top suggestions
@@ -696,6 +737,17 @@ When the implementation manifest contains multiple code branches:
      ```bash
      python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"orchestrate","message":"Mid-pipeline review triggered after consecutive failures","phase":6,"iteration":<iteration>,"context":{"trigger":"consecutive_failures"}}'
      ```
+
+### Speculative Proposal Validation
+
+Before using speculative proposals from a previous iteration's background hp-tune, verify ALL of these:
+
+1. **Branch validity:** All `code_branch` values in proposals still exist in the active branch list (none were pruned by analyze)
+2. **Budget compliance:** Number of proposals ≤ `remaining_budget`
+3. **No search space conflict:** If analyze recommended narrowing the search space (via pivot), check that speculative proposals fall within the new bounds
+4. **No duplicates:** Speculative proposals don't duplicate experiments from the just-completed batch
+
+If ANY check fails, discard ALL speculative proposals and invoke hp-tune synchronously with updated parameters.
 
 ### Parallel GPU Dispatch Pattern:
 When dispatching experiments across multiple GPUs, use the Agent tool with `subagent_type: "general-purpose"` for each experiment.

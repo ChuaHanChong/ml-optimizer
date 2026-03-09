@@ -66,6 +66,13 @@ You are an ML optimization orchestrator. You coordinate the full optimization pi
 
 ## Phase 1: Understand the Model
 
+0. **Cross-session memory lookup** (optional but recommended):
+   Before analyzing the codebase, use `claude-mem:mem-search` to search for past optimization sessions involving similar model types, tasks, or frameworks. This may surface:
+   - HP ranges that worked well for similar models
+   - Optimization techniques that succeeded or failed for this type of task
+   - Common pitfalls encountered in previous sessions
+   Use any relevant findings to inform the optimization plan (Phase 1, step 6).
+
 1. **Locate model code:**
    - Use Glob to find Python files: `**/*.py`
    - Look for model definitions:
@@ -110,6 +117,7 @@ You are an ML optimization orchestrator. You coordinate the full optimization pi
      - Divergence metric: use policy/value loss if logged; otherwise use reward with `divergence_lower_is_better = False`
      - Baseline eval: use average reward over N episodes (see baseline skill RL section)
      - Training is episodic — throughput is measured in steps/sec or episodes/hour
+     - **Polarity validation:** After setting `divergence_metric` and `divergence_lower_is_better`, check for inconsistency: if the metric name contains "reward", "return", or "score" but `divergence_lower_is_better` is True, warn the user: "For reward-like metrics, divergence means the metric drops (lower_is_better=False). You set lower_is_better=True — confirm this is correct?" Use AskUserQuestion. This prevents silently killing experiments during improvement.
    - **Generative model detection:** If the codebase contains GAN discriminator/generator pairs, diffusion schedulers (`DDPMScheduler`, `noise_scheduler`), or VAE encoder/decoder with KL loss:
      - Set `model_category = "generative"` with sub-type `"gan"`, `"diffusion"`, or `"vae"`
      - For GANs: primary_metric is often FID or IS — confirm with user. Divergence metric: generator_loss or discriminator_loss
@@ -129,7 +137,9 @@ You are an ML optimization orchestrator. You coordinate the full optimization pi
    - If the estimate exceeds the user's max training time constraint from Phase 0, warn and adjust
 
 8. **Confirm plan with user:**
-   Use AskUserQuestion to confirm the plan aligns with their Phase 0 answers:
+   **Autonomous mode auto-skip:** If `budget_mode == "autonomous"`, skip the confirmation below. Log the plan summary to `experiments/dev_notes.md` with a note: "Plan auto-approved (autonomous mode)." Proceed directly to Phase 2.
+
+   **Otherwise:** Use AskUserQuestion to confirm the plan aligns with their Phase 0 answers:
    ```
    Based on your goals and my analysis, here is the optimization plan:
    [plan summary]
@@ -142,8 +152,42 @@ You are an ML optimization orchestrator. You coordinate the full optimization pi
    - Estimated total GPU-hours: [X]
    - Scope: [HP-only / HP + research, per Phase 0]
 
+   Experiment budget mode:
+   1. Auto (default): I'll judge the experiment budget based on task difficulty — [N] experiments estimated
+   2. Autonomous (run until you interrupt — no experiment limit, continuous research every N batches)
+   3. Custom: specify your own experiment limit
+
+   If autonomous: How many HP tuning batches between research rounds? (default: 3)
+
    Does this match your expectations? Any adjustments?
    ```
+
+   Store the budget mode as `budget_mode` in user_choices (`"auto"`, `"autonomous"`, or `"custom"`). Default: `"auto"`.
+
+   **Note:** Autonomous mode skips ALL user checkpoints after Phase 0 discovery (Phase 4 direction, Phase 5 proposal selection, Phase 5.1 dependency/license approval, Pre-Loop method proposal selection). All decisions are auto-resolved with logging to dev_notes and error tracker for post-session review.
+
+   If autonomous, also store `hp_batches_per_round` (default: 3). This controls how often the orchestrator auto-triggers a full research → implement cycle. Set to a higher value (e.g., 5-10) for slower research cadence.
+
+   If custom, store `custom_budget` (user-specified number).
+
+   **Adaptive budget calculation (auto mode):**
+
+   In `"auto"` mode, the orchestrator judges task difficulty based on Phase 1 analysis and sets a `difficulty_multiplier`:
+
+   | Difficulty | Multiplier | Criteria |
+   |-----------|-----------|----------|
+   | `easy`    | `× 8`    | Tabular ML (sklearn/XGBoost/LightGBM), ≤3 tunable HPs, HP-only (no code changes) |
+   | `moderate`| `× 15`   | Standard supervised learning (CNN/MLP), moderate HP space (4-8 HPs), 1-2 research proposals |
+   | `hard`    | `× 25`   | Complex architecture (transformers, GANs), large HP space (8+ HPs), 3+ proposals, RL, or generative tasks |
+
+   Formula: `max_experiments = max(num_gpus, 1) × difficulty_multiplier`
+
+   Store `difficulty` and `difficulty_multiplier` in user_choices. The user can override the budget at the Phase 4 checkpoint if they disagree with the assessment.
+
+   **Budget by mode:**
+   - `"auto"`: `max_experiments = max(num_gpus, 1) × difficulty_multiplier` (8, 15, or 25 based on assessed difficulty)
+   - `"autonomous"`: `max_experiments = 999` (effectively unlimited — loop runs until user interrupts or context window exhaustion). In autonomous mode, the analyze skill's `"stop"` recommendation is logged but NOT enforced — the loop continues. The only hard stops are: user interruption, context window limit, or all reasonable approaches exhausted (analyze recommends stop 3 consecutive times). Research → implement cycles auto-trigger every `hp_batches_per_round` batches (see step 6.8).
+   - `"custom"`: `max_experiments = custom_budget` (user-specified value)
 
 ## Phase 2: Prerequisites Check
 
@@ -159,13 +203,17 @@ Invoke the `ml-optimizer:prerequisites` skill with:
 
 **Check results** from `experiments/results/prerequisites.json`:
 - `ready_for_baseline = true` → proceed to Phase 3
-- `status = "partial"` → inform user of issues, ask if they want to proceed anyway or fix first
-- `status = "failed"` → diagnose from `prerequisites.json` error details:
-  - Dataset not found / path invalid → ask user to verify `train_data_path`/`val_data_path` via AskUserQuestion
-  - Dataset format unrecognized → ask user to specify format manually
-  - Dependency install failed → show the failed packages/error, ask user to install manually
-  - Environment not found → ask user to verify `env_manager`/`env_name`
-  - If fixable, re-run Phase 2 after corrections. Otherwise stop and report.
+- **If `budget_mode == "autonomous"`:**
+  - `status = "partial"` → log warnings to `experiments/dev_notes.md`: "Prerequisites partial — proceeding anyway (autonomous mode)." Proceed to Phase 3.
+  - `status = "failed"` → BLOCK: use AskUserQuestion even in autonomous mode (unrecoverable without user input).
+- **Otherwise (interactive/auto/custom):**
+  - `status = "partial"` → inform user of issues, ask if they want to proceed anyway or fix first
+  - `status = "failed"` → diagnose from `prerequisites.json` error details:
+    - Dataset not found / path invalid → ask user to verify `train_data_path`/`val_data_path` via AskUserQuestion
+    - Dataset format unrecognized → ask user to specify format manually
+    - Dependency install failed → show the failed packages/error, ask user to install manually
+    - Environment not found → ask user to verify `env_manager`/`env_name`
+    - If fixable, re-run Phase 2 after corrections. Otherwise stop and report.
 
 **If dataset was prepared** to a new directory:
 1. Read `prerequisites.json` → `dataset.prepared` field
@@ -225,6 +273,8 @@ If baseline fails, diagnose from the error message in baseline.json or error tra
 
 ## Phase 4: User Checkpoint (Post-Baseline)
 
+**Autonomous mode auto-skip:** If `budget_mode == "autonomous"`, skip the user question below. Auto-select option 5 (method proposals) with `method_proposal_scope = "architecture"` (balanced default). Log to dev_notes: `"Autonomous mode: auto-selected method proposals (scope: architecture)"`. Then proceed directly to Phase 5.1 / Pre-Loop method proposal generation.
+
 Use AskUserQuestion to show baseline results and ask for direction:
 
 ```
@@ -239,6 +289,7 @@ How would you like to proceed?
 2. Run research first (look for architectural improvements)
 3. I have research/papers to share (provide your own findings)
 4. Skip to experiments with specific configs
+5. Propose new optimization methods (method proposals — LLM knowledge + optional web search)
 ```
 
 ### Phase 4, Option 3: User-Provided Papers
@@ -249,6 +300,19 @@ If the user selects option 3:
 3. When invoking `ml-optimizer:research` in Phase 5, pass `user_papers`
 4. The research skill will analyze user papers FIRST before running web searches
 5. User-provided papers get a +2 confidence bonus in proposal ranking
+
+### Phase 4, Option 5: Method Proposals
+
+If the user selects option 5:
+1. Use AskUserQuestion to confirm scope level:
+   ```
+   What scope of changes should I propose?
+   1. Training strategies only (optimizer, schedulers, regularization, augmentation) — safest
+   2. Training + architecture changes (attention, normalization, activation variants) — bolder
+   3. Full scope (everything including data pipeline and loss functions) — most aggressive
+   ```
+2. Store `method_proposal_scope` in pipeline state user_choices (values: `"training"`, `"architecture"`, `"full"`)
+3. Skip Phase 5 (web research) — method proposals will be generated in Phase 6 Pre-Loop
 
 ## Phase 5: Research (Optional)
 
@@ -263,6 +327,8 @@ Wait for research findings.
 
 ### User Checkpoint (Post-Research)
 
+**Autonomous mode auto-skip:** If `budget_mode == "autonomous"`, skip the user question below. Auto-select all proposals. Log to dev_notes: `"Autonomous mode: auto-selected all N research proposals for implementation"`.
+
 Use AskUserQuestion to show research findings:
 
 ```
@@ -276,7 +342,7 @@ Which proposals should I pursue?
 - [4] Skip research, just tune HPs
 ```
 
-## Phase 5.5: Implement Research Proposals
+## Phase 5.1: Implement Research Proposals
 
 If the user selected research proposals that require code changes (not just HP tuning):
 
@@ -297,6 +363,7 @@ If the user selected research proposals that require code changes (not just HP t
 
    Install them? (The experiment will fail without them.)
    ```
+   **Autonomous mode auto-skip:** If `budget_mode == "autonomous"`, auto-approve dependency installation. Log to error tracker: `category: "pipeline_inefficiency", severity: "info", message: "Autonomous mode: auto-approved installation of [packages]"`.
 
 4. **If license warnings flagged** → Use AskUserQuestion to surface to user:
    ```
@@ -305,8 +372,15 @@ If the user selected research proposals that require code changes (not just HP t
 
    Please review before proceeding. Continue with these proposals?
    ```
+   **Autonomous mode auto-skip:** If `budget_mode == "autonomous"`, auto-accept license warnings and proceed. Log to error tracker: `category: "pipeline_inefficiency", severity: "warning", message: "Autonomous mode: auto-accepted license warnings for [proposals]"`. Log to dev_notes for user review later.
 
 5. **If conflicts detected** → Inform user which proposals touch the same files. Each is on its own branch, so experiments run independently, but merging winners later may need manual conflict resolution.
+
+6. **Post-implementation quality review** (optional):
+   For validated proposals, dispatch `feature-dev:code-reviewer` to review each implementation branch for bugs, logic errors, and code quality issues. This catches problems before wasting experiment budget on broken implementations.
+   - Only review proposals with `status: "validated"` in the manifest
+   - If the reviewer flags critical issues, mark the proposal as `validation_failed` and skip it
+   - If the reviewer flags minor issues (style, non-blocking), log them but proceed
 
 ## Phase 6: Experiment Loop (Autonomous)
 
@@ -341,6 +415,50 @@ If `experiments/results/implementation-manifest.json` exists:
 
 If no manifest exists, run HP-only experiments on the current code.
 
+### Pre-Loop: Method Proposals (if user chose option 5 in Phase 4)
+
+If `method_proposal_scope` is set in user_choices (i.e., user chose option 5 in Phase 4):
+
+1. **Invoke `ml-optimizer:research`** with:
+   - `source`: `"both"`
+   - `scope_level`: from user_choices `method_proposal_scope`
+   - `output_path`: `"experiments/reports/research-findings-method-proposals.md"`
+   - All other standard inputs (`model_type`, `task`, `current_metrics`, `problem_description`, `exp_root`)
+
+2. **Present proposals to user for confirmation** (same as Phase 5 post-research checkpoint):
+
+   **Autonomous mode auto-skip:** If `budget_mode == "autonomous"`, skip the user question. Auto-select all proposals. Log to dev_notes: `"Autonomous mode: auto-selected all N method proposals for implementation"`.
+
+   ```
+   Method proposals (from LLM knowledge + web search):
+   [summary of proposals from research-findings-method-proposals.md]
+
+   Which proposals should I pursue?
+   - [1] Proposal A (complexity: low, expected: +X%)
+   - [2] Proposal B (complexity: medium, expected: +Y%)
+   - [3] Custom: describe your own approach
+   - [4] Skip, just tune HPs on existing code
+   ```
+
+3. **If user selects proposals:** Invoke `ml-optimizer:implement` with:
+   - `findings_path`: `"experiments/reports/research-findings-method-proposals.md"`
+   - `selected_indices`: The indices the user chose
+   - `project_root`: Project root directory
+
+4. **Check implementation results** from `experiments/results/implementation-manifest.json`:
+   - Merge validated method proposal branches into the `code_branches` list
+   - Follow the same handling as Phase 5.1 (failed proposals, dependencies, license warnings)
+
+5. **Store method proposal state:**
+   - `method_proposal_iterations`: 1 (initial)
+
+### Pre-Loop: Initialize Research Cadence
+
+Initialize the research round counter for autonomous mode:
+- `batches_since_last_research = 0`
+- This counter tracks how many HP tuning batches have run since the last research → implement cycle
+- In autonomous mode, when this counter reaches `hp_batches_per_round`, step 6.8 auto-triggers a new research round
+
 ### Pre-Loop: Save Pipeline State
 
 Save Phase 0 user choices into pipeline state so they persist across interruptions:
@@ -365,6 +483,10 @@ save_state(6, 0, [], '<exp_root>', user_choices={
     'env_name': '<env_name or None>',
     'model_category': '<model_category or None>',
     'user_papers': <user_papers or None>,
+    'budget_mode': '<budget_mode>',
+    'method_proposal_scope': '<method_proposal_scope or None>',
+    'method_proposal_iterations': <method_proposal_iterations or 0>,
+    'hp_batches_per_round': <hp_batches_per_round or 3>,
 })
 "
 ```
@@ -404,7 +526,7 @@ When the implementation manifest contains multiple code branches:
      - `iteration`: Current loop iteration (1-based)
      - `primary_metric`: The metric to optimize (from Phase 0)
      - `lower_is_better`: Whether lower values are better
-     - `remaining_budget`: How many more experiments can be run before hitting the budget limit. Calculated as `(max(num_gpus, 1) × 5) - total_experiments_so_far`. HP-tune must cap proposals at `min(max(num_gpus, 1), remaining_budget)`.
+     - `remaining_budget`: How many more experiments can be run before hitting the budget limit. Calculated as `max_experiments - total_experiments_so_far` (where `max_experiments` is set by the adaptive difficulty assessment or user override). HP-tune must cap proposals at `min(max(num_gpus, 1), remaining_budget)`.
      - `code_branches`: List of validated code branches from the implementation manifest (e.g., `["ml-opt/perceptual-loss", "ml-opt/cosine-scheduler"]`), or `[]` for HP-only optimization. HP-tune uses this in iteration 1 to generate one config per branch + one for baseline.
    - It reads past results and proposes the next batch of configs
    - Number of configs = `min(max(num_gpus, 1), remaining_budget)` (capped to prevent budget overshoot)
@@ -440,6 +562,7 @@ When the implementation manifest contains multiple code branches:
      - `healthy`: Training is progressing normally — continue waiting
      - `diverged`: Stop the experiment automatically, record divergence reason in experiment results
      - `completed`: Training finished naturally during monitoring — proceed to wait/analysis
+     - `unmonitored`: The watched metric was not found in the logs after all fallback attempts. Warn the user once (via dev_notes) that divergence monitoring is disabled for this experiment. Continue without divergence checks — rely on the experiment's hard timeout (from baseline profiling) as the safety net.
      - `failed`: Monitor itself encountered an error — log as `agent_failure`, continue without monitoring for remaining experiments in this batch
      - `no_output`: Log file has no parseable data yet — continue monitoring (normal for early training)
    - **If `divergence_metric` is null** (tabular ML — scikit-learn, XGBoost, LightGBM): skip the monitor skill entirely. Wait for experiments to complete naturally without divergence monitoring.
@@ -455,17 +578,107 @@ When the implementation manifest contains multiple code branches:
      - `primary_metric`: From Phase 0 (NOT "loss" — see Metric Routing Rule)
      - `lower_is_better`: Based on metric type
      - `target_value`: From Phase 0 (or null)
+     - `remaining_budget`: `max_experiments - total_experiments_so_far` (analyze uses this in its pivot decision tree to gate research pivots)
    - It compares all experiments, ranks them, identifies patterns
    - It recommends: continue, pivot, or stop
 
 6. **Decision:**
    - If analyze says **continue**: loop back to step 1
    - If analyze says **pivot**: adjust the strategy, loop back to step 1
-   - If analyze says **stop**: exit loop
+   - If analyze says **stop**:
+     - In `"auto"` or `"custom"` mode: exit loop
+     - In `"autonomous"` mode: log the stop recommendation but continue the loop. Only force-stop if analyze recommends stop 3 consecutive times (indicating true convergence, not a one-off plateau).
    - **If analyze output is malformed or contains an unexpected action:** Treat as `agent_failure`. Log to error tracker. Retry analyze once with a simplified prompt: "Based on the experiment results, should we continue, pivot, or stop? Respond with exactly one of: continue, pivot, stop." If retry also fails, default to `continue` if remaining_budget > 0, or `stop` if budget exhausted.
-   - **Safety limit:** Maximum total experiments budget (default: `max(num_gpus, 1) × 5`). After budget exhausted, force exit and report. This replaces the rigid 5-iteration limit to account for varying GPU counts. When `num_gpus=0` (CPU-only, e.g., scikit-learn), the budget is `1 × 5 = 5` experiments.
+   - **Safety limit:** Maximum experiments budget depends on `budget_mode` from Phase 1:
+     - `"auto"` (default): `max(num_gpus, 1) × difficulty_multiplier` (easy=8, moderate=15, hard=25)
+     - `"custom"`: user-specified `custom_budget`
+     - `"autonomous"`: 999 (effectively unlimited — runs until interrupted or 3 consecutive stop recommendations)
+     After budget exhausted, force exit and report. When `num_gpus=0` (CPU-only, e.g., scikit-learn), the multiplier applies to `1`.
 
-7. **Mid-pipeline review check** (after step 6, before looping):
+6.1. **Mid-loop method proposal trigger** (when analyze recommends new methods):
+
+   If analyze returns `pivot_type: "method_proposal"` or `pivot_type: "qualitative_change"`:
+
+   a. **Budget gate:** If `remaining_budget < 3`, skip method proposals and recommend stop with current best result. Log:
+      ```bash
+      python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"orchestrate","message":"Method proposals skipped: remaining_budget (<N>) < 3","phase":6,"iteration":<iteration>}'
+      ```
+
+   b. **Scope confirmation:** Ask the user which scope level to use:
+      ```
+      HP tuning has plateaued. I can propose new optimization methods.
+
+      Scope options:
+      1. Training strategies only (optimizers, schedulers, regularization, augmentation, loss functions)
+      2. Training + architecture changes (attention, normalization, activations, block design)
+      3. Full scope (training + architecture + data pipeline, distillation, ensemble)
+      4. Skip — stop with current best result
+
+      Which scope? (1/2/3/4)
+      ```
+      If user chooses 4 (skip), exit the loop and proceed to Phase 7 (report).
+
+   c. **Generate proposals:** Invoke `ml-optimizer:research` with:
+      - `source`: `"both"`
+      - `scope_level`: user's choice (`"training"` / `"architecture"` / `"full"`)
+      - `output_path`: `"experiments/reports/research-findings-method-proposals-iter<N>.md"` (where N = `method_proposal_iterations + 1`)
+      - All other standard inputs (project_root, model description, primary_metric, etc.)
+
+   d. **Present proposals:** Show the generated proposals to the user for confirmation. The user can accept all, select a subset, or reject all (which exits the loop).
+
+   e. **Implement proposals:** Invoke `ml-optimizer:implement` with the confirmed method proposal findings. This creates new `ml-opt/<slug>` branches.
+
+   f. **Merge into experiment loop:** Add the new validated branches to `code_branches`. Reset the iteration counter for these new branches only (they start at iteration 1 = `method_default_hp` tier). Existing branches keep their iteration count.
+
+   g. **Update state:**
+      - Increment `method_proposal_iterations` in user_choices
+      - Deduct expected cost from `remaining_budget`: `expected_cost = len(new_branches) + 1` (one experiment per branch + one baseline comparison)
+      - Save pipeline state
+
+   h. **Continue loop:** Loop back to step 1 (hp-tune) with the expanded `code_branches` list. Reset `batches_since_last_research = 0`.
+
+6.8. **Research round check** (autonomous mode only — cadence-based research trigger):
+
+   This step auto-triggers research → implement on a regular cadence, independent of analyze's pivot recommendation. It only applies in autonomous mode with `method_proposal_scope` set.
+
+   **Conditions (ALL must be true):**
+   - `budget_mode == "autonomous"`
+   - `method_proposal_scope` is set (user opted into method proposals)
+   - `batches_since_last_research >= hp_batches_per_round`
+   - Step 6.1 did NOT already trigger this iteration (avoid double research)
+
+   **If conditions met:**
+
+   a. **Log the trigger:**
+      ```bash
+      python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_info","severity":"info","source":"orchestrate","message":"Autonomous research round triggered after <N> HP batches","phase":6,"iteration":<iteration>,"context":{"batches_since_last_research":<N>,"method_proposal_iterations":<M>}}'
+      ```
+
+   b. **Generate proposals:** Invoke `ml-optimizer:research` with:
+      - `source`: `"both"`
+      - `scope_level`: from user_choices `method_proposal_scope`
+      - `output_path`: `"experiments/reports/research-findings-method-proposals-iter<N>.md"` (where N = `method_proposal_iterations + 1`)
+      - All standard inputs (project_root, model description, primary_metric, etc.)
+
+   c. **Check results:**
+      - If research returns new proposals (not all filtered by deduplication): proceed to implement
+      - If research returns **no new proposals** (all deduplicated): skip implement, double `hp_batches_per_round` (exponential backoff), log:
+        ```bash
+        python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_info","severity":"info","source":"orchestrate","message":"Research round yielded no new proposals — increasing cadence to <new_value> batches","phase":6,"iteration":<iteration>}'
+        ```
+
+   d. **Implement proposals (no user confirmation):** In autonomous mode, ALL returned proposals are implemented automatically (the user opted into autonomous operation). Invoke `ml-optimizer:implement` with the research findings. This creates new `ml-opt/<slug>` branches.
+
+   e. **Merge into experiment loop:** Same as step 6.1f — add new validated branches to `code_branches`, reset iteration counter for new branches.
+
+   f. **Update state:**
+      - Increment `method_proposal_iterations`
+      - Reset `batches_since_last_research = 0`
+      - Save pipeline state
+
+   **If conditions NOT met:** Increment `batches_since_last_research` and continue.
+
+7. **Mid-pipeline review check** (after step 6/6.1/6.8, before looping):
    Run pattern detection:
    ```bash
    python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> patterns
@@ -495,7 +708,7 @@ When dispatching experiments across multiple GPUs, use the Agent tool with `suba
 For each config in proposed_configs:
   Agent(
     description: "Run experiment {exp_id}",
-    prompt: "Use the ml-optimizer:experiment skill to run experiment {exp_id} with config: {config_json}. GPU: {gpu_id}. Project root: {project_root}. Train command: {train_command}. Eval command: {eval_command or null}. Code branch: {code_branch or null}. Code proposal: {code_proposal or null}. Prepared train path: {prepared_train_path or null}. Prepared val path: {prepared_val_path or null}.",
+    prompt: "Use the ml-optimizer:experiment skill to run experiment {exp_id} with config: {config_json}. GPU: {gpu_id}. Project root: {project_root}. Train command: {train_command}. Eval command: {eval_command or null}. Code branch: {code_branch or null}. Code proposal: {code_proposal or null}. Proposal source: {proposal_source or null}. Method tier: {method_tier or null}. Iteration: {iteration}. Prepared train path: {prepared_train_path or null}. Prepared val path: {prepared_val_path or null}.",
     subagent_type: "general-purpose",
     run_in_background: true
   )
@@ -510,7 +723,7 @@ Example for analytical dispatch:
 ```
 Agent(
   description: "Analyze batch {N} results",
-  prompt: "Ultrathink. Use the ml-optimizer:analyze skill to analyze batch {N}. Project root: {project_root}. Primary metric: {primary_metric}. Lower is better: {lower_is_better}. Target: {target_value or null}.",
+  prompt: "Ultrathink. Use the ml-optimizer:analyze skill to analyze batch {N}. Project root: {project_root}. Primary metric: {primary_metric}. Lower is better: {lower_is_better}. Target: {target_value or null}. Remaining budget: {remaining_budget}.",
   subagent_type: "general-purpose"
 )
 ```
@@ -530,7 +743,12 @@ After the experiment loop exits:
    ```bash
    python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> sync ~/.claude/plugins/ml-optimizer
    ```
-4. Ask the user about self-improvement review:
+4. **Self-improvement review:**
+   **Autonomous mode auto-skip:** If `budget_mode == "autonomous"`, auto-run review with `scope: "session"`. Skip AskUserQuestion. Log to dev_notes: "Auto-running self-improvement review (autonomous mode)." Invoke `ml-optimizer:review` with:
+   - `project_root`, `exp_root`, `primary_metric`, `lower_is_better`
+   - `scope`: "session"
+
+   **Otherwise:** Ask the user:
    ```
    AskUserQuestion: "Would you like a self-improvement review? It analyzes what worked, what didn't, and suggests plugin improvements for future sessions."
    Options: ["Yes, run review", "No, skip"]

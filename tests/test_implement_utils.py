@@ -26,6 +26,7 @@ from implement_utils import (
 )
 SAMPLE_FINDINGS = FIXTURES / "sample_research_findings.md"
 SAMPLE_FINDINGS_REF = FIXTURES / "sample_research_findings_with_reference.md"
+SAMPLE_FINDINGS_KNOWLEDGE = FIXTURES / "sample_research_findings_knowledge.md"
 
 
 # --- slugify ---
@@ -514,3 +515,32 @@ def test_parse_proposals_double_hash(tmp_path):
     proposals = parse_research_proposals(str(f))
     assert len(proposals) == 1
     assert proposals[0]["name"] == "Test Technique"
+
+
+# --- proposal_source extraction ---
+
+
+def test_parse_proposals_knowledge_source():
+    """Knowledge-mode proposals have proposal_source='llm_knowledge'."""
+    proposals = parse_research_proposals(str(SAMPLE_FINDINGS_KNOWLEDGE))
+    assert len(proposals) == 3
+    for p in proposals:
+        assert p["proposal_source"] == "llm_knowledge"
+        assert p["implementation_strategy"] == "from_scratch"
+
+
+def test_parse_proposals_paper_source_default():
+    """Old findings without proposal_source default to 'paper'."""
+    proposals = parse_research_proposals(str(SAMPLE_FINDINGS))
+    for p in proposals:
+        assert p["proposal_source"] == "paper"
+
+
+def test_cli_parse_knowledge_proposals(run_main):
+    """CLI parses knowledge-mode findings and includes proposal_source."""
+    r = run_main("implement_utils.py", str(SAMPLE_FINDINGS_KNOWLEDGE), '[1,2]')
+    assert r.returncode == 0
+    output = json.loads(r.stdout)
+    assert len(output["proposals"]) == 2
+    for p in output["proposals"]:
+        assert p["proposal_source"] == "llm_knowledge"

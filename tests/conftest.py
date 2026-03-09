@@ -45,9 +45,20 @@ def run_main():
     return _run_main
 
 
-def _write_result(results_dir, exp_id, status, config, metrics, **extra):
-    """Helper to write a minimal experiment result JSON."""
+def _write_result(results_dir, exp_id, status, config, metrics,
+                   method_tier=None, proposal_source=None, code_branch=None,
+                   **extra):
+    """Helper to write a minimal experiment result JSON.
+
+    Optional three-tier tracking fields: method_tier, proposal_source, code_branch.
+    """
     data = {"exp_id": exp_id, "status": status, "config": config, "metrics": metrics}
+    if method_tier is not None:
+        data["method_tier"] = method_tier
+    if proposal_source is not None:
+        data["proposal_source"] = proposal_source
+    if code_branch is not None:
+        data["code_branch"] = code_branch
     data.update(extra)
     (results_dir / f"{exp_id}.json").write_text(json.dumps(data))
 

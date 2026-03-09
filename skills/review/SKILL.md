@@ -55,7 +55,7 @@ python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> patte
    python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> cleanup ~/.claude/plugins/ml-optimizer 10
    ```
 
-## Step 1.5: Read Target Plugin Files
+## Step 1.1: Read Target Plugin Files
 
 Based on which error categories are present, read the relevant plugin files so suggestions are grounded in reality:
 
@@ -141,7 +141,7 @@ For each issue:
 - **Warning:** Degrades optimization quality. Should be addressed.
 - **Info:** Optimization opportunity. Nice to have.
 
-## Step 3.5: Rank and Prioritize Issues
+## Step 3.1: Rank and Prioritize Issues
 
 Rank all detected patterns by impact score:
 
@@ -180,7 +180,7 @@ For each detected pattern (in rank order), generate a specific, actionable sugge
 1. **Be specific.** "Improve error handling" is useless. "Add a batch_size cap of 128 to hp-tune Step 2 when GPU memory < 12GB" is actionable.
 2. **Reference evidence.** Every suggestion must cite at least one error event, pattern, or experiment result.
 3. **Target the right file.** If the problem is in HP proposals, target `skills/hp-tune/SKILL.md`, not a random script.
-4. **Quote current behavior.** You read the file in Step 1.5 — quote the relevant section so the user can verify.
+4. **Quote current behavior.** You read the file in Step 1.1 — quote the relevant section so the user can verify.
 5. **Consider side effects.** Will this change break other skills or narrow the search space too much?
 6. **Cross-project suggestions get higher confidence** when the same pattern appears in 2+ projects.
 7. **Check for repeats.** If this pattern was previously suggested (from Step 1.8), reduce confidence by one level (High→Medium, Medium→Low) and note "Previously suggested (iteration N)" in the Evidence field. Skip Low-confidence repeats entirely — they've been flagged enough times without action.
@@ -294,7 +294,7 @@ Write the review to `<exp_root>/reports/session-review.md`:
 - [Suggestions that would improve the plugin for all projects]
 ```
 
-## Step 5.5: Log Generated Suggestions
+## Step 5.1: Log Generated Suggestions
 
 After writing the review, log each generated suggestion so future reviews can detect repeats:
 

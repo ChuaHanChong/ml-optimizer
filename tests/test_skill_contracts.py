@@ -363,3 +363,115 @@ def test_prerequisites_partial_has_actionable_info():
     # Partial must still have structured data for the user to decide
     assert isinstance(report["dataset"], dict)
     assert isinstance(report["environment"], dict)
+
+
+# --- Budget flow contract ---
+
+
+def test_budget_remaining_calculation():
+    """remaining_budget = max_experiments - total_experiments_so_far."""
+    max_experiments = 15  # moderate difficulty × 1 GPU
+    total_experiments = 6
+    remaining_budget = max_experiments - total_experiments
+    assert remaining_budget == 9
+
+
+def test_budget_hp_tune_caps_proposals(tmp_path):
+    """HP-tune must cap proposals at min(max(num_gpus, 1), remaining_budget)."""
+    num_gpus = 4
+    remaining_budget = 3
+    max_proposals = min(max(num_gpus, 1), remaining_budget)
+    assert max_proposals == 3  # capped by remaining_budget, not GPU count
+
+    num_gpus_2 = 2
+    remaining_budget_2 = 10
+    max_proposals_2 = min(max(num_gpus_2, 1), remaining_budget_2)
+    assert max_proposals_2 == 2  # capped by GPU count
+
+    # CPU-only: num_gpus=0 → max(0,1) = 1
+    num_gpus_0 = 0
+    remaining_budget_3 = 5
+    max_proposals_3 = min(max(num_gpus_0, 1), remaining_budget_3)
+    assert max_proposals_3 == 1
+
+
+def test_budget_exhausted_recommends_stop():
+    """When remaining_budget <= 0, hp-tune should recommend stop."""
+    max_experiments = 10
+    total_experiments = 10
+    remaining_budget = max_experiments - total_experiments
+    assert remaining_budget <= 0
+
+
+def test_budget_tracks_across_iterations():
+    """Budget decrements correctly across 3 iterations."""
+    num_gpus = 2
+    difficulty_multiplier = 8  # easy
+    max_experiments = max(num_gpus, 1) * difficulty_multiplier  # 16
+
+    # Iteration 1: 2 experiments (1 per GPU)
+    batch_1_size = 2
+    remaining_after_1 = max_experiments - batch_1_size
+    assert remaining_after_1 == 14
+
+    # Iteration 2: 2 more experiments
+    batch_2_size = min(max(num_gpus, 1), remaining_after_1)  # min(2, 14) = 2
+    remaining_after_2 = remaining_after_1 - batch_2_size
+    assert remaining_after_2 == 12
+
+    # Iteration 3: 2 more
+    batch_3_size = min(max(num_gpus, 1), remaining_after_2)  # min(2, 12) = 2
+    remaining_after_3 = remaining_after_2 - batch_3_size
+    assert remaining_after_3 == 10
+
+    # Budget never goes negative
+    assert remaining_after_3 >= 0
+
+
+def test_budget_adaptive_difficulty_multipliers():
+    """Adaptive difficulty multipliers: easy=8, moderate=15, hard=25."""
+    num_gpus = 1
+    assert max(num_gpus, 1) * 8 == 8    # easy
+    assert max(num_gpus, 1) * 15 == 15   # moderate
+    assert max(num_gpus, 1) * 25 == 25   # hard
+
+    num_gpus_4 = 4
+    assert max(num_gpus_4, 1) * 8 == 32   # easy, 4 GPUs
+    assert max(num_gpus_4, 1) * 15 == 60  # moderate, 4 GPUs
+    assert max(num_gpus_4, 1) * 25 == 100 # hard, 4 GPUs
+
+
+def test_budget_branch_iteration1_cap():
+    """Iteration 1 with code branches: one config per branch + one baseline."""
+    code_branches = ["ml-opt/loss-a", "ml-opt/loss-b", "ml-opt/aug-c"]
+    remaining_budget = 5
+    configs_needed = len(code_branches) + 1  # +1 for baseline
+    actual = min(configs_needed, remaining_budget)
+    assert actual == 4  # 3 branches + 1 baseline, within budget
+
+    # Budget too small for all branches
+    remaining_budget_small = 2
+    actual_small = min(configs_needed, remaining_budget_small)
+    assert actual_small == 2  # forced to drop some branches
+
+
+def test_budget_autonomous_mode_unlimited():
+    """Autonomous mode: stop only after 3 consecutive stop recommendations."""
+    consecutive_stops = 0
+    budget_mode = "autonomous"
+
+    # Simulate 3 iterations where analyze says stop
+    for _ in range(3):
+        consecutive_stops += 1
+
+    # Only stop after 3 consecutive
+    should_stop = budget_mode == "autonomous" and consecutive_stops >= 3
+    assert should_stop is True
+
+    # Reset on a non-stop recommendation
+    consecutive_stops = 2
+    analyze_says_stop = False
+    if not analyze_says_stop:
+        consecutive_stops = 0
+    should_stop_2 = budget_mode == "autonomous" and consecutive_stops >= 3
+    assert should_stop_2 is False

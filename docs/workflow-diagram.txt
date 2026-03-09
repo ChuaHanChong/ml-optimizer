@@ -1,0 +1,439 @@
+================================================================================
+                    ML-OPTIMIZER PLUGIN — WORKFLOW DIAGRAM
+================================================================================
+
+ENTRY POINT
+============
+
+  User types:  /optimize <model-path-or-description>
+                    |
+                    v
+          +-------------------+
+          |  commands/        |
+          |  optimize.md      |  <-- slash command definition
+          +-------------------+
+                    |
+                    v
+    +-------------------------------+
+    |   ml-optimizer:orchestrate    |  <-- skill invocation
+    |   (skills/orchestrate/)       |
+    +-------------------------------+
+                    |
+         Dispatches agents via
+         Agent tool (general-purpose)
+                    |
+                    v
+
+================================================================================
+                          AGENT ROSTER (5 types)
+================================================================================
+
+  +-------------------+  Tools: Bash, Read, Write, Glob, Grep
+  | prerequisites-    |
+  | agent (procedural)|
+  +-------------------+
+
+  +-------------------+  Tools: WebSearch, WebFetch, Read, Write,
+  | research-agent    |  Bash, Glob, Grep
+  | (ultrathink)      |  External: context7 (API docs),
+  +-------------------+  claude-mem:mem-search (cross-session)
+
+  +-------------------+  Tools: Bash, Read, Write, Edit, Glob, Grep,
+  | implement-agent   |  WebFetch
+  | (ultrathink)      |  External: context7 (API docs),
+  +-------------------+  feature-dev:code-explorer, superpowers:systematic-debugging
+
+  +-------------------+  Tools: Read, Write, Bash, Glob, Grep,
+  | tuning-agent      |  WebSearch, WebFetch
+  | (ultrathink)      |
+  +-------------------+
+
+  +-------------------+  Tools: Bash, Read, Write, Glob, Grep
+  | experiment-agent  |
+  | (procedural)      |
+  +-------------------+
+
+================================================================================
+                        PHASE-BY-PHASE PIPELINE
+================================================================================
+
+
+  PHASE 0: DISCOVERY
+  ===================
+  Mode: Plan Mode (read-only, user Q&A)
+  Agent: orchestrator (no subagent dispatch)
+
+  User answers 8+ questions:
+    Q1: Model path or description
+    Q2: Primary metric (accuracy, loss, PSNR, F1, etc.)
+    Q3: Lower is better? (for primary metric)
+    Q4: Target value (optional)
+    Q5: Training command
+    Q6: Eval command (if separate)
+    Q7: Divergence metric (default: loss)
+    Q7a: Divergence lower_is_better? (default: True)
+    Q8: Data paths (train, val)
+    Q9: Environment manager (conda/venv/none)
+    Q10: Model category (supervised/RL/generative)
+    Q11: Budget mode (standard/extended/autonomous)
+    Q12: User papers (optional, for research)
+
+  +-- RL polarity validation -------------------------------------------+
+  | If divergence_metric contains "reward"/"return"/"score"             |
+  | AND divergence_lower_is_better = True (default):                    |
+  |   WARN: "For reward-like metrics, divergence means dropping —       |
+  |          confirming lower_is_better=False?"                         |
+  +---------------------------------------------------------------------+
+
+  Saves: pipeline-state.json (user_choices), user-choices-backup.json
+
+                    |
+                    v
+
+  PHASE 1: UNDERSTAND MODEL
+  ==========================
+  Agent: orchestrator reads code directly
+  External: claude-mem:mem-search (recall past projects)
+
+    - Read model files, config files
+    - python3 scripts/gpu_check.py  -->  GPU count, VRAM
+    - Detect framework (PyTorch/TF/JAX/sklearn/XGBoost/LightGBM)
+    - Determine model_category if not set
+
+  Writes: dev_notes.md (session log starts)
+
+                    |
+                    v
+
+  PHASE 2: PREREQUISITES
+  =======================
+  Agent: prerequisites-agent --> ml-optimizer:prerequisites skill
+
+    +--------------------------------------------------------------+
+    |  Step 1: Detect environment (conda/venv/system)              |
+    |  Step 2: Scan imports, check missing packages                |
+    |  Step 3: Detect dataset format (CSV/ImageFolder/HuggingFace) |
+    |  Step 4: Validate dataset paths and structure                |
+    |  Step 5: Install missing dependencies                        |
+    |  Step 6: Prepare data if needed (preprocessing)              |
+    |  Step 6.1: Dry-run validation (NEW)                          |
+    |    timeout 120 <train_command_with_minimal_steps>            |
+    |  Step 7: Write prerequisites.json report                     |
+    +--------------------------------------------------------------+
+
+  Reads: user_choices (train_command, data paths, env_manager)
+  Writes: experiments/results/prerequisites.json
+          experiments/prepared-data/ (if preprocessing needed)
+
+                    |
+                    v
+
+  PHASE 3: BASELINE
+  ==================
+  Agent: experiment-agent --> ml-optimizer:baseline skill
+
+    +--------------------------------------------------------------+
+    |  1. Run training with default HPs                            |
+    |  2. Parse logs: python3 scripts/parse_logs.py <logfile>      |
+    |  3. Check divergence: python3 scripts/detect_divergence.py   |
+    |  4. Profile GPU memory usage (skip for tabular ML)           |
+    |  5. Estimate throughput (steps/sec, time/epoch)              |
+    |  6. Write baseline.json                                      |
+    +--------------------------------------------------------------+
+
+  Reads: prerequisites.json, user_choices
+  Writes: experiments/results/baseline.json
+          experiments/logs/baseline/train.log
+
+                    |
+                    v
+
+  PHASE 4: USER CHECKPOINT
+  =========================
+  Agent: orchestrator (user interaction)
+
+  Presents options to user:
+    +--------------------------------------------------------------+
+    | 1. Continue to research (web search for techniques)          |
+    | 2. Skip research, go directly to HP tuning                   |
+    | 3. Adjust baseline config and re-run                         |
+    | 4. Stop here                                                 |
+    | 5. Generate method proposals (research with source: "both")  |
+    +--------------------------------------------------------------+
+
+  Option 5 triggers:
+    - Ask user for method_proposal_scope (training/architecture/full)
+    - research-agent --> ml-optimizer:research (source: "both")
+    - User confirms proposals
+    - implement-agent --> ml-optimizer:implement
+    - Creates branches/backups for each proposal
+
+                    |
+     (option 1 or 5 chosen)
+                    v
+
+  PHASE 5: RESEARCH
+  ==================
+  Agent: research-agent --> ml-optimizer:research skill
+
+    +--------------------------------------------------------------+
+    |  Source modes:                                               |
+    |    "web"       — WebSearch + WebFetch only                   |
+    |    "knowledge" — LLM training knowledge (confidence cap 7/10)|
+    |    "both"      — LLM proposals + web validation              |
+    |                                                              |
+    |  Scope levels:                                               |
+    |    "training"      — HPs, schedulers, augmentation (safest)  |
+    |    "architecture"  — model changes, loss functions           |
+    |    "full"          — any change including data pipeline      |
+    |                                                              |
+    |  Fuzzy deduplication (NEW):                                  |
+    |    - Normalize: lowercase, strip suffixes                    |
+    |    - Substring containment check                             |
+    |    - Common abbreviation matching (lr↔learning rate, etc.)   |
+    |    - >70% word overlap → treat as duplicate                  |
+    |                                                              |
+    |  Priority scoring:                                           |
+    |    score = (impact × confidence) / (11 - feasibility)        |
+    +--------------------------------------------------------------+
+
+  Reads: baseline.json, user_choices, existing findings files
+  Writes: experiments/reports/research-findings.md
+          experiments/reports/research-findings-method-proposals.md (if "both")
+
+                    |
+                    v
+
+  PHASE 5.1: IMPLEMENT
+  =====================
+  Agent: implement-agent --> ml-optimizer:implement skill
+  Post-review: feature-dev:code-reviewer (quality check)
+
+    +---------------------------------------------------------------+
+    |  Strategy A — Git Branch (default):                           |
+    |    For each proposal:                                         |
+    |      1. git checkout -b ml-opt/<slug> from base branch        |
+    |      2. Apply code changes                                    |
+    |      3. Validate syntax (py_compile)                          |
+    |      4. Run dry-run test                                      |
+    |      5. Record in implementation-manifest.json                |
+    |                                                               |
+    |  Strategy B — File Backup (non-git fallback):                 |
+    |    Restore-before-apply pattern (prevents cross-contamination)|
+    |      1. Create baseline backup (_baseline/)                   |
+    |      2. For EACH proposal:                                    |
+    |         a. Restore ALL files from _baseline/ (clean slate)    |
+    |         b. Apply this proposal's changes                      |
+    |         c. Validate syntax                                    |
+    |         d. If pass: backup to backups/<slug>/                 |
+    |         e. Restore from _baseline/ (clean for next)           |
+    |      3. Experiments run SEQUENTIALLY (not parallel)           |
+    +---------------------------------------------------------------+
+
+  Reads: research-findings.md, user-confirmed proposal indices
+  Writes: experiments/results/implementation-manifest.json
+          Git branches: ml-opt/<slug> (one per proposal)
+
+                    |
+                    v
+
+  PHASE 6: EXPERIMENT LOOP
+  =========================
+  Budget modes:
+    auto:       max_experiments = max(num_gpus, 1) × difficulty_multiplier
+                  easy=×8, moderate=×15, hard=×25 (agent judges task difficulty)
+    autonomous: unlimited (runs until 3 consecutive stop recommendations)
+    custom:     user-specified experiment limit
+
+  +======================================================================+
+  |                                                                      |
+  |  ITERATION START                                                     |
+  |  +-----------------------------------------------------------------+ |
+  |  |  6.1  HP-TUNE                                                   | |
+  |  |  Agent: tuning-agent --> ml-optimizer:hp-tune skill             | |
+  |  |                                                                 | |
+  |  |  Inputs: past results (grouped by code_branch), remaining_budget| |
+  |  |  Iter 1: one config per branch + one baseline HP config         | |
+  |  |  Iter 2+: prune underperforming branches, focus configs         | |
+  |  |  Cap: min(max(num_gpus, 1), remaining_budget) proposals         | |
+  |  |                                                                 | |
+  |  |  WARNING: If branches dropped due to budget, log to             | |
+  |  |  error_tracker with priority order (impact × confidence)        | |
+  |  +-----------------------------------------------------------------+ |
+  |                    |                                                 |
+  |                    v                                                 |
+  |  +-----------------------------------------------------------------+ |
+  |  |  6.2  EXPERIMENT                                                | |
+  |  |  Agent: experiment-agent --> ml-optimizer:experiment skill      | |
+  |  |                                                                 | |
+  |  |  - Generate training scripts per config                         | |
+  |  |  - Run training (parallel across GPUs if available)             | |
+  |  |  - Parse logs, collect metrics                                  | |
+  |  |  - Write exp-NNN.json results                                   | |
+  |  |  - Timeout: baseline_time × 3 (iter 1), × 2 (iter 2+)           | |
+  |  +-----------------------------------------------------------------+ |
+  |                    |                                                 |
+  |                    v                                                 |
+  |  +-----------------------------------------------------------------+ |
+  |  |  6.3  MONITOR (concurrent with experiment)                      | |
+  |  |  Skill: ml-optimizer:monitor                                    | |
+  |  |  (skipped for tabular ML: sklearn, XGBoost, LightGBM)           | |
+  |  |                                                                 | |
+  |  |  - Watch divergence_metric (default: "loss")                    | |
+  |  |  - python3 scripts/detect_divergence.py '<values>'              | |
+  |  |  - Returns: healthy | diverged | unmonitored                    | |
+  |  |                                                                 | |
+  |  |  "unmonitored" (NEW): metric not found after fallbacks          | |
+  |  |    → warn user, rely on hard timeout as safety net              | |
+  |  |  "diverged": kill training, mark experiment as diverged         | |
+  |  +-----------------------------------------------------------------+ |
+  |                    |                                                 |
+  |                    v                                                 |
+  |  +-----------------------------------------------------------------+ |
+  |  |  6.4  ANALYZE                                                   | |
+  |  |  Agent: tuning-agent --> ml-optimizer:analyze skill             | |
+  |  |                                                                 | |
+  |  |  Inputs: results_dir, primary_metric, lower_is_better,          | |
+  |  |          remaining_budget (NEW)                                 | |
+  |  |                                                                 | |
+  |  |  Decision tree:                                                 | |
+  |  |    "continue"         → next HP iteration                       | |
+  |  |    "stop"             → go to Phase 7 report                    | |
+  |  |    "method_proposal"  → trigger 6.1 research pivot              | |
+  |  |      (requires remaining_budget >= 3)                           | |
+  |  |    "qualitative_change" → trigger full research                 | |
+  |  |      (requires remaining_budget >= 5)                           | |
+  |  +-----------------------------------------------------------------+ |
+  |                   |                                                  |
+  |         +---------+--- ------+----------+                            |
+  |         |         |          |          |                            |
+  |    "continue"  "stop"  "method_   "qualitative_                      |
+  |         |         |    proposal"   change"                           |
+  |         |         |          |          |                            |
+  |         |         v          +----+-----+                            |
+  |         |    Phase 7              |                                  |
+  |         |                         v                                  |
+  |  +------+----------------------------------------------------------+ |
+  |  |  6.1  RESEARCH PIVOT (triggered by analyze)                     | |
+  |  |  Agent: research-agent --> ml-optimizer:research (source:"both")| |
+  |  |  Then: implement-agent --> ml-optimizer:implement               | |
+  |  |  User confirmation required for scope + proposals               | |
+  |  +-----------------------------------------------------------------+ |
+  |         |                                                            |
+  |         v                                                            |
+  |  +----------------------------------------------------------------+  |
+  |  |  6.8  AUTONOMOUS RESEARCH CADENCE                              |  |
+  |  |  (autonomous mode only, method_proposal_scope set)             |  |
+  |  |                                                                |  |
+  |  |  Every hp_batches_per_round batches (default 3):               |  |
+  |  |    Auto-trigger research → implement cycle                     |  |
+  |  |    NO user confirmation needed                                 |  |
+  |  |    If no new proposals: double cadence (exponential backoff)   |  |
+  |  +----------------------------------------------------------------+  |
+  |         |                                                            |
+  |         v                                                            |
+  |  +----------------------------------------------------------------+  |
+  |  |  6.9  MID-PIPELINE REVIEW (auto-triggered)                     |  |
+  |  |  Skill: ml-optimizer:review (scope: "session")                 |  |
+  |  |                                                                |  |
+  |  |  Triggers:                                                     |  |
+  |  |    - wasted_budget pattern ≥ 3 occurrences                     |  |
+  |  |    - 2 consecutive batches with zero successful experiments    |  |
+  |  |                                                                |  |
+  |  |  Output: course correction suggestions in session-review.md    |  |
+  |  +----------------------------------------------------------------+  |
+  |         |                                                            |
+  |         +-- Loop back to 6.1 (if budget remains) ------>             |
+  |                                                                      |
+  +============================ END LOOP ================================+
+
+                    |
+      (budget exhausted, or "stop" recommendation,
+       or 3 consecutive stops in autonomous mode)
+                    v
+
+  PHASE 7: REPORT
+  ================
+  Agent: tuning-agent --> ml-optimizer:report skill
+
+    +--------------------------------------------------------------+
+    |  Compile final optimization report:                          |
+    |    - Best experiment config and metrics                      |
+    |    - Ranking of all experiments                              |
+    |    - HP sensitivity analysis (Spearman correlations)         |
+    |    - ASCII charts (comparison, timeline, sensitivity)        |
+    |    - Matplotlib progress chart (if available)                |
+    |    - Error pattern summary                                   |
+    |    - Proposal outcome tracking                               |
+    |                                                              |
+    |  Three-tier comparison (when method_tier present):           |
+    |    Tier 1: baseline                                          |
+    |    Tier 2: method_default_hp (isolated method effect)        |
+    |    Tier 3: method_tuned_hp (combined HP + method effect)     |
+    +--------------------------------------------------------------+
+
+  Reads: All experiments/results/*.json, error-log.json
+  Writes: experiments/reports/optimization-report.md
+          experiments/reports/progress_chart.png (optional)
+
+                    |
+                    v
+
+  OPTIONAL: END-OF-SESSION REVIEW
+  ================================
+  Skill: ml-optimizer:review (scope: "session")
+
+    - Self-improvement analysis
+    - What worked, what didn't
+    - Suggestions for future sessions
+
+  Writes: experiments/reports/session-review.md
+
+
+================================================================================
+                          DATA FLOW SUMMARY
+================================================================================
+
+  Phase  | Reads                          | Writes
+  -------|--------------------------------|-----------------------------
+  0      | (user input)                   | pipeline-state.json
+         |                                | user-choices-backup.json
+  1      | model files, config            | dev_notes.md
+  2      | user_choices                   | results/prerequisites.json
+         |                                | prepared-data/
+  3      | prerequisites.json             | results/baseline.json
+         |                                | logs/baseline/train.log
+  4      | baseline.json                  | (user decision)
+  5      | baseline.json, user_choices    | reports/research-findings.md
+  5.1    | research-findings.md           | results/implementation-manifest.json
+         |                                | Git branches: ml-opt/<slug>
+  6.1    | results/exp-*.json             | results/proposed-configs/*.json
+  6.2    | proposed-configs               | results/exp-NNN.json
+         |                                | logs/<exp-id>/train.log
+         |                                | scripts/<exp-id>.sh
+  6.3    | logs/<exp-id>/train.log        | (status: healthy/diverged/unmonitored)
+  6.4    | results/, remaining_budget     | reports/analysis-batch-N.md
+  6.1    | reports/research-findings*.md  | reports/research-findings-method-proposals-iterN.md
+  6.9    | reports/error-log.json         | reports/session-review.md
+  7      | results/, error-log.json       | reports/optimization-report.md
+         |                                | reports/progress_chart.png
+
+
+================================================================================
+                              LEGEND
+================================================================================
+
+  Agent dispatch:    orchestrator ---> agent ---> skill
+  User interaction:  [User]  <--->  [Orchestrator]
+  Conditional:       (condition) ---> branch
+  External skill:    context7, claude-mem, feature-dev, superpowers
+  Data flow:         Reads: <file>  |  Writes: <file>
+
+  Agents with "ultrathink": Extended reasoning for complex decisions
+  Agents "procedural": Direct execution, no extended reasoning
+
+  Three-tier fields in exp-*.json:
+    "method_tier":     "baseline" | "method_default_hp" | "method_tuned_hp"
+    "proposal_source": "paper" | "llm_knowledge" | null
+
+================================================================================

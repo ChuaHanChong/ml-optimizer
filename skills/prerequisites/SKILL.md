@@ -88,7 +88,7 @@ Common preparations:
 - **Train/val split:** Split a single dataset directory into train/ and val/ subsets
 - **CSV column rename:** Create a new CSV with columns matching what the training code expects
 
-## Step 4.5: Validate Environment Manager
+## Step 4.1: Validate Environment Manager
 
 Run environment detection to validate the user's Phase 0 answer:
 ```bash
@@ -136,7 +136,7 @@ Where `<python_executable>` is:
 - For venv: `<venv_path>/bin/python`
 - For system: `python3` (the default if omitted)
 
-## Step 5.5: Bulk Install from Dependency Files
+## Step 5.1: Bulk Install from Dependency Files
 
 Before installing packages individually, check if the project has a dependency specification:
 ```bash
@@ -181,6 +181,30 @@ python3 ~/.claude/plugins/ml-optimizer/scripts/prerequisites_check.py check-pack
 - **Critical** (torch, tensorflow, jax, keras, lightning, transformers): Set `ready_for_baseline: false`
 - **Non-critical** (wandb, tensorboard, mlflow, comet_ml, neptune): Set `ready_for_baseline: true` with warning
 
+## Step 6.1: Dry-Run Validation
+
+After all dependencies are installed and data is prepared, verify the training command actually executes:
+
+```bash
+# Run the training command with minimal steps to check it works
+timeout 120 <train_command_with_minimal_steps>
+```
+
+**How to limit steps:** Modify the training command based on the framework:
+- **PyTorch/Lightning:** Add `--max_steps 1` or `--max_epochs 1` (check if the script accepts these flags by reading its argparse)
+- **TensorFlow/Keras:** Add `--epochs 1` or modify config to set `epochs: 1`
+- **scikit-learn/XGBoost:** These are typically fast enough to run the full command
+
+If the script doesn't accept step-limiting flags, run it with a 120-second timeout — the goal is just to verify the process starts without errors, not to complete training.
+
+**If dry-run fails:**
+- Parse the error message (FileNotFoundError, ModuleNotFoundError, SyntaxError, etc.)
+- Apply the same classification as baseline failure recovery (see orchestrate Phase 3)
+- Log the error and set `ready_for_baseline: false` with the dry-run error details
+- This catches training command typos, missing configs, and environment issues BEFORE baseline
+
+**If dry-run succeeds:** Clean up any partial outputs (checkpoints, logs) created during the dry run.
+
 ## Step 7: Write Prerequisites Report
 
 Write `experiments/results/prerequisites.json`:
@@ -208,6 +232,15 @@ Write `experiments/results/prerequisites.json`:
   "ready_for_baseline": true|false
 }
 ```
+
+## Step 7.1: Validate Output
+
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/schema_validator.py \
+  experiments/results/prerequisites.json prerequisites
+```
+
+If validation fails, fix and re-validate before proceeding.
 
 Append to `experiments/dev_notes.md`:
 ```markdown

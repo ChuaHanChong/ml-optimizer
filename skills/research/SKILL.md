@@ -1,6 +1,6 @@
 ---
 name: research
-description: "Research ML optimization techniques via web search and paper analysis. Extracts actionable proposals from papers with implementation details, expected impact, and complexity ratings. Use when: need to find new techniques for improving an ML model."
+description: "Research ML optimization techniques via web search, paper analysis, or LLM knowledge. Extracts actionable proposals with implementation details, expected impact, and complexity ratings. Use when: need to find new techniques for improving an ML model."
 ---
 
 # ML Research Agent
@@ -23,6 +23,15 @@ From the orchestrator:
 - `problem_description`: What needs improvement
 - `user_papers`: Optional list of paper URLs or files provided by the user
 - `exp_root`: Path to experiments/ directory (for error logging)
+- `source`: One of `"web"` (default), `"knowledge"`, or `"both"`. Controls how proposals are generated:
+  - `"web"`: Current behavior — web search + paper analysis (Phase 5)
+  - `"knowledge"`: LLM proposes methods from its own training knowledge (Phase 6 method proposals)
+  - `"both"`: Web search first, then supplement with knowledge-based proposals
+- `scope_level`: One of `"training"` (default), `"architecture"`, or `"full"`. Constrains what categories of changes can be proposed:
+  - `"training"`: Optimizer, LR schedulers, warmup strategies, gradient clipping/accumulation, mixed precision, loss functions, weight decay, data augmentation, regularization (dropout, label smoothing), EMA
+  - `"architecture"`: All of `training` + attention mechanism changes, normalization layer changes, activation function changes, block design changes, skip connection modifications
+  - `"full"`: All of `architecture` + data pipeline changes, preprocessing, tokenization, feature engineering, ensemble approaches, distillation, curriculum learning, training-free methods (pruning, quantization, sparsification), test-time adaptation (TTA, test-time augmentation), inference-time search (MCTS, beam search)
+- `output_path`: Where to write findings (default: `experiments/reports/research-findings.md`). When called from Phase 6, use `experiments/reports/research-findings-method-proposals.md`
 
 ## Step 1: Analyze User-Provided Papers (if any)
 
@@ -41,13 +50,21 @@ If the user provided papers or URLs:
    - Assess expected impact
    - Identify risks
 
-## Step 1.5: Check for Existing Research (Deduplication)
+## Step 1.1: Check for Existing Research (Deduplication)
 
-Before searching, check if `experiments/reports/research-findings.md` already exists:
+Before searching, check for existing findings files:
 
-1. If it exists, read it and extract all previously proposed technique names
-2. When generating new proposals, exclude techniques that were already proposed
-3. This prevents re-proposing the same techniques on subsequent optimization runs
+1. Check `experiments/reports/research-findings.md` (Phase 5 web-based proposals)
+2. Check `experiments/reports/research-findings-method-proposals*.md` (Phase 6 method proposals)
+3. If any exist, read them and extract all previously proposed technique names
+4. When generating new proposals, exclude techniques that were already proposed
+5. This prevents re-proposing the same techniques on subsequent optimization runs
+
+**Fuzzy matching rules:** When comparing a new technique name against previously proposed names:
+- Normalize both names: lowercase, strip trailing "loss", "function", "scheduler", "strategy", "method", "technique"
+- Check substring containment: if either normalized name contains the other, treat as duplicate (e.g., "perceptual loss" matches "vgg perceptual loss")
+- Check common abbreviations: "lr" ↔ "learning rate", "bn" ↔ "batch normalization", "wd" ↔ "weight decay"
+- If in doubt (>70% word overlap), treat as duplicate and skip
 
 ## Step 2: Web Search for Techniques
 
@@ -107,6 +124,37 @@ When the model is tree-based or ensemble, replace or supplement the DL-centric q
 
 The DL queries (architecture improvements, loss functions) are unlikely useful for tree-based models. Focus on data preprocessing, feature engineering, and ensemble strategies instead.
 
+## Step 2 Alternative: Knowledge-Based Proposals (when `source` is `"knowledge"`)
+
+When `source` is `"knowledge"`, **skip Steps 1, 2, and 3 entirely** — do NOT use WebSearch or WebFetch. Instead, propose methods directly from the LLM's own training knowledge.
+
+### Process:
+
+1. **Analyze the model context:** Consider the model type, task, framework, current metrics, and problem description.
+
+2. **Generate proposals within scope constraints:** Only propose techniques within the `scope_level`:
+
+   | Scope Level | Allowed Categories |
+   |---|---|
+   | `training` | Optimizer changes (Adam → AdamW, LAMB, etc.), LR schedulers (cosine, one-cycle, warm restarts), warmup strategies, gradient clipping, gradient accumulation, mixed precision, loss function changes, weight decay tuning, data augmentation, regularization (dropout, label smoothing, stochastic depth), EMA |
+   | `architecture` | All of `training` + attention variants (multi-head, efficient attention), normalization changes (BatchNorm → LayerNorm/GroupNorm/RMSNorm), activation functions (ReLU → SiLU/GELU/Swish), block design changes, skip/residual connection modifications, channel/dimension scaling |
+   | `full` | All of `architecture` + data pipeline changes, preprocessing, tokenization changes, feature engineering, ensemble approaches, distillation, curriculum learning, different training paradigms |
+
+3. **Apply quality standards:**
+   - Each proposal must have concrete implementation steps (not vague suggestions)
+   - Each proposal must specify files to modify and what to change
+   - Cap confidence scores at 7/10 maximum (unless the technique is extremely well-established, e.g., label smoothing for classification)
+   - All proposals are `implementation_strategy: "from_scratch"` (no reference repo)
+   - All proposals must include `**Proposal source:** llm_knowledge`
+
+4. **Apply the same ranking formula:** `(impact × confidence) / (11 - min(feasibility, 10))`
+
+5. **Proceed to Step 4** (skip Step 3).
+
+### When `source` is `"both"`:
+
+Run Steps 1-3 (web search) first, then supplement with knowledge-based proposals that don't overlap with what was found. Apply deduplication between web-found and knowledge-generated proposals. Mark web-found proposals with `**Proposal source:** paper` and knowledge proposals with `**Proposal source:** llm_knowledge`.
+
 ## Step 3: Analyze Found Papers
 
 For each relevant paper or technique found:
@@ -154,7 +202,7 @@ If a proposal originated from a user-provided paper (`user_papers` input):
 
 ## Step 5: Write Research Findings
 
-Write to `experiments/reports/research-findings.md`:
+Write to the path specified by `output_path` (default: `experiments/reports/research-findings.md`):
 
 ```markdown
 # Research Findings
@@ -173,8 +221,9 @@ Write to `experiments/reports/research-findings.md`:
 ## Proposals (Ranked by Priority)
 
 ### Proposal 1: [Name] (Priority: X/10)
+- **Proposal source:** paper | llm_knowledge
 - **Type:** code_change | hp_only
-- **Source:** [Paper title and URL]
+- **Source:** [Paper title and URL, or "LLM knowledge" for knowledge-mode]
 - **Technique:** [Category] - [Description]
 - **What to change:**
   - [Specific file and function to modify]

@@ -1,6 +1,7 @@
 """Tests for plot_results.py."""
 
 import json
+from unittest import mock
 
 from conftest import _write_results
 
@@ -10,6 +11,7 @@ from plot_results import (
     plot_metric_comparison,
     plot_improvement_timeline,
     plot_hp_sensitivity,
+    plot_progress_chart,
 )
 
 
@@ -375,3 +377,140 @@ def test_cli_no_args(run_main):
     r = run_main("plot_results.py")
     assert r.returncode == 1
     assert "Usage" in r.stdout
+
+
+# ---------- plot_progress_chart ----------
+
+
+def test_plot_progress_chart_basic(tmp_path):
+    """Progress chart generates a PNG when matplotlib is available."""
+    import plot_results
+    if not plot_results.HAS_MATPLOTLIB:
+        import pytest
+        pytest.skip("matplotlib not installed")
+
+    _write_results(tmp_path, {
+        "baseline": {"metrics": {"loss": 1.0}, "config": {"lr": 0.01}},
+        "exp-001": {"metrics": {"loss": 0.7}, "config": {"lr": 0.001}},
+        "exp-002": {"metrics": {"loss": 0.9}, "config": {"lr": 0.005}},
+        "exp-003": {"metrics": {"loss": 0.5}, "config": {"lr": 0.0001}},
+    })
+    out = tmp_path / "chart.png"
+    path = plot_progress_chart(str(tmp_path), "loss", output_path=str(out))
+    assert path == str(out)
+    assert out.exists()
+    assert out.stat().st_size > 0
+
+
+def test_plot_progress_chart_higher_is_better(tmp_path):
+    """Progress chart works with higher-is-better metrics."""
+    import plot_results
+    if not plot_results.HAS_MATPLOTLIB:
+        import pytest
+        pytest.skip("matplotlib not installed")
+
+    _write_results(tmp_path, {
+        "exp-001": {"metrics": {"acc": 70.0}, "config": {}},
+        "exp-002": {"metrics": {"acc": 80.0}, "config": {}},
+        "exp-003": {"metrics": {"acc": 75.0}, "config": {}},
+        "exp-004": {"metrics": {"acc": 90.0}, "config": {}},
+    })
+    out = tmp_path / "acc_chart.png"
+    path = plot_progress_chart(str(tmp_path), "acc", lower_is_better=False,
+                               output_path=str(out))
+    assert path == str(out)
+    assert out.exists()
+
+
+def test_plot_progress_chart_no_results(tmp_path):
+    """Progress chart returns None when no results found."""
+    import plot_results
+    if not plot_results.HAS_MATPLOTLIB:
+        import pytest
+        pytest.skip("matplotlib not installed")
+
+    result = plot_progress_chart(str(tmp_path / "nonexistent"), "loss")
+    assert result is None
+
+
+def test_plot_progress_chart_default_output_path(tmp_path):
+    """Progress chart uses default path under reports/ dir."""
+    import plot_results
+    if not plot_results.HAS_MATPLOTLIB:
+        import pytest
+        pytest.skip("matplotlib not installed")
+
+    results_dir = tmp_path / "experiments" / "results"
+    results_dir.mkdir(parents=True)
+    for name, data in {
+        "exp-001": {"metrics": {"loss": 1.0}, "config": {}},
+        "exp-002": {"metrics": {"loss": 0.5}, "config": {}},
+    }.items():
+        (results_dir / f"{name}.json").write_text(json.dumps(data))
+
+    path = plot_progress_chart(str(results_dir), "loss")
+    assert path is not None
+    expected = tmp_path / "experiments" / "reports" / "progress_chart.png"
+    assert path == str(expected)
+    assert expected.exists()
+
+
+def test_plot_progress_chart_no_matplotlib(tmp_path):
+    """Progress chart returns None when matplotlib is not available."""
+    _write_results(tmp_path, {
+        "exp-001": {"metrics": {"loss": 0.5}, "config": {}},
+    })
+    import plot_results
+    original = plot_results.HAS_MATPLOTLIB
+    try:
+        plot_results.HAS_MATPLOTLIB = False
+        result = plot_progress_chart(str(tmp_path), "loss")
+        assert result is None
+    finally:
+        plot_results.HAS_MATPLOTLIB = original
+
+
+def test_plot_progress_chart_single_experiment(tmp_path):
+    """Progress chart handles a single experiment (all kept)."""
+    import plot_results
+    if not plot_results.HAS_MATPLOTLIB:
+        import pytest
+        pytest.skip("matplotlib not installed")
+
+    _write_results(tmp_path, {
+        "exp-001": {"metrics": {"loss": 0.5}, "config": {}},
+    })
+    out = tmp_path / "single.png"
+    path = plot_progress_chart(str(tmp_path), "loss", output_path=str(out))
+    assert path == str(out)
+    assert out.exists()
+
+
+def test_plot_progress_chart_missing_metric(tmp_path):
+    """Progress chart returns None when metric not in any result."""
+    import plot_results
+    if not plot_results.HAS_MATPLOTLIB:
+        import pytest
+        pytest.skip("matplotlib not installed")
+
+    _write_results(tmp_path, {
+        "exp-001": {"metrics": {"accuracy": 0.9}, "config": {}},
+    })
+    result = plot_progress_chart(str(tmp_path), "loss")
+    assert result is None
+
+
+def test_cli_progress(run_main, tmp_path):
+    """CLI progress mode works when matplotlib is available."""
+    import plot_results
+    if not plot_results.HAS_MATPLOTLIB:
+        import pytest
+        pytest.skip("matplotlib not installed")
+
+    _write_results(tmp_path, {
+        "exp-001": {"metrics": {"loss": 0.5}, "config": {}},
+        "exp-002": {"metrics": {"loss": 0.3}, "config": {}},
+    })
+    r = run_main("plot_results.py", str(tmp_path), "loss", "progress")
+    assert r.returncode == 0
+    assert "saved to" in r.stdout

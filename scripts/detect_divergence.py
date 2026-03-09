@@ -152,6 +152,26 @@ def detect_gradual_drift(
     return None
 
 
+MODEL_CATEGORY_DEFAULTS: dict[str | None, dict] = {
+    "rl": {
+        "explosion_threshold": 20.0,
+        "plateau_patience": 50,
+        "gradual_drift_min_slope": 0.3,
+    },
+    "generative": {
+        "explosion_threshold": 10.0,
+        "plateau_patience": 40,
+        "gradual_drift_min_slope": 0.2,
+    },
+    None: {},  # use function defaults for supervised learning
+}
+
+
+def get_thresholds_for_category(model_category: str | None) -> dict:
+    """Return divergence threshold overrides for a model category."""
+    return dict(MODEL_CATEGORY_DEFAULTS.get(model_category, {}))
+
+
 def check_divergence(
     values: list[float],
     explosion_window: int = 10,
@@ -166,6 +186,18 @@ def check_divergence(
     """Run all divergence checks on a metric trajectory."""
     if not values:
         return {"diverged": False, "reason": "No data", "step": -1}
+
+    # Need at least a few data points for meaningful analysis.
+    # NaN/Inf detection still runs on short sequences (any length),
+    # but trend-based checks (explosion, plateau, drift) need >= 5 values.
+    MIN_SEQUENCE_LENGTH = 5
+    finite_values = [v for v in values if math.isfinite(v)]
+    if len(finite_values) < MIN_SEQUENCE_LENGTH:
+        # Still check for NaN/Inf in the short sequence
+        result = detect_nan_inf(values)
+        if result:
+            return result
+        return {"diverged": False, "reason": "Insufficient data for trend analysis", "step": -1}
 
     # Check in order of severity
     result = detect_nan_inf(values)
@@ -196,20 +228,52 @@ def check_divergence(
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: detect_divergence.py <json-array-of-values> [--higher-is-better]")
+        print("Usage: detect_divergence.py <json-array-of-values> [--higher-is-better] [--model-category rl|generative|supervised]")
+        print("       [--explosion-threshold N] [--plateau-patience N]")
         print('Example: detect_divergence.py "[0.5, 0.4, 0.3, 100.0]"')
-        print('Example: detect_divergence.py "[50, 60, 70, 80]" --higher-is-better')
+        print('Example: detect_divergence.py "[50, 60, 70, 80]" --higher-is-better --model-category rl')
         sys.exit(1)
+
+    # Parse flags
     higher_is_better = "--higher-is-better" in sys.argv
-    args = [a for a in sys.argv[1:] if a != "--higher-is-better"]
-    if not args:
-        print("Usage: detect_divergence.py <json-array-of-values> [--higher-is-better]")
+    model_category = None
+    extra_kwargs: dict = {}
+    skip_next = False
+    positional_args = []
+
+    for i, arg in enumerate(sys.argv[1:], start=1):
+        if skip_next:
+            skip_next = False
+            continue
+        if arg == "--higher-is-better":
+            continue
+        elif arg == "--model-category" and i + 1 < len(sys.argv):
+            cat = sys.argv[i + 1]
+            model_category = cat if cat != "supervised" else None
+            skip_next = True
+        elif arg == "--explosion-threshold" and i + 1 < len(sys.argv):
+            extra_kwargs["explosion_threshold"] = float(sys.argv[i + 1])
+            skip_next = True
+        elif arg == "--plateau-patience" and i + 1 < len(sys.argv):
+            extra_kwargs["plateau_patience"] = int(sys.argv[i + 1])
+            skip_next = True
+        else:
+            positional_args.append(arg)
+
+    if not positional_args:
+        print("Usage: detect_divergence.py <json-array-of-values> [--higher-is-better] [--model-category rl|generative|supervised]")
         print('Example: detect_divergence.py "[0.5, 0.4, 0.3, 100.0]"')
         sys.exit(1)
     try:
-        values = json.loads(args[0])
+        values = json.loads(positional_args[0])
     except json.JSONDecodeError:
-        print(f"Error: invalid JSON '{args[0]}'")
+        print(f"Error: invalid JSON '{positional_args[0]}'")
         print('Usage: detect_divergence.py <json-array-of-values> [--higher-is-better]')
         sys.exit(1)
-    print(json.dumps(check_divergence(values, lower_is_better=not higher_is_better), indent=2))
+
+    # Apply model category defaults, then override with explicit flags
+    kwargs = get_thresholds_for_category(model_category)
+    kwargs.update(extra_kwargs)
+    kwargs["lower_is_better"] = not higher_is_better
+
+    print(json.dumps(check_divergence(values, **kwargs), indent=2))

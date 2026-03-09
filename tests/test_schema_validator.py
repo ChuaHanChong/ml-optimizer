@@ -49,6 +49,31 @@ def test_validate_result_invalid_status():
     assert any("unknown" in e for e in result["errors"])
 
 
+def test_validate_result_timeout_status():
+    """A result with status 'timeout' passes validation."""
+    data = {
+        "exp_id": "exp-001",
+        "status": "timeout",
+        "config": {"lr": 0.001},
+        "metrics": {},
+    }
+    result = validate_result(data)
+    assert result["valid"] is True
+
+
+def test_validate_result_with_iteration():
+    """A result with an iteration field passes validation."""
+    data = {
+        "exp_id": "exp-001",
+        "status": "completed",
+        "config": {"lr": 0.001},
+        "metrics": {"loss": 0.5},
+        "iteration": 3,
+    }
+    result = validate_result(data)
+    assert result["valid"] is True
+
+
 def test_validate_baseline_valid():
     """A valid baseline passes validation."""
     data = {
@@ -426,6 +451,46 @@ def test_validate_result_neg_inf_metric():
     result = validate_result(data)
     assert result["valid"] is False
     assert any("loss" in e and "finite" in e for e in result["errors"])
+
+
+def test_validate_result_valid_method_tier():
+    """A result with valid method_tier passes validation."""
+    for tier in ["baseline", "method_default_hp", "method_tuned_hp"]:
+        data = {
+            "exp_id": "exp-001",
+            "status": "completed",
+            "config": {"lr": 0.001},
+            "metrics": {"loss": 0.5},
+            "method_tier": tier,
+        }
+        result = validate_result(data)
+        assert result["valid"] is True, f"method_tier '{tier}' should be valid"
+
+
+def test_validate_result_invalid_method_tier():
+    """A result with invalid method_tier fails validation."""
+    data = {
+        "exp_id": "exp-001",
+        "status": "completed",
+        "config": {"lr": 0.001},
+        "metrics": {"loss": 0.5},
+        "method_tier": "invalid_tier",
+    }
+    result = validate_result(data)
+    assert result["valid"] is False
+    assert any("method_tier" in e for e in result["errors"])
+
+
+def test_validate_result_without_method_tier():
+    """A result without method_tier still passes (field is optional)."""
+    data = {
+        "exp_id": "exp-001",
+        "status": "completed",
+        "config": {"lr": 0.001},
+        "metrics": {"loss": 0.5},
+    }
+    result = validate_result(data)
+    assert result["valid"] is True
 
 
 def test_cli_validate_valid(run_main, tmp_path):

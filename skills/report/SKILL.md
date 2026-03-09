@@ -42,6 +42,8 @@ Read `experiments/dev_notes.md` for decisions, reasoning, and observations.
 ### Read research findings (if applicable)
 Check if `experiments/reports/research-findings.md` exists.
 If so, read for proposals that were tried.
+Also check for method proposal findings: `experiments/reports/research-findings-method-proposals*.md`.
+If any exist, read them for method proposals that were tried.
 
 ### Read implementation manifest (if applicable)
 Check if `experiments/results/implementation-manifest.json` exists.
@@ -59,13 +61,59 @@ Create a comprehensive comparison table with ALL experiments:
 2. Sort by primary metric (best first)
 3. Include: exp_id, status, key config changes, all metrics, delta vs baseline
 
-## Step 2.5: Compile HP Sensitivity Analysis
+## Step 2.1: Compile HP Sensitivity Analysis
 
 The `result_analyzer.py` `identify_correlations()` output includes per-HP
 correlation data. Format this into the "Hyperparameter Sensitivity" table:
 - Only include if ≥4 experiments completed (otherwise note "insufficient data")
 - Show direction (lower/higher correlates with better metric)
 - For categorical params, show most common value in top vs bottom performers
+
+## Step 2.7: Three-Tier Results (if method proposals were used)
+
+If any experiments have `method_tier` fields (from research or method proposals), compile a three-tier comparison:
+
+```python
+# Use result_analyzer.py's group_by_method_tier() to separate experiments
+python3 -c "
+import json, sys
+sys.path.insert(0, '$HOME/.claude/plugins/ml-optimizer/scripts')
+from result_analyzer import load_results, group_by_method_tier
+results = load_results('<project_root>/experiments/results')
+groups = group_by_method_tier(results)
+print(json.dumps({k: len(v) for k, v in groups.items()}))
+"
+```
+
+### Tier 1: Baseline
+Report baseline metrics (from `baseline.json`).
+
+### Tier 2: Method + Default HPs
+Table of experiments with `method_tier: "method_default_hp"`:
+
+| Branch | Proposal | Source | <Metric> | vs Baseline |
+|--------|----------|--------|----------|-------------|
+| ml-opt/... | ... | paper / llm_knowledge | ... | +X% / -X% |
+
+This shows the **isolated effect of each method** before HP tuning.
+
+### Tier 3: Method + Tuned HPs
+Table of best experiments per branch with `method_tier: "method_tuned_hp"`:
+
+| Branch | Proposal | Source | Best Config | <Metric> | vs Baseline | vs Default HP |
+|--------|----------|--------|-------------|----------|-------------|---------------|
+| ml-opt/... | ... | paper / llm_knowledge | lr=..., bs=... | ... | +X% | +Y% |
+
+This shows the **combined effect of method + HP tuning**.
+
+### Method Effectiveness Summary
+For each method proposal, summarize:
+- **Method gain** (Tier 2 vs Tier 1): How much did the method itself contribute?
+- **Tuning gain** (Tier 3 vs Tier 2): How much did HP tuning add on top?
+- **Total gain** (Tier 3 vs Tier 1): Combined improvement
+- **Source**: `paper` or `llm_knowledge` — enables comparison of paper-based vs LLM-knowledge-based proposals
+
+If no experiments have `method_tier` fields, skip this section entirely.
 
 ## Step 3: Identify Best Configuration
 
@@ -92,7 +140,7 @@ From the analysis reports and results, identify:
 3. Any surprising results?
 4. What would be worth trying next?
 
-## Step 5.5: Generate Visualizations
+## Step 5.1: Generate Visualizations
 
 Use the plot_results.py script to generate ASCII charts:
 
@@ -107,6 +155,28 @@ Generate:
 3. HP sensitivity scatter for the highest-impact HP
 
 Include the ASCII chart output in the report (in code blocks).
+
+### Matplotlib Progress Chart
+
+After the ASCII charts, attempt to generate a matplotlib progress chart:
+
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/plot_results.py \
+  <project_root>/experiments/results <primary_metric> progress
+```
+
+If successful, this saves a PNG to `experiments/reports/progress_chart.png` showing:
+- Green dots for experiments that set a new running best
+- Gray dots for experiments that didn't improve
+- Blue step line tracking the running best frontier
+- Annotated experiment IDs on kept experiments
+
+Include a reference to this image in the report:
+```markdown
+![Optimization Progress](reports/progress_chart.png)
+```
+
+If matplotlib is not available, skip this step (the ASCII charts provide the same information).
 
 ## Step 6: Write the Report
 
@@ -184,6 +254,7 @@ Before writing the report, verify:
 - [ ] HP sensitivity analysis included (or noted as insufficient data)
 - [ ] Infrastructure/profiling data included
 - [ ] If research proposals were used, implementation manifest summarized
+- [ ] If method proposals were used, three-tier results section included
 - [ ] Appendix has concrete file paths, not just vague references
 
 ## Edge Cases

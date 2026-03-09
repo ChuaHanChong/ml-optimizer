@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ASCII visualization of experiment results."""
+"""ASCII and matplotlib visualization of experiment results."""
 
 import math
 import sys
@@ -9,6 +9,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from result_analyzer import load_results, rank_by_metric
+
+# Optional matplotlib for progress chart
+try:
+    import matplotlib
+    matplotlib.use("Agg")  # Non-interactive backend for file output
+    import matplotlib.pyplot as plt
+    HAS_MATPLOTLIB = True
+except ImportError:
+    HAS_MATPLOTLIB = False
 
 
 def ascii_bar_chart(
@@ -266,28 +275,141 @@ def plot_hp_sensitivity(
     return ascii_line_chart(metric_values, title=title)
 
 
+def plot_progress_chart(
+    results_dir: str,
+    metric: str,
+    lower_is_better: bool = True,
+    output_path: str | None = None,
+) -> str | None:
+    """Generate a matplotlib progress chart showing optimization progress.
+
+    Plots each experiment as a dot — green if it set a new running best,
+    gray otherwise.  A blue step line tracks the running best frontier.
+    Kept experiments are annotated with their exp_id.
+
+    Returns the output file path, or ``None`` if matplotlib is unavailable.
+    """
+    if not HAS_MATPLOTLIB:
+        return None
+
+    results = load_results(results_dir)
+    if not results:
+        return None
+
+    ranked = rank_by_metric(results, metric, lower_is_better)
+    if not ranked:
+        return None
+
+    # Sort chronologically by exp_id
+    ranked.sort(key=lambda x: x["exp_id"])
+
+    indices: list[int] = []
+    values: list[float] = []
+    exp_ids: list[str] = []
+    is_new_best: list[bool] = []
+    best_so_far: list[float] = []
+    current_best = None
+
+    for i, entry in enumerate(ranked):
+        val = entry["value"]
+        exp_id = entry["exp_id"]
+        indices.append(i)
+        values.append(val)
+        exp_ids.append(exp_id)
+
+        if current_best is None:
+            current_best = val
+            is_new_best.append(True)
+        else:
+            improved = val < current_best if lower_is_better else val > current_best
+            if improved:
+                current_best = val
+                is_new_best.append(True)
+            else:
+                is_new_best.append(False)
+        best_so_far.append(current_best)
+
+    # Separate kept and discarded
+    kept_idx = [i for i, b in zip(indices, is_new_best) if b]
+    kept_val = [v for v, b in zip(values, is_new_best) if b]
+    disc_idx = [i for i, b in zip(indices, is_new_best) if not b]
+    disc_val = [v for v, b in zip(values, is_new_best) if not b]
+
+    fig, ax = plt.subplots(figsize=(max(8, len(ranked) * 0.4), 5))
+
+    # Discarded experiments (gray)
+    if disc_idx:
+        ax.scatter(disc_idx, disc_val, c="gray", s=50, alpha=0.5,
+                   label="Discarded", zorder=2)
+
+    # Kept experiments (green)
+    if kept_idx:
+        ax.scatter(kept_idx, kept_val, c="green", s=80, edgecolors="darkgreen",
+                   label="New best", zorder=3)
+
+    # Running best frontier (blue step line)
+    ax.step(indices, best_so_far, where="post", color="royalblue",
+            linewidth=1.5, alpha=0.7, label="Running best", zorder=1)
+
+    # Annotate kept experiments
+    for i, b in zip(indices, is_new_best):
+        if b:
+            ax.annotate(
+                exp_ids[i], (i, values[i]),
+                textcoords="offset points", xytext=(5, 8),
+                fontsize=7, rotation=30, ha="left",
+            )
+
+    direction = "lower is better" if lower_is_better else "higher is better"
+    ax.set_title(f"Optimization Progress: {metric} ({direction})")
+    ax.set_xlabel("Experiment")
+    ax.set_ylabel(metric)
+    ax.legend(loc="best", fontsize=8)
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+
+    # Determine output path
+    if output_path is None:
+        results_path = Path(results_dir)
+        reports_dir = results_path.parent / "reports"
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        output_path = str(reports_dir / "progress_chart.png")
+
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+    return output_path
+
+
 if __name__ == "__main__":
     if len(sys.argv) < 3:
         print(
             "Usage: plot_results.py <results_dir> <metric> "
-            "[comparison|timeline|sensitivity <hp_name>]"
+            "[comparison|timeline|sensitivity <hp_name>|progress]"
         )
         sys.exit(1)
 
     results_dir = sys.argv[1]
     metric = sys.argv[2]
     mode = sys.argv[3] if len(sys.argv) > 3 else "comparison"
+    lower_is_better = "--higher-is-better" not in sys.argv
 
     if mode == "comparison":
-        print(plot_metric_comparison(results_dir, metric))
+        print(plot_metric_comparison(results_dir, metric, lower_is_better))
     elif mode == "timeline":
-        print(plot_improvement_timeline(results_dir, metric))
+        print(plot_improvement_timeline(results_dir, metric, lower_is_better))
     elif mode == "sensitivity":
         if len(sys.argv) < 5:
             print("sensitivity mode requires <hp_name> argument")
             sys.exit(1)
         hp_name = sys.argv[4]
         print(plot_hp_sensitivity(results_dir, metric, hp_name))
+    elif mode == "progress":
+        path = plot_progress_chart(results_dir, metric, lower_is_better)
+        if path:
+            print(f"Progress chart saved to: {path}")
+        else:
+            print("matplotlib not available — cannot generate progress chart")
+            sys.exit(1)
     else:
         print(f"Unknown mode: {mode}")
         sys.exit(1)

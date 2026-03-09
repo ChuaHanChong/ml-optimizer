@@ -18,6 +18,9 @@ From the orchestrator or hp-tune skill:
 - `eval_command`: Evaluation command (optional)
 - `code_branch`: Git branch with code changes (optional, from implement manifest)
 - `code_proposal`: Name of the research proposal (optional, for tagging results)
+- `proposal_source`: Origin of the proposal — `"paper"`, `"llm_knowledge"`, or `null` (pass-through from hp-tune)
+- `method_tier`: Which tier this experiment belongs to — `"baseline"`, `"method_default_hp"`, or `"method_tuned_hp"` (pass-through from hp-tune)
+- `iteration`: HP tuning iteration that produced this config (integer, from hp-tune proposed config)
 - `prepared_train_path`: Path to prepared training data (optional, from prerequisites)
 - `prepared_val_path`: Path to prepared validation data (optional, from prerequisites)
 
@@ -44,7 +47,7 @@ If no `code_branch` is provided: use the current code as-is (HP-only experiment)
 
 **Fallback:** If `git worktree` is not available (old git version), fall back to `git checkout` with a warning that parallel experiments on different branches will conflict.
 
-## Step 1.5: Pre-Flight Checks
+## Step 1.1: Pre-Flight Checks
 
 Before building the training command, verify:
 
@@ -141,6 +144,33 @@ bash experiments/scripts/<exp_id>.sh
 - Run via Bash tool with `run_in_background: true`
 - The monitor skill will handle divergence detection
 
+## Step 4.1: Early Abort Check
+
+After training starts, perform a fast sanity check on the first few log entries — **independent of the monitor skill**:
+
+1. Wait for the first 5-10 training steps to appear in the log (poll `experiments/logs/<exp_id>/train.log` briefly)
+2. Parse the initial loss values using:
+   ```bash
+   python3 ~/.claude/plugins/ml-optimizer/scripts/parse_logs.py experiments/logs/<exp_id>/train.log
+   ```
+3. **Abort immediately** if any of these conditions are met:
+   - Loss is `NaN` or `Inf` in the first 10 steps
+   - Loss exceeds 10× the baseline's initial loss (read from `experiments/results/baseline.json` → `metrics.loss` or first logged loss value)
+   - Training process already exited with non-zero code
+
+4. If aborting:
+   - Kill the training process (if still running)
+   - Write results with `"status": "failed"` and note: `"Early abort: <reason> in first 10 steps"`
+   - Log to error tracker:
+     ```bash
+     python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"training_failure","severity":"warning","source":"experiment","message":"Early abort: <reason>","exp_id":"<exp_id>","config":<config_json>,"context":{"abort_step":<step>,"loss_value":<value>}}'
+     ```
+   - Skip to Step 6 (Write Results) — do not wait for full training
+
+5. If the first steps look healthy, continue waiting for training to complete normally.
+
+**Note:** This check is a fast pre-filter, not a replacement for the monitor skill. The monitor handles gradual divergence (plateau, slow explosion). This handles obvious failures that waste training time.
+
 ## Step 5: Parse Results
 
 After training completes:
@@ -186,9 +216,21 @@ Write experiment results to `experiments/results/<exp_id>.json`:
   "script_file": "experiments/scripts/<exp_id>.sh",
   "code_branch": "<branch name or null>",
   "code_proposal": "<proposal name or null>",
+  "proposal_source": "<paper|llm_knowledge|null>",
+  "method_tier": "<baseline|method_default_hp|method_tuned_hp>",
+  "iteration": <tuning_iteration>,
   "notes": "<any observations>"
 }
 ```
+
+## Step 6.1: Validate Output
+
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/schema_validator.py \
+  experiments/results/<exp_id>.json result
+```
+
+If validation fails, read the errors, fix the JSON file, and re-validate. Do not proceed to Step 7 until validation passes.
 
 ## Step 7: Report Back
 

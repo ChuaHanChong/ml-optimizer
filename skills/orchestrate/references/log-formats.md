@@ -6,7 +6,7 @@
 ```json
 {
   "exp_id": "exp-001",
-  "status": "completed|failed|diverged|running|pending",
+  "status": "completed|failed|diverged|timeout|running|pending",
   "config": {
     "lr": 0.001,
     "batch_size": 16,
@@ -26,6 +26,9 @@
   "script_file": "experiments/scripts/exp-001.sh",
   "code_branch": "ml-opt/perceptual-loss|null",
   "code_proposal": "Perceptual Loss Function|null",
+  "method_tier": "baseline|method_default_hp|method_tuned_hp|null",
+  "proposal_source": "paper|llm_knowledge|null",
+  "iteration": 1,
   "notes": "Optional notes about this experiment"
 }
 ```

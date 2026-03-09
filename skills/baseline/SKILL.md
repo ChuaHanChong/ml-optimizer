@@ -40,7 +40,7 @@ Search the project for evaluation scripts:
    - What metrics it outputs
    ```
 
-## Step 1.5: Apply Prepared Data Paths (If Applicable)
+## Step 1.1: Apply Prepared Data Paths (If Applicable)
 
 If the orchestrator passed `prepared_train_path` or `prepared_val_path`:
 1. Identify how the training command references data paths (CLI args like `--data_dir`, `--train_path`, `--val_path`, or config file entries)
@@ -140,6 +140,15 @@ Write `experiments/results/baseline.json`:
 ```
 
 Use the Write tool to create this file.
+
+## Step 5.1: Validate Output
+
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/schema_validator.py \
+  experiments/results/baseline.json baseline
+```
+
+If validation fails, fix and re-validate before proceeding.
 
 ## Step 6: Write Dev Notes
 

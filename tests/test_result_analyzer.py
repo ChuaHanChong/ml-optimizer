@@ -6,7 +6,7 @@ import pytest
 
 from conftest import _write_results
 
-from result_analyzer import load_results, rank_by_metric, compute_deltas, identify_correlations, analyze, spearman_correlation
+from result_analyzer import load_results, rank_by_metric, compute_deltas, identify_correlations, analyze, spearman_correlation, group_by_method_tier
 
 
 def test_load_results(tmp_path):
@@ -403,3 +403,48 @@ def test_cli_no_args(run_main):
     r = run_main("result_analyzer.py")
     assert r.returncode == 1
     assert "Usage" in r.stdout
+
+
+# --- group_by_method_tier tests ---
+
+
+def test_group_by_method_tier_mixed():
+    """Groups experiments by method_tier field."""
+    results = {
+        "baseline": {"method_tier": "baseline", "metrics": {"loss": 1.0}},
+        "exp-001": {"method_tier": "method_default_hp", "metrics": {"loss": 0.8}},
+        "exp-002": {"method_tier": "method_default_hp", "metrics": {"loss": 0.7}},
+        "exp-003": {"method_tier": "method_tuned_hp", "metrics": {"loss": 0.5}},
+    }
+    groups = group_by_method_tier(results)
+    assert len(groups["baseline"]) == 1
+    assert len(groups["method_default_hp"]) == 2
+    assert len(groups["method_tuned_hp"]) == 1
+    assert "unknown" not in groups
+
+
+def test_group_by_method_tier_missing_field():
+    """Experiments without method_tier go to 'unknown'."""
+    results = {
+        "baseline": {"metrics": {"loss": 1.0}},
+        "exp-001": {"method_tier": "method_default_hp", "metrics": {"loss": 0.8}},
+        "exp-002": {"metrics": {"loss": 0.6}},
+    }
+    groups = group_by_method_tier(results)
+    assert len(groups["unknown"]) == 2
+    assert len(groups["method_default_hp"]) == 1
+
+
+def test_group_by_method_tier_empty():
+    """Empty results returns empty dict."""
+    groups = group_by_method_tier({})
+    assert groups == {}
+
+
+def test_group_by_method_tier_preserves_exp_id():
+    """Each grouped entry includes exp_id."""
+    results = {
+        "exp-001": {"method_tier": "baseline", "metrics": {"loss": 0.5}},
+    }
+    groups = group_by_method_tier(results)
+    assert groups["baseline"][0]["exp_id"] == "exp-001"

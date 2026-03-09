@@ -35,7 +35,7 @@ This returns structured proposals with names, slugs, files to modify, and implem
 
 If no findings file exists, ask the user to run the `ml-optimizer:research` skill first.
 
-## Step 1.5: Classify Proposals by Strategy
+## Step 1.1: Classify Proposals by Strategy
 
 Group proposals by their `implementation_strategy` field:
 
@@ -273,6 +273,15 @@ from implement_utils import write_manifest
 write_manifest("experiments/results/implementation-manifest.json", manifest_data)
 ```
 
+## Step 5.1: Validate Manifest
+
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/schema_validator.py \
+  experiments/results/implementation-manifest.json manifest
+```
+
+If validation fails, fix the manifest and re-validate before proceeding.
+
 ## Step 6: Write Dev Notes
 
 Write a summary to `experiments/reports/implementation-summary.md`:
@@ -344,11 +353,13 @@ New dependencies needed (install before experiments):
 ## Non-Git Fallback Details
 
 When using `file_backup` strategy:
-1. Before each proposal: backup all target files to `experiments/backups/<slug>/`
-2. Apply changes to the original files
+1. **Before the first proposal:** Create a baseline backup of ALL files that ANY proposal will modify → `experiments/backups/_baseline/`. This is the clean reference state.
+2. **Before each proposal:** Restore ALL target files from `experiments/backups/_baseline/` first (ensures a clean slate). Then apply this proposal's changes.
 3. Validate
-4. If validation fails: restore from backup
-5. If validation passes: leave changes in place, but note that only ONE proposal can be active at a time
+4. If validation fails: restore from baseline backup
+5. If validation passes: backup the modified state to `experiments/backups/<slug>/`, then restore from baseline backup (return to clean state before next proposal)
 6. The manifest records backup paths instead of branch names
 
-**Limitation:** With file backup, proposals cannot be tested in parallel. The experiment skill must restore backups between runs.
+**Critical:** The restore-before-apply pattern (step 2) prevents proposal A's changes from leaking into proposal B's code. Each proposal is validated and backed up independently against the original code.
+
+**Limitation:** With file backup, proposals cannot be tested in parallel. The experiment skill must restore each proposal's backup before running its experiments, then restore baseline before the next proposal's experiments.

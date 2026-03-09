@@ -318,3 +318,107 @@ def test_parse_log_xgboost_file(tmp_path):
     assert len(records) == 3
     assert records[0]["iteration"] == 0.0
     assert records[2]["train-logloss"] == 0.600
+
+
+# --- Timezone-suffixed Python logging format ---
+
+
+def test_parse_python_logging_line_with_utc_timezone():
+    """Python logging format with UTC timezone suffix."""
+    line = "2024-01-15 10:30:45,123 UTC INFO epoch=5 loss=0.234"
+    metrics = parse_python_logging_line(line)
+    assert metrics["epoch"] == 5.0
+    assert abs(metrics["loss"] - 0.234) < 1e-6
+    assert "wall_time" in metrics
+
+
+def test_parse_python_logging_line_with_offset_timezone():
+    """Python logging format with +0800 offset timezone."""
+    line = "2024-01-15 10:30:45,123 +0800 INFO epoch=3 loss=0.5"
+    metrics = parse_python_logging_line(line)
+    assert metrics["epoch"] == 3.0
+    assert abs(metrics["loss"] - 0.5) < 1e-6
+
+
+def test_parse_python_logging_line_with_est_timezone():
+    """Python logging format with EST timezone abbreviation."""
+    line = "2024-01-15 10:30:45.123 EST WARNING lr=0.001 batch_loss=0.123"
+    metrics = parse_python_logging_line(line)
+    assert abs(metrics["lr"] - 0.001) < 1e-6
+    assert abs(metrics["batch_loss"] - 0.123) < 1e-6
+
+
+# --- XGBoost/LightGBM session fixture tests ---
+
+
+def test_parse_xgboost_session_fixture():
+    """Parse the XGBoost session fixture: 20 iterations of train-auc and val-auc."""
+    records = parse_log(str(FIXTURES / "xgboost_session_log.txt"))
+    assert len(records) == 20
+    # First iteration
+    assert records[0]["iteration"] == 0.0
+    assert records[0]["train-auc"] == 0.5
+    assert records[0]["val-auc"] == 0.498
+    # Last iteration
+    assert records[-1]["iteration"] == 19.0
+    assert records[-1]["val-auc"] == 0.8052
+    # Verify trajectory extraction works
+    val_auc = extract_metric_trajectory(records, "val-auc")
+    assert len(val_auc) == 20
+    assert val_auc[-1] > val_auc[0]  # AUC should increase
+
+
+def test_parse_lightgbm_session_fixture():
+    """Parse the LightGBM session fixture: possessive key format with apostrophes."""
+    records = parse_log(str(FIXTURES / "lightgbm_session_log.txt"))
+    assert len(records) == 20
+    # LightGBM keys normalized: "training's binary_logloss" → "training_binary_logloss"
+    assert "training_binary_logloss" in records[0]
+    assert "valid_1_binary_logloss" in records[0]
+    # First iteration
+    assert records[0]["iteration"] == 1.0
+    assert records[0]["training_binary_logloss"] == 0.68
+    assert records[0]["valid_1_binary_logloss"] == 0.685
+    # Last iteration
+    assert records[-1]["iteration"] == 20.0
+    assert records[-1]["training_binary_logloss"] == 0.4
+    # Trajectory extraction
+    val_loss = extract_metric_trajectory(records, "valid_1_binary_logloss")
+    assert len(val_loss) == 20
+    assert val_loss[-1] < val_loss[0]  # logloss should decrease
+
+
+def test_xgboost_fixture_divergence_detection():
+    """XGBoost AUC metrics work with divergence detection (higher-is-better)."""
+    from detect_divergence import check_divergence
+    records = parse_log(str(FIXTURES / "xgboost_session_log.txt"))
+    val_auc = extract_metric_trajectory(records, "val-auc")
+    result = check_divergence(val_auc, lower_is_better=False)
+    assert result["diverged"] is False
+
+
+def test_lightgbm_fixture_divergence_detection():
+    """LightGBM logloss metrics work with divergence detection (lower-is-better)."""
+    from detect_divergence import check_divergence
+    records = parse_log(str(FIXTURES / "lightgbm_session_log.txt"))
+    val_loss = extract_metric_trajectory(records, "valid_1_binary_logloss")
+    result = check_divergence(val_loss, lower_is_better=True)
+    assert result["diverged"] is False
+
+
+def test_parse_xgboost_line_lightgbm_possessive():
+    """LightGBM possessive format: training's X → training_X."""
+    line = "[5]\ttraining's binary_logloss:0.4500\tvalid_1's binary_logloss:0.5100"
+    m = parse_xgboost_line(line)
+    assert m["iteration"] == 5.0
+    assert m["training_binary_logloss"] == 0.45
+    assert m["valid_1_binary_logloss"] == 0.51
+
+
+def test_detect_format_lightgbm():
+    """LightGBM bracket lines with possessive keys detected as 'xgboost' format."""
+    lines = [
+        "[1]\ttraining's binary_logloss:0.6800\tvalid_1's binary_logloss:0.6850",
+        "[2]\ttraining's binary_logloss:0.6650\tvalid_1's binary_logloss:0.6720",
+    ]
+    assert detect_format(lines) == "xgboost"

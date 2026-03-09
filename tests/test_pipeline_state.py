@@ -561,3 +561,43 @@ def test_validate_phase3_blocks_on_failed_prerequisites(tmp_path):
     result = validate_phase_requirements(3, str(tmp_path))
     assert result["valid"] is False
     assert any("prerequisites" in m.lower() or "ready_for_baseline" in m.lower() for m in result["missing"])
+
+
+# --- User choices backup and recovery ---
+
+
+def test_save_state_creates_user_choices_backup(tmp_path):
+    """save_state writes a separate user-choices-backup.json file."""
+    choices = {"primary_metric": "accuracy", "lower_is_better": False}
+    save_state(6, 1, [], str(tmp_path), user_choices=choices)
+    backup_path = tmp_path / "user-choices-backup.json"
+    assert backup_path.is_file()
+    backup = json.loads(backup_path.read_text())
+    assert backup == choices
+
+
+def test_save_state_no_backup_without_user_choices(tmp_path):
+    """save_state without user_choices does not create a backup file."""
+    save_state(3, 1, [], str(tmp_path))
+    backup_path = tmp_path / "user-choices-backup.json"
+    assert not backup_path.is_file()
+
+
+def test_load_state_recovers_from_corrupt_state_with_backup(tmp_path):
+    """If pipeline-state.json is corrupt but backup exists, recover user_choices."""
+    choices = {"primary_metric": "loss", "lower_is_better": True, "target_value": 0.01}
+    # First save normally to create the backup
+    save_state(6, 2, [], str(tmp_path), user_choices=choices)
+    # Now corrupt the main state file
+    (tmp_path / "pipeline-state.json").write_text("{corrupt json!!!")
+    state = load_state(str(tmp_path))
+    assert state is not None
+    assert state["status"] == "recovered"
+    assert state["user_choices"] == choices
+
+
+def test_load_state_corrupt_no_backup_returns_none(tmp_path):
+    """If both state and backup are missing/corrupt, returns None."""
+    (tmp_path / "pipeline-state.json").write_text("{bad}")
+    state = load_state(str(tmp_path))
+    assert state is None

@@ -475,3 +475,199 @@ def test_budget_autonomous_mode_unlimited():
         consecutive_stops = 0
     should_stop_2 = budget_mode == "autonomous" and consecutive_stops >= 3
     assert should_stop_2 is False
+
+
+# --- Monitor → Experiment contract ---
+
+def test_monitor_divergence_signal_schema():
+    """Monitor must output divergence_status and optional diverged_exp_ids."""
+    # Monitor skill outputs this structure to orchestrate
+    monitor_output = {
+        "divergence_status": "diverged",
+        "diverged_exp_ids": ["exp-003"],
+        "reason": "loss explosion detected at step 450",
+    }
+    assert monitor_output["divergence_status"] in (
+        "healthy", "diverged", "completed", "unmonitored", "failed", "no_output"
+    )
+    assert isinstance(monitor_output.get("diverged_exp_ids", []), list)
+
+
+def test_monitor_unmonitored_status_when_metric_missing():
+    """When watched metric not found, monitor returns unmonitored with available_metrics."""
+    monitor_output = {
+        "divergence_status": "unmonitored",
+        "available_metrics": ["train_acc", "val_acc"],
+        "watched_metric": "loss",
+    }
+    assert monitor_output["divergence_status"] == "unmonitored"
+    assert isinstance(monitor_output["available_metrics"], list)
+    assert len(monitor_output["available_metrics"]) > 0
+
+
+# --- Analyze → HP-tune feedback contract ---
+
+def test_analyze_stop_recommendation_prevents_hp_tune():
+    """When analyze says stop, hp-tune should not be invoked (except speculative discard)."""
+    analyze_output = {"action": "stop", "reason": "target achieved"}
+    # Orchestrate logic: if stop, discard speculative and exit
+    should_invoke_hp_tune = analyze_output["action"] not in ("stop",)
+    assert should_invoke_hp_tune is False
+
+
+def test_analyze_pivot_passes_updated_params_to_hp_tune():
+    """When analyze says pivot, hp-tune receives updated search space."""
+    analyze_output = {
+        "action": "pivot",
+        "pivot_type": "narrow_space",
+        "updated_search_space": {"lr": [1e-5, 1e-3], "batch_size": [16, 32]},
+    }
+    original_search_space = {"lr": [1e-6, 1e-1], "batch_size": [8, 16, 32, 64]}
+    if analyze_output["action"] == "pivot" and "updated_search_space" in analyze_output:
+        search_space = analyze_output["updated_search_space"]
+    else:
+        search_space = original_search_space
+    assert search_space["lr"] == [1e-5, 1e-3]  # narrowed
+
+
+# --- Analyze → Review mid-pipeline trigger contract ---
+
+def test_review_trigger_wasted_budget_threshold():
+    """Review triggers when wasted_budget >= 3."""
+    patterns = {"wasted_budget": {"occurrences": 3}}
+    consecutive_all_fail_batches = 0
+    should_trigger = (
+        patterns.get("wasted_budget", {}).get("occurrences", 0) >= 3
+        or consecutive_all_fail_batches >= 2
+    )
+    assert should_trigger is True
+
+
+def test_review_trigger_consecutive_all_fail():
+    """Review triggers when 2+ consecutive batches had zero successes."""
+    patterns = {"wasted_budget": {"occurrences": 1}}
+    consecutive_all_fail_batches = 2
+    should_trigger = (
+        patterns.get("wasted_budget", {}).get("occurrences", 0) >= 3
+        or consecutive_all_fail_batches >= 2
+    )
+    assert should_trigger is True
+
+
+def test_review_no_trigger_below_thresholds():
+    """Review does NOT trigger when both thresholds are below limits."""
+    patterns = {"wasted_budget": {"occurrences": 2}}
+    consecutive_all_fail_batches = 1
+    should_trigger = (
+        patterns.get("wasted_budget", {}).get("occurrences", 0) >= 3
+        or consecutive_all_fail_batches >= 2
+    )
+    assert should_trigger is False
+
+
+# --- HP-tune branch iteration 1 contract ---
+
+def test_hp_tune_iteration1_one_config_per_branch():
+    """Iteration 1 with code branches generates one config per branch + baseline."""
+    code_branches = ["ml-opt/perceptual-loss", "ml-opt/cosine-scheduler"]
+    iteration = 1
+    remaining_budget = 10
+    num_gpus = 4
+    if iteration == 1 and code_branches:
+        num_configs = min(len(code_branches) + 1, remaining_budget)  # +1 for baseline
+    else:
+        num_configs = min(max(num_gpus, 1), remaining_budget)
+    assert num_configs == 3  # 2 branches + 1 baseline
+
+
+# --- method_tier field rules contract ---
+
+def test_method_tier_baseline_when_no_branch():
+    """method_tier is 'baseline' when code_branch is null."""
+    config = {"exp_id": "exp-001", "code_branch": None, "iteration": 1}
+    if config["code_branch"] is None:
+        tier = "baseline"
+    elif config["iteration"] == 1:
+        tier = "method_default_hp"
+    else:
+        tier = "method_tuned_hp"
+    assert tier == "baseline"
+
+
+def test_method_tier_default_hp_on_iteration1():
+    """method_tier is 'method_default_hp' on iteration 1 with a code branch."""
+    config = {"exp_id": "exp-002", "code_branch": "ml-opt/perceptual-loss", "iteration": 1}
+    if config["code_branch"] is None:
+        tier = "baseline"
+    elif config["iteration"] == 1:
+        tier = "method_default_hp"
+    else:
+        tier = "method_tuned_hp"
+    assert tier == "method_default_hp"
+
+
+def test_method_tier_tuned_hp_on_later_iterations():
+    """method_tier is 'method_tuned_hp' on iteration 2+ with a code branch."""
+    config = {"exp_id": "exp-005", "code_branch": "ml-opt/perceptual-loss", "iteration": 3}
+    if config["code_branch"] is None:
+        tier = "baseline"
+    elif config["iteration"] == 1:
+        tier = "method_default_hp"
+    else:
+        tier = "method_tuned_hp"
+    assert tier == "method_tuned_hp"
+
+
+# --- Speculative hp-tune pipelining contract ---
+
+def test_speculative_proposals_discarded_on_stop():
+    """Speculative proposals must be discarded when analyze says stop."""
+    analyze_result = {"action": "stop", "reason": "target achieved"}
+    speculative_proposals = [{"exp_id": "exp-010", "config": {"lr": 0.001}}]
+    use_speculative = analyze_result["action"] == "continue"
+    assert use_speculative is False
+
+
+def test_speculative_proposals_discarded_on_pivot():
+    """Speculative proposals must be discarded when analyze says pivot."""
+    analyze_result = {"action": "pivot", "pivot_type": "narrow_space"}
+    use_speculative = analyze_result["action"] == "continue"
+    assert use_speculative is False
+
+
+def test_speculative_proposals_used_on_continue():
+    """Speculative proposals should be used when analyze says continue."""
+    analyze_result = {"action": "continue"}
+    speculative_proposals = [{"exp_id": "exp-010", "config": {"lr": 0.001}, "code_branch": None}]
+    use_speculative = (
+        analyze_result["action"] == "continue"
+        and len(speculative_proposals) > 0
+    )
+    assert use_speculative is True
+
+
+def test_speculative_proposals_invalidated_by_branch_pruning():
+    """Speculative proposals on pruned branches must be discarded."""
+    speculative_proposals = [
+        {"exp_id": "exp-010", "config": {"lr": 0.001}, "code_branch": "ml-opt/pruned-branch"},
+        {"exp_id": "exp-011", "config": {"lr": 0.01}, "code_branch": None},  # baseline
+    ]
+    pruned_branches = ["ml-opt/pruned-branch"]
+    valid = [
+        p for p in speculative_proposals
+        if p.get("code_branch") is None or p["code_branch"] not in pruned_branches
+    ]
+    assert len(valid) == 1  # only baseline survives
+    assert valid[0]["exp_id"] == "exp-011"
+
+
+def test_speculative_skip_when_budget_low():
+    """Speculative hp-tune should not start when budget can't fit another batch."""
+    remaining_budget = 2
+    num_gpus = 4
+    should_speculate = remaining_budget > max(num_gpus, 1)
+    assert should_speculate is False
+
+    remaining_budget = 10
+    should_speculate = remaining_budget > max(num_gpus, 1)
+    assert should_speculate is True

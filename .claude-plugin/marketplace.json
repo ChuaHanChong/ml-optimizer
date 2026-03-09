@@ -1,0 +1,32 @@
+{
+  "name": "ml-optimizer",
+  "description": "Autonomous ML model optimization orchestrator that dispatches specialized agents for research, hyperparameter tuning, experiment execution, and result analysis",
+  "owner": {
+    "name": "hcchua"
+  },
+  "plugins": [
+    {
+      "name": "ml-optimizer",
+      "description": "Autonomous ML model optimization orchestrator. Dispatches specialized agents for research, hyperparameter tuning, and experiment running. Monitors training for divergence and records findings in structured format.",
+      "version": "0.1.0",
+      "source": "./plugin",
+      "category": "development",
+      "author": {
+        "name": "hcchua"
+      },
+      "skills": [
+        "./skills/orchestrate",
+        "./skills/baseline",
+        "./skills/prerequisites",
+        "./skills/research",
+        "./skills/implement",
+        "./skills/hp-tune",
+        "./skills/experiment",
+        "./skills/monitor",
+        "./skills/analyze",
+        "./skills/report",
+        "./skills/review"
+      ]
+    }
+  ]
+}

@@ -90,7 +90,42 @@ cd <project_root> && git rev-parse --is-inside-work-tree 2>/dev/null
 - Back up files to `experiments/backups/<slug>/` before each modification
 - Apply changes sequentially, validating after each
 
-## Step 4: Implement Each Proposal
+## Step 3.5: Parallel Implementation (Git Strategy Only)
+
+**If `strategy == "git_branch"` AND more than one proposal is selected:**
+
+Proposals can be implemented in parallel using git worktrees. Each proposal gets its own isolated worktree, avoiding checkout conflicts.
+
+1. **Create worktrees** for each proposal:
+   ```bash
+   git worktree add experiments/impl-worktrees/<slug> <original_branch>
+   ```
+
+2. **Dispatch implementation agents in parallel** — issue all Agent calls in a single message:
+   ```
+   For each proposal:
+     Agent(
+       description: "Implement proposal: <proposal_name>",
+       prompt: "Ultrathink. Implement the following ML research proposal in the worktree at experiments/impl-worktrees/<slug>. Project root (worktree): experiments/impl-worktrees/<slug>. Proposal: <full proposal details including name, slug, files_to_modify, implementation_steps, implementation_strategy>. After implementation: (1) validate syntax and imports using implement_utils.py, (2) create branch ml-opt/<slug>, (3) commit changes with message 'ml-opt: implement <proposal_name>', (4) report back with status, commit SHA, and any validation issues.",
+       subagent_type: "general-purpose",
+       run_in_background: true
+     )
+   ```
+
+3. **Wait for all agents to complete.** Collect results from each.
+
+4. **Clean up worktrees:**
+   ```bash
+   git worktree remove experiments/impl-worktrees/<slug>
+   ```
+
+5. Proceed directly to Step 5 (Write Implementation Manifest) with the collected results.
+
+**If `strategy == "file_backup"` OR only 1 proposal selected:**
+
+Skip this step. Use the sequential flow in Step 4 below.
+
+## Step 4: Implement Each Proposal (Sequential)
 
 For each selected proposal, in order:
 

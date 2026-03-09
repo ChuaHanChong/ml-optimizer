@@ -9,7 +9,7 @@
       "name": "ml-optimizer",
       "description": "Autonomous ML model optimization orchestrator. Dispatches specialized agents for research, hyperparameter tuning, and experiment running. Monitors training for divergence and records findings in structured format.",
       "version": "0.1.0",
-      "source": "./plugin",
+      "source": "./",
       "category": "development",
       "author": {
         "name": "hcchua"

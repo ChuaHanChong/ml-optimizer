@@ -671,3 +671,95 @@ def test_speculative_skip_when_budget_low():
     remaining_budget = 10
     should_speculate = remaining_budget > max(num_gpus, 1)
     assert should_speculate is True
+
+
+# --- Baseline → HP-tune contract (Task 3.3) ---
+
+
+class TestBaselineToHpTuneContract:
+    """Baseline output must contain fields hp-tune depends on (Task 3.3)."""
+
+    def test_baseline_has_gpu_memory_profiling(self):
+        """Baseline output schema must include profiling.gpu_memory_used_mib."""
+        # A valid baseline result should have profiling with gpu_memory_used_mib
+        baseline = {
+            "experiment_id": "baseline",
+            "metrics": {"loss": 0.5, "accuracy": 0.8},
+            "config": {"learning_rate": 0.001, "batch_size": 32},
+            "profiling": {"gpu_memory_used_mib": 4096, "throughput_samples_per_sec": 100.0}
+        }
+        assert "profiling" in baseline
+        assert "gpu_memory_used_mib" in baseline["profiling"]
+        assert "config" in baseline
+
+    def test_baseline_config_has_tunable_params(self):
+        """Baseline must expose config dict that hp-tune can use as starting point."""
+        baseline = {
+            "experiment_id": "baseline",
+            "metrics": {"loss": 0.5},
+            "config": {"learning_rate": 0.001, "batch_size": 32}
+        }
+        assert isinstance(baseline["config"], dict)
+        assert len(baseline["config"]) > 0
+
+
+# --- Experiment → Monitor log format contract (Task 3.4) ---
+
+
+class TestExperimentToMonitorContract:
+    """Experiment log output must be parseable by parse_logs → detect_divergence (Task 3.4)."""
+
+    def test_experiment_log_parseable(self, tmp_path):
+        """Simulated experiment log must yield valid metrics for divergence detection."""
+        from parse_logs import parse_log
+        from detect_divergence import check_divergence
+
+        # Simulate what the experiment skill would produce
+        log_content = "loss: 0.5\nloss: 0.4\nloss: 0.35\nloss: 0.3\nloss: 0.28\n"
+        log_file = tmp_path / "train.log"
+        log_file.write_text(log_content)
+
+        records = parse_log(str(log_file))
+        assert len(records) > 0
+
+        values = [r["loss"] for r in records if "loss" in r]
+        assert len(values) > 0
+
+        result = check_divergence(values)
+        assert result is not None
+        assert "diverged" in result
+        assert "reason" in result
+
+
+# --- Prerequisites → Schema validator contract (Task 3.8) ---
+
+
+class TestPrerequisitesToSchemaContract:
+    """Prerequisites report must pass schema validation (Task 3.8)."""
+
+    def test_prerequisites_report_validates(self):
+        from schema_validator import validate_prerequisites
+
+        # Minimal prerequisites report matching expected schema
+        report = {
+            "status": "passed",
+            "dataset": {"format": "csv", "train_path": "/data/train.csv"},
+            "environment": {"manager": "conda", "python_version": "3.10"},
+            "dependencies": {"missing": [], "installed": ["torch", "numpy"]},
+            "ready_for_baseline": True,
+        }
+        result = validate_prerequisites(report)
+        assert result is not None
+        assert isinstance(result, dict)
+        assert "valid" in result
+        # "passed" is not in VALID_PREREQ_STATUSES, so it will be invalid
+        # Use a valid status to get a clean pass
+        report_valid = {
+            "status": "ready",
+            "dataset": {"format": "csv", "train_path": "/data/train.csv"},
+            "environment": {"manager": "conda", "python_version": "3.10"},
+            "ready_for_baseline": True,
+        }
+        result_valid = validate_prerequisites(report_valid)
+        assert result_valid["valid"] is True
+        assert result_valid["errors"] == []

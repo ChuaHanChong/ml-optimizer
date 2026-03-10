@@ -601,3 +601,45 @@ def test_load_state_corrupt_no_backup_returns_none(tmp_path):
     (tmp_path / "pipeline-state.json").write_text("{bad}")
     state = load_state(str(tmp_path))
     assert state is None
+
+
+# --- Full user_choices roundtrip (Task 3.2) ---
+
+
+class TestFullUserChoicesRoundtrip:
+    """All 20+ documented user_choices fields survive save/load (Task 3.2)."""
+
+    def test_all_user_choices_fields_persist(self, tmp_path):
+        all_choices = {
+            "primary_metric": "accuracy",
+            "divergence_metric": "loss",
+            "divergence_lower_is_better": True,
+            "lower_is_better": False,
+            "target_value": 0.95,
+            "train_command": "python train.py",
+            "eval_command": "python eval.py",
+            "train_data_path": "/data/train.csv",
+            "val_data_path": "/data/val.csv",
+            "prepared_train_path": "/data/prepared/train.csv",
+            "prepared_val_path": "/data/prepared/val.csv",
+            "env_manager": "conda",
+            "env_name": "ml-env",
+            "model_category": "supervised",
+            "user_papers": ["paper1.pdf", "paper2.pdf"],
+            "budget_mode": "autonomous",
+            "difficulty": "moderate",
+            "difficulty_multiplier": 15,
+            "method_proposal_scope": "training",
+            "method_proposal_iterations": 3,
+            "hp_batches_per_round": 3,
+        }
+
+        save_state(4, 1, [], str(tmp_path), user_choices=all_choices)
+        loaded = load_state(str(tmp_path))
+
+        assert loaded is not None
+        loaded_choices = loaded.get("user_choices", {})
+
+        for key, value in all_choices.items():
+            assert key in loaded_choices, f"Missing key: {key}"
+            assert loaded_choices[key] == value, f"Mismatch for {key}: {loaded_choices[key]} != {value}"

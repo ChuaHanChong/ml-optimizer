@@ -1339,6 +1339,43 @@ def test_cli_suggestion_history(run_main, tmp_path):
     assert "oom_batch_size" in pattern_ids
 
 
+class TestConcurrentLogEvent:
+    """Test concurrent log_event calls don't lose events (Task 3.1)."""
+
+    def test_concurrent_log_events_no_loss(self, tmp_path):
+        """4 threads x 5 events each = 20 events, verify none lost."""
+        import threading
+
+        errors = []
+
+        def log_events(thread_id):
+            try:
+                for i in range(5):
+                    ev = create_event(
+                        category="training_failure",
+                        severity="warning",
+                        source="experiment",
+                        message=f"Thread {thread_id} event {i}",
+                        exp_id=f"exp-t{thread_id}-{i}",
+                        phase=6,
+                    )
+                    log_event(str(tmp_path), ev)
+            except Exception as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=log_events, args=(t,)) for t in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors, f"Threads raised errors: {errors}"
+
+        # Read all events and verify count
+        events = get_events(str(tmp_path))
+        assert len(events) == 20, f"Expected 20 events, got {len(events)}"
+
+
 def test_create_event_invalid_category_raises():
     """create_event with invalid category raises ValueError."""
     with pytest.raises(ValueError, match="Invalid.*category"):
@@ -1355,3 +1392,14 @@ def test_create_event_invalid_source_raises():
     """create_event with invalid source raises ValueError."""
     with pytest.raises(ValueError, match="Invalid.*source"):
         create_event("training_failure", "critical", "bad_source", "msg")
+
+
+class TestEmptyInputEdgeCases:
+    """Edge case tests for empty inputs (Task 3.5)."""
+
+    def test_validate_event_empty(self):
+        # Should handle empty dict gracefully (return errors or False, not crash)
+        result = validate_event({})
+        assert result is not None
+        assert result["valid"] is False
+        assert len(result["errors"]) > 0

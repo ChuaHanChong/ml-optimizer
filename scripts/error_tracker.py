@@ -7,6 +7,7 @@ Supports per-project error logs and cross-project pattern memory.
 Dependency-free — uses only the Python standard library.
 """
 
+import fcntl
 import hashlib
 import json
 import math
@@ -168,19 +169,26 @@ def _atomic_write_json(path: Path, data: dict) -> None:
 def log_event(exp_root: str, event: dict) -> str:
     """Append an event to the per-project error log. Returns the log path."""
     path = _error_log_path(exp_root)
-    log_data = load_error_log(exp_root)
+    lock_path = path.with_suffix(".lock")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(lock_path, "w") as lock_fd:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        try:
+            log_data = load_error_log(exp_root)
 
-    if log_data is None:
-        log_data = {
-            "project_id": _project_id(exp_root),
-            "session_start": datetime.now(timezone.utc).isoformat(),
-            "events": [],
-            "summary": {},
-        }
+            if log_data is None:
+                log_data = {
+                    "project_id": _project_id(exp_root),
+                    "session_start": datetime.now(timezone.utc).isoformat(),
+                    "events": [],
+                    "summary": {},
+                }
 
-    log_data["events"].append(event)
-    log_data["summary"] = _compute_summary(log_data["events"])
-    _atomic_write_json(path, log_data)
+            log_data["events"].append(event)
+            log_data["summary"] = _compute_summary(log_data["events"])
+            _atomic_write_json(path, log_data)
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
     return str(path)
 
 

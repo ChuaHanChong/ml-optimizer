@@ -14,6 +14,8 @@ def load_results(results_dir: str) -> dict[str, dict]:
     if not path.exists():
         return results
     for f in sorted(path.glob("*.json")):
+        if f.stem.lower() != "baseline" and not f.stem.startswith("exp-"):
+            continue
         try:
             data = json.loads(f.read_text())
             results[f.stem] = data

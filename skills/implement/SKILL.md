@@ -71,7 +71,19 @@ cd <project_root> && git rev-parse --is-inside-work-tree 2>/dev/null
   ```bash
   git status --porcelain
   ```
-  If output is non-empty (dirty working tree), use AskUserQuestion:
+  If output is non-empty (dirty working tree):
+
+  **Autonomous mode dirty-tree handling:**
+  If `budget_mode == "autonomous"` and `git status --porcelain` shows uncommitted changes:
+  1. Run `git stash --include-untracked`
+  2. Log to dev_notes: "Auto-stashed working tree changes (autonomous mode)"
+  3. Set `auto_stashed = true` for later restoration
+  4. After all implementation is complete (end of Step 7), if `auto_stashed`:
+     - Run `git stash pop`
+     - Log to dev_notes: "Restored auto-stashed changes"
+
+  **Interactive mode (default):**
+  If `budget_mode != "autonomous"` (or not set), use AskUserQuestion:
   ```
   Your working tree has uncommitted changes. These changes would be carried into
   all proposal branches, which could contaminate the baseline comparison.
@@ -82,7 +94,7 @@ cd <project_root> && git rev-parse --is-inside-work-tree 2>/dev/null
 
   Then re-run the implement skill.
   ```
-  Do NOT proceed with branch creation on a dirty working tree.
+  Do NOT proceed with branch creation on a dirty working tree in interactive mode.
 - Each proposal gets branch `ml-opt/<slug>`
 
 **If not a git repo (fallback):**

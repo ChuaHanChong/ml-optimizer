@@ -6,7 +6,7 @@ import math
 import pytest
 
 from conftest import FIXTURES
-from parse_logs import parse_kv_line, parse_json_line, parse_csv_lines, parse_python_logging_line, parse_tqdm_line, parse_xgboost_line, detect_format, parse_log, extract_metric_trajectory
+from parse_logs import parse_kv_line, parse_json_line, parse_hf_trainer_line, parse_csv_lines, parse_python_logging_line, parse_tqdm_line, parse_xgboost_line, detect_format, parse_log, extract_metric_trajectory
 
 
 def test_parse_kv_line():
@@ -422,3 +422,98 @@ def test_detect_format_lightgbm():
         "[2]\ttraining's binary_logloss:0.6650\tvalid_1's binary_logloss:0.6720",
     ]
     assert detect_format(lines) == "xgboost"
+
+
+class TestHuggingFaceTrainerFormat:
+    """Tests for HuggingFace Trainer log format parsing (Task 3.6)."""
+
+    def test_parse_hf_trainer_line_basic(self):
+        line = "{'loss': 0.5, 'learning_rate': 5e-05, 'epoch': 1.0}"
+        result = parse_hf_trainer_line(line)
+        assert result == {'loss': 0.5, 'learning_rate': 5e-05, 'epoch': 1.0}
+
+    def test_parse_hf_trainer_line_with_whitespace(self):
+        line = "  {'loss': 0.3214, 'grad_norm': 1.5, 'epoch': 2.0}  "
+        result = parse_hf_trainer_line(line)
+        assert 'loss' in result
+        assert result['loss'] == 0.3214
+
+    def test_parse_hf_trainer_line_non_numeric_filtered(self):
+        line = "{'loss': 0.5, 'some_string': 'hello', 'epoch': 1.0}"
+        result = parse_hf_trainer_line(line)
+        assert 'loss' in result
+        assert 'epoch' in result
+        assert 'some_string' not in result
+
+    def test_parse_hf_trainer_line_not_matching(self):
+        line = "loss: 0.5"
+        result = parse_hf_trainer_line(line)
+        assert result == {}
+
+    def test_parse_hf_trainer_line_empty(self):
+        result = parse_hf_trainer_line("")
+        assert result == {}
+
+    def test_detect_format_hf_trainer(self):
+        lines = [
+            "{'loss': 0.5, 'learning_rate': 5e-05, 'epoch': 1.0}",
+            "{'loss': 0.4, 'learning_rate': 4e-05, 'epoch': 2.0}",
+            "{'loss': 0.3, 'learning_rate': 3e-05, 'epoch': 3.0}",
+        ]
+        fmt = detect_format(lines)
+        assert fmt == "hf_trainer"
+
+    def test_parse_log_hf_trainer_integration(self, tmp_path):
+        log_content = "\n".join([
+            "Some header text",
+            "{'loss': 0.5, 'learning_rate': 5e-05, 'epoch': 1.0}",
+            "{'loss': 0.4, 'learning_rate': 4e-05, 'epoch': 2.0}",
+            "{'loss': 0.3, 'learning_rate': 3e-05, 'epoch': 3.0}",
+        ])
+        log_file = tmp_path / "hf_train.log"
+        log_file.write_text(log_content)
+        results = parse_log(str(log_file))
+        assert len(results) == 3
+        assert results[0]['loss'] == 0.5
+        assert results[2]['epoch'] == 3.0
+
+
+class TestEmptyInputEdgeCases:
+    """Edge case tests for empty inputs (Task 3.5)."""
+
+    def test_parse_csv_lines_empty(self):
+        result = parse_csv_lines([])
+        assert result == []
+
+    def test_detect_format_empty(self):
+        result = detect_format([])
+        assert isinstance(result, str)  # should return a default format, not crash
+
+    def test_parse_log_empty_file(self, tmp_path):
+        empty_file = tmp_path / "empty.log"
+        empty_file.write_text("")
+        result = parse_log(str(empty_file))
+        assert result == []
+
+    def test_parse_log_nonexistent_file(self):
+        result = parse_log("/nonexistent/path/to/file.log")
+        assert result == []
+
+
+class TestUnicodeLogFile:
+    """Test Unicode handling in log files (Task 3.7)."""
+
+    def test_parse_log_unicode_metric_names(self, tmp_path):
+        log_content = "époque: 1, perte: 0.5, précision: 0.8\népoque: 2, perte: 0.3, précision: 0.9\n"
+        log_file = tmp_path / "unicode.log"
+        log_file.write_text(log_content, encoding="utf-8")
+        results = parse_log(str(log_file))
+        assert len(results) >= 0  # should not crash on Unicode
+
+    def test_parse_log_unicode_comments(self, tmp_path):
+        log_content = "# 训练日志 - Training log\nloss: 0.5, accuracy: 0.8\nloss: 0.3, accuracy: 0.9\n"
+        log_file = tmp_path / "unicode_comments.log"
+        log_file.write_text(log_content, encoding="utf-8")
+        results = parse_log(str(log_file))
+        assert len(results) == 2
+        assert results[0]['loss'] == 0.5

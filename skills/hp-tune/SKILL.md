@@ -79,6 +79,15 @@ python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '
 ```
 
 **If `code_branches` is empty (HP-only):**
+
+**Tabular ML iteration 1 adjustment:** If the detected framework is scikit-learn, XGBoost, or LightGBM (tree-based models):
+- **Iteration 1 priority**: Explore `max_depth` and `n_estimators` first (these have the highest impact for tree-based models)
+- **Iteration 2+**: Then tune `learning_rate`/`eta`, `min_child_weight`, `subsample`, `colsample_bytree`
+- **Rationale**: Learning rate is less impactful for tree-based models compared to tree structure parameters
+
+For neural network frameworks (PyTorch, TensorFlow, JAX): keep the existing strategy (learning rate first).
+
+**Default strategy (neural networks):**
 - Propose configs that span the search space
 - Focus on learning rate first (highest impact)
 - One config per order of magnitude of LR

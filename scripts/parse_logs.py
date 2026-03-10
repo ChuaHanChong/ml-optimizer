@@ -113,6 +113,22 @@ def parse_json_line(line: str) -> dict:
     return {}
 
 
+def parse_hf_trainer_line(line: str) -> dict:
+    """Parse HuggingFace Trainer log line: {'loss': 0.5, 'learning_rate': 5e-5, 'epoch': 1.0}"""
+    stripped = line.strip()
+    m = re.match(r"^\{.*'.*':.*\}$", stripped)
+    if not m:
+        return {}
+    try:
+        converted = stripped.replace("'", '"')
+        data = json.loads(converted)
+        if isinstance(data, dict):
+            return {k: v for k, v in data.items() if isinstance(v, (int, float))}
+    except (json.JSONDecodeError, ValueError):
+        pass
+    return {}
+
+
 def parse_csv_lines(lines: list[str]) -> list[dict]:
     """Parse CSV-formatted lines (first line is header)."""
     if len(lines) < 2:
@@ -160,6 +176,13 @@ def detect_format(lines: list[str]) -> str:
         stripped = line.strip()
         if stripped and re.match(r'^\[\d+\]\s+\S+.*?:', stripped):
             return "xgboost"
+    # Check for HuggingFace Trainer format (single-quote Python dicts)
+    hf_count = 0
+    for line in lines:
+        if parse_hf_trainer_line(line):
+            hf_count += 1
+    if hf_count >= 2:
+        return "hf_trainer"
     # Check if first non-empty line looks like CSV header
     for line in lines[:3]:
         stripped = line.strip()
@@ -192,6 +215,13 @@ def parse_log(filepath: str, fmt: str | None = None) -> list[dict]:
         return [m for line in lines if (m := parse_tqdm_line(line))]
     elif fmt == "xgboost":
         return [m for line in lines if (m := parse_xgboost_line(line))]
+    elif fmt == "hf_trainer":
+        results = []
+        for line in lines:
+            parsed = parse_hf_trainer_line(line)
+            if parsed:
+                results.append(parsed)
+        return results
     else:
         result = [m for line in lines if (m := parse_kv_line(line))]
         if auto_detected and not result and lines:

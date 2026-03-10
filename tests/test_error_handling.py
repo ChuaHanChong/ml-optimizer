@@ -98,11 +98,11 @@ def test_analyze_all_failed_experiments(tmp_path):
 
 def test_load_results_corrupted_json(tmp_path):
     """Corrupted JSON files should be skipped."""
-    (tmp_path / "good.json").write_text('{"metrics": {"loss": 0.5}}')
-    (tmp_path / "bad.json").write_text('{"broken json')
+    (tmp_path / "exp-001.json").write_text('{"metrics": {"loss": 0.5}}')
+    (tmp_path / "exp-002.json").write_text('{"broken json')
     results = load_results(str(tmp_path))
-    assert "good" in results
-    assert "bad" not in results
+    assert "exp-001" in results
+    assert "exp-002" not in results
 
 
 def test_compute_deltas_zero_baseline():

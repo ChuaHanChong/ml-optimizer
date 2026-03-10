@@ -117,7 +117,9 @@ You are an ML optimization orchestrator. You coordinate the full optimization pi
      - Divergence metric: use policy/value loss if logged; otherwise use reward with `divergence_lower_is_better = False`
      - Baseline eval: use average reward over N episodes (see baseline skill RL section)
      - Training is episodic — throughput is measured in steps/sec or episodes/hour
-     - **Polarity validation:** After setting `divergence_metric` and `divergence_lower_is_better`, check for inconsistency: if the metric name contains "reward", "return", or "score" but `divergence_lower_is_better` is True, warn the user: "For reward-like metrics, divergence means the metric drops (lower_is_better=False). You set lower_is_better=True — confirm this is correct?" Use AskUserQuestion. This prevents silently killing experiments during improvement.
+     - **Polarity validation:** After setting `divergence_metric` and `divergence_lower_is_better`, check for inconsistency: if the metric name contains "reward", "return", or "score" but `divergence_lower_is_better` is True, or if the metric name contains "loss", "error", "nll" but `divergence_lower_is_better` is False:
+       - **Autonomous mode auto-skip:** If `budget_mode == "autonomous"`, auto-infer the correct polarity from the metric name (reward/return/score → `False`, loss/error/nll → `True`). Log to dev_notes: "Auto-inferred divergence polarity for '<metric_name>': lower_is_better=<value> (autonomous mode)". Skip AskUserQuestion.
+       - **Otherwise:** Warn the user: "For reward-like metrics, divergence means the metric drops (lower_is_better=False). You set lower_is_better=True — confirm this is correct?" Use AskUserQuestion. This prevents silently killing experiments during improvement.
    - **Generative model detection:** If the codebase contains GAN discriminator/generator pairs, diffusion schedulers (`DDPMScheduler`, `noise_scheduler`), or VAE encoder/decoder with KL loss:
      - Set `model_category = "generative"` with sub-type `"gan"`, `"diffusion"`, or `"vae"`
      - For GANs: primary_metric is often FID or IS — confirm with user. Divergence metric: generator_loss or discriminator_loss
@@ -269,6 +271,8 @@ If baseline fails, diagnose from the error message in baseline.json or error tra
 
 **Retry logic:** Attempt up to 2 retries with adjustments from the table above. Log each retry to the error tracker.
 
+**Autonomous mode Phase 3 unknown error:** If `budget_mode == "autonomous"` and baseline fails with an unknown error after 2 retries: log the full error to error tracker with `category: "agent_failure", severity: "critical"`, log to dev_notes: "Baseline failed after 2 retries with unknown error — exiting with partial results (autonomous mode)". Exit the pipeline and proceed to Phase 7 (report) with whatever partial results exist. Do NOT use AskUserQuestion.
+
 **Skip-baseline fallback:** If all retries fail, offer to create a synthetic baseline.json with user-provided metric values. Mark profiling fields as `null`. This allows the experiment loop to proceed without throughput-based timeout estimation.
 
 ## Phase 4: User Checkpoint (Post-Baseline)
@@ -324,6 +328,14 @@ If the user chose research, invoke the `ml-optimizer:research` skill with parame
 - `user_papers`: Any user-provided paper URLs or links (optional)
 - `exp_root`: Path to experiments/ directory (for error logging)
 Wait for research findings.
+
+### Research Failure Recovery
+
+If the research skill fails (web search errors, timeout, or no results):
+
+1. **First fallback:** Retry with `source: "knowledge"` (skip web search, use LLM training knowledge only). Log to error tracker: `category: "agent_failure", severity: "warning", message: "Research web search failed — retrying with knowledge-only mode"`.
+2. **Second fallback:** If knowledge-only also fails, continue with HP-only optimization (no research proposals). Log to error tracker: `category: "agent_failure", severity: "warning", message: "Research failed entirely — continuing with HP-only optimization"`. Log to dev_notes: "Research failed — proceeding with HP tuning only."
+3. **Each fallback step** is logged to the error tracker for post-session review.
 
 ### User Checkpoint (Post-Research)
 
@@ -452,6 +464,14 @@ If `method_proposal_scope` is set in user_choices (i.e., user chose option 5 in 
 5. **Store method proposal state:**
    - `method_proposal_iterations`: 1 (initial)
 
+### Pre-Loop: Route `hp_only` Research Proposals
+
+When processing research proposals (from Phase 5 or mid-loop step 6.1), check each proposal's `type` field:
+- **`type: "hp_only"`**: These proposals recommend search space modifications (e.g., "try cyclical learning rates", "increase weight decay range") rather than code changes. Route them directly to hp-tune as search space adjustments — skip the implement skill entirely. Merge the suggested HP ranges into the existing `search_space` dict.
+- **`type: "code_change"` or no type field**: Route through implement as normal (create branches, validate, etc.).
+
+This prevents unnecessary implementation overhead for proposals that only affect HP tuning parameters.
+
 ### Pre-Loop: Initialize Research Cadence
 
 Initialize the research round counter for autonomous mode:
@@ -574,6 +594,11 @@ When the implementation manifest contains multiple code branches:
 
 4. **Wait for completion:**
    - All experiments in the batch must complete (or be stopped) before analysis
+   - **Experiment timeout:** Each experiment has a hard timeout of `max_experiment_duration = baseline_training_time * 3` (where `baseline_training_time` is from baseline profiling). If no baseline profiling is available (profiling fields are `null`), use a fallback timeout of 6 hours. If an experiment exceeds the timeout:
+     1. Kill the experiment process
+     2. Set `status: "timeout"` in the experiment result JSON
+     3. Log to error tracker: `category: "experiment_failure", severity: "warning", message: "Experiment <exp_id> timed out after <duration>s (limit: <max_duration>s)"`
+     4. Continue with the remaining experiments in the batch
    - Save pipeline state after each batch completes
 
 5. **Analyze results + speculative hp-tune (parallel):**
@@ -626,7 +651,10 @@ When the implementation manifest contains multiple code branches:
       python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"orchestrate","message":"Method proposals skipped: remaining_budget (<N>) < 3","phase":6,"iteration":<iteration>}'
       ```
 
-   b. **Scope confirmation:** Ask the user which scope level to use:
+   b. **Scope confirmation:**
+      **Autonomous mode auto-skip:** If `budget_mode == "autonomous"`, use stored `method_proposal_scope` from user_choices. Log to dev_notes: "Autonomous mode: using stored method_proposal_scope '<scope>' for mid-loop proposals". Skip AskUserQuestion.
+
+      **Otherwise:** Ask the user which scope level to use:
       ```
       HP tuning has plateaued. I can propose new optimization methods.
 
@@ -646,7 +674,10 @@ When the implementation manifest contains multiple code branches:
       - `output_path`: `"experiments/reports/research-findings-method-proposals-iter<N>.md"` (where N = `method_proposal_iterations + 1`)
       - All other standard inputs (project_root, model description, primary_metric, etc.)
 
-   d. **Present proposals:** Show the generated proposals to the user for confirmation. The user can accept all, select a subset, or reject all (which exits the loop).
+   d. **Present proposals:**
+      **Autonomous mode auto-skip:** If `budget_mode == "autonomous"`, accept all proposals automatically. Log to dev_notes: "Autonomous mode: auto-accepted all N mid-loop method proposals". Skip AskUserQuestion.
+
+      **Otherwise:** Show the generated proposals to the user for confirmation. The user can accept all, select a subset, or reject all (which exits the loop).
 
    e. **Implement proposals:** Invoke `ml-optimizer:implement` with the confirmed method proposal findings. This creates new `ml-opt/<slug>` branches.
 
@@ -827,7 +858,13 @@ Full report: experiments/reports/final-report.md
 
 - **GPU unavailable:** Fall back to single-GPU sequential execution
 - **Training crashes:** Record the error, skip to next experiment in batch
-- **All experiments diverge:** Stop loop, report to user with AskUserQuestion
+- **All experiments diverge in a batch:**
+  - **Recovery attempt:** Before stopping, attempt a recovery batch with halved learning rates (divide all LR values by 2). Log to error tracker: `category: "experiment_failure", severity: "warning", message: "All experiments diverged — attempting recovery with halved LRs"`.
+  - If the recovery batch also all-diverges: stop the loop and report to user. In autonomous mode, log to dev_notes and proceed to Phase 7 (report). In interactive mode, use AskUserQuestion to inform user.
+- **OOM feedback to hp-tune:** When an experiment fails with `CUDA out of memory`:
+  1. Record the OOM-causing batch size in the error tracker: `category: "experiment_failure", context: {"oom_batch_size": <batch_size>}`
+  2. On the next hp-tune invocation, pass `max_batch_size` constraint (one step below the OOM-causing batch size) so hp-tune avoids proposing configs that will OOM again
+  3. If multiple OOM events occur, use the smallest OOM-causing batch size as the constraint
 - **Script not found:** Ask user to provide the correct training command
 
 ## Error Tracking

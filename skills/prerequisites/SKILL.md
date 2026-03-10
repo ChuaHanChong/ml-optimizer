@@ -39,7 +39,11 @@ python3 ~/.claude/plugins/ml-optimizer/scripts/prerequisites_check.py detect-for
 
 This scans the training script AND any local modules it imports for data-loading patterns. It returns the expected format (image_folder, csv, hdf5, cifar, etc.), patterns found, data-related CLI arguments, and confidence level.
 
-If confidence is "low" or format is "unknown", use AskUserQuestion:
+If confidence is "low" or format is "unknown":
+
+**Autonomous mode auto-skip:** If `budget_mode == "autonomous"`: use the dataset as-is without format conversion. Log warning to dev_notes: "Unknown dataset format — using as-is (autonomous mode)". Skip AskUserQuestion.
+
+Otherwise, use AskUserQuestion:
 ```
 I couldn't automatically determine the expected dataset format from the training code.
 
@@ -66,7 +70,11 @@ If the user said "embedded in code" (e.g., CIFAR10 auto-download), skip validati
 
 ## Step 4: Prepare Dataset (If Needed)
 
-If there's a format mismatch between user data and what the training script expects, use AskUserQuestion:
+If there's a format mismatch between user data and what the training script expects:
+
+**Autonomous mode auto-skip:** If `budget_mode == "autonomous"`: skip data preparation/conversion. Log warning to dev_notes: "Dataset format mismatch — skipping preparation (autonomous mode)". Skip AskUserQuestion.
+
+Otherwise, use AskUserQuestion:
 ```
 Your data appears to be in [detected format] but the training script expects [expected format].
 
@@ -97,7 +105,11 @@ python3 ~/.claude/plugins/ml-optimizer/scripts/prerequisites_check.py detect-env
 
 Compare the detected manager with the user's specified manager (`env_manager` from Phase 0):
 - **Match:** Proceed as normal
-- **Mismatch:** Use AskUserQuestion to warn:
+- **Mismatch:**
+
+  **Autonomous mode auto-skip:** If `budget_mode == "autonomous"`: use the detected environment manager instead. Log to dev_notes: "Env manager mismatch — using detected '<detected_manager>' (autonomous mode)". Skip AskUserQuestion.
+
+  Otherwise, use AskUserQuestion to warn:
   ```
   I detected [detected_manager] (found [config_file]) but you specified [user_manager].
   Which should I use for package installation?
@@ -110,7 +122,11 @@ Compare the detected manager with the user's specified manager (`env_manager` fr
 ```bash
 conda env list | grep -w <env_name>
 ```
-If the environment does not exist, use AskUserQuestion:
+If the environment does not exist:
+
+**Autonomous mode auto-skip:** If `budget_mode == "autonomous"`: auto-create the conda environment with `conda create -n <env_name> python=<detected_python_version> -y`. Log to dev_notes: "Auto-created conda env '<env_name>' (autonomous mode)". Skip AskUserQuestion.
+
+Otherwise, use AskUserQuestion:
 ```
 Conda environment "<env_name>" does not exist.
 Options:

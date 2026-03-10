@@ -93,7 +93,7 @@ All scripts work as both importable modules and CLI tools:
 | Script | CLI Usage |
 |--------|-----------|
 | `gpu_check.py` | `python3 scripts/gpu_check.py` — parse nvidia-smi |
-| `parse_logs.py` | `python3 scripts/parse_logs.py <logfile>` — parse kv/JSON/CSV/XGBoost logs |
+| `parse_logs.py` | `python3 scripts/parse_logs.py <logfile>` — parse kv/JSON/CSV/XGBoost/HuggingFace Trainer logs |
 | `detect_divergence.py` | `python3 scripts/detect_divergence.py '<json_values>' [--higher-is-better] [--model-category rl\|generative\|supervised] [--explosion-threshold N] [--plateau-patience N]` — detect NaN/explosion/plateau with configurable thresholds |
 | `result_analyzer.py` | `python3 scripts/result_analyzer.py <results_dir> <metric> [baseline_id] [lower_is_better]` |
 | `experiment_setup.py` | Generates experiment IDs and directory structure |
@@ -153,12 +153,21 @@ The orchestrator can be stopped and resumed. On restart it reads `pipeline-state
 - **Spearman correlation**: `result_analyzer.py` uses rank correlation with average-rank tie-breaking to identify HP-metric relationships (no scipy dependency).
 - **Dual implementation strategy**: Research proposals include an `implementation_strategy` field (`from_scratch` or `from_reference`). The implement agent dispatches accordingly — either implementing from paper descriptions (Section 8) or cloning and adapting reference repos (Section 9). Strategy is decided by the research agent based on repo availability and quality.
 - **Research skill modes**: The research skill accepts `source` (`"web"` | `"knowledge"` | `"both"`), `scope_level` (`"training"` | `"architecture"` | `"full"`), and `output_path` parameters. Knowledge mode skips web search and uses LLM training knowledge only.
-- **Autonomous mode auto-skip**: When `budget_mode == "autonomous"`, all user checkpoints after Phase 0 are auto-resolved (Phase 1 plan → auto-approve, Phase 2 partial prereqs → proceed, Phase 4 direction → method proposals, Phase 5 proposal selection → all proposals, Phase 5.1 dependencies → auto-install, license warnings → auto-accept, Phase 7 self-review → auto-run). Only unrecoverable errors (Phase 2 failed, Phase 3 unknown error) still block. Decisions are logged to dev_notes and error tracker for post-session review.
+- **Autonomous mode auto-skip**: When `budget_mode == "autonomous"`, all user checkpoints after Phase 0 are auto-resolved (Phase 1 plan → auto-approve, Phase 2 partial prereqs → proceed, Phase 4 direction → method proposals, Phase 5 proposal selection → all proposals, Phase 5.1 dependencies → auto-install, license warnings → auto-accept, Phase 6 mid-loop scope/proposals → use stored scope + accept all, RL polarity → auto-infer, Phase 7 self-review → auto-run). Only unrecoverable errors (Phase 2 failed) still block. Phase 3 unknown errors exit with partial results in autonomous mode. Decisions are logged to dev_notes and error tracker for post-session review. The implement skill auto-stashes dirty working trees, and the prerequisites skill auto-resolves format/env mismatches.
 - **Speculative hp-tune**: In Phase 6, the orchestrator starts a background hp-tune call in parallel with analyze. If analyze says "continue" and proposals pass validation (no pruned branches, within budget, no duplicates), the proposals are used immediately — eliminating 30-60s of GPU idle time per batch. If analyze says stop/pivot, speculative proposals are discarded.
 - **Parallel research**: All WebSearch calls in the research skill are issued simultaneously in a single tool-call message. WebFetch follow-ups for different URLs are also parallelized. Domain-specific query sets (NLP, CV, RL, time-series) are issued alongside generic queries.
 - **Parallel implementation**: When using git branch strategy with multiple proposals, each proposal is implemented in a separate git worktree via parallel Agent dispatches. File-backup strategy remains sequential.
 - **Async mid-pipeline review**: In autonomous mode, mid-pipeline review runs in the background while the next experiment batch starts. Suggestions are applied one batch late — acceptable trade-off vs blocking the pipeline.
 - **Configurable divergence thresholds**: `detect_divergence.py` supports per-model-category threshold overrides via `MODEL_CATEGORY_DEFAULTS` dict and `--model-category` CLI flag. RL models use `explosion_threshold=20.0` (prevents false positives on reward spikes), generative models use `plateau_patience=40` (accommodates slow convergence). Individual thresholds can also be overridden via `--explosion-threshold` and `--plateau-patience` CLI flags.
+- **Experiment timeout**: Each experiment has a hard timeout of `baseline_training_time * 3` (fallback: 6 hours). Timed-out experiments are killed and marked `status: "timeout"`.
+- **Research failure recovery**: If web search fails, the orchestrator retries with `source: "knowledge"` (LLM-only). If that also fails, it continues with HP-only optimization. Each fallback is logged.
+- **OOM feedback loop**: When experiments OOM, the batch size is recorded in the error tracker. On the next hp-tune invocation, `max_batch_size` is passed to prevent re-proposing configs that will OOM.
+- **All-diverge recovery**: If all experiments in a batch diverge, a recovery batch with halved learning rates is attempted before stopping.
+- **HP-only research routing**: Research proposals with `type: "hp_only"` skip the implement skill and are routed directly to hp-tune as search space modifications.
+- **Tabular ML HP strategy**: For tree-based models (sklearn/XGBoost/LightGBM), iteration 1 explores `max_depth`/`n_estimators` first instead of learning rate.
+- **Concurrent-safe error logging**: `error_tracker.py` uses `fcntl.flock()` file locking around the read-modify-write in `log_event()` to prevent concurrent agents from losing events.
+- **Result file filtering**: `result_analyzer.py` only loads `exp-*.json` and `baseline.json` files, preventing non-experiment files from inflating counts.
+- **HuggingFace Trainer log format**: `parse_logs.py` detects and parses HuggingFace Trainer's single-quote Python dict format (`{'loss': 0.5, 'epoch': 1.0}`).
 
 ## Test Fixtures
 

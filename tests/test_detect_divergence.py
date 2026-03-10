@@ -521,3 +521,16 @@ def test_cli_plateau_patience_flag(run_main):
     output = json.loads(r.stdout)
     assert output["diverged"] is True
     assert "plateau" in output["reason"].lower()
+
+
+class TestEmptyInputEdgeCases:
+    """Edge case tests for empty inputs (Task 3.5)."""
+
+    def test_detect_nan_inf_empty(self):
+        result = detect_nan_inf([])
+        assert result is None  # no NaN/Inf in empty list
+
+    def test_detect_divergence_empty(self):
+        result = check_divergence([])
+        assert result is not None  # should handle empty gracefully
+        assert result["diverged"] is False

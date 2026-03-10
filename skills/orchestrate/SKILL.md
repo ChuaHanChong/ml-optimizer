@@ -188,7 +188,7 @@ You are an ML optimization orchestrator. You coordinate the full optimization pi
 
    **Budget by mode:**
    - `"auto"`: `max_experiments = max(num_gpus, 1) × difficulty_multiplier` (8, 15, or 25 based on assessed difficulty)
-   - `"autonomous"`: `max_experiments = 999` (effectively unlimited — loop runs until user interrupts or context window exhaustion). In autonomous mode, the analyze skill's `"stop"` recommendation is logged but NOT enforced — the loop continues. The only hard stops are: user interruption, context window limit, or all reasonable approaches exhausted (analyze recommends stop 3 consecutive times). Research → implement cycles auto-trigger every `hp_batches_per_round` batches (see step 6.8).
+   - `"autonomous"`: `max_experiments = 999` (effectively unlimited — loop runs until user interrupts or context window exhaustion). In autonomous mode, the analyze skill's `"stop"` recommendation is logged but NOT enforced — the loop continues. The only hard stops are: user interruption, context window limit, or all reasonable approaches exhausted (analyze recommends stop 3 consecutive times). Research → implement cycles auto-trigger every `hp_batches_per_round` batches (see step 6.6).
    - `"custom"`: `max_experiments = custom_budget` (user-specified value)
 
 ## Phase 2: Prerequisites Check
@@ -478,7 +478,7 @@ If `method_proposal_scope` is set in user_choices (i.e., user chose option 5 in 
 
 ### Pre-Loop: Route `hp_only` Research Proposals
 
-When processing research proposals (from Phase 5 or mid-loop step 6.1), check each proposal's `type` field:
+When processing research proposals (from Phase 5 or mid-loop step 6.5), check each proposal's `type` field:
 - **`type: "hp_only"`**: These proposals recommend search space modifications (e.g., "try cyclical learning rates", "increase weight decay range") rather than code changes. Route them directly to hp-tune as search space adjustments — skip the implement skill entirely. Merge the suggested HP ranges into the existing `search_space` dict.
 - **`type: "code_change"` or no type field**: Route through implement as normal (create branches, validate, etc.).
 
@@ -489,7 +489,7 @@ This prevents unnecessary implementation overhead for proposals that only affect
 Initialize the research round counter for autonomous mode:
 - `batches_since_last_research = 0`
 - This counter tracks how many HP tuning batches have run since the last research → implement cycle
-- In autonomous mode, when this counter reaches `hp_batches_per_round`, step 6.8 auto-triggers a new research round
+- In autonomous mode, when this counter reaches `hp_batches_per_round`, step 6.6 auto-triggers a new research round
 
 ### Pre-Loop: Save Pipeline State
 
@@ -668,8 +668,8 @@ When the implementation manifest contains multiple code branches:
      - `"hp_expand"`: Widen the search space around the best config (extend LR range by 2× in each direction). Pass updated `search_space` to hp-tune.
      - `"narrow_space"`: Constrain the search space to the range around the best result (analyze's `suggestion` field contains bounds). Pass narrowed `search_space` to hp-tune.
      - `"regularization"`: Add regularization HPs (weight_decay, dropout) to the search space or expand their range. Pass updated `search_space` to hp-tune. No research needed.
-     - `"research"`: Route to step 6.1 (same as `method_proposal`). Requires `remaining_budget >= 5`.
-     - `"method_proposal"`, `"qualitative_change"`: Route to step 6.1 (existing handling). Requires `remaining_budget >= 3`.
+     - `"research"`: Route to step 6.5 (same as `method_proposal`). Requires `remaining_budget >= 5`.
+     - `"method_proposal"`, `"qualitative_change"`: Route to step 6.5 (existing handling). Requires `remaining_budget >= 3`.
      - **Unknown pivot_type:** Treat as `"hp_expand"` (safest default). Log to error tracker.
    - If analyze says **stop**:
      - Discard speculative proposals.
@@ -682,7 +682,7 @@ When the implementation manifest contains multiple code branches:
      - `"autonomous"`: 999 (effectively unlimited — runs until interrupted or 3 consecutive stop recommendations)
      After budget exhausted, force exit and report. When `num_gpus=0` (CPU-only, e.g., scikit-learn), the multiplier applies to `1`.
 
-6.1. **Mid-loop method proposal trigger** (when analyze recommends new methods):
+6.5. **Mid-loop method proposal trigger** (when analyze recommends new methods):
 
    If analyze returns `pivot_type: "method_proposal"` or `pivot_type: "qualitative_change"`:
 
@@ -730,7 +730,7 @@ When the implementation manifest contains multiple code branches:
 
    h. **Continue loop:** Loop back to step 1 (hp-tune) with the expanded `code_branches` list. Reset `batches_since_last_research = 0`.
 
-6.8. **Research round check** (autonomous mode only — cadence-based research trigger):
+6.6. **Research round check** (autonomous mode only — cadence-based research trigger):
 
    This step auto-triggers research → implement on a regular cadence, independent of analyze's pivot recommendation. It only applies in autonomous mode with `method_proposal_scope` set.
 
@@ -738,7 +738,7 @@ When the implementation manifest contains multiple code branches:
    - `budget_mode == "autonomous"`
    - `method_proposal_scope` is set (user opted into method proposals)
    - `batches_since_last_research >= hp_batches_per_round`
-   - Step 6.1 did NOT already trigger this iteration (avoid double research)
+   - Step 6.5 did NOT already trigger this iteration (avoid double research)
 
    **If conditions met:**
 
@@ -762,7 +762,7 @@ When the implementation manifest contains multiple code branches:
 
    d. **Implement proposals (no user confirmation):** In autonomous mode, ALL returned proposals are implemented automatically (the user opted into autonomous operation). Invoke `ml-optimizer:implement` with the research findings. This creates new `ml-opt/<slug>` branches.
 
-   e. **Merge into experiment loop:** Same as step 6.1f — add new validated branches to `code_branches`, reset iteration counter for new branches.
+   e. **Merge into experiment loop:** Same as step 6.5f — add new validated branches to `code_branches`, reset iteration counter for new branches.
 
    f. **Update state:**
       - Increment `method_proposal_iterations`
@@ -771,7 +771,7 @@ When the implementation manifest contains multiple code branches:
 
    **If conditions NOT met:** Increment `batches_since_last_research` and continue.
 
-7. **Mid-pipeline review check** (after step 6/6.1/6.8, before looping):
+7. **Mid-pipeline review check** (after step 6/6.5/6.6, before looping):
    Run pattern detection:
    ```bash
    python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> patterns
@@ -810,7 +810,7 @@ When the implementation manifest contains multiple code branches:
      python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"orchestrate","message":"Mid-pipeline review triggered after consecutive failures","phase":6,"iteration":<iteration>,"context":{"trigger":"consecutive_failures"}}'
      ```
 
-8. **Loop back:** After steps 6/6.1/6.8/7, increment `batches_since_last_research` and return to step 1 (Get HP configs). The loop continues until the Decision step (6) or budget exhaustion forces an exit.
+8. **Loop back:** After steps 6/6.5/6.6/7, increment `batches_since_last_research` and return to step 1 (Get HP configs). The loop continues until the Decision step (6) or budget exhaustion forces an exit.
 
 ### Speculative Proposal Validation
 

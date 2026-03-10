@@ -144,7 +144,7 @@ Output:
 
 **Orchestrator contract:** The orchestrator dispatches each `pivot_type` as follows:
 - `branch_test`, `hp_expand`, `narrow_space`, `regularization`: Adjust search space and invoke hp-tune. No research round.
-- `research`, `method_proposal`, `qualitative_change`: Trigger research → implement cycle (step 6.1 in orchestrate). Requires `remaining_budget >= 3`.
+- `research`, `method_proposal`, `qualitative_change`: Trigger research → implement cycle (step 6.5 in orchestrate). Requires `remaining_budget >= 3`.
 See orchestrate SKILL.md Phase 6 step 6 "Pivot dispatch by type" for details.
 
 ### Stop

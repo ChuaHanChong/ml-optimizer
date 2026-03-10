@@ -129,7 +129,7 @@ experiments/
 
 The research skill supports `source: "both"` mode where the LLM proposes optimization methods using its training knowledge supplemented by web search. Proposals are scoped by `scope_level`: `"training"` (safest), `"architecture"`, or `"full"`. This is triggered:
 - **Pre-loop** (Phase 4, option 5): User chooses to generate method proposals before the experiment loop
-- **Mid-loop** (Phase 6, step 6.1): When analyze recommends `pivot_type: "method_proposal"` or `"qualitative_change"`
+- **Mid-loop** (Phase 6, step 6.5): When analyze recommends `pivot_type: "method_proposal"` or `"qualitative_change"`
 
 Both triggers require user confirmation of scope and proposals. Knowledge-based proposals have confidence capped at 7/10.
 

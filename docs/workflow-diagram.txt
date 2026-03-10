@@ -309,7 +309,7 @@ ENTRY POINT
   |  |  Decision tree:                                                 | |
   |  |    "continue"         → next HP iteration                       | |
   |  |    "stop"             → go to Phase 7 report                    | |
-  |  |    "method_proposal"  → trigger 6.1 research pivot              | |
+  |  |    "method_proposal"  → trigger 6.5 research pivot              | |
   |  |      (requires remaining_budget >= 3)                           | |
   |  |    "qualitative_change" → trigger full research                 | |
   |  |      (requires remaining_budget >= 5)                           | |
@@ -324,7 +324,7 @@ ENTRY POINT
   |         |    Phase 7              |                                  |
   |         |                         v                                  |
   |  +------+----------------------------------------------------------+ |
-  |  |  6.1  RESEARCH PIVOT (triggered by analyze)                     | |
+  |  |  6.5  RESEARCH PIVOT (triggered by analyze)                     | |
   |  |  Agent: research-agent --> ml-optimizer:research (source:"both")| |
   |  |  Then: implement-agent --> ml-optimizer:implement               | |
   |  |  User confirmation required for scope + proposals               | |
@@ -332,7 +332,7 @@ ENTRY POINT
   |         |                                                            |
   |         v                                                            |
   |  +----------------------------------------------------------------+  |
-  |  |  6.8  AUTONOMOUS RESEARCH CADENCE                              |  |
+  |  |  6.6  AUTONOMOUS RESEARCH CADENCE                              |  |
   |  |  (autonomous mode only, method_proposal_scope set)             |  |
   |  |                                                                |  |
   |  |  Every hp_batches_per_round batches (default 3):               |  |
@@ -343,7 +343,7 @@ ENTRY POINT
   |         |                                                            |
   |         v                                                            |
   |  +----------------------------------------------------------------+  |
-  |  |  6.9  MID-PIPELINE REVIEW (auto-triggered)                     |  |
+  |  |  6.7  MID-PIPELINE REVIEW (auto-triggered)                     |  |
   |  |  Skill: ml-optimizer:review (scope: "session")                 |  |
   |  |                                                                |  |
   |  |  Triggers:                                                     |  |
@@ -353,7 +353,7 @@ ENTRY POINT
   |  |  Output: course correction suggestions in session-review.md    |  |
   |  +----------------------------------------------------------------+  |
   |         |                                                            |
-  |         +-- Loop back to 6.1 (if budget remains) ------>             |
+  |         +-- Loop back to 6.1 HP-TUNE (if budget remains) -->             |
   |                                                                      |
   +============================ END LOOP ================================+
 
@@ -423,8 +423,10 @@ ENTRY POINT
          |                                | scripts/<exp-id>.sh
   6.3    | logs/<exp-id>/train.log        | (status: healthy/diverged/unmonitored)
   6.4    | results/, remaining_budget     | reports/analysis-batch-N.md
-  6.1    | reports/research-findings*.md  | reports/research-findings-method-proposals-iterN.md
-  6.9    | reports/error-log.json         | reports/session-review.md
+  6.5    | reports/research-findings*.md  | reports/research-findings-method-proposals-iterN.md
+  6.6    | research-findings*.md          | research-findings-method-proposals-iterN.md
+         |                                | (autonomous cadence — same I/O as 6.5)
+  6.7    | reports/error-log.json         | reports/session-review.md
   7      | results/, error-log.json       | reports/optimization-report.md
          |                                | reports/progress_chart.png
 

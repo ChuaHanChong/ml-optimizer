@@ -2,6 +2,7 @@
 
 import json
 import math
+import random
 
 import pytest
 
@@ -194,7 +195,6 @@ def test_detect_gradual_drift_higher_is_better():
 
 def test_detect_gradual_drift_noisy_stable():
     """Noisy but flat data should NOT trigger drift (R² filter)."""
-    import random
     rng = random.Random(42)
     values = [0.5 + rng.gauss(0, 0.1) for _ in range(100)]
     result = detect_gradual_drift(values, window=50, min_slope_ratio=0.1)
@@ -203,7 +203,6 @@ def test_detect_gradual_drift_noisy_stable():
 
 def test_detect_gradual_drift_noisy_with_real_trend():
     """Upward trend plus noise should still be detected."""
-    import random
     rng = random.Random(42)
     values = [0.5 + i * 0.005 + rng.gauss(0, 0.02) for i in range(60)]
     result = detect_gradual_drift(values, window=50, min_slope_ratio=0.1)
@@ -214,8 +213,7 @@ def test_detect_gradual_drift_noisy_with_real_trend():
 
 def test_detect_gradual_drift_oscillating():
     """Sine wave around stable mean should NOT trigger drift."""
-    import math as m
-    values = [0.5 + 0.1 * m.sin(i * 0.3) for i in range(100)]
+    values = [0.5 + 0.1 * math.sin(i * 0.3) for i in range(100)]
     result = detect_gradual_drift(values, window=50, min_slope_ratio=0.1)
     assert result is None
 

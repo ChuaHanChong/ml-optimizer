@@ -1,11 +1,15 @@
 """Tests for skill interface contracts — verify data flows between skills correctly."""
 
 import json
+import re
 
 from conftest import FIXTURES, _write_result
 
+from detect_divergence import check_divergence
 from implement_utils import parse_research_proposals
+from parse_logs import parse_log
 from result_analyzer import load_results, rank_by_metric
+from schema_validator import validate_prerequisites
 from error_tracker import (
     create_event,
     log_event,
@@ -37,7 +41,6 @@ def test_research_proposals_have_implement_required_fields():
 def test_research_proposals_slug_is_valid_branch_name():
     """Slugs must be valid git branch name components."""
     proposals = parse_research_proposals(str(SAMPLE_FINDINGS))
-    import re
     for proposal in proposals:
         slug = proposal["slug"]
         assert re.match(r'^[a-z0-9][a-z0-9-]*[a-z0-9]$', slug), \
@@ -711,9 +714,6 @@ class TestExperimentToMonitorContract:
 
     def test_experiment_log_parseable(self, tmp_path):
         """Simulated experiment log must yield valid metrics for divergence detection."""
-        from parse_logs import parse_log
-        from detect_divergence import check_divergence
-
         # Simulate what the experiment skill would produce
         log_content = "loss: 0.5\nloss: 0.4\nloss: 0.35\nloss: 0.3\nloss: 0.28\n"
         log_file = tmp_path / "train.log"
@@ -738,8 +738,6 @@ class TestPrerequisitesToSchemaContract:
     """Prerequisites report must pass schema validation (Task 3.8)."""
 
     def test_prerequisites_report_validates(self):
-        from schema_validator import validate_prerequisites
-
         # Minimal prerequisites report matching expected schema
         report = {
             "status": "passed",

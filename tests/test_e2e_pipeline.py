@@ -6,13 +6,17 @@ result_analyzer, gpu_check) work correctly with real training output.
 """
 
 import json
+import os
 import shutil
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+
+import torch
+import yaml
 
 from parse_logs import parse_log, extract_metric_trajectory
 from detect_divergence import check_divergence
@@ -20,6 +24,7 @@ from experiment_setup import create_experiment_dirs, next_experiment_id, setup
 from result_analyzer import analyze, load_results, rank_by_metric, compute_deltas
 from pipeline_state import save_state, load_state, validate_phase_requirements, cleanup_stale
 from schema_validator import validate_result, validate_baseline, validate_manifest, validate_file
+import plot_results
 from plot_results import plot_metric_comparison, plot_improvement_timeline, plot_hp_sensitivity, plot_progress_chart
 from conftest import FIXTURES, _write_result
 from implement_utils import (
@@ -34,22 +39,9 @@ from error_tracker import (
 RESNET_FIXTURE = FIXTURES / "tiny_resnet_cifar10"
 
 
-def has_torch():
-    """Check if PyTorch is available in the current environment."""
-    try:
-        import torch
-        return True
-    except ImportError:
-        return False
-
-
 def has_gpu():
     """Check if CUDA GPU is available."""
-    try:
-        import torch
-        return torch.cuda.is_available()
-    except ImportError:
-        return False
+    return torch.cuda.is_available()
 
 
 def get_python():
@@ -92,7 +84,6 @@ def get_python():
 
 
 # Module-level detection for skip markers
-_has_torch = has_torch()
 _has_gpu = has_gpu()
 _python = get_python()
 
@@ -129,7 +120,6 @@ def run_training(project_dir, output_dir, data_dir, extra_args=None, timeout=300
 
     env = None
     if _has_gpu:
-        import os
         env = {**os.environ, "CUDA_VISIBLE_DEVICES": "0"}
 
     result = subprocess.run(
@@ -142,7 +132,6 @@ def run_training(project_dir, output_dir, data_dir, extra_args=None, timeout=300
 # Phase 1: Model Understanding
 # ---------------------------------------------------------------------------
 
-@pytest.mark.skipif(not _has_torch, reason="PyTorch not available")
 class TestPhase1ModelUnderstanding:
     """Phase 1: Verify project files are discoverable and parseable."""
 
@@ -155,14 +144,12 @@ class TestPhase1ModelUnderstanding:
         assert "class TinyResNet" in content
 
     def test_config_parseable(self):
-        import yaml
         config = yaml.safe_load((RESNET_FIXTURE / "config.yaml").read_text())
         assert config["model"]["type"] == "tiny_resnet"
         assert config["training"]["lr"] == 0.01
         assert config["data"]["dataset"] == "cifar10"
 
     def test_model_instantiates(self):
-        import torch
         sys.path.insert(0, str(RESNET_FIXTURE))
         from model import get_model
         model = get_model()
@@ -190,7 +177,6 @@ class TestPhase1ModelUnderstanding:
 # ---------------------------------------------------------------------------
 
 @pytest.mark.slow
-@pytest.mark.skipif(not _has_torch, reason="PyTorch not available")
 class TestPhase3Baseline:
     """Phase 3: Run baseline training and verify log parsing + divergence check."""
 
@@ -248,7 +234,6 @@ class TestPhase3Baseline:
 # Phase 4: User Checkpoint
 # ---------------------------------------------------------------------------
 
-@pytest.mark.skipif(not _has_torch, reason="PyTorch not available")
 class TestPhase4UserCheckpoint:
     """Phase 4: Verify baseline.json has all required checkpoint keys."""
 
@@ -276,7 +261,6 @@ class TestPhase4UserCheckpoint:
 # ---------------------------------------------------------------------------
 
 @pytest.mark.slow
-@pytest.mark.skipif(not _has_torch, reason="PyTorch not available")
 class TestPhase6ExperimentLoop:
     """Phase 6: Run multiple experiments and verify analysis."""
 
@@ -366,7 +350,6 @@ class TestPhase6ExperimentLoop:
 
 
 @pytest.mark.slow
-@pytest.mark.skipif(not _has_torch, reason="PyTorch not available")
 class TestPhase6DivergenceDetection:
     """Phase 6: Verify divergence detection with extreme learning rate."""
 
@@ -402,7 +385,6 @@ class TestPhase6DivergenceDetection:
 # Phase 7: Report
 # ---------------------------------------------------------------------------
 
-@pytest.mark.skipif(not _has_torch, reason="PyTorch not available")
 class TestPhase7Report:
     """Phase 7: Verify analysis output has correct schema for reporting."""
 
@@ -449,7 +431,6 @@ class TestPhase7Report:
 # ---------------------------------------------------------------------------
 
 @pytest.mark.slow
-@pytest.mark.skipif(not _has_torch, reason="PyTorch not available")
 class TestFullPipelineIntegration:
     """End-to-end: all phases sequentially."""
 
@@ -601,7 +582,6 @@ class TestPipelineStateIntegration:
         # Patch the timestamp to be 3 hours ago so cleanup triggers
         state_path = tmp_path / "exp" / "pipeline-state.json"
         state = json.loads(state_path.read_text())
-        from datetime import timedelta
         old_time = datetime.now(timezone.utc) - timedelta(hours=3)
         state["timestamp"] = old_time.isoformat()
         state_path.write_text(json.dumps(state))
@@ -622,7 +602,6 @@ class TestPipelineStateIntegration:
         exp_root = tmp_path / "exp"
         results_dir = exp_root / "results"
         results_dir.mkdir(parents=True)
-        from datetime import timedelta
         old_time = (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat()
         (results_dir / "exp-001.json").write_text(json.dumps({
             "exp_id": "exp-001", "status": "running", "timestamp": old_time,
@@ -1295,11 +1274,7 @@ class TestProgressChart:
         return d
 
     def test_progress_chart_generates_file(self, results_dir, tmp_path):
-        """plot_progress_chart produces a .png file when matplotlib available."""
-        from plot_results import HAS_MATPLOTLIB
-        if not HAS_MATPLOTLIB:
-            pytest.skip("matplotlib not available")
-
+        """plot_progress_chart produces a .png file."""
         output = tmp_path / "chart.png"
         result = plot_progress_chart(str(results_dir), "loss", output_path=str(output))
         assert result is not None
@@ -1308,10 +1283,6 @@ class TestProgressChart:
 
     def test_progress_chart_higher_is_better(self, results_dir, tmp_path):
         """Progress chart works with higher-is-better metrics."""
-        from plot_results import HAS_MATPLOTLIB
-        if not HAS_MATPLOTLIB:
-            pytest.skip("matplotlib not available")
-
         output = tmp_path / "chart_acc.png"
         result = plot_progress_chart(str(results_dir), "accuracy",
                                      lower_is_better=False, output_path=str(output))
@@ -1320,22 +1291,11 @@ class TestProgressChart:
 
     def test_progress_chart_default_output_path(self, results_dir):
         """When no output_path given, chart goes to reports/progress_chart.png."""
-        from plot_results import HAS_MATPLOTLIB
-        if not HAS_MATPLOTLIB:
-            pytest.skip("matplotlib not available")
-
         result = plot_progress_chart(str(results_dir), "loss")
         assert result is not None
         assert "reports" in result
         assert result.endswith(".png")
         assert Path(result).exists()
-
-    def test_progress_chart_no_matplotlib(self, results_dir, monkeypatch):
-        """Returns None gracefully when matplotlib is unavailable."""
-        import plot_results
-        monkeypatch.setattr(plot_results, "HAS_MATPLOTLIB", False)
-        result = plot_progress_chart(str(results_dir), "loss")
-        assert result is None
 
 
 # ---------------------------------------------------------------------------

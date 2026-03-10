@@ -3,6 +3,9 @@
 import json
 from unittest import mock
 
+import pytest
+
+import plot_results
 from conftest import _write_results
 
 from plot_results import (
@@ -384,11 +387,6 @@ def test_cli_no_args(run_main):
 
 def test_plot_progress_chart_basic(tmp_path):
     """Progress chart generates a PNG when matplotlib is available."""
-    import plot_results
-    if not plot_results.HAS_MATPLOTLIB:
-        import pytest
-        pytest.skip("matplotlib not installed")
-
     _write_results(tmp_path, {
         "baseline": {"metrics": {"loss": 1.0}, "config": {"lr": 0.01}},
         "exp-001": {"metrics": {"loss": 0.7}, "config": {"lr": 0.001}},
@@ -404,11 +402,6 @@ def test_plot_progress_chart_basic(tmp_path):
 
 def test_plot_progress_chart_higher_is_better(tmp_path):
     """Progress chart works with higher-is-better metrics."""
-    import plot_results
-    if not plot_results.HAS_MATPLOTLIB:
-        import pytest
-        pytest.skip("matplotlib not installed")
-
     _write_results(tmp_path, {
         "exp-001": {"metrics": {"acc": 70.0}, "config": {}},
         "exp-002": {"metrics": {"acc": 80.0}, "config": {}},
@@ -424,22 +417,12 @@ def test_plot_progress_chart_higher_is_better(tmp_path):
 
 def test_plot_progress_chart_no_results(tmp_path):
     """Progress chart returns None when no results found."""
-    import plot_results
-    if not plot_results.HAS_MATPLOTLIB:
-        import pytest
-        pytest.skip("matplotlib not installed")
-
     result = plot_progress_chart(str(tmp_path / "nonexistent"), "loss")
     assert result is None
 
 
 def test_plot_progress_chart_default_output_path(tmp_path):
     """Progress chart uses default path under reports/ dir."""
-    import plot_results
-    if not plot_results.HAS_MATPLOTLIB:
-        import pytest
-        pytest.skip("matplotlib not installed")
-
     results_dir = tmp_path / "experiments" / "results"
     results_dir.mkdir(parents=True)
     for name, data in {
@@ -455,28 +438,9 @@ def test_plot_progress_chart_default_output_path(tmp_path):
     assert expected.exists()
 
 
-def test_plot_progress_chart_no_matplotlib(tmp_path):
-    """Progress chart returns None when matplotlib is not available."""
-    _write_results(tmp_path, {
-        "exp-001": {"metrics": {"loss": 0.5}, "config": {}},
-    })
-    import plot_results
-    original = plot_results.HAS_MATPLOTLIB
-    try:
-        plot_results.HAS_MATPLOTLIB = False
-        result = plot_progress_chart(str(tmp_path), "loss")
-        assert result is None
-    finally:
-        plot_results.HAS_MATPLOTLIB = original
-
 
 def test_plot_progress_chart_single_experiment(tmp_path):
     """Progress chart handles a single experiment (all kept)."""
-    import plot_results
-    if not plot_results.HAS_MATPLOTLIB:
-        import pytest
-        pytest.skip("matplotlib not installed")
-
     _write_results(tmp_path, {
         "exp-001": {"metrics": {"loss": 0.5}, "config": {}},
     })
@@ -488,11 +452,6 @@ def test_plot_progress_chart_single_experiment(tmp_path):
 
 def test_plot_progress_chart_missing_metric(tmp_path):
     """Progress chart returns None when metric not in any result."""
-    import plot_results
-    if not plot_results.HAS_MATPLOTLIB:
-        import pytest
-        pytest.skip("matplotlib not installed")
-
     _write_results(tmp_path, {
         "exp-001": {"metrics": {"accuracy": 0.9}, "config": {}},
     })
@@ -502,11 +461,6 @@ def test_plot_progress_chart_missing_metric(tmp_path):
 
 def test_cli_progress(run_main, tmp_path):
     """CLI progress mode works when matplotlib is available."""
-    import plot_results
-    if not plot_results.HAS_MATPLOTLIB:
-        import pytest
-        pytest.skip("matplotlib not installed")
-
     _write_results(tmp_path, {
         "exp-001": {"metrics": {"loss": 0.5}, "config": {}},
         "exp-002": {"metrics": {"loss": 0.3}, "config": {}},

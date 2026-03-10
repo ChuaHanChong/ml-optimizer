@@ -10,14 +10,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from result_analyzer import load_results, rank_by_metric
 
-# Optional matplotlib for progress chart
-try:
-    import matplotlib
-    matplotlib.use("Agg")  # Non-interactive backend for file output
-    import matplotlib.pyplot as plt
-    HAS_MATPLOTLIB = True
-except ImportError:
-    HAS_MATPLOTLIB = False
+import matplotlib
+matplotlib.use("Agg")  # Non-interactive backend for file output
+import matplotlib.pyplot as plt
 
 
 def ascii_bar_chart(
@@ -287,11 +282,8 @@ def plot_progress_chart(
     gray otherwise.  A blue step line tracks the running best frontier.
     Kept experiments are annotated with their exp_id.
 
-    Returns the output file path, or ``None`` if matplotlib is unavailable.
+    Returns the output file path, or ``None`` if no results found.
     """
-    if not HAS_MATPLOTLIB:
-        return None
-
     results = load_results(results_dir)
     if not results:
         return None

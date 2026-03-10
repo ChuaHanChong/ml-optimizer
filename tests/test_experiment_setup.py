@@ -1,7 +1,9 @@
 """Tests for experiment_setup.py."""
 
+import concurrent.futures
 import json
 import os
+import stat
 import time
 from pathlib import Path
 
@@ -66,7 +68,6 @@ def test_generate_train_script(tmp_path):
     assert "WANDB_DISABLED=true" in content
     assert "tee logs/exp-001/train.log" in content
     # Check executable
-    import stat
     assert Path(script_path).stat().st_mode & stat.S_IXUSR
 
 
@@ -194,8 +195,6 @@ def test_cleanup_stale_corrupt_json(tmp_path):
 
 def test_concurrent_setup_unique_ids(tmp_path):
     """Multiple concurrent setup() calls should produce unique experiment IDs."""
-    import concurrent.futures
-
     project_root = str(tmp_path)
 
     def do_setup(i):

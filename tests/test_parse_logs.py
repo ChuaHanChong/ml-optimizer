@@ -2,10 +2,12 @@
 
 import json
 import math
+import warnings
 
 import pytest
 
 from conftest import FIXTURES
+from detect_divergence import check_divergence
 from parse_logs import parse_kv_line, parse_json_line, parse_hf_trainer_line, parse_csv_lines, parse_python_logging_line, parse_tqdm_line, parse_xgboost_line, detect_format, parse_log, extract_metric_trajectory
 
 
@@ -75,7 +77,6 @@ def test_parse_log_nonexistent():
 
 
 def test_parse_log_divergent_captures_nan():
-    import math
     records = parse_log(str(FIXTURES / "divergent_log.txt"))
     losses = extract_metric_trajectory(records, "loss")
     # Line 11 has loss=nan — must be captured
@@ -223,7 +224,6 @@ def test_parse_log_tqdm_format(tmp_path):
 
 def test_parse_log_kv_fallback_warns_on_empty(tmp_path):
     """Auto-detected 'kv' format with no parseable metrics should warn."""
-    import warnings
     f = tmp_path / "weird.log"
     f.write_text("This is just a plain text log\nNo metrics here\nJust words\n")
     with warnings.catch_warnings(record=True) as w:
@@ -390,7 +390,6 @@ def test_parse_lightgbm_session_fixture():
 
 def test_xgboost_fixture_divergence_detection():
     """XGBoost AUC metrics work with divergence detection (higher-is-better)."""
-    from detect_divergence import check_divergence
     records = parse_log(str(FIXTURES / "xgboost_session_log.txt"))
     val_auc = extract_metric_trajectory(records, "val-auc")
     result = check_divergence(val_auc, lower_is_better=False)
@@ -399,7 +398,6 @@ def test_xgboost_fixture_divergence_detection():
 
 def test_lightgbm_fixture_divergence_detection():
     """LightGBM logloss metrics work with divergence detection (lower-is-better)."""
-    from detect_divergence import check_divergence
     records = parse_log(str(FIXTURES / "lightgbm_session_log.txt"))
     val_loss = extract_metric_trajectory(records, "valid_1_binary_logloss")
     result = check_divergence(val_loss, lower_is_better=True)
@@ -517,3 +515,69 @@ class TestUnicodeLogFile:
         results = parse_log(str(log_file))
         assert len(results) == 2
         assert results[0]['loss'] == 0.5
+
+
+def test_parse_python_logging_non_matching():
+    """Non-matching line returns empty dict."""
+    result = parse_python_logging_line("Just some random text")
+    assert result == {}
+
+
+def test_parse_tqdm_value_error():
+    """Tqdm line with malformed numeric value should skip that value."""
+    line = "100%|████| 100/100 [00:01<00:00, loss=e+, acc=95.0]"
+    result = parse_tqdm_line(line)
+    assert "loss" not in result  # e+ is not a valid float
+    assert result.get("acc") == 95.0  # valid value still parsed
+
+
+def test_parse_xgboost_empty_segment():
+    """XGBoost line with empty segments between tabs should skip them (line 83)."""
+    # Space-only segment between tabs becomes empty after strip()
+    line = "[10]\ttrain-auc:0.85\t \tval-auc:0.80"
+    result = parse_xgboost_line(line)
+    assert result["iteration"] == 10.0
+    assert result["train-auc"] == 0.85
+    assert result["val-auc"] == 0.80
+
+
+def test_parse_xgboost_primary_value_error():
+    """Primary regex matches but float() fails → ValueError continue (lines 93-94)."""
+    # "1.2.3" matches [0-9eE.+\\-]+ but float("1.2.3") raises ValueError
+    line = "[5]\ttrain-auc:1.2.3"
+    result = parse_xgboost_line(line)
+    assert result["iteration"] == 5.0
+    assert "train-auc" not in result  # skipped due to ValueError
+
+
+def test_parse_xgboost_fallback_regex():
+    """Segment failing primary regex falls back to secondary regex (lines 97-99)."""
+    # Trailing text causes primary regex (anchored at $) to fail
+    line = "[5]\ttrain:0.85 info"
+    result = parse_xgboost_line(line)
+    assert result["iteration"] == 5.0
+    assert result.get("train") == 0.85
+
+
+def test_parse_xgboost_fallback_value_error():
+    """Fallback regex matches but float() fails → ValueError continue (lines 100-101)."""
+    # Trailing text fails primary; fallback finds key:1.2.3 but float fails
+    line = "[5]\ttrain:1.2.3 trailing"
+    result = parse_xgboost_line(line)
+    assert result["iteration"] == 5.0
+    assert "train" not in result
+
+
+def test_parse_hf_trainer_malformed_json():
+    """HF Trainer line that looks right but has invalid JSON content."""
+    line = "{'key': undefined}"
+    result = parse_hf_trainer_line(line)
+    assert result == {}
+
+
+def test_parse_kv_line_nan_bare():
+    """KV line with 'nan' value should parse as float NaN."""
+    line = "loss=nan lr=0.001"
+    result = parse_kv_line(line)
+    assert math.isnan(result["loss"])
+    assert result["lr"] == 0.001

@@ -57,6 +57,7 @@ If the watched metric is not found in the parsed records, attempt auto-detection
 
 1. **Case-insensitive match:** Try `metric_to_watch.lower()` against all keys lowercased
 2. **Prefix variants:** Try `train_<metric>`, `val_<metric>`, `<metric>_train` (e.g., `loss` → `train_loss`, `val_loss`)
+   **Disambiguation:** If multiple prefix variants match (e.g., both `train_loss` and `val_loss`), prefer `val_<metric>` — validation loss is a better divergence signal than training loss. Log which variant was selected to dev_notes.
 3. **Substring match:** Look for any key containing `metric_to_watch` as a substring (e.g., `"loss"` matches `"total_loss"`)
 4. **Report missing:** If no match found after all fallbacks, log a warning and report the available metric names to the orchestrator. Do not treat this as divergence. Return status `unmonitored` with the list of available metrics. The orchestrator handles this status by continuing without divergence checks but with a hard timeout fallback.
 
@@ -107,9 +108,9 @@ If divergence is detected:
    **Warning:** Never use bare `pkill -f "<exp_id>"` — it could match unrelated processes.
 
 2. **Record the divergence:**
-   - Read the current experiment result file
-   - Update status to `"diverged"`
-   - Add divergence details to notes:
+   - Read the current experiment result file (if it exists)
+   - **Ownership check:** If the file already has `status: "completed"` or `status: "failed"`, do NOT overwrite — the experiment finished first. Log to dev_notes: "Monitor detected divergence for <exp_id> but experiment already completed with status '<status>' — skipping overwrite." Skip to step 3.
+   - If the file does not exist, or has `status: "running"`: update status to `"diverged"` and add divergence details to notes:
      ```json
      {
        "status": "diverged",

@@ -219,6 +219,7 @@ Return to the orchestrator:
 - List of proposed configs (exp_id, config, gpu_id)
 - Reasoning summary
 - Any concerns or notes (e.g., "approaching diminishing returns")
+- Recommendation: `"continue"` or `"stop"` (see "When to Recommend Stopping" below)
 
 ## When to Recommend Stopping
 

@@ -58,8 +58,9 @@ Before building the training command, verify:
    Warn if less than 5 GB free.
 
 2. **Timeout enforcement:** Compute a timeout for the training command:
-   - If `baseline.json` has `profiling.throughput_samples_per_sec`: `timeout_seconds = int(1.5 × (dataset_size × epochs) / throughput)`
-   - If profiling unavailable: `timeout_seconds = 14400` (4 hours default)
+   - If `baseline.json` has `profiling.estimated_timeout_seconds` (tabular ML): `timeout_seconds = profiling.estimated_timeout_seconds`
+   - Else if `baseline.json` has `profiling.throughput_samples_per_sec` (iterative DL): `timeout_seconds = int(1.5 × (dataset_size × epochs) / throughput)`
+   - If neither available: `timeout_seconds = 14400` (4 hours default)
    - Cap at 86400 (24 hours maximum)
    - Store `timeout_seconds` for use in Step 3 script generation
 
@@ -191,6 +192,8 @@ After training completes:
    - Best metric value (PSNR, accuracy, etc.)
    - Training duration
    - Any other relevant metrics
+
+4. **Validate required metrics:** Ensure `metrics` includes the `divergence_metric` (for monitor) and `primary_metric` (for analyze/hp-tune). If either is missing from parsed output, check the raw log for alternative names (e.g., `train_loss`, `val_loss`). If a match is found, include it under both the original and canonical name. If not found, set to `null` and log a warning.
 
 ## Step 6: Write Results
 

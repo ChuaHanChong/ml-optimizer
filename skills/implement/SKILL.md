@@ -102,7 +102,7 @@ cd <project_root> && git rev-parse --is-inside-work-tree 2>/dev/null
 - Back up files to `experiments/backups/<slug>/` before each modification
 - Apply changes sequentially, validating after each
 
-## Step 3.5: Parallel Implementation (Git Strategy Only)
+## Step 3.1: Parallel Implementation (Git Strategy Only)
 
 **If `strategy == "git_branch"` AND more than one proposal is selected:**
 
@@ -136,6 +136,26 @@ Proposals can be implemented in parallel using git worktrees. Each proposal gets
 **If `strategy == "file_backup"` OR only 1 proposal selected:**
 
 Skip this step. Use the sequential flow in Step 4 below.
+
+## Step 3.2: Pre-Flight File Existence Validation
+
+Before starting any implementation (parallel or sequential), validate that all target files exist:
+
+**File-backup strategy note:** For `strategy == "file_backup"`, pre-flight validation is critical because there is no branch isolation. If implementation fails mid-way, the working directory may be corrupted. Verify the baseline backup (`experiments/backups/_baseline/`) is intact before proceeding with other proposals.
+
+For each proposal:
+
+1. **Check every path in `files_to_modify`:**
+   - Use Glob or `test -f` to verify each file exists under `<project_root>`
+
+2. **If any file is missing:**
+   a. **Search for similar files** using Glob: `**/<filename>` and `**/<filename_stem>*<extension>`
+      - If matches found: log candidates to dev_notes
+   b. **Classify viability:**
+      - If ALL `files_to_modify` are missing: mark proposal as `status: "preflight_failed"`, set `notes: "All target files missing"`. Skip this proposal entirely. Log to error tracker: `category: "implementation_error", severity: "warning", source: "implement", message: "Pre-flight failed: all files missing for proposal <name>"`
+      - If SOME missing but others exist: log warning to dev_notes. Check if proposal's implementation steps mention creating these files (expected-missing). If so, proceed. If not, log the gap but still attempt implementation.
+
+3. **Remove preflight-failed proposals** from the active list before passing to Step 3.1 (parallel) or Step 4 (sequential). Include them in the manifest with `status: "preflight_failed"`.
 
 ## Step 4: Implement Each Proposal (Sequential)
 
@@ -382,7 +402,7 @@ New dependencies needed (install before experiments):
 
 ## Error Handling
 
-- **File not found:** If a file listed in the proposal doesn't exist, report it and skip that file. Mark the proposal as `implementation_error`. Log to error tracker:
+- **File not found (during implementation):** If a file listed in the proposal doesn't exist, report it and skip that file. Mark the proposal as `implementation_error`. Log to error tracker:
   ```bash
   python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"implementation_error","severity":"warning","source":"implement","message":"File not found: <file_path> for proposal <name>","context":{"proposal_name":"<name>","proposal_slug":"<slug>"}}'
   ```

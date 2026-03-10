@@ -69,7 +69,7 @@ correlation data. Format this into the "Hyperparameter Sensitivity" table:
 - Show direction (lower/higher correlates with better metric)
 - For categorical params, show most common value in top vs bottom performers
 
-## Step 2.7: Three-Tier Results (if method proposals were used)
+## Step 2.2: Three-Tier Results (if method proposals were used)
 
 If any experiments have `method_tier` fields (from research or method proposals), compile a three-tier comparison:
 

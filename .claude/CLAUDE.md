@@ -168,6 +168,10 @@ The orchestrator can be stopped and resumed. On restart it reads `pipeline-state
 - **Concurrent-safe error logging**: `error_tracker.py` uses `fcntl.flock()` file locking around the read-modify-write in `log_event()` to prevent concurrent agents from losing events.
 - **Result file filtering**: `result_analyzer.py` only loads `exp-*.json` and `baseline.json` files, preventing non-experiment files from inflating counts.
 - **HuggingFace Trainer log format**: `parse_logs.py` detects and parses HuggingFace Trainer's single-quote Python dict format (`{'loss': 0.5, 'epoch': 1.0}`).
+- **Baseline eval auto-fallback**: In autonomous mode, if no eval command is found, baseline uses training output metrics instead of blocking on user input.
+- **Pre-flight file validation**: The implement skill validates all `files_to_modify` exist before creating branches or starting implementation. Missing-file proposals are marked `preflight_failed`.
+- **Early batch abort**: If >= 2 experiments diverge within 60 seconds of start, remaining experiments in the batch are cancelled to save compute.
+- **Tabular ML adaptive timeout**: For non-iterative frameworks, experiment timeout is computed from `fit_duration * (max_iters / profiling_iters) * 2` instead of a generic 4-hour fallback.
 
 ## Test Fixtures
 

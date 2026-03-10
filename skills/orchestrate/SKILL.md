@@ -207,7 +207,13 @@ Invoke the `ml-optimizer:prerequisites` skill with:
 - `ready_for_baseline = true` → proceed to Phase 3
 - **If `budget_mode == "autonomous"`:**
   - `status = "partial"` → log warnings to `experiments/dev_notes.md`: "Prerequisites partial — proceeding anyway (autonomous mode)." Proceed to Phase 3.
-  - `status = "failed"` → BLOCK: use AskUserQuestion even in autonomous mode (unrecoverable without user input).
+  - `status = "failed"` → Classify the failure reason from `prerequisites.json`:
+    - **Data path invalid / not found:** If `budget_mode == "autonomous"`, attempt auto-recovery: search the project for data files, check the training script for auto-download patterns (CIFAR, MNIST, HuggingFace `load_dataset`). If a plausible path is found, update `train_data_path`/`val_data_path` and re-run Phase 2. If not found: BLOCK with AskUserQuestion.
+    - **Dependency install failed:** If `budget_mode == "autonomous"`, retry install once with `--no-deps`, then check if import still fails. If still fails: BLOCK with AskUserQuestion.
+    - **Environment not found:** If `budget_mode == "autonomous"` and env_manager is conda, auto-create the environment. If creation also fails: BLOCK.
+    - **Dry-run failed:** If `budget_mode == "autonomous"`, log error and attempt Phase 3 anyway (baseline may succeed where dry-run failed). If baseline also fails, exit via Phase 3 failure path.
+    - **All other failures:** BLOCK with AskUserQuestion (unrecoverable without user input).
+    - Log all auto-recovery attempts to dev_notes and error tracker with `category: "config_error", severity: "warning", source: "orchestrate"`.
 - **Otherwise (interactive/auto/custom):**
   - `status = "partial"` → inform user of issues, ask if they want to proceed anyway or fix first
   - `status = "failed"` → diagnose from `prerequisites.json` error details:
@@ -274,6 +280,8 @@ If baseline fails, diagnose from the error message in baseline.json or error tra
 **Autonomous mode Phase 3 unknown error:** If `budget_mode == "autonomous"` and baseline fails with an unknown error after 2 retries: log the full error to error tracker with `category: "agent_failure", severity: "critical"`, log to dev_notes: "Baseline failed after 2 retries with unknown error — exiting with partial results (autonomous mode)". Exit the pipeline and proceed to Phase 7 (report) with whatever partial results exist. Do NOT use AskUserQuestion.
 
 **Skip-baseline fallback:** If all retries fail, offer to create a synthetic baseline.json with user-provided metric values. Mark profiling fields as `null`. This allows the experiment loop to proceed without throughput-based timeout estimation.
+
+**Autonomous mode:** If `budget_mode == "autonomous"`, do NOT create a synthetic baseline (no user to provide metric values). Instead, exit the pipeline and proceed to Phase 7 (report) with partial results. Log to error tracker: `category: "agent_failure", severity: "critical", source: "orchestrate", message: "Baseline failed — cannot create synthetic baseline in autonomous mode"`.
 
 ## Phase 4: User Checkpoint (Post-Baseline)
 
@@ -388,7 +396,10 @@ If the user selected research proposals that require code changes (not just HP t
 
 5. **If conflicts detected** → Inform user which proposals touch the same files. Each is on its own branch, so experiments run independently, but merging winners later may need manual conflict resolution.
 
-6. **Post-implementation quality review** (optional):
+6. **Post-implementation quality review** (skip in autonomous mode):
+   **Autonomous mode auto-skip:** If `budget_mode == "autonomous"`, skip code review to avoid blocking the pipeline. The experiment loop catches broken implementations via early abort. Log to dev_notes: "Skipping post-implementation code review (autonomous mode)."
+
+   **Otherwise:**
    For validated proposals, dispatch `feature-dev:code-reviewer` to review each implementation branch for bugs, logic errors, and code quality issues. This catches problems before wasting experiment budget on broken implementations.
    - Only review proposals with `status: "validated"` in the manifest
    - If the reviewer flags critical issues, mark the proposal as `validation_failed` and skip it
@@ -422,6 +433,7 @@ If `experiments/results/implementation-manifest.json` exists:
 1. Read the manifest
 2. Collect all proposals with `"status": "validated"` — skip any with `"status": "validation_failed"` or `"status": "implementation_error"`
 3. Each validated proposal branch will be tested with HP tuning
+   **Branch existence validation:** Before passing `code_branches` to hp-tune, verify each branch exists via `git rev-parse --verify <branch>`. Remove missing branches and log to error tracker.
 4. Also test the baseline (original branch, HP-only) for comparison
 5. **Non-git detection:** If manifest has `"strategy": "file_backup"`, force sequential execution (only ONE experiment at a time)
 
@@ -564,7 +576,9 @@ When the implementation manifest contains multiple code branches:
    1. **Validate output:** Check each proposed config has required fields (`exp_id`, `config`, `gpu_id`), values are within search space bounds, and no duplicates of previously-tried configs.
    2. **If validation fails:** Retry hp-tune once with a simplified prompt: "Propose {N} configs within these ranges: {search_space}. Return valid JSON only."
    3. **If retry also fails:** Fall back to random sampling — pick `lr` uniformly from search space log-range, `batch_size` from allowed set, other HPs at baseline values. The orchestrator constructs the JSON directly.
-   4. **If all fallbacks fail:** Ask user to provide configs manually via AskUserQuestion.
+   4. **If random sampling also fails** (construction error):
+      - **Autonomous mode:** If `budget_mode == "autonomous"`, use the baseline config as-is for all experiments in this batch (re-validates baseline, keeps loop alive). Log to error tracker: `category: "agent_failure", severity: "critical", source: "orchestrate", message: "All HP-tune fallbacks failed — using baseline config as placeholder batch (autonomous mode)"`. Log to dev_notes: "HP-tune completely failed — running baseline-config batch as placeholder." Proceed to step 2 with baseline configs.
+      - **Interactive mode:** Ask user to provide configs manually via AskUserQuestion.
 
    Log each fallback step to error tracker with `category: "agent_failure"`, `source: "orchestrate"`.
 
@@ -592,9 +606,25 @@ When the implementation manifest contains multiple code branches:
      - `no_output`: Log file has no parseable data yet — continue monitoring (normal for early training)
    - **If `divergence_metric` is null** (tabular ML — scikit-learn, XGBoost, LightGBM): skip the monitor skill entirely. Wait for experiments to complete naturally without divergence monitoring.
 
+   ### Early Batch Abort on Mass Divergence
+
+   When monitoring a batch of experiments in parallel, track divergence timestamps:
+
+   - **Trigger:** If `>= 2` experiments in the same batch diverge AND all divergences occurred within 60 seconds of their respective start times:
+     1. Cancel remaining running experiments in the batch (kill processes)
+     2. Mark cancelled experiments as `status: "cancelled"` with `notes: "Early batch abort — mass divergence detected"`
+     3. Log to error tracker: `category: "experiment_failure", severity: "critical", source: "orchestrate", message: "Early batch abort: <N_diverged> of <batch_size> experiments diverged within 60s of start"`
+     4. Log to dev_notes: "Early batch abort at iteration <N>: <diverged_count> experiments diverged within 60s. Cancelled <cancelled_count> remaining."
+     5. Proceed directly to step 4 with partial results
+   - **Rationale:** Divergence within 60 seconds indicates a systematic config problem (LR too high, NaN initialization) that will affect all similar configs. Two or more confirms it's systematic, not a fluke.
+
 4. **Wait for completion:**
    - All experiments in the batch must complete (or be stopped) before analysis
-   - **Experiment timeout:** Each experiment has a hard timeout of `max_experiment_duration = baseline_training_time * 3` (where `baseline_training_time` is from baseline profiling). If no baseline profiling is available (profiling fields are `null`), use a fallback timeout of 6 hours. If an experiment exceeds the timeout:
+   - **Experiment timeout:** Each experiment has a hard timeout computed as:
+     - If `baseline.json` has `profiling.estimated_timeout_seconds` (tabular ML): use that value directly
+     - Else if `baseline.json` has throughput profiling: `max_experiment_duration = baseline_training_time * 3`
+     - Else (no profiling): fallback to 21600 seconds (6 hours)
+     If an experiment exceeds the timeout:
      1. Kill the experiment process
      2. Set `status: "timeout"` in the experiment result JSON
      3. Log to error tracker: `category: "experiment_failure", severity: "warning", message: "Experiment <exp_id> timed out after <duration>s (limit: <max_duration>s)"`
@@ -623,6 +653,8 @@ When the implementation manifest contains multiple code branches:
      ```
    - If `remaining_budget <= max(num_gpus, 1)`: skip speculative hp-tune (not enough budget for another full batch)
    - Analyze completes first (it's synchronous). Speculative hp-tune may still be running.
+   - **Wait policy:** If analyze says "continue" and speculative hp-tune has not completed, wait up to 120 seconds. If it completes in time, validate and use. If it doesn't, discard and invoke hp-tune synchronously. Log timeout to error tracker with `category: "agent_failure", severity: "info"`.
+   - If analyze says "pivot" or "stop", discard speculative hp-tune immediately — do not wait.
 
 6. **Decision:**
    - If analyze says **continue** AND speculative proposals are available and valid:
@@ -631,6 +663,14 @@ When the implementation manifest contains multiple code branches:
      - Discard speculative proposals (if Agent failure, log to error tracker with `category: "agent_failure", source: "orchestrate"`). Invoke hp-tune synchronously → loop back to step 2
    - If analyze says **pivot**:
      - Discard speculative proposals. Apply pivot adjustments → invoke hp-tune synchronously → loop back to step 2
+     **Pivot dispatch by type:**
+     - `"branch_test"`: Pass analyze's suggestion to hp-tune. Generate configs for untested branches with baseline HPs. No research needed.
+     - `"hp_expand"`: Widen the search space around the best config (extend LR range by 2× in each direction). Pass updated `search_space` to hp-tune.
+     - `"narrow_space"`: Constrain the search space to the range around the best result (analyze's `suggestion` field contains bounds). Pass narrowed `search_space` to hp-tune.
+     - `"regularization"`: Add regularization HPs (weight_decay, dropout) to the search space or expand their range. Pass updated `search_space` to hp-tune. No research needed.
+     - `"research"`: Route to step 6.1 (same as `method_proposal`). Requires `remaining_budget >= 5`.
+     - `"method_proposal"`, `"qualitative_change"`: Route to step 6.1 (existing handling). Requires `remaining_budget >= 3`.
+     - **Unknown pivot_type:** Treat as `"hp_expand"` (safest default). Log to error tracker.
    - If analyze says **stop**:
      - Discard speculative proposals.
      - In `"auto"` or `"custom"` mode: exit loop
@@ -753,6 +793,7 @@ When the implementation manifest contains multiple code branches:
      - If completed successfully: read suggestions and apply course corrections (narrow search space, prune branches, stop)
      - If completed with error or no output: log as `agent_failure` to error tracker, skip course corrections for this iteration
      - If still running: continue without waiting (suggestions will be applied in the following iteration)
+   - **Design note:** Applying review suggestions one batch late is intentional — blocking the pipeline to wait for review would waste GPU time. Review suggestions are strategic (search space narrowing, branch pruning), so a one-batch delay is acceptable.
    - Log: "Mid-pipeline review started in background (autonomous mode)"
 
    **Otherwise (interactive/auto/custom):**
@@ -768,6 +809,8 @@ When the implementation manifest contains multiple code branches:
      ```bash
      python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"orchestrate","message":"Mid-pipeline review triggered after consecutive failures","phase":6,"iteration":<iteration>,"context":{"trigger":"consecutive_failures"}}'
      ```
+
+8. **Loop back:** After steps 6/6.1/6.8/7, increment `batches_since_last_research` and return to step 1 (Get HP configs). The loop continues until the Decision step (6) or budget exhaustion forces an exit.
 
 ### Speculative Proposal Validation
 
@@ -918,7 +961,7 @@ All state is persisted in the `experiments/` directory:
 
 The orchestrator can be stopped and resumed:
 1. On start, check for `pipeline-state.json` via `pipeline_state.load_state()`
-2. If state exists and status is "running", run `pipeline_state.cleanup_stale()` to handle interrupted experiments
+2. If state exists and status is "running", run `pipeline_state.cleanup_stale()` to handle interrupted experiments. This uses a 2-hour timeout: any experiment with status: "running" last modified >2 hours ago is marked status: "failed" with notes: "Marked failed by cleanup_stale — presumed interrupted". Log cleaned-up items to dev_notes before resuming.
 3. Restore Phase 0 user choices from `state["user_choices"]` (primary_metric, divergence_metric, lower_is_better, target_value, train_command, eval_command, train_data_path, val_data_path, prepared_train_path, prepared_val_path, env_manager, env_name) — do NOT re-ask the user
 4. Resume from the recorded phase and iteration
 5. Read all past results to understand what has been tried

@@ -35,7 +35,7 @@ This returns structured proposals with names, slugs, files to modify, and implem
 
 If no findings file exists, ask the user to run the `ml-optimizer:research` skill first.
 
-## Step 1.5: Classify Proposals by Strategy
+## Step 1.1: Classify Proposals by Strategy
 
 Group proposals by their `implementation_strategy` field:
 
@@ -71,7 +71,19 @@ cd <project_root> && git rev-parse --is-inside-work-tree 2>/dev/null
   ```bash
   git status --porcelain
   ```
-  If output is non-empty (dirty working tree), use AskUserQuestion:
+  If output is non-empty (dirty working tree):
+
+  **Autonomous mode dirty-tree handling:**
+  If `budget_mode == "autonomous"` and `git status --porcelain` shows uncommitted changes:
+  1. Run `git stash --include-untracked`
+  2. Log to dev_notes: "Auto-stashed working tree changes (autonomous mode)"
+  3. Set `auto_stashed = true` for later restoration
+  4. After all implementation is complete (end of Step 7), if `auto_stashed`:
+     - Run `git stash pop`
+     - Log to dev_notes: "Restored auto-stashed changes"
+
+  **Interactive mode (default):**
+  If `budget_mode != "autonomous"` (or not set), use AskUserQuestion:
   ```
   Your working tree has uncommitted changes. These changes would be carried into
   all proposal branches, which could contaminate the baseline comparison.
@@ -82,7 +94,7 @@ cd <project_root> && git rev-parse --is-inside-work-tree 2>/dev/null
 
   Then re-run the implement skill.
   ```
-  Do NOT proceed with branch creation on a dirty working tree.
+  Do NOT proceed with branch creation on a dirty working tree in interactive mode.
 - Each proposal gets branch `ml-opt/<slug>`
 
 **If not a git repo (fallback):**
@@ -90,7 +102,62 @@ cd <project_root> && git rev-parse --is-inside-work-tree 2>/dev/null
 - Back up files to `experiments/backups/<slug>/` before each modification
 - Apply changes sequentially, validating after each
 
-## Step 4: Implement Each Proposal
+## Step 3.1: Parallel Implementation (Git Strategy Only)
+
+**If `strategy == "git_branch"` AND more than one proposal is selected:**
+
+Proposals can be implemented in parallel using git worktrees. Each proposal gets its own isolated worktree, avoiding checkout conflicts.
+
+1. **Create worktrees** for each proposal:
+   ```bash
+   git worktree add experiments/impl-worktrees/<slug> <original_branch>
+   ```
+
+2. **Dispatch implementation agents in parallel** — issue all Agent calls in a single message:
+   ```
+   For each proposal:
+     Agent(
+       description: "Implement proposal: <proposal_name>",
+       prompt: "Ultrathink. Implement the following ML research proposal in the worktree at experiments/impl-worktrees/<slug>. Project root (worktree): experiments/impl-worktrees/<slug>. Proposal: <full proposal details including name, slug, files_to_modify, implementation_steps, implementation_strategy>. After implementation: (1) validate syntax and imports using implement_utils.py, (2) create branch ml-opt/<slug>, (3) commit changes with message 'ml-opt: implement <proposal_name>', (4) report back with status, commit SHA, and any validation issues.",
+       subagent_type: "general-purpose",
+       run_in_background: true
+     )
+   ```
+
+3. **Wait for all agents to complete.** Collect results from each.
+
+4. **Clean up worktrees:**
+   ```bash
+   git worktree remove experiments/impl-worktrees/<slug>
+   ```
+
+5. Proceed directly to Step 5 (Write Implementation Manifest) with the collected results.
+
+**If `strategy == "file_backup"` OR only 1 proposal selected:**
+
+Skip this step. Use the sequential flow in Step 4 below.
+
+## Step 3.2: Pre-Flight File Existence Validation
+
+Before starting any implementation (parallel or sequential), validate that all target files exist:
+
+**File-backup strategy note:** For `strategy == "file_backup"`, pre-flight validation is critical because there is no branch isolation. If implementation fails mid-way, the working directory may be corrupted. Verify the baseline backup (`experiments/backups/_baseline/`) is intact before proceeding with other proposals.
+
+For each proposal:
+
+1. **Check every path in `files_to_modify`:**
+   - Use Glob or `test -f` to verify each file exists under `<project_root>`
+
+2. **If any file is missing:**
+   a. **Search for similar files** using Glob: `**/<filename>` and `**/<filename_stem>*<extension>`
+      - If matches found: log candidates to dev_notes
+   b. **Classify viability:**
+      - If ALL `files_to_modify` are missing: mark proposal as `status: "preflight_failed"`, set `notes: "All target files missing"`. Skip this proposal entirely. Log to error tracker: `category: "implementation_error", severity: "warning", source: "implement", message: "Pre-flight failed: all files missing for proposal <name>"`
+      - If SOME missing but others exist: log warning to dev_notes. Check if proposal's implementation steps mention creating these files (expected-missing). If so, proceed. If not, log the gap but still attempt implementation.
+
+3. **Remove preflight-failed proposals** from the active list before passing to Step 3.1 (parallel) or Step 4 (sequential). Include them in the manifest with `status: "preflight_failed"`.
+
+## Step 4: Implement Each Proposal (Sequential)
 
 For each selected proposal, in order:
 
@@ -273,6 +340,15 @@ from implement_utils import write_manifest
 write_manifest("experiments/results/implementation-manifest.json", manifest_data)
 ```
 
+## Step 5.1: Validate Manifest
+
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/schema_validator.py \
+  experiments/results/implementation-manifest.json manifest
+```
+
+If validation fails, fix the manifest and re-validate before proceeding.
+
 ## Step 6: Write Dev Notes
 
 Write a summary to `experiments/reports/implementation-summary.md`:
@@ -326,7 +402,7 @@ New dependencies needed (install before experiments):
 
 ## Error Handling
 
-- **File not found:** If a file listed in the proposal doesn't exist, report it and skip that file. Mark the proposal as `implementation_error`. Log to error tracker:
+- **File not found (during implementation):** If a file listed in the proposal doesn't exist, report it and skip that file. Mark the proposal as `implementation_error`. Log to error tracker:
   ```bash
   python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"implementation_error","severity":"warning","source":"implement","message":"File not found: <file_path> for proposal <name>","context":{"proposal_name":"<name>","proposal_slug":"<slug>"}}'
   ```
@@ -344,11 +420,13 @@ New dependencies needed (install before experiments):
 ## Non-Git Fallback Details
 
 When using `file_backup` strategy:
-1. Before each proposal: backup all target files to `experiments/backups/<slug>/`
-2. Apply changes to the original files
+1. **Before the first proposal:** Create a baseline backup of ALL files that ANY proposal will modify → `experiments/backups/_baseline/`. This is the clean reference state.
+2. **Before each proposal:** Restore ALL target files from `experiments/backups/_baseline/` first (ensures a clean slate). Then apply this proposal's changes.
 3. Validate
-4. If validation fails: restore from backup
-5. If validation passes: leave changes in place, but note that only ONE proposal can be active at a time
+4. If validation fails: restore from baseline backup
+5. If validation passes: backup the modified state to `experiments/backups/<slug>/`, then restore from baseline backup (return to clean state before next proposal)
 6. The manifest records backup paths instead of branch names
 
-**Limitation:** With file backup, proposals cannot be tested in parallel. The experiment skill must restore backups between runs.
+**Critical:** The restore-before-apply pattern (step 2) prevents proposal A's changes from leaking into proposal B's code. Each proposal is validated and backed up independently against the original code.
+
+**Limitation:** With file backup, proposals cannot be tested in parallel. The experiment skill must restore each proposal's backup before running its experiments, then restore baseline before the next proposal's experiments.

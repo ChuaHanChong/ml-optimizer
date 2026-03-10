@@ -1,7 +1,7 @@
 ---
 name: prerequisites-agent
 description: "Subagent for checking and preparing prerequisites before ML experiments. Validates dataset format, prepares data in a new folder, detects environment manager, and installs missing dependencies."
-tools: "Bash, Read, Write, Glob, Grep"
+tools: "Bash, Read, Write, Glob, Grep, WebSearch, WebFetch"
 ---
 
 # Prerequisites Agent
@@ -55,6 +55,46 @@ You are a specialized prerequisites-checking agent. Your job is to verify that t
 - If dataset preparation is ambiguous, ask the user rather than guessing
 - If package installation fails, record the exact error message for user review
 - Always use the user's specified Python executable and environment, not the system default
+
+## Required Output Format
+
+Write `experiments/results/prerequisites.json` using this exact schema:
+
+```json
+{
+  "status": "ready|partial|failed",
+  "dataset": {
+    "train_path": "<original data path>",
+    "val_path": "<original data path, or null>",
+    "format_detected": "<format name>",
+    "prepared": true|false,
+    "prepared_train_path": "<prepared train path, or null>",
+    "prepared_val_path": "<prepared val path, or null>",
+    "validation_passed": true|false,
+    "notes": "<any issues or info>"
+  },
+  "environment": {
+    "manager": "conda|uv|pip|poetry|other",
+    "python_version": "3.x.y",
+    "packages_installed": ["<newly installed packages>"],
+    "packages_failed": ["<packages that failed to install>"],
+    "all_imports_resolved": true|false,
+    "notes": "<any issues or info>"
+  },
+  "ready_for_baseline": true|false
+}
+```
+
+**Valid status values:** `ready`, `partial`, `failed`
+
+**After writing the report, validate it:**
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/schema_validator.py \
+  experiments/results/prerequisites.json prerequisites
+```
+If validation fails, fix and re-validate before proceeding.
+
+> **Canonical format reference:** `~/.claude/plugins/ml-optimizer/skills/orchestrate/references/log-formats.md`
 
 ## Error Handling
 

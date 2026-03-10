@@ -14,6 +14,8 @@ def load_results(results_dir: str) -> dict[str, dict]:
     if not path.exists():
         return results
     for f in sorted(path.glob("*.json")):
+        if f.stem.lower() != "baseline" and not f.stem.startswith("exp-"):
+            continue
         try:
             data = json.loads(f.read_text())
             results[f.stem] = data
@@ -194,6 +196,19 @@ def identify_correlations(results: dict[str, dict], metric: str, lower_is_better
             })
 
     return {"correlations": correlations}
+
+
+def group_by_method_tier(results: dict[str, dict]) -> dict[str, list[dict]]:
+    """Group experiments by method_tier for three-tier analysis.
+
+    Tiers: baseline, method_default_hp, method_tuned_hp.
+    Experiments without a method_tier field are grouped as 'unknown'.
+    """
+    groups: dict[str, list[dict]] = {}
+    for exp_id, data in results.items():
+        tier = data.get("method_tier", "unknown")
+        groups.setdefault(tier, []).append({"exp_id": exp_id, **data})
+    return {k: v for k, v in groups.items() if v}
 
 
 def analyze(results_dir: str, metric: str, baseline_id: str = "baseline", lower_is_better: bool = True) -> dict:

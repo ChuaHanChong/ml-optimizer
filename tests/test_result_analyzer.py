@@ -6,7 +6,7 @@ import pytest
 
 from conftest import _write_results
 
-from result_analyzer import load_results, rank_by_metric, compute_deltas, identify_correlations, analyze, spearman_correlation
+from result_analyzer import load_results, rank_by_metric, compute_deltas, identify_correlations, analyze, spearman_correlation, group_by_method_tier
 
 
 def test_load_results(tmp_path):
@@ -403,3 +403,107 @@ def test_cli_no_args(run_main):
     r = run_main("result_analyzer.py")
     assert r.returncode == 1
     assert "Usage" in r.stdout
+
+
+# --- group_by_method_tier tests ---
+
+
+def test_group_by_method_tier_mixed():
+    """Groups experiments by method_tier field."""
+    results = {
+        "baseline": {"method_tier": "baseline", "metrics": {"loss": 1.0}},
+        "exp-001": {"method_tier": "method_default_hp", "metrics": {"loss": 0.8}},
+        "exp-002": {"method_tier": "method_default_hp", "metrics": {"loss": 0.7}},
+        "exp-003": {"method_tier": "method_tuned_hp", "metrics": {"loss": 0.5}},
+    }
+    groups = group_by_method_tier(results)
+    assert len(groups["baseline"]) == 1
+    assert len(groups["method_default_hp"]) == 2
+    assert len(groups["method_tuned_hp"]) == 1
+    assert "unknown" not in groups
+
+
+def test_group_by_method_tier_missing_field():
+    """Experiments without method_tier go to 'unknown'."""
+    results = {
+        "baseline": {"metrics": {"loss": 1.0}},
+        "exp-001": {"method_tier": "method_default_hp", "metrics": {"loss": 0.8}},
+        "exp-002": {"metrics": {"loss": 0.6}},
+    }
+    groups = group_by_method_tier(results)
+    assert len(groups["unknown"]) == 2
+    assert len(groups["method_default_hp"]) == 1
+
+
+def test_group_by_method_tier_empty():
+    """Empty results returns empty dict."""
+    groups = group_by_method_tier({})
+    assert groups == {}
+
+
+def test_group_by_method_tier_preserves_exp_id():
+    """Each grouped entry includes exp_id."""
+    results = {
+        "exp-001": {"method_tier": "baseline", "metrics": {"loss": 0.5}},
+    }
+    groups = group_by_method_tier(results)
+    assert groups["baseline"][0]["exp_id"] == "exp-001"
+
+
+# --- load_results file filter tests ---
+
+
+class TestLoadResultsFileFilter:
+    """Verify load_results only loads baseline.json and exp-*.json files."""
+
+    def test_filters_non_result_files(self, tmp_path):
+        """Only baseline.json and exp-*.json are loaded; other JSON files are skipped."""
+        # Valid result files
+        (tmp_path / "baseline.json").write_text(
+            json.dumps({"experiment_id": "baseline", "metrics": {"accuracy": 0.85}})
+        )
+        (tmp_path / "exp-001.json").write_text(
+            json.dumps({"experiment_id": "exp-001", "metrics": {"accuracy": 0.90}})
+        )
+        # Files that should be filtered out
+        (tmp_path / "prerequisites.json").write_text(
+            json.dumps({"experiment_id": "prerequisites", "metrics": {"accuracy": 0.0}})
+        )
+        (tmp_path / "implementation-manifest.json").write_text(
+            json.dumps({"experiment_id": "manifest", "metrics": {"accuracy": 0.0}})
+        )
+
+        results = load_results(str(tmp_path))
+        assert len(results) == 2
+        assert "baseline" in results
+        assert "exp-001" in results
+        assert "prerequisites" not in results
+        assert "implementation-manifest" not in results
+
+    def test_multiple_exp_files(self, tmp_path):
+        """Multiple exp-*.json files are all loaded."""
+        for i in range(5):
+            (tmp_path / f"exp-{i:03d}.json").write_text(
+                json.dumps({"experiment_id": f"exp-{i:03d}", "metrics": {"loss": 0.5 - i * 0.05}})
+            )
+        (tmp_path / "some-other-file.json").write_text(
+            json.dumps({"experiment_id": "other", "metrics": {"loss": 1.0}})
+        )
+        results = load_results(str(tmp_path))
+        assert len(results) == 5
+        assert "some-other-file" not in results
+
+    def test_no_matching_files(self, tmp_path):
+        """Directory with only non-matching JSON files returns empty dict."""
+        (tmp_path / "prerequisites.json").write_text('{"status": "ok"}')
+        (tmp_path / "implementation-manifest.json").write_text('{"proposals": []}')
+        results = load_results(str(tmp_path))
+        assert results == {}
+
+
+class TestEmptyInputEdgeCases:
+    """Edge case tests for empty inputs (Task 3.5)."""
+
+    def test_rank_by_metric_empty(self):
+        result = rank_by_metric({}, "accuracy")
+        assert result == []

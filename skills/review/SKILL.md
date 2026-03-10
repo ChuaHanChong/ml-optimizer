@@ -55,7 +55,7 @@ python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> patte
    python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> cleanup ~/.claude/plugins/ml-optimizer 10
    ```
 
-## Step 1.5: Read Target Plugin Files
+## Step 1.1: Read Target Plugin Files
 
 Based on which error categories are present, read the relevant plugin files so suggestions are grounded in reality:
 
@@ -72,7 +72,7 @@ Based on which error categories are present, read the relevant plugin files so s
 
 **Why this matters:** You cannot suggest "add a batch_size cap to hp-tune Step 2" without reading what Step 2 currently says. Read the files first, then propose specific edits.
 
-## Step 1.6: Compute Success Metrics
+## Step 1.2: Compute Success Metrics
 
 Run the success metrics analyzer to understand what *worked*, not just what failed:
 
@@ -88,7 +88,7 @@ This returns:
 - Top performing configs and worst performing configs
 - Time wasted on failures as a percentage
 
-## Step 1.7: Compute Proposal Outcomes
+## Step 1.3: Compute Proposal Outcomes
 
 Run the proposal outcome tracker to understand which decisions paid off:
 
@@ -101,7 +101,7 @@ This returns:
 - HP proposal stats: total proposed vs run vs completed vs beat baseline
 - Implementation stats: validated vs failed validation vs implementation error
 
-## Step 1.8: Load Suggestion History
+## Step 1.4: Load Suggestion History
 
 Check if this pattern was previously suggested in an earlier review:
 
@@ -141,7 +141,7 @@ For each issue:
 - **Warning:** Degrades optimization quality. Should be addressed.
 - **Info:** Optimization opportunity. Nice to have.
 
-## Step 3.5: Rank and Prioritize Issues
+## Step 3.1: Rank and Prioritize Issues
 
 Rank all detected patterns by impact score:
 
@@ -155,7 +155,7 @@ When scope includes cross-project (`"both"` or `"cross-project"`), pass the plug
 python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> rank <total_experiments> ~/.claude/plugins/ml-optimizer
 ```
 
-Where `<total_experiments>` is the `total_experiments` value from Step 1.6 success metrics (omit if Step 1.6 was skipped). This returns patterns sorted by score (severity weight × occurrences × cross-project boost), with a `significance` field when total_experiments is provided. Use this ranking to order your suggestions — highest score first. In Step 6, present only the top 3 most impactful suggestions to the user.
+Where `<total_experiments>` is the `total_experiments` value from Step 1.2 success metrics (omit if Step 1.2 was skipped). This returns patterns sorted by score (severity weight × occurrences × cross-project boost), with a `significance` field when total_experiments is provided. Use this ranking to order your suggestions — highest score first. In Step 6, present only the top 3 most impactful suggestions to the user.
 
 ## Step 4: Generate Improvement Suggestions
 
@@ -180,10 +180,10 @@ For each detected pattern (in rank order), generate a specific, actionable sugge
 1. **Be specific.** "Improve error handling" is useless. "Add a batch_size cap of 128 to hp-tune Step 2 when GPU memory < 12GB" is actionable.
 2. **Reference evidence.** Every suggestion must cite at least one error event, pattern, or experiment result.
 3. **Target the right file.** If the problem is in HP proposals, target `skills/hp-tune/SKILL.md`, not a random script.
-4. **Quote current behavior.** You read the file in Step 1.5 — quote the relevant section so the user can verify.
+4. **Quote current behavior.** You read the file in Step 1.1 — quote the relevant section so the user can verify.
 5. **Consider side effects.** Will this change break other skills or narrow the search space too much?
 6. **Cross-project suggestions get higher confidence** when the same pattern appears in 2+ projects.
-7. **Check for repeats.** If this pattern was previously suggested (from Step 1.8), reduce confidence by one level (High→Medium, Medium→Low) and note "Previously suggested (iteration N)" in the Evidence field. Skip Low-confidence repeats entirely — they've been flagged enough times without action.
+7. **Check for repeats.** If this pattern was previously suggested (from Step 1.4), reduce confidence by one level (High→Medium, Medium→Low) and note "Previously suggested (iteration N)" in the Evidence field. Skip Low-confidence repeats entirely — they've been flagged enough times without action.
 
 ### Error-Based Suggestion Types
 
@@ -294,7 +294,7 @@ Write the review to `<exp_root>/reports/session-review.md`:
 - [Suggestions that would improve the plugin for all projects]
 ```
 
-## Step 5.5: Log Generated Suggestions
+## Step 5.1: Log Generated Suggestions
 
 After writing the review, log each generated suggestion so future reviews can detect repeats:
 

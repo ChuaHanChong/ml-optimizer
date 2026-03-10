@@ -19,8 +19,10 @@ EXPERIMENT_RESULT_REQUIRED = ["exp_id", "status", "config", "metrics"]
 EXPERIMENT_RESULT_OPTIONAL = [
     "gpu_id", "duration_seconds", "log_file", "script_file",
     "code_branch", "code_proposal", "notes",
+    "method_tier", "proposal_source", "iteration",
 ]
-VALID_STATUSES = ["completed", "failed", "diverged", "running", "pending"]
+VALID_METHOD_TIERS = ["baseline", "method_default_hp", "method_tuned_hp"]
+VALID_STATUSES = ["completed", "failed", "diverged", "running", "pending", "timeout"]
 
 BASELINE_REQUIRED = ["exp_id", "status", "config", "metrics"]
 BASELINE_OPTIONAL = ["profiling", "eval_command", "train_command", "notes"]
@@ -35,6 +37,7 @@ PROPOSAL_OPTIONAL = [
     "commit_sha", "notes", "type",
     "implementation_strategy", "reference_repo", "reference_files_used",
     "adaptation_notes", "files_created", "license_warning", "new_dependencies",
+    "proposal_source",
 ]
 VALID_PROPOSAL_STATUSES = ["validated", "validation_failed", "implementation_error"]
 VALID_IMPLEMENTATION_STRATEGIES = ["from_scratch", "from_reference"]
@@ -100,6 +103,11 @@ def validate_result(data: dict) -> dict:
 
     if "config" in data and not isinstance(data["config"], dict):
         errors.append("'config' must be a dict")
+
+    if "method_tier" in data and data["method_tier"] not in VALID_METHOD_TIERS:
+        errors.append(
+            f"Invalid method_tier '{data['method_tier']}': must be one of {VALID_METHOD_TIERS}"
+        )
 
     return {"valid": len(errors) == 0, "errors": errors, "warnings": []}
 

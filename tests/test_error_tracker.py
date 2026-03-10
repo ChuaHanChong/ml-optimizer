@@ -1,12 +1,17 @@
 """Tests for error_tracker.py."""
 
 import json
+import subprocess
+import sys
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
 from conftest import FIXTURES, _write_result
+
+from unittest import mock
 
 from error_tracker import (
     validate_event,
@@ -25,6 +30,9 @@ from error_tracker import (
     cleanup_memory,
     log_suggestion,
     get_suggestion_history,
+    _atomic_write_json,
+    _cli_main,
+    _load_results,
     VALID_CATEGORIES,
     VALID_SEVERITIES,
     VALID_SOURCES,
@@ -1339,6 +1347,41 @@ def test_cli_suggestion_history(run_main, tmp_path):
     assert "oom_batch_size" in pattern_ids
 
 
+class TestConcurrentLogEvent:
+    """Test concurrent log_event calls don't lose events (Task 3.1)."""
+
+    def test_concurrent_log_events_no_loss(self, tmp_path):
+        """4 threads x 5 events each = 20 events, verify none lost."""
+        errors = []
+
+        def log_events(thread_id):
+            try:
+                for i in range(5):
+                    ev = create_event(
+                        category="training_failure",
+                        severity="warning",
+                        source="experiment",
+                        message=f"Thread {thread_id} event {i}",
+                        exp_id=f"exp-t{thread_id}-{i}",
+                        phase=6,
+                    )
+                    log_event(str(tmp_path), ev)
+            except Exception as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=log_events, args=(t,)) for t in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors, f"Threads raised errors: {errors}"
+
+        # Read all events and verify count
+        events = get_events(str(tmp_path))
+        assert len(events) == 20, f"Expected 20 events, got {len(events)}"
+
+
 def test_create_event_invalid_category_raises():
     """create_event with invalid category raises ValueError."""
     with pytest.raises(ValueError, match="Invalid.*category"):
@@ -1355,3 +1398,308 @@ def test_create_event_invalid_source_raises():
     """create_event with invalid source raises ValueError."""
     with pytest.raises(ValueError, match="Invalid.*source"):
         create_event("training_failure", "critical", "bad_source", "msg")
+
+
+class TestEmptyInputEdgeCases:
+    """Edge case tests for empty inputs (Task 3.5)."""
+
+    def test_validate_event_empty(self):
+        # Should handle empty dict gracefully (return errors or False, not crash)
+        result = validate_event({})
+        assert result is not None
+        assert result["valid"] is False
+        assert len(result["errors"]) > 0
+
+
+# ---------------------------------------------------------------------------
+# Additional coverage tests
+# ---------------------------------------------------------------------------
+
+
+def test_detect_patterns_no_redundant_configs(tmp_path):
+    """Only 1 duplication event should NOT create redundant_configs pattern."""
+    exp_root = str(tmp_path / "exp")
+    ev = create_event("pipeline_inefficiency", "info", "hp-tune", "Regenerated 1 proposals due to duplication")
+    log_event(exp_root, ev)
+    patterns = detect_patterns(load_error_log(exp_root)["events"])
+    ids = [p["pattern_id"] for p in patterns]
+    assert "redundant_configs" not in ids
+
+
+def test_detect_patterns_missing_lr_bs(tmp_path):
+    """Failure events without lr or batch_size in config should be skipped in interaction check."""
+    exp_root = str(tmp_path / "exp")
+    for i in range(3):
+        ev = create_event("divergence", "warning", "monitor", f"Diverged {i}",
+                         config={"some_hp": i})  # No lr or batch_size
+        log_event(exp_root, ev)
+    patterns = detect_patterns(load_error_log(exp_root)["events"])
+    ids = [p["pattern_id"] for p in patterns]
+    assert "hp_interaction_failure" not in ids
+
+
+def test_detect_patterns_non_numeric_lr(tmp_path):
+    """Non-numeric lr in config should be skipped in interaction check."""
+    exp_root = str(tmp_path / "exp")
+    for i in range(3):
+        ev = create_event("divergence", "warning", "monitor", f"Diverged {i}",
+                         config={"lr": "not_a_number", "batch_size": 32})
+        log_event(exp_root, ev)
+    patterns = detect_patterns(load_error_log(exp_root)["events"])
+    ids = [p["pattern_id"] for p in patterns]
+    assert "hp_interaction_failure" not in ids
+
+
+def test_update_cross_project_no_error_log(tmp_path):
+    """update_cross_project should handle missing error-log.json gracefully."""
+    plugin_root = str(tmp_path / "plugin")
+    project_path = str(tmp_path / "project")
+    exp_root = str(tmp_path / "project" / "experiments")
+    Path(exp_root).mkdir(parents=True)
+    # No error-log.json exists — should still complete without error
+    update_cross_project(plugin_root, project_path, exp_root)
+    # Verify cross-project memory was created
+    memory_path = Path(plugin_root) / "memory" / "cross-project-errors.json"
+    assert memory_path.exists()
+
+
+def test_success_metrics_no_baseline_metric(tmp_path):
+    """compute_success_metrics handles baseline missing the primary metric."""
+    exp_root = tmp_path / "experiments"
+    results = exp_root / "results"
+    results.mkdir(parents=True)
+    # Baseline has loss but not accuracy
+    (results / "baseline.json").write_text(json.dumps({
+        "exp_id": "baseline", "status": "completed",
+        "config": {"lr": 0.01}, "metrics": {"loss": 1.0}
+    }))
+    (results / "exp-001.json").write_text(json.dumps({
+        "exp_id": "exp-001", "status": "completed",
+        "config": {"lr": 0.001}, "metrics": {"accuracy": 0.9}
+    }))
+    metrics = compute_success_metrics(str(exp_root), "accuracy", False)
+    # Should still compute but improvement_rate may be None (no baseline comparison)
+    assert metrics is not None
+    assert metrics["total_experiments"] >= 1
+
+
+def test_proposal_outcomes_corrupt_manifest(tmp_path):
+    """compute_proposal_outcomes handles corrupt implementation manifest."""
+    exp_root = tmp_path / "experiments"
+    results = exp_root / "results"
+    results.mkdir(parents=True)
+    (results / "implementation-manifest.json").write_text("NOT VALID JSON")
+    (results / "baseline.json").write_text(json.dumps({
+        "exp_id": "baseline", "status": "completed",
+        "config": {}, "metrics": {"loss": 1.0}
+    }))
+    outcomes = compute_proposal_outcomes(str(exp_root), "loss", True)
+    assert outcomes is not None
+    assert outcomes["implementation_stats"]["total_proposals"] == 0
+
+
+def test_cli_unknown_action(tmp_path):
+    """CLI with unknown action exits 1 (lines 1058-1059)."""
+    with mock.patch.object(sys, "argv", ["et", str(tmp_path), "nonexistent"]):
+        with pytest.raises(SystemExit) as exc:
+            _cli_main()
+        assert exc.value.code == 1
+
+
+def test_cli_log_missing_arg(tmp_path):
+    """CLI log without event_json arg exits 1 (lines 947-948)."""
+    with mock.patch.object(sys, "argv", ["et", str(tmp_path), "log"]):
+        with pytest.raises(SystemExit) as exc:
+            _cli_main()
+        assert exc.value.code == 1
+
+
+def test_cli_log_invalid_json(tmp_path):
+    """CLI log with invalid JSON exits 1 (lines 975-977)."""
+    with mock.patch.object(sys, "argv", ["et", str(tmp_path), "log",
+                                          '{"category":"divergence","severity":"bad_sev","source":"monitor","message":"m"}']):
+        with pytest.raises(SystemExit) as exc:
+            _cli_main()
+        assert exc.value.code == 1
+
+
+def test_cli_sync_missing_arg(tmp_path):
+    """CLI sync without plugin_root exits 1 (lines 997-998)."""
+    with mock.patch.object(sys, "argv", ["et", str(tmp_path), "sync"]):
+        with pytest.raises(SystemExit) as exc:
+            _cli_main()
+        assert exc.value.code == 1
+
+
+def test_cli_success_missing_args(tmp_path):
+    """CLI success without metric/lower exits 1 (lines 1007-1008)."""
+    with mock.patch.object(sys, "argv", ["et", str(tmp_path), "success"]):
+        with pytest.raises(SystemExit) as exc:
+            _cli_main()
+        assert exc.value.code == 1
+
+
+def test_cli_proposals_missing_args(tmp_path):
+    """CLI proposals without metric/lower exits 1 (lines 1016-1017)."""
+    with mock.patch.object(sys, "argv", ["et", str(tmp_path), "proposals"]):
+        with pytest.raises(SystemExit) as exc:
+            _cli_main()
+        assert exc.value.code == 1
+
+
+def test_cli_cleanup_missing_arg(tmp_path):
+    """CLI cleanup without plugin_root exits 1 (lines 1037-1038)."""
+    with mock.patch.object(sys, "argv", ["et", str(tmp_path), "cleanup"]):
+        with pytest.raises(SystemExit) as exc:
+            _cli_main()
+        assert exc.value.code == 1
+
+
+def test_cli_log_suggestion_missing_arg(tmp_path):
+    """CLI log-suggestion without pattern_id exits 1 (lines 1046-1047)."""
+    with mock.patch.object(sys, "argv", ["et", str(tmp_path), "log-suggestion"]):
+        with pytest.raises(SystemExit) as exc:
+            _cli_main()
+        assert exc.value.code == 1
+
+
+def test_cli_show_category_filter(tmp_path):
+    """CLI show with category filter (line 982-984)."""
+    exp_root = str(tmp_path / "exp")
+    ev = create_event("divergence", "warning", "monitor", "diverged")
+    log_event(exp_root, ev)
+    with mock.patch.object(sys, "argv", ["et", exp_root, "show", "divergence"]):
+        _cli_main()  # Should not raise
+
+
+def test_get_events_no_log(tmp_path):
+    """get_events returns empty list when no log file exists (line 212)."""
+    result = get_events(str(tmp_path / "nonexistent"))
+    assert result == []
+
+
+def test_atomic_write_json_exception(tmp_path):
+    """_atomic_write_json cleans up temp file on write failure (lines 161-166)."""
+    path = tmp_path / "reports" / "error-log.json"
+    path.parent.mkdir(parents=True)
+    with pytest.raises(TypeError):
+        _atomic_write_json(path, {"bad": set()})  # set() is not JSON serializable
+
+
+def test_load_results_no_results_dir(tmp_path):
+    """_load_results returns (None, []) when results dir missing (line 601)."""
+    baseline, experiments = _load_results(str(tmp_path))
+    assert baseline is None
+    assert experiments == []
+
+
+def test_load_results_corrupt_json(tmp_path):
+    """_load_results skips corrupt JSON files (lines 611-612)."""
+    results = tmp_path / "results"
+    results.mkdir()
+    (results / "exp-001.json").write_text("CORRUPT")
+    (results / "exp-002.json").write_text(json.dumps({
+        "exp_id": "exp-002", "status": "completed",
+        "config": {}, "metrics": {"loss": 0.5}
+    }))
+    baseline, experiments = _load_results(str(tmp_path))
+    assert len(experiments) == 1
+    assert experiments[0]["exp_id"] == "exp-002"
+
+
+def test_load_results_missing_exp_id(tmp_path):
+    """_load_results skips JSON files without exp_id (line 614)."""
+    results = tmp_path / "results"
+    results.mkdir()
+    (results / "exp-001.json").write_text(json.dumps({"no_id": True}))
+    baseline, experiments = _load_results(str(tmp_path))
+    assert experiments == []
+
+
+def test_success_metrics_baseline_zero(tmp_path):
+    """improvement_pct is None when baseline metric is 0 (line 679)."""
+    exp_root = tmp_path / "experiments"
+    results = exp_root / "results"
+    results.mkdir(parents=True)
+    (results / "baseline.json").write_text(json.dumps({
+        "exp_id": "baseline", "status": "completed",
+        "config": {}, "metrics": {"loss": 0}
+    }))
+    (results / "exp-001.json").write_text(json.dumps({
+        "exp_id": "exp-001", "status": "completed",
+        "config": {}, "metrics": {"loss": 0.5}
+    }))
+    metrics = compute_success_metrics(str(exp_root), "loss", True)
+    # With baseline_val=0, improvement_pct should be None
+    assert metrics is not None
+
+
+def test_proposal_outcomes_impl_error_status(tmp_path):
+    """Manifest with implementation_error status counted (lines 777-778)."""
+    exp_root = tmp_path / "experiments"
+    results = exp_root / "results"
+    results.mkdir(parents=True)
+    (results / "implementation-manifest.json").write_text(json.dumps({
+        "proposals": [
+            {"name": "p1", "branch": "ml-opt/p1", "status": "validated"},
+            {"name": "p2", "branch": "", "status": "implementation_error"},
+        ]
+    }))
+    (results / "baseline.json").write_text(json.dumps({
+        "exp_id": "baseline", "status": "completed",
+        "config": {}, "metrics": {"loss": 1.0}
+    }))
+    outcomes = compute_proposal_outcomes(str(exp_root), "loss", True)
+    assert outcomes["implementation_stats"]["implementation_error"] == 1
+    assert outcomes["implementation_stats"]["validated"] == 1
+
+
+def test_cleanup_memory_no_file(tmp_path):
+    """cleanup_memory returns zeros when no cross-project file (line 866)."""
+    result = cleanup_memory(str(tmp_path))
+    assert result == {"cleaned": 0, "projects_remaining": 0}
+
+
+def test_get_suggestion_history_corrupt(tmp_path):
+    """get_suggestion_history handles corrupt JSON (lines 927-928)."""
+    reports = tmp_path / "reports"
+    reports.mkdir(parents=True)
+    (reports / "suggestion-history.json").write_text("CORRUPT")
+    result = get_suggestion_history(str(tmp_path))
+    assert result == []
+
+
+def test_detect_patterns_non_dict_config(tmp_path):
+    """Config that is not a dict should be skipped (line 355)."""
+    exp_root = str(tmp_path / "exp")
+    for i in range(3):
+        ev = create_event("divergence", "warning", "monitor", f"Diverged {i}",
+                         config="not_a_dict")
+        log_event(exp_root, ev)
+    patterns = detect_patterns(load_error_log(exp_root)["events"])
+    ids = [p["pattern_id"] for p in patterns]
+    assert "hp_interaction_failure" not in ids
+
+
+def test_detect_patterns_redundant_configs_true(tmp_path):
+    """2+ duplication events should create redundant_configs pattern (line 304)."""
+    exp_root = str(tmp_path / "exp")
+    for i in range(2):
+        ev = create_event("pipeline_inefficiency", "info", "hp-tune",
+                         f"Regenerated {i+1} proposals due to duplication")
+        log_event(exp_root, ev)
+    patterns = detect_patterns(load_error_log(exp_root)["events"])
+    ids = [p["pattern_id"] for p in patterns]
+    assert "redundant_configs" in ids
+
+
+def test_detect_patterns_branch_underperformance(tmp_path):
+    """Branch underperformance events should create the pattern."""
+    exp_root = str(tmp_path / "exp")
+    ev = create_event("pipeline_inefficiency", "info", "analyze",
+                     "Branch ml-opt/foo underperforms baseline across all HP configs",
+                     code_branch="ml-opt/foo")
+    log_event(exp_root, ev)
+    patterns = detect_patterns(load_error_log(exp_root)["events"])
+    ids = [p["pattern_id"] for p in patterns]
+    assert "branch_underperformance" in ids

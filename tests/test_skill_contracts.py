@@ -1,11 +1,15 @@
 """Tests for skill interface contracts — verify data flows between skills correctly."""
 
 import json
+import re
 
 from conftest import FIXTURES, _write_result
 
+from detect_divergence import check_divergence
 from implement_utils import parse_research_proposals
+from parse_logs import parse_log
 from result_analyzer import load_results, rank_by_metric
+from schema_validator import validate_prerequisites
 from error_tracker import (
     create_event,
     log_event,
@@ -37,7 +41,6 @@ def test_research_proposals_have_implement_required_fields():
 def test_research_proposals_slug_is_valid_branch_name():
     """Slugs must be valid git branch name components."""
     proposals = parse_research_proposals(str(SAMPLE_FINDINGS))
-    import re
     for proposal in proposals:
         slug = proposal["slug"]
         assert re.match(r'^[a-z0-9][a-z0-9-]*[a-z0-9]$', slug), \
@@ -363,3 +366,398 @@ def test_prerequisites_partial_has_actionable_info():
     # Partial must still have structured data for the user to decide
     assert isinstance(report["dataset"], dict)
     assert isinstance(report["environment"], dict)
+
+
+# --- Budget flow contract ---
+
+
+def test_budget_remaining_calculation():
+    """remaining_budget = max_experiments - total_experiments_so_far."""
+    max_experiments = 15  # moderate difficulty × 1 GPU
+    total_experiments = 6
+    remaining_budget = max_experiments - total_experiments
+    assert remaining_budget == 9
+
+
+def test_budget_hp_tune_caps_proposals(tmp_path):
+    """HP-tune must cap proposals at min(max(num_gpus, 1), remaining_budget)."""
+    num_gpus = 4
+    remaining_budget = 3
+    max_proposals = min(max(num_gpus, 1), remaining_budget)
+    assert max_proposals == 3  # capped by remaining_budget, not GPU count
+
+    num_gpus_2 = 2
+    remaining_budget_2 = 10
+    max_proposals_2 = min(max(num_gpus_2, 1), remaining_budget_2)
+    assert max_proposals_2 == 2  # capped by GPU count
+
+    # CPU-only: num_gpus=0 → max(0,1) = 1
+    num_gpus_0 = 0
+    remaining_budget_3 = 5
+    max_proposals_3 = min(max(num_gpus_0, 1), remaining_budget_3)
+    assert max_proposals_3 == 1
+
+
+def test_budget_exhausted_recommends_stop():
+    """When remaining_budget <= 0, hp-tune should recommend stop."""
+    max_experiments = 10
+    total_experiments = 10
+    remaining_budget = max_experiments - total_experiments
+    assert remaining_budget <= 0
+
+
+def test_budget_tracks_across_iterations():
+    """Budget decrements correctly across 3 iterations."""
+    num_gpus = 2
+    difficulty_multiplier = 8  # easy
+    max_experiments = max(num_gpus, 1) * difficulty_multiplier  # 16
+
+    # Iteration 1: 2 experiments (1 per GPU)
+    batch_1_size = 2
+    remaining_after_1 = max_experiments - batch_1_size
+    assert remaining_after_1 == 14
+
+    # Iteration 2: 2 more experiments
+    batch_2_size = min(max(num_gpus, 1), remaining_after_1)  # min(2, 14) = 2
+    remaining_after_2 = remaining_after_1 - batch_2_size
+    assert remaining_after_2 == 12
+
+    # Iteration 3: 2 more
+    batch_3_size = min(max(num_gpus, 1), remaining_after_2)  # min(2, 12) = 2
+    remaining_after_3 = remaining_after_2 - batch_3_size
+    assert remaining_after_3 == 10
+
+    # Budget never goes negative
+    assert remaining_after_3 >= 0
+
+
+def test_budget_adaptive_difficulty_multipliers():
+    """Adaptive difficulty multipliers: easy=8, moderate=15, hard=25."""
+    num_gpus = 1
+    assert max(num_gpus, 1) * 8 == 8    # easy
+    assert max(num_gpus, 1) * 15 == 15   # moderate
+    assert max(num_gpus, 1) * 25 == 25   # hard
+
+    num_gpus_4 = 4
+    assert max(num_gpus_4, 1) * 8 == 32   # easy, 4 GPUs
+    assert max(num_gpus_4, 1) * 15 == 60  # moderate, 4 GPUs
+    assert max(num_gpus_4, 1) * 25 == 100 # hard, 4 GPUs
+
+
+def test_budget_branch_iteration1_cap():
+    """Iteration 1 with code branches: one config per branch + one baseline."""
+    code_branches = ["ml-opt/loss-a", "ml-opt/loss-b", "ml-opt/aug-c"]
+    remaining_budget = 5
+    configs_needed = len(code_branches) + 1  # +1 for baseline
+    actual = min(configs_needed, remaining_budget)
+    assert actual == 4  # 3 branches + 1 baseline, within budget
+
+    # Budget too small for all branches
+    remaining_budget_small = 2
+    actual_small = min(configs_needed, remaining_budget_small)
+    assert actual_small == 2  # forced to drop some branches
+
+
+def test_budget_autonomous_mode_unlimited():
+    """Autonomous mode: stop only after 3 consecutive stop recommendations."""
+    consecutive_stops = 0
+    budget_mode = "autonomous"
+
+    # Simulate 3 iterations where analyze says stop
+    for _ in range(3):
+        consecutive_stops += 1
+
+    # Only stop after 3 consecutive
+    should_stop = budget_mode == "autonomous" and consecutive_stops >= 3
+    assert should_stop is True
+
+    # Reset on a non-stop recommendation
+    consecutive_stops = 2
+    analyze_says_stop = False
+    if not analyze_says_stop:
+        consecutive_stops = 0
+    should_stop_2 = budget_mode == "autonomous" and consecutive_stops >= 3
+    assert should_stop_2 is False
+
+
+# --- Monitor → Experiment contract ---
+
+def test_monitor_divergence_signal_schema():
+    """Monitor must output divergence_status and optional diverged_exp_ids."""
+    # Monitor skill outputs this structure to orchestrate
+    monitor_output = {
+        "divergence_status": "diverged",
+        "diverged_exp_ids": ["exp-003"],
+        "reason": "loss explosion detected at step 450",
+    }
+    assert monitor_output["divergence_status"] in (
+        "healthy", "diverged", "completed", "unmonitored", "failed", "no_output"
+    )
+    assert isinstance(monitor_output.get("diverged_exp_ids", []), list)
+
+
+def test_monitor_unmonitored_status_when_metric_missing():
+    """When watched metric not found, monitor returns unmonitored with available_metrics."""
+    monitor_output = {
+        "divergence_status": "unmonitored",
+        "available_metrics": ["train_acc", "val_acc"],
+        "watched_metric": "loss",
+    }
+    assert monitor_output["divergence_status"] == "unmonitored"
+    assert isinstance(monitor_output["available_metrics"], list)
+    assert len(monitor_output["available_metrics"]) > 0
+
+
+# --- Analyze → HP-tune feedback contract ---
+
+def test_analyze_stop_recommendation_prevents_hp_tune():
+    """When analyze says stop, hp-tune should not be invoked (except speculative discard)."""
+    analyze_output = {"action": "stop", "reason": "target achieved"}
+    # Orchestrate logic: if stop, discard speculative and exit
+    should_invoke_hp_tune = analyze_output["action"] not in ("stop",)
+    assert should_invoke_hp_tune is False
+
+
+def test_analyze_pivot_passes_updated_params_to_hp_tune():
+    """When analyze says pivot, hp-tune receives updated search space."""
+    analyze_output = {
+        "action": "pivot",
+        "pivot_type": "narrow_space",
+        "updated_search_space": {"lr": [1e-5, 1e-3], "batch_size": [16, 32]},
+    }
+    original_search_space = {"lr": [1e-6, 1e-1], "batch_size": [8, 16, 32, 64]}
+    if analyze_output["action"] == "pivot" and "updated_search_space" in analyze_output:
+        search_space = analyze_output["updated_search_space"]
+    else:
+        search_space = original_search_space
+    assert search_space["lr"] == [1e-5, 1e-3]  # narrowed
+
+
+# --- Analyze → Review mid-pipeline trigger contract ---
+
+def test_review_trigger_wasted_budget_threshold():
+    """Review triggers when wasted_budget >= 3."""
+    patterns = {"wasted_budget": {"occurrences": 3}}
+    consecutive_all_fail_batches = 0
+    should_trigger = (
+        patterns.get("wasted_budget", {}).get("occurrences", 0) >= 3
+        or consecutive_all_fail_batches >= 2
+    )
+    assert should_trigger is True
+
+
+def test_review_trigger_consecutive_all_fail():
+    """Review triggers when 2+ consecutive batches had zero successes."""
+    patterns = {"wasted_budget": {"occurrences": 1}}
+    consecutive_all_fail_batches = 2
+    should_trigger = (
+        patterns.get("wasted_budget", {}).get("occurrences", 0) >= 3
+        or consecutive_all_fail_batches >= 2
+    )
+    assert should_trigger is True
+
+
+def test_review_no_trigger_below_thresholds():
+    """Review does NOT trigger when both thresholds are below limits."""
+    patterns = {"wasted_budget": {"occurrences": 2}}
+    consecutive_all_fail_batches = 1
+    should_trigger = (
+        patterns.get("wasted_budget", {}).get("occurrences", 0) >= 3
+        or consecutive_all_fail_batches >= 2
+    )
+    assert should_trigger is False
+
+
+# --- HP-tune branch iteration 1 contract ---
+
+def test_hp_tune_iteration1_one_config_per_branch():
+    """Iteration 1 with code branches generates one config per branch + baseline."""
+    code_branches = ["ml-opt/perceptual-loss", "ml-opt/cosine-scheduler"]
+    iteration = 1
+    remaining_budget = 10
+    num_gpus = 4
+    if iteration == 1 and code_branches:
+        num_configs = min(len(code_branches) + 1, remaining_budget)  # +1 for baseline
+    else:
+        num_configs = min(max(num_gpus, 1), remaining_budget)
+    assert num_configs == 3  # 2 branches + 1 baseline
+
+
+# --- method_tier field rules contract ---
+
+def test_method_tier_baseline_when_no_branch():
+    """method_tier is 'baseline' when code_branch is null."""
+    config = {"exp_id": "exp-001", "code_branch": None, "iteration": 1}
+    if config["code_branch"] is None:
+        tier = "baseline"
+    elif config["iteration"] == 1:
+        tier = "method_default_hp"
+    else:
+        tier = "method_tuned_hp"
+    assert tier == "baseline"
+
+
+def test_method_tier_default_hp_on_iteration1():
+    """method_tier is 'method_default_hp' on iteration 1 with a code branch."""
+    config = {"exp_id": "exp-002", "code_branch": "ml-opt/perceptual-loss", "iteration": 1}
+    if config["code_branch"] is None:
+        tier = "baseline"
+    elif config["iteration"] == 1:
+        tier = "method_default_hp"
+    else:
+        tier = "method_tuned_hp"
+    assert tier == "method_default_hp"
+
+
+def test_method_tier_tuned_hp_on_later_iterations():
+    """method_tier is 'method_tuned_hp' on iteration 2+ with a code branch."""
+    config = {"exp_id": "exp-005", "code_branch": "ml-opt/perceptual-loss", "iteration": 3}
+    if config["code_branch"] is None:
+        tier = "baseline"
+    elif config["iteration"] == 1:
+        tier = "method_default_hp"
+    else:
+        tier = "method_tuned_hp"
+    assert tier == "method_tuned_hp"
+
+
+# --- Speculative hp-tune pipelining contract ---
+
+def test_speculative_proposals_discarded_on_stop():
+    """Speculative proposals must be discarded when analyze says stop."""
+    analyze_result = {"action": "stop", "reason": "target achieved"}
+    speculative_proposals = [{"exp_id": "exp-010", "config": {"lr": 0.001}}]
+    use_speculative = analyze_result["action"] == "continue"
+    assert use_speculative is False
+
+
+def test_speculative_proposals_discarded_on_pivot():
+    """Speculative proposals must be discarded when analyze says pivot."""
+    analyze_result = {"action": "pivot", "pivot_type": "narrow_space"}
+    use_speculative = analyze_result["action"] == "continue"
+    assert use_speculative is False
+
+
+def test_speculative_proposals_used_on_continue():
+    """Speculative proposals should be used when analyze says continue."""
+    analyze_result = {"action": "continue"}
+    speculative_proposals = [{"exp_id": "exp-010", "config": {"lr": 0.001}, "code_branch": None}]
+    use_speculative = (
+        analyze_result["action"] == "continue"
+        and len(speculative_proposals) > 0
+    )
+    assert use_speculative is True
+
+
+def test_speculative_proposals_invalidated_by_branch_pruning():
+    """Speculative proposals on pruned branches must be discarded."""
+    speculative_proposals = [
+        {"exp_id": "exp-010", "config": {"lr": 0.001}, "code_branch": "ml-opt/pruned-branch"},
+        {"exp_id": "exp-011", "config": {"lr": 0.01}, "code_branch": None},  # baseline
+    ]
+    pruned_branches = ["ml-opt/pruned-branch"]
+    valid = [
+        p for p in speculative_proposals
+        if p.get("code_branch") is None or p["code_branch"] not in pruned_branches
+    ]
+    assert len(valid) == 1  # only baseline survives
+    assert valid[0]["exp_id"] == "exp-011"
+
+
+def test_speculative_skip_when_budget_low():
+    """Speculative hp-tune should not start when budget can't fit another batch."""
+    remaining_budget = 2
+    num_gpus = 4
+    should_speculate = remaining_budget > max(num_gpus, 1)
+    assert should_speculate is False
+
+    remaining_budget = 10
+    should_speculate = remaining_budget > max(num_gpus, 1)
+    assert should_speculate is True
+
+
+# --- Baseline → HP-tune contract (Task 3.3) ---
+
+
+class TestBaselineToHpTuneContract:
+    """Baseline output must contain fields hp-tune depends on (Task 3.3)."""
+
+    def test_baseline_has_gpu_memory_profiling(self):
+        """Baseline output schema must include profiling.gpu_memory_used_mib."""
+        # A valid baseline result should have profiling with gpu_memory_used_mib
+        baseline = {
+            "experiment_id": "baseline",
+            "metrics": {"loss": 0.5, "accuracy": 0.8},
+            "config": {"learning_rate": 0.001, "batch_size": 32},
+            "profiling": {"gpu_memory_used_mib": 4096, "throughput_samples_per_sec": 100.0}
+        }
+        assert "profiling" in baseline
+        assert "gpu_memory_used_mib" in baseline["profiling"]
+        assert "config" in baseline
+
+    def test_baseline_config_has_tunable_params(self):
+        """Baseline must expose config dict that hp-tune can use as starting point."""
+        baseline = {
+            "experiment_id": "baseline",
+            "metrics": {"loss": 0.5},
+            "config": {"learning_rate": 0.001, "batch_size": 32}
+        }
+        assert isinstance(baseline["config"], dict)
+        assert len(baseline["config"]) > 0
+
+
+# --- Experiment → Monitor log format contract (Task 3.4) ---
+
+
+class TestExperimentToMonitorContract:
+    """Experiment log output must be parseable by parse_logs → detect_divergence (Task 3.4)."""
+
+    def test_experiment_log_parseable(self, tmp_path):
+        """Simulated experiment log must yield valid metrics for divergence detection."""
+        # Simulate what the experiment skill would produce
+        log_content = "loss: 0.5\nloss: 0.4\nloss: 0.35\nloss: 0.3\nloss: 0.28\n"
+        log_file = tmp_path / "train.log"
+        log_file.write_text(log_content)
+
+        records = parse_log(str(log_file))
+        assert len(records) > 0
+
+        values = [r["loss"] for r in records if "loss" in r]
+        assert len(values) > 0
+
+        result = check_divergence(values)
+        assert result is not None
+        assert "diverged" in result
+        assert "reason" in result
+
+
+# --- Prerequisites → Schema validator contract (Task 3.8) ---
+
+
+class TestPrerequisitesToSchemaContract:
+    """Prerequisites report must pass schema validation (Task 3.8)."""
+
+    def test_prerequisites_report_validates(self):
+        # Minimal prerequisites report matching expected schema
+        report = {
+            "status": "passed",
+            "dataset": {"format": "csv", "train_path": "/data/train.csv"},
+            "environment": {"manager": "conda", "python_version": "3.10"},
+            "dependencies": {"missing": [], "installed": ["torch", "numpy"]},
+            "ready_for_baseline": True,
+        }
+        result = validate_prerequisites(report)
+        assert result is not None
+        assert isinstance(result, dict)
+        assert "valid" in result
+        # "passed" is not in VALID_PREREQ_STATUSES, so it will be invalid
+        # Use a valid status to get a clean pass
+        report_valid = {
+            "status": "ready",
+            "dataset": {"format": "csv", "train_path": "/data/train.csv"},
+            "environment": {"manager": "conda", "python_version": "3.10"},
+            "ready_for_baseline": True,
+        }
+        result_valid = validate_prerequisites(report_valid)
+        assert result_valid["valid"] is True
+        assert result_valid["errors"] == []

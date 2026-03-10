@@ -23,7 +23,7 @@ From the orchestrator:
 - `iteration`: Which tuning iteration this is (1, 2, 3, ...)
 - `primary_metric`: The metric to optimize (e.g., "loss", "accuracy", "psnr")
 - `lower_is_better`: Whether lower metric values are better (True for loss, False for accuracy)
-- `remaining_budget`: Maximum number of experiments that can still be run. Calculated by orchestrator as `(max(num_gpus, 1) × 5) - total_experiments_so_far`. Cap proposals at `min(max(num_gpus, 1), remaining_budget)`. If remaining_budget ≤ 0, recommend stopping.
+- `remaining_budget`: Maximum number of experiments that can still be run. Calculated by orchestrator as `max_experiments - total_experiments_so_far` (where `max_experiments` is set by adaptive difficulty assessment: easy=×8, moderate=×15, hard=×25, or user override). Cap proposals at `min(max(num_gpus, 1), remaining_budget)`. If remaining_budget ≤ 0, recommend stopping.
 - `code_branches`: List of validated code branches from the implementation manifest (e.g., `["ml-opt/perceptual-loss"]`), or `[]` for HP-only. In iteration 1, generate one config per branch (with baseline HPs) plus one for the original code, instead of spanning the search space.
 
 ## Step 1: Load Past Results
@@ -73,7 +73,21 @@ If this is the first tuning iteration (only baseline exists):
 
 **If `code_branches` is non-empty:** Generate one config per branch using baseline HPs, plus one config for the original code (no branch). This tests each code change in isolation before HP tuning. Assign each config a `code_branch` and `code_proposal` field. Cap total configs at `min(len(code_branches) + 1, remaining_budget)`.
 
+**If budget forces branch dropping:** When `remaining_budget < len(code_branches) + 1`, some branches must be skipped. Prioritize by research proposal ranking (higher `impact × confidence` first). Log a warning to error_tracker:
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"warning","source":"hp-tune","message":"Budget insufficient to test all branches. Testing <N> of <M> branches (dropped: <list>). Prioritized by proposal ranking.","phase":6,"iteration":<iteration>}'
+```
+
 **If `code_branches` is empty (HP-only):**
+
+**Tabular ML iteration 1 adjustment:** If the detected framework is scikit-learn, XGBoost, or LightGBM (tree-based models):
+- **Iteration 1 priority**: Explore `max_depth` and `n_estimators` first (these have the highest impact for tree-based models)
+- **Iteration 2+**: Then tune `learning_rate`/`eta`, `min_child_weight`, `subsample`, `colsample_bytree`
+- **Rationale**: Learning rate is less impactful for tree-based models compared to tree structure parameters
+
+For neural network frameworks (PyTorch, TensorFlow, JAX): keep the existing strategy (learning rate first).
+
+**Default strategy (neural networks):**
 - Propose configs that span the search space
 - Focus on learning rate first (highest impact)
 - One config per order of magnitude of LR
@@ -120,7 +134,7 @@ Before finalizing, check each proposed config:
 4. **Within search space:** All values within defined ranges
 5. **Sensible combinations:** LR and batch size follow linear scaling rule
 
-## Step 4.5: Log Tuning Issues
+## Step 4.1: Log Tuning Issues
 
 ### If proposals duplicate previously tried configs (caught in step 4.3):
 ```bash
@@ -153,6 +167,8 @@ For each proposed config, write a JSON file:
   },
   "code_branch": "<branch name or null for baseline>",
   "code_proposal": "<proposal name or null>",
+  "proposal_source": "<paper|llm_knowledge|null>",
+  "method_tier": "<baseline|method_default_hp|method_tuned_hp>",
   "gpu_id": <assigned_gpu>,
   "reasoning": "<why this config was chosen>",
   "iteration": <tuning_iteration>
@@ -163,6 +179,17 @@ For each proposed config, write a JSON file:
 - Baseline config (no code change): `"code_branch": null, "code_proposal": null`
 - Branch config: `"code_branch": "ml-opt/<slug>"` (from manifest), `"code_proposal": "<slug>"` (matching the manifest entry's `slug` field)
 - Iteration 2+: inherit from the branch being tested, or null for baseline code
+
+**`method_tier` rules:**
+- `"baseline"`: No code branch, running baseline HPs on original code
+- `"method_default_hp"`: Has a code branch, iteration 1 (testing the code change with baseline/default HPs)
+- `"method_tuned_hp"`: Has a code branch, iteration 2+ (tuning HPs on the code branch)
+
+**`proposal_source` rules:**
+- Carry from the implementation manifest's `proposal_source` field for the corresponding branch
+- `"paper"`: Proposal originated from web research (Phase 5)
+- `"llm_knowledge"`: Proposal originated from LLM knowledge (Phase 6 method proposals)
+- `null`: For baseline experiments (no code change)
 
 Use `experiment_setup.py` to generate proper experiment IDs:
 ```bash
@@ -192,6 +219,7 @@ Return to the orchestrator:
 - List of proposed configs (exp_id, config, gpu_id)
 - Reasoning summary
 - Any concerns or notes (e.g., "approaching diminishing returns")
+- Recommendation: `"continue"` or `"stop"` (see "When to Recommend Stopping" below)
 
 ## When to Recommend Stopping
 

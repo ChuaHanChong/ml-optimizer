@@ -152,6 +152,7 @@ def parse_research_proposals(findings_path: str, selected_indices: list[int] | N
             "implementation_strategy": _extract_field(body, "Implementation strategy") or "from_scratch",
             "reference_repo": _extract_field(body, "Reference repo") or "",
             "reference_files": _extract_reference_files(body),
+            "proposal_source": _extract_field(body, "Proposal source") or "paper",
         }
         proposals.append(proposal)
 

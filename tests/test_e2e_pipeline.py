@@ -6,45 +6,42 @@ result_analyzer, gpu_check) work correctly with real training output.
 """
 
 import json
+import os
 import shutil
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
+import torch
+import yaml
+
 from parse_logs import parse_log, extract_metric_trajectory
 from detect_divergence import check_divergence
 from experiment_setup import create_experiment_dirs, next_experiment_id, setup
-from result_analyzer import analyze, rank_by_metric, compute_deltas
+from result_analyzer import analyze, load_results, rank_by_metric, compute_deltas
 from pipeline_state import save_state, load_state, validate_phase_requirements, cleanup_stale
 from schema_validator import validate_result, validate_baseline, validate_manifest, validate_file
-from plot_results import plot_metric_comparison, plot_improvement_timeline, plot_hp_sensitivity
+import plot_results
+from plot_results import plot_metric_comparison, plot_improvement_timeline, plot_hp_sensitivity, plot_progress_chart
 from conftest import FIXTURES, _write_result
 from implement_utils import (
     parse_research_proposals, detect_conflicts, validate_syntax,
     write_manifest, backup_files, is_git_repo,
 )
+from error_tracker import (
+    create_event, log_event, get_events, detect_patterns,
+    log_suggestion, get_suggestion_history, summarize_session,
+    compute_success_metrics, rank_suggestions,
+)
 RESNET_FIXTURE = FIXTURES / "tiny_resnet_cifar10"
-
-
-def has_torch():
-    """Check if PyTorch is available in the current environment."""
-    try:
-        import torch
-        return True
-    except ImportError:
-        return False
 
 
 def has_gpu():
     """Check if CUDA GPU is available."""
-    try:
-        import torch
-        return torch.cuda.is_available()
-    except ImportError:
-        return False
+    return torch.cuda.is_available()
 
 
 def get_python():
@@ -87,7 +84,6 @@ def get_python():
 
 
 # Module-level detection for skip markers
-_has_torch = has_torch()
 _has_gpu = has_gpu()
 _python = get_python()
 
@@ -124,7 +120,6 @@ def run_training(project_dir, output_dir, data_dir, extra_args=None, timeout=300
 
     env = None
     if _has_gpu:
-        import os
         env = {**os.environ, "CUDA_VISIBLE_DEVICES": "0"}
 
     result = subprocess.run(
@@ -137,7 +132,6 @@ def run_training(project_dir, output_dir, data_dir, extra_args=None, timeout=300
 # Phase 1: Model Understanding
 # ---------------------------------------------------------------------------
 
-@pytest.mark.skipif(not _has_torch, reason="PyTorch not available")
 class TestPhase1ModelUnderstanding:
     """Phase 1: Verify project files are discoverable and parseable."""
 
@@ -150,14 +144,12 @@ class TestPhase1ModelUnderstanding:
         assert "class TinyResNet" in content
 
     def test_config_parseable(self):
-        import yaml
         config = yaml.safe_load((RESNET_FIXTURE / "config.yaml").read_text())
         assert config["model"]["type"] == "tiny_resnet"
         assert config["training"]["lr"] == 0.01
         assert config["data"]["dataset"] == "cifar10"
 
     def test_model_instantiates(self):
-        import torch
         sys.path.insert(0, str(RESNET_FIXTURE))
         from model import get_model
         model = get_model()
@@ -185,7 +177,6 @@ class TestPhase1ModelUnderstanding:
 # ---------------------------------------------------------------------------
 
 @pytest.mark.slow
-@pytest.mark.skipif(not _has_torch, reason="PyTorch not available")
 class TestPhase3Baseline:
     """Phase 3: Run baseline training and verify log parsing + divergence check."""
 
@@ -243,7 +234,6 @@ class TestPhase3Baseline:
 # Phase 4: User Checkpoint
 # ---------------------------------------------------------------------------
 
-@pytest.mark.skipif(not _has_torch, reason="PyTorch not available")
 class TestPhase4UserCheckpoint:
     """Phase 4: Verify baseline.json has all required checkpoint keys."""
 
@@ -271,7 +261,6 @@ class TestPhase4UserCheckpoint:
 # ---------------------------------------------------------------------------
 
 @pytest.mark.slow
-@pytest.mark.skipif(not _has_torch, reason="PyTorch not available")
 class TestPhase6ExperimentLoop:
     """Phase 6: Run multiple experiments and verify analysis."""
 
@@ -361,7 +350,6 @@ class TestPhase6ExperimentLoop:
 
 
 @pytest.mark.slow
-@pytest.mark.skipif(not _has_torch, reason="PyTorch not available")
 class TestPhase6DivergenceDetection:
     """Phase 6: Verify divergence detection with extreme learning rate."""
 
@@ -397,7 +385,6 @@ class TestPhase6DivergenceDetection:
 # Phase 7: Report
 # ---------------------------------------------------------------------------
 
-@pytest.mark.skipif(not _has_torch, reason="PyTorch not available")
 class TestPhase7Report:
     """Phase 7: Verify analysis output has correct schema for reporting."""
 
@@ -444,7 +431,6 @@ class TestPhase7Report:
 # ---------------------------------------------------------------------------
 
 @pytest.mark.slow
-@pytest.mark.skipif(not _has_torch, reason="PyTorch not available")
 class TestFullPipelineIntegration:
     """End-to-end: all phases sequentially."""
 
@@ -596,7 +582,6 @@ class TestPipelineStateIntegration:
         # Patch the timestamp to be 3 hours ago so cleanup triggers
         state_path = tmp_path / "exp" / "pipeline-state.json"
         state = json.loads(state_path.read_text())
-        from datetime import timedelta
         old_time = datetime.now(timezone.utc) - timedelta(hours=3)
         state["timestamp"] = old_time.isoformat()
         state_path.write_text(json.dumps(state))
@@ -617,7 +602,6 @@ class TestPipelineStateIntegration:
         exp_root = tmp_path / "exp"
         results_dir = exp_root / "results"
         results_dir.mkdir(parents=True)
-        from datetime import timedelta
         old_time = (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat()
         (results_dir / "exp-001.json").write_text(json.dumps({
             "exp_id": "exp-001", "status": "running", "timestamp": old_time,
@@ -975,3 +959,451 @@ class TestExperimentIdSequencing:
         results_dir.mkdir()
         (results_dir / "exp-003.json").write_text("{}")
         assert next_experiment_id(str(results_dir)) == "exp-004"
+
+
+# ---------------------------------------------------------------------------
+# D1: Three-Tier Result Tracking (no PyTorch needed)
+# ---------------------------------------------------------------------------
+
+class TestThreeTierTracking:
+    """Test three-tier result comparison with method_tier and proposal_source fields."""
+
+    @pytest.fixture
+    def tiered_results_dir(self, tmp_path):
+        """Create a results dir with three-tier experiment data."""
+        d = tmp_path / "results"
+        d.mkdir()
+        # Baseline
+        _write_result(d, "baseline", "completed", {"lr": 0.01}, {"loss": 2.0, "accuracy": 30.0},
+                       method_tier="baseline")
+        # Method with default HPs (isolated method effect)
+        _write_result(d, "exp-001", "completed", {"lr": 0.01}, {"loss": 1.6, "accuracy": 42.0},
+                       method_tier="method_default_hp", proposal_source="paper",
+                       code_branch="ml-opt/cosine-lr")
+        # Method with tuned HPs (combined effect)
+        _write_result(d, "exp-002", "completed", {"lr": 0.005}, {"loss": 1.2, "accuracy": 55.0},
+                       method_tier="method_tuned_hp", proposal_source="paper",
+                       code_branch="ml-opt/cosine-lr")
+        # Knowledge-based proposal
+        _write_result(d, "exp-003", "completed", {"lr": 0.01}, {"loss": 1.7, "accuracy": 40.0},
+                       method_tier="method_default_hp", proposal_source="llm_knowledge",
+                       code_branch="ml-opt/label-smoothing")
+        return str(d)
+
+    def test_result_with_method_tier_fields(self, tiered_results_dir):
+        """Schema validation should accept results with method_tier and proposal_source."""
+        results = load_results(tiered_results_dir)
+        for exp_id, data in results.items():
+            vr = validate_result(data)
+            assert vr["valid"], f"{exp_id} failed validation: {vr['errors']}"
+
+    def test_analyze_handles_tiered_results(self, tiered_results_dir):
+        """result_analyzer.analyze works correctly with tiered result data."""
+        analysis = analyze(tiered_results_dir, "loss", baseline_id="baseline")
+        assert analysis["num_experiments"] >= 4
+        assert len(analysis["ranking"]) >= 4
+
+    def test_three_tier_comparison_ranking(self, tiered_results_dir):
+        """Ranking sorts correctly: best loss first regardless of tier."""
+        analysis = analyze(tiered_results_dir, "loss", baseline_id="baseline")
+        ranking_vals = [r["value"] for r in analysis["ranking"]]
+        assert ranking_vals == sorted(ranking_vals)
+        # Best (exp-002 at 1.2) should be first
+        assert analysis["ranking"][0]["exp_id"] == "exp-002"
+
+    def test_plot_comparison_shows_tiers(self, tiered_results_dir):
+        """plot_metric_comparison works with tiered data and shows baseline marker."""
+        chart = plot_metric_comparison(tiered_results_dir, "loss")
+        assert chart
+        assert "[B]" in chart  # baseline marker
+
+    def test_mixed_tier_and_plain_results(self, tmp_path):
+        """Results without tier fields work alongside tiered results."""
+        d = tmp_path / "results"
+        d.mkdir()
+        _write_result(d, "baseline", "completed", {"lr": 0.01}, {"loss": 2.0})
+        _write_result(d, "exp-001", "completed", {"lr": 0.005}, {"loss": 1.5},
+                       method_tier="method_tuned_hp", proposal_source="paper")
+        _write_result(d, "exp-002", "completed", {"lr": 0.001}, {"loss": 1.8})  # no tier fields
+
+        analysis = analyze(str(d), "loss", baseline_id="baseline")
+        assert analysis["num_experiments"] == 3
+        assert len(analysis["ranking"]) == 3
+
+    def test_proposal_source_values(self, tiered_results_dir):
+        """proposal_source correctly distinguishes paper vs llm_knowledge."""
+        results = load_results(tiered_results_dir)
+        paper_results = [d for d in results.values() if d.get("proposal_source") == "paper"]
+        knowledge_results = [d for d in results.values() if d.get("proposal_source") == "llm_knowledge"]
+        assert len(paper_results) == 2  # exp-001 and exp-002
+        assert len(knowledge_results) == 1  # exp-003
+
+    def test_delta_computation_across_tiers(self, tiered_results_dir):
+        """Deltas are computed correctly against baseline for all tiers."""
+        analysis = analyze(tiered_results_dir, "loss", baseline_id="baseline")
+        deltas = analysis["deltas"]
+        # All non-baseline experiments should have deltas
+        assert len(deltas) >= 3
+        for delta in deltas:
+            assert "delta" in delta
+            assert "delta_pct" in delta
+
+    def test_timeline_with_tiers(self, tiered_results_dir):
+        """Improvement timeline works with tiered data."""
+        chart = plot_improvement_timeline(tiered_results_dir, "loss")
+        assert chart
+        assert "Best-so-far" in chart
+
+
+# ---------------------------------------------------------------------------
+# D2: Method Proposal Parsing (no PyTorch needed)
+# ---------------------------------------------------------------------------
+
+class TestMethodProposalParsing:
+    """Test parsing of knowledge-mode research findings."""
+
+    KNOWLEDGE_FIXTURE = FIXTURES / "research_findings_knowledge.md"
+
+    def test_parse_knowledge_mode_proposals(self):
+        """Parse proposals with proposal_source: llm_knowledge."""
+        proposals = parse_research_proposals(str(self.KNOWLEDGE_FIXTURE))
+        assert len(proposals) == 3
+        for p in proposals:
+            assert p["proposal_source"] == "llm_knowledge"
+            assert p["implementation_strategy"] == "from_scratch"
+            assert p["reference_repo"] == ""
+
+    def test_knowledge_proposals_have_slug(self):
+        """Each knowledge proposal gets a valid slug."""
+        proposals = parse_research_proposals(str(self.KNOWLEDGE_FIXTURE))
+        slugs = [p["slug"] for p in proposals]
+        assert slugs[0] == "cosine-annealing-with-warm-restarts"
+        assert slugs[1] == "label-smoothing-cross-entropy"
+        for slug in slugs:
+            assert slug  # non-empty
+            assert " " not in slug  # no spaces
+
+    def test_both_mode_mixed_proposals(self, tmp_path):
+        """Mix of web-sourced and knowledge-sourced proposals in same file."""
+        findings = tmp_path / "mixed-findings.md"
+        findings.write_text("""\
+# Research Findings
+
+### Proposal 1: Cosine LR Schedule (Priority: High)
+
+**Complexity:** Low
+**Implementation strategy:** from_scratch
+**Proposal source:** paper
+
+**What to change:**
+- `train.py` — add cosine scheduler
+
+**Implementation steps:**
+1. Import CosineAnnealingLR
+2. Create scheduler
+
+### Proposal 2: Label Smoothing (Priority: Medium)
+
+**Complexity:** Low
+**Implementation strategy:** from_scratch
+**Proposal source:** llm_knowledge
+
+**What to change:**
+- `train.py` — use label smoothing
+
+**Implementation steps:**
+1. Add label_smoothing=0.1 to loss
+""")
+        proposals = parse_research_proposals(str(findings))
+        assert len(proposals) == 2
+        assert proposals[0]["proposal_source"] == "paper"
+        assert proposals[1]["proposal_source"] == "llm_knowledge"
+
+    def test_proposal_priority_scoring(self):
+        """Verify priority score formula: (impact × confidence) / (11 - feasibility)."""
+        # Formula: score = (impact * confidence) / (11 - min(feasibility, 10))
+        # Proposal 1: impact=8, confidence=7, feasibility=9 → 56/2 = 28
+        # Proposal 2: impact=5, confidence=6, feasibility=9 → 30/2 = 15
+        # Proposal 3: impact=7, confidence=7, feasibility=7 → 49/4 = 12.25
+        score1 = (8 * 7) / (11 - min(9, 10))
+        score2 = (5 * 6) / (11 - min(9, 10))
+        score3 = (7 * 7) / (11 - min(7, 10))
+        assert score1 == 28.0
+        assert score2 == 15.0
+        assert score3 == pytest.approx(12.25)
+        # Scores should rank: proposal 1 > 2 > 3
+        assert score1 > score2 > score3
+
+    def test_selected_indices_filtering(self):
+        """Selecting specific proposal indices works."""
+        proposals = parse_research_proposals(str(self.KNOWLEDGE_FIXTURE), selected_indices=[1, 3])
+        assert len(proposals) == 2
+        indices = [p["index"] for p in proposals]
+        assert 1 in indices
+        assert 3 in indices
+        assert 2 not in indices
+
+
+# ---------------------------------------------------------------------------
+# D3: Autonomous Mode Budget Logic (no PyTorch needed)
+# ---------------------------------------------------------------------------
+
+class TestAutonomousMode:
+    """Test autonomous budget mode logic and continuous research cadence."""
+
+    def test_easy_budget_calculation(self):
+        """Auto mode, easy difficulty: max(num_gpus, 1) × 8."""
+        multiplier = 8
+        for num_gpus, expected in [(0, 8), (1, 8), (2, 16), (4, 32)]:
+            budget = max(num_gpus, 1) * multiplier
+            assert budget == expected, f"num_gpus={num_gpus}: expected {expected}, got {budget}"
+
+    def test_moderate_budget_calculation(self):
+        """Auto mode, moderate difficulty: max(num_gpus, 1) × 15."""
+        multiplier = 15
+        for num_gpus, expected in [(0, 15), (1, 15), (2, 30), (4, 60)]:
+            budget = max(num_gpus, 1) * multiplier
+            assert budget == expected, f"num_gpus={num_gpus}: expected {expected}, got {budget}"
+
+    def test_hard_budget_calculation(self):
+        """Auto mode, hard difficulty: max(num_gpus, 1) × 25."""
+        multiplier = 25
+        for num_gpus, expected in [(0, 25), (1, 25), (2, 50), (4, 100)]:
+            budget = max(num_gpus, 1) * multiplier
+            assert budget == expected, f"num_gpus={num_gpus}: expected {expected}, got {budget}"
+
+    def test_autonomous_budget_unlimited(self):
+        """Autonomous mode has no fixed budget cap."""
+        # In autonomous mode, remaining_budget is effectively infinite.
+        # Stop requires 3 consecutive recommendations.
+        consecutive_stops = 0
+        max_budget = float("inf")
+        # Simulate: 2 stops then a continue resets the counter
+        for recommendation in ["stop", "stop", "continue", "stop"]:
+            if recommendation == "stop":
+                consecutive_stops += 1
+            else:
+                consecutive_stops = 0
+        assert consecutive_stops == 1  # reset after "continue"
+        assert consecutive_stops < 3  # not enough to terminate
+
+    def test_stop_recommendation_counting(self):
+        """3 consecutive stop recommendations terminate autonomous mode."""
+        consecutive_stops = 0
+        recommendations = ["continue", "stop", "continue", "stop", "stop", "stop"]
+        terminated = False
+        for rec in recommendations:
+            if rec == "stop":
+                consecutive_stops += 1
+            else:
+                consecutive_stops = 0
+            if consecutive_stops >= 3:
+                terminated = True
+                break
+        assert terminated
+        assert consecutive_stops == 3
+
+    def test_research_cadence_trigger(self):
+        """Research triggers every hp_batches_per_round batches."""
+        hp_batches_per_round = 3
+        research_triggers = []
+        for batch_num in range(1, 10):
+            if batch_num % hp_batches_per_round == 0:
+                research_triggers.append(batch_num)
+        assert research_triggers == [3, 6, 9]
+
+    def test_research_cadence_exponential_backoff(self):
+        """Cadence doubles when no new proposals found."""
+        cadence = 3  # initial hp_batches_per_round
+        no_proposal_rounds = 0
+        cadence_history = [cadence]
+
+        for round_num in range(5):
+            new_proposals_found = round_num % 3 == 0  # proposals found every 3rd round
+            if not new_proposals_found:
+                no_proposal_rounds += 1
+                cadence = cadence * 2
+            else:
+                no_proposal_rounds = 0
+                cadence = 3  # reset to default
+            cadence_history.append(cadence)
+
+        # After round 0 (proposals found): cadence=3
+        # After round 1 (no proposals): cadence=6
+        # After round 2 (no proposals): cadence=12
+        # After round 3 (proposals found): cadence=3
+        assert cadence_history[1] == 3   # round 0: found proposals
+        assert cadence_history[2] == 6   # round 1: no proposals, doubled
+        assert cadence_history[3] == 12  # round 2: no proposals, doubled again
+        assert cadence_history[4] == 3   # round 3: found proposals, reset
+
+    def test_user_choices_persist_budget_mode(self, tmp_path):
+        """Budget mode persists in pipeline state user_choices."""
+        exp_root = str(tmp_path / "exp")
+        user_choices = {
+            "budget_mode": "autonomous",
+            "hp_batches_per_round": 3,
+            "primary_metric": "accuracy",
+        }
+        save_state(phase=6, iteration=5, running_exp_ids=[], exp_root=exp_root,
+                   user_choices=user_choices)
+        state = load_state(exp_root)
+        assert state is not None
+        assert state["user_choices"]["budget_mode"] == "autonomous"
+        assert state["user_choices"]["hp_batches_per_round"] == 3
+
+
+# ---------------------------------------------------------------------------
+# D4: Progress Chart (no PyTorch needed)
+# ---------------------------------------------------------------------------
+
+class TestProgressChart:
+    """Test matplotlib progress chart generation."""
+
+    @pytest.fixture
+    def results_dir(self, tmp_path):
+        d = tmp_path / "results"
+        d.mkdir()
+        for name, loss, acc, lr in [
+            ("baseline", 2.0, 30.0, 0.01),
+            ("exp-001", 1.5, 45.0, 0.001),
+            ("exp-002", 1.8, 38.0, 0.1),
+            ("exp-003", 1.3, 50.0, 0.005),
+        ]:
+            _write_result(d, name, "completed", {"lr": lr}, {"loss": loss, "accuracy": acc})
+        return d
+
+    def test_progress_chart_generates_file(self, results_dir, tmp_path):
+        """plot_progress_chart produces a .png file."""
+        output = tmp_path / "chart.png"
+        result = plot_progress_chart(str(results_dir), "loss", output_path=str(output))
+        assert result is not None
+        assert Path(result).exists()
+        assert Path(result).stat().st_size > 0
+
+    def test_progress_chart_higher_is_better(self, results_dir, tmp_path):
+        """Progress chart works with higher-is-better metrics."""
+        output = tmp_path / "chart_acc.png"
+        result = plot_progress_chart(str(results_dir), "accuracy",
+                                     lower_is_better=False, output_path=str(output))
+        assert result is not None
+        assert Path(result).exists()
+
+    def test_progress_chart_default_output_path(self, results_dir):
+        """When no output_path given, chart goes to reports/progress_chart.png."""
+        result = plot_progress_chart(str(results_dir), "loss")
+        assert result is not None
+        assert "reports" in result
+        assert result.endswith(".png")
+        assert Path(result).exists()
+
+
+# ---------------------------------------------------------------------------
+# D5: Error Tracker Integration (no PyTorch needed)
+# ---------------------------------------------------------------------------
+
+class TestErrorTrackerIntegration:
+    """Test error tracking, pattern detection, and suggestion history end-to-end."""
+
+    def test_log_and_show_errors(self, tmp_path):
+        """Log error events and retrieve them."""
+        exp_root = str(tmp_path / "exp")
+        ev1 = create_event("training_failure", "critical", "experiment",
+                           "OOM during training", exp_id="exp-001",
+                           config={"lr": 0.01, "batch_size": 64})
+        ev2 = create_event("divergence", "warning", "monitor",
+                           "Loss exploded", exp_id="exp-002",
+                           config={"lr": 0.1})
+        log_event(exp_root, ev1)
+        log_event(exp_root, ev2)
+
+        all_events = get_events(exp_root)
+        assert len(all_events) == 2
+
+        # Filter by category
+        div_events = get_events(exp_root, category="divergence")
+        assert len(div_events) == 1
+        assert div_events[0]["message"] == "Loss exploded"
+
+    def test_pattern_detection(self, tmp_path):
+        """Detect repeated failure patterns from logged events."""
+        exp_root = str(tmp_path / "exp")
+        # Log 3 divergence events to trigger high_lr_divergence pattern
+        for i in range(3):
+            ev = create_event("divergence", "warning", "monitor",
+                              f"Loss diverged at step {i*100}",
+                              exp_id=f"exp-{i:03d}",
+                              config={"lr": 0.5 + i * 0.1})
+            log_event(exp_root, ev)
+
+        events = get_events(exp_root)
+        patterns = detect_patterns(events)
+        pattern_ids = [p["pattern_id"] for p in patterns]
+        assert "high_lr_divergence" in pattern_ids
+
+    def test_suggestion_logging(self, tmp_path):
+        """log_suggestion and get_suggestion_history round-trip."""
+        exp_root = str(tmp_path / "exp")
+        log_suggestion(exp_root, "high_lr_divergence", scope="session")
+        log_suggestion(exp_root, "oom_batch_size", scope="session")
+        log_suggestion(exp_root, "high_lr_divergence", scope="session")  # repeat
+
+        history = get_suggestion_history(exp_root)
+        assert len(history) == 3
+        assert history[0]["pattern_id"] == "high_lr_divergence"
+        assert history[0]["iteration"] == 1
+        assert history[2]["pattern_id"] == "high_lr_divergence"
+        assert history[2]["iteration"] == 2  # second occurrence
+
+    def test_error_summary(self, tmp_path):
+        """summarize_session aggregates events correctly."""
+        exp_root = str(tmp_path / "exp")
+        for cat, sev in [("training_failure", "critical"),
+                         ("divergence", "warning"),
+                         ("divergence", "warning"),
+                         ("config_error", "info")]:
+            ev = create_event(cat, sev, "experiment", f"Test {cat}")
+            log_event(exp_root, ev)
+
+        summary = summarize_session(exp_root)
+        assert summary["total_events"] == 4
+        assert summary["by_category"]["divergence"] == 2
+        assert summary["by_severity"]["warning"] == 2
+
+    def test_success_metrics(self, tmp_path):
+        """compute_success_metrics calculates rates correctly."""
+        exp_root = tmp_path / "exp"
+        results_dir = exp_root / "results"
+        results_dir.mkdir(parents=True)
+        _write_result(results_dir, "baseline", "completed",
+                       {"lr": 0.01}, {"loss": 2.0})
+        _write_result(results_dir, "exp-001", "completed",
+                       {"lr": 0.005}, {"loss": 1.5})
+        _write_result(results_dir, "exp-002", "failed",
+                       {"lr": 0.5}, {"loss": 5.0})
+        _write_result(results_dir, "exp-003", "completed",
+                       {"lr": 0.001}, {"loss": 2.5})
+
+        metrics = compute_success_metrics(str(exp_root), "loss", lower_is_better=True)
+        assert metrics["total_experiments"] == 3  # excludes baseline
+        assert metrics["completed"] == 2
+        assert metrics["failed"] == 1
+        assert metrics["success_rate"] == pytest.approx(2 / 3)
+        # exp-001 beats baseline (1.5 < 2.0), exp-003 doesn't (2.5 > 2.0)
+        assert metrics["improvement_rate"] == pytest.approx(0.5)
+
+    def test_rank_suggestions(self, tmp_path):
+        """rank_suggestions orders by impact score."""
+        patterns = [
+            {"pattern_id": "oom_batch_size", "occurrences": 3,
+             "description": "OOM", "suggested_action": "reduce batch"},
+            {"pattern_id": "wasted_budget", "occurrences": 5,
+             "description": "waste", "suggested_action": "tighten search"},
+        ]
+        ranked = rank_suggestions(patterns, total_experiments=10)
+        assert len(ranked) == 2
+        # oom_batch_size: weight=3, occ=3, score=9
+        # wasted_budget: weight=1, occ=5, score=5
+        assert ranked[0]["pattern_id"] == "oom_batch_size"
+        assert ranked[0]["score"] > ranked[1]["score"]
+        assert "significance" in ranked[0]

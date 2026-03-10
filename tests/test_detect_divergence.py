@@ -2,10 +2,11 @@
 
 import json
 import math
+import random
 
 import pytest
 
-from detect_divergence import detect_nan_inf, detect_explosion, detect_plateau, detect_gradual_drift, check_divergence
+from detect_divergence import detect_nan_inf, detect_explosion, detect_plateau, detect_gradual_drift, check_divergence, get_thresholds_for_category, MODEL_CATEGORY_DEFAULTS
 
 
 def test_detect_nan():
@@ -194,7 +195,6 @@ def test_detect_gradual_drift_higher_is_better():
 
 def test_detect_gradual_drift_noisy_stable():
     """Noisy but flat data should NOT trigger drift (R² filter)."""
-    import random
     rng = random.Random(42)
     values = [0.5 + rng.gauss(0, 0.1) for _ in range(100)]
     result = detect_gradual_drift(values, window=50, min_slope_ratio=0.1)
@@ -203,7 +203,6 @@ def test_detect_gradual_drift_noisy_stable():
 
 def test_detect_gradual_drift_noisy_with_real_trend():
     """Upward trend plus noise should still be detected."""
-    import random
     rng = random.Random(42)
     values = [0.5 + i * 0.005 + rng.gauss(0, 0.02) for i in range(60)]
     result = detect_gradual_drift(values, window=50, min_slope_ratio=0.1)
@@ -214,8 +213,7 @@ def test_detect_gradual_drift_noisy_with_real_trend():
 
 def test_detect_gradual_drift_oscillating():
     """Sine wave around stable mean should NOT trigger drift."""
-    import math as m
-    values = [0.5 + 0.1 * m.sin(i * 0.3) for i in range(100)]
+    values = [0.5 + 0.1 * math.sin(i * 0.3) for i in range(100)]
     result = detect_gradual_drift(values, window=50, min_slope_ratio=0.1)
     assert result is None
 
@@ -368,3 +366,169 @@ def test_detect_explosion_near_zero_threshold(values, should_explode):
         assert result is not None and result["diverged"] is True
     else:
         assert result is None
+
+
+# --- Short sequence guard ---
+
+
+def test_check_divergence_short_sequence_healthy():
+    """Short finite sequence (<5 values) returns insufficient_data, not healthy."""
+    values = [1.0, 0.9, 0.8]
+    result = check_divergence(values)
+    assert result["diverged"] is False
+    assert "insufficient" in result["reason"].lower()
+
+
+def test_check_divergence_short_sequence_with_nan():
+    """Short sequence with NaN still catches it (NaN check runs first)."""
+    values = [1.0, float("nan"), 0.8]
+    result = check_divergence(values)
+    assert result["diverged"] is True
+    assert "nan" in result["reason"].lower()
+
+
+def test_check_divergence_short_sequence_with_inf():
+    """Short sequence with Inf still catches it."""
+    values = [1.0, float("inf")]
+    result = check_divergence(values)
+    assert result["diverged"] is True
+    assert "inf" in result["reason"].lower()
+
+
+def test_check_divergence_four_values_insufficient():
+    """Exactly 4 finite values is below the minimum threshold."""
+    values = [1.0, 0.9, 0.8, 0.7]
+    result = check_divergence(values)
+    assert result["diverged"] is False
+    assert "insufficient" in result["reason"].lower()
+
+
+def test_check_divergence_five_values_runs_checks():
+    """Exactly 5 finite values should run trend-based checks."""
+    values = [0.5, 0.4, 0.3, 0.2, 0.1]
+    result = check_divergence(values)
+    assert result["diverged"] is False
+    assert "insufficient" not in result["reason"].lower()
+
+
+# --- Model category configurable thresholds ---
+
+
+def test_get_thresholds_rl():
+    """RL thresholds have higher explosion threshold and longer patience."""
+    t = get_thresholds_for_category("rl")
+    assert t["explosion_threshold"] == 20.0
+    assert t["plateau_patience"] == 50
+
+
+def test_get_thresholds_generative():
+    """Generative thresholds have moderate explosion threshold and patience."""
+    t = get_thresholds_for_category("generative")
+    assert t["explosion_threshold"] == 10.0
+    assert t["plateau_patience"] == 40
+
+
+def test_get_thresholds_supervised():
+    """Supervised (None) returns empty dict — uses function defaults."""
+    t = get_thresholds_for_category(None)
+    assert t == {}
+
+
+def test_get_thresholds_unknown_category():
+    """Unknown category returns empty dict (safe fallback)."""
+    t = get_thresholds_for_category("unknown_model")
+    assert t == {}
+
+
+def test_rl_thresholds_prevent_false_positive():
+    """RL reward spikes that trigger default thresholds don't trigger RL thresholds."""
+    # Reward jumps from 1.0 to 8.0 — default explosion_threshold=5.0 would trigger
+    values = [1.0] * 15 + [8.0]
+    # Default: should detect explosion
+    result_default = check_divergence(values, explosion_threshold=5.0, lower_is_better=False)
+    # Note: for higher-is-better, explosion checks for crash (value < avg/threshold)
+    # So this is actually NOT an explosion for higher-is-better (reward going up is good)
+    # Let's test with a reward CRASH instead
+    values_crash = [8.0] * 15 + [1.0]
+    # Default threshold (5.0): 1.0 < 8.0/5.0 = 1.6 → crash detected
+    result_crash_default = check_divergence(values_crash, explosion_threshold=5.0, lower_is_better=False)
+    assert result_crash_default["diverged"] is True
+    # RL threshold (20.0): 1.0 < 8.0/20.0 = 0.4 → 1.0 > 0.4, no crash
+    rl_kwargs = get_thresholds_for_category("rl")
+    result_crash_rl = check_divergence(values_crash, lower_is_better=False, **rl_kwargs)
+    assert result_crash_rl["diverged"] is False
+
+
+def test_generative_thresholds_longer_patience():
+    """Generative models have longer plateau patience (40 vs default 20)."""
+    # 25 flat values triggers default patience=20 but not generative patience=40
+    values = [0.5] + [0.5] * 25
+    result_default = check_divergence(values, plateau_patience=20)
+    assert result_default["diverged"] is True
+    gen_kwargs = get_thresholds_for_category("generative")
+    result_gen = check_divergence(values, **gen_kwargs)
+    assert result_gen["diverged"] is False
+
+
+def test_model_category_defaults_immutable():
+    """get_thresholds_for_category returns a copy, not the original dict."""
+    t = get_thresholds_for_category("rl")
+    t["explosion_threshold"] = 999
+    assert MODEL_CATEGORY_DEFAULTS["rl"]["explosion_threshold"] == 20.0
+
+
+def test_cli_model_category_rl(run_main):
+    """CLI --model-category rl applies RL thresholds."""
+    # Reward crash from 8 to 1 — RL threshold (20.0) should NOT trigger
+    r = run_main("detect_divergence.py",
+                  "[8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,1]",
+                  "--higher-is-better", "--model-category", "rl")
+    assert r.returncode == 0
+    output = json.loads(r.stdout)
+    assert output["diverged"] is False
+
+
+def test_cli_model_category_supervised(run_main):
+    """CLI --model-category supervised uses default thresholds."""
+    r = run_main("detect_divergence.py", "[0.5, 0.4, 0.3, 0.2]",
+                  "--model-category", "supervised")
+    assert r.returncode == 0
+    output = json.loads(r.stdout)
+    assert output["diverged"] is False
+
+
+def test_cli_explicit_threshold_overrides_category(run_main):
+    """CLI explicit --explosion-threshold overrides category default."""
+    # With RL category (threshold=20) this wouldn't trigger, but explicit 3.0 should
+    r = run_main("detect_divergence.py",
+                  "[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,5]",
+                  "--model-category", "rl", "--explosion-threshold", "3.0")
+    assert r.returncode == 0
+    output = json.loads(r.stdout)
+    assert output["diverged"] is True
+    assert "explosion" in output["reason"].lower()
+
+
+def test_cli_plateau_patience_flag(run_main):
+    """CLI --plateau-patience flag works."""
+    # 12 flat values: default patience=20 won't trigger, but patience=10 will
+    values = [1.0] + [1.0] * 11
+    r = run_main("detect_divergence.py", json.dumps(values),
+                  "--plateau-patience", "10")
+    assert r.returncode == 0
+    output = json.loads(r.stdout)
+    assert output["diverged"] is True
+    assert "plateau" in output["reason"].lower()
+
+
+class TestEmptyInputEdgeCases:
+    """Edge case tests for empty inputs (Task 3.5)."""
+
+    def test_detect_nan_inf_empty(self):
+        result = detect_nan_inf([])
+        assert result is None  # no NaN/Inf in empty list
+
+    def test_detect_divergence_empty(self):
+        result = check_divergence([])
+        assert result is not None  # should handle empty gracefully
+        assert result["diverged"] is False

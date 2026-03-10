@@ -32,7 +32,17 @@ Search the project for evaluation scripts:
    - **HuggingFace Trainer:** Look for `compute_metrics` function passed to `Trainer`. Metrics are logged to `runs/` or `output_dir`. Use `trainer.evaluate()` as eval command
    - **TF/Keras:** Look for `model.evaluate()` or custom callbacks. Metrics may be in `CSVLogger` output or TensorBoard
 
-3. If no clear eval command found, use AskUserQuestion:
+3. If no clear eval command found:
+
+   **Autonomous mode auto-skip:** If `budget_mode == "autonomous"`, skip the user question. Instead:
+   - Set `eval_command = null`
+   - Use training output as the evaluation source — run training for the profiling duration and extract final metrics via `parse_logs.py`
+   - If metrics containing the `primary_metric` keyword are found in training output: use those as baseline metrics
+   - If no recognizable metrics found: look for checkpoint/log files (TensorBoard events, CSV logs, JSON summaries) and parse those
+   - Log to dev_notes: "No eval command found — using training output metrics as baseline (autonomous mode)"
+   - Log to error tracker: `category: "config_error", severity: "info", source: "baseline", message: "No eval command — falling back to training output metrics (autonomous mode)"`
+
+   **Otherwise (interactive mode):** Use AskUserQuestion:
    ```
    I couldn't automatically identify an evaluation command.
    How do I evaluate this model? Please provide:
@@ -40,7 +50,7 @@ Search the project for evaluation scripts:
    - What metrics it outputs
    ```
 
-## Step 1.5: Apply Prepared Data Paths (If Applicable)
+## Step 1.1: Apply Prepared Data Paths (If Applicable)
 
 If the orchestrator passed `prepared_train_path` or `prepared_val_path`:
 1. Identify how the training command references data paths (CLI args like `--data_dir`, `--train_path`, `--val_path`, or config file entries)
@@ -85,6 +95,7 @@ This creates:
 **For non-iterative frameworks (scikit-learn, XGBoost without GPU, LightGBM without GPU):**
 - Skip GPU memory profiling and throughput estimation below.
 - Instead, measure total `fit()` wall-clock time and record as `profiling.fit_duration_seconds` in baseline.json.
+- **Estimate experiment timeout from fit duration:** Read the model's configured iteration count (e.g., `n_estimators`, `max_iter`, `num_boost_round`) and the profiling iteration count. Compute: `estimated_timeout_seconds = fit_duration_seconds * (max_iterations_configured / profiling_iterations) * 2`. The `× 2` safety margin accounts for slower HP configs. If iteration counts cannot be determined, fall back to `fit_duration_seconds * 10`. Cap at 14400 (4 hours). Record as `profiling.estimated_timeout_seconds` in baseline.json.
 - Set `profiling.throughput_samples_per_sec` and `profiling.estimated_max_batch_size` to `null`.
 - If the framework supports GPU (XGBoost `tree_method="gpu_hist"`, LightGBM `device="gpu"`), still run `gpu_check.py`.
 
@@ -140,6 +151,25 @@ Write `experiments/results/baseline.json`:
 ```
 
 Use the Write tool to create this file.
+
+**Nullable fields:** For non-iterative frameworks (scikit-learn, XGBoost, LightGBM), `profiling.throughput_samples_per_sec` and `profiling.estimated_max_batch_size` will be `null`. HP-tune must not use `estimated_max_batch_size` as a cap when null. Experiment must use `estimated_timeout_seconds` instead of throughput-based timeout.
+
+## Step 5.1: Validate Output
+
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/schema_validator.py \
+  experiments/results/baseline.json baseline
+```
+
+If validation fails, fix and re-validate before proceeding.
+
+## Step 5.2: Validate Metric Keys
+
+After schema validation passes, verify the `metrics` dict contains required keys:
+
+1. **Check primary_metric:** If the orchestrator specified `primary_metric`, verify `metrics` contains a matching key (case-insensitive). If not found, search for close matches (e.g., `"val_accuracy"` for `"accuracy"`). If a close match exists, log to dev_notes which key was used. If no match: log warning to error tracker with `category: "config_error"`.
+
+2. **Check divergence metric:** If the orchestrator specified `divergence_metric` (default: `"loss"`), verify it exists in `metrics`. If not found, check aliases: `"train_loss"`, `"val_loss"`, `"total_loss"`, `"nll_loss"`. If found under an alias, log which alias to dev_notes — the orchestrator should pass this alias to the monitor skill. If not found at all: log warning — divergence monitoring may not work.
 
 ## Step 6: Write Dev Notes
 

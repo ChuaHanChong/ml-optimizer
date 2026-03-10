@@ -113,10 +113,13 @@ def save_state(
 
     Args:
         user_choices: Optional dict of Phase 0 user choices to persist
-            (e.g., primary_metric, divergence_metric, lower_is_better,
-            target_value, train_command, eval_command, train_data_path,
-            val_data_path, prepared_train_path, prepared_val_path,
-            env_manager, env_name). These are preserved across pipeline
+            (e.g., primary_metric, divergence_metric, divergence_lower_is_better,
+            lower_is_better, target_value, train_command, eval_command,
+            train_data_path, val_data_path, prepared_train_path,
+            prepared_val_path, env_manager, env_name, model_category,
+            user_papers, budget_mode, difficulty, difficulty_multiplier,
+            method_proposal_scope, method_proposal_iterations,
+            hp_batches_per_round). These are preserved across pipeline
             resumptions.
 
     Returns the path to the state file.
@@ -143,6 +146,18 @@ def save_state(
     except BaseException:
         os.unlink(tmp_path)
         raise
+
+    # Backup user_choices separately for recovery if main state corrupts
+    if user_choices:
+        backup_path = root / "user-choices-backup.json"
+        try:
+            tmp_fd2, tmp_path2 = tempfile.mkstemp(dir=str(root), suffix=".tmp")
+            with os.fdopen(tmp_fd2, "w") as f:
+                json.dump(user_choices, f, indent=2)
+            os.replace(tmp_path2, str(backup_path))
+        except OSError:
+            pass  # Best-effort backup — don't fail the main save
+
     return str(state_path)
 
 
@@ -150,13 +165,31 @@ def load_state(exp_root: str) -> dict | None:
     """Read pipeline-state.json if it exists.
 
     Returns the state dict, or None if no state file exists.
+    If the main state file is corrupt but user-choices-backup.json exists,
+    returns a minimal state dict with the recovered user_choices.
     """
-    state_path = Path(exp_root) / "pipeline-state.json"
+    root = Path(exp_root)
+    state_path = root / "pipeline-state.json"
     if not state_path.is_file():
         return None
     try:
         return json.loads(state_path.read_text())
     except (json.JSONDecodeError, OSError):
+        # Main state corrupt — attempt to recover user_choices from backup
+        backup_path = root / "user-choices-backup.json"
+        if backup_path.is_file():
+            try:
+                user_choices = json.loads(backup_path.read_text())
+                return {
+                    "phase": 0,
+                    "iteration": 0,
+                    "running_experiments": [],
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "status": "recovered",
+                    "user_choices": user_choices,
+                }
+            except (json.JSONDecodeError, OSError):
+                pass
         return None
 
 

@@ -17,6 +17,7 @@ From the orchestrator:
 - `primary_metric`: The metric to optimize
 - `lower_is_better`: Whether lower values are better (True for loss, False for PSNR/accuracy)
 - `target_value`: The goal value for the primary metric (optional)
+- `remaining_budget`: How many more experiments can be run (used in pivot decision tree)
 
 ## Step 1: Load and Compare Results
 
@@ -34,7 +35,7 @@ This returns:
 - Deltas vs baseline
 - HP correlations
 
-## Step 1.5: Filter Results
+## Step 1.1: Filter Results
 
 Before analysis, filter out non-completed experiments:
 - Exclude experiments with `status: "diverged"` or `status: "failed"` from correlation analysis
@@ -66,6 +67,28 @@ For each hyperparameter that was varied, use **relative** (percentage) threshold
 ### Interaction Effects
 - Did changing two HPs together produce unexpected results?
 - e.g., High LR + large batch diverged, but high LR + small batch worked
+
+## Step 2.1: Tier-Aware Analysis (if method proposals were used)
+
+When experiments have `method_tier` fields, use them for smarter budget allocation:
+
+### Method Effectiveness Ranking
+For each code branch that has `method_default_hp` results:
+1. Compare its `method_default_hp` metric to the baseline metric
+2. Compute the **isolated method effect** = `(method_default_hp_metric - baseline_metric) / baseline_metric × 100%`
+3. Rank branches by isolated method effect
+
+### Branch Pruning Recommendations
+- **Prune (>5% worse than baseline):** If a method with default HPs performs >5% worse (relative) than baseline, recommend pruning that branch — the method itself hurts, HP tuning is unlikely to recover it
+- **Promising (>2% better than baseline):** Flag as high-priority for HP tuning in subsequent iterations
+- **Neutral (within ±2% of baseline):** Keep but deprioritize — the method's effect is marginal, HP tuning may or may not help
+
+### Inform the Decision (Step 3)
+- If promising branches exist but haven't been HP-tuned yet (`method_tuned_hp` results don't exist for them), recommend **continue** with direction: "tune HPs on promising method branches"
+- If all branches have been pruned (all methods hurt), recommend **pivot** or **stop** depending on remaining budget
+- Include the method effectiveness ranking in the batch analysis report (Step 4)
+
+If no experiments have `method_tier` fields, skip this step entirely.
 
 ## Step 3: Decide Next Action
 
@@ -99,6 +122,8 @@ Output:
 3. **Research status:**
    - No research done AND `remaining_budget >= 5` → "Switch to research + code changes — HP tuning alone has plateaued"
    - Research done but not all proposals implemented AND `remaining_budget >= 3` → "Implement next-priority research proposal"
+3b. **Method proposals (LLM knowledge + web search):**
+   - HP tuning plateaued AND `remaining_budget >= 3` AND no method proposals tried yet → pivot_type: `"method_proposal"`, suggestion: "Propose new optimization methods (method proposals)"
 4. **Failure pattern:**
    - >50% of recent experiments diverged → "Narrow search space — constrain LR to [best_lr × 0.5, best_lr × 2.0]"
    - All experiments within 1% of each other → "Try qualitatively different change (different optimizer, scheduler, data augmentation)"
@@ -110,12 +135,17 @@ Output:
 {
   "action": "pivot",
   "reason": "<which condition from the decision tree triggered>",
-  "pivot_type": "<branch_test|hp_expand|research|narrow_space|qualitative_change|regularization>",
+  "pivot_type": "<branch_test|hp_expand|research|method_proposal|narrow_space|qualitative_change|regularization>",
   "suggestion": "<specific actionable next step>",
   "remaining_potential": "<estimated room for improvement>",
   "budget_remaining": "<N>"
 }
 ```
+
+**Orchestrator contract:** The orchestrator dispatches each `pivot_type` as follows:
+- `branch_test`, `hp_expand`, `narrow_space`, `regularization`: Adjust search space and invoke hp-tune. No research round.
+- `research`, `method_proposal`, `qualitative_change`: Trigger research → implement cycle (step 6.5 in orchestrate). Requires `remaining_budget >= 3`.
+See orchestrate SKILL.md Phase 6 step 6 "Pivot dispatch by type" for details.
 
 ### Stop
 **When:** Goal reached OR no more improvement possible
@@ -134,7 +164,7 @@ Output:
 }
 ```
 
-## Step 3.5: Log Inefficiency Observations
+## Step 3.1: Log Inefficiency Observations
 
 After each analysis, log notable inefficiencies to the error tracker:
 

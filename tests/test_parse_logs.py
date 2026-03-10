@@ -2,11 +2,13 @@
 
 import json
 import math
+import warnings
 
 import pytest
 
 from conftest import FIXTURES
-from parse_logs import parse_kv_line, parse_json_line, parse_csv_lines, parse_python_logging_line, parse_tqdm_line, parse_xgboost_line, detect_format, parse_log, extract_metric_trajectory
+from detect_divergence import check_divergence
+from parse_logs import parse_kv_line, parse_json_line, parse_hf_trainer_line, parse_csv_lines, parse_python_logging_line, parse_tqdm_line, parse_xgboost_line, detect_format, parse_log, extract_metric_trajectory
 
 
 def test_parse_kv_line():
@@ -75,7 +77,6 @@ def test_parse_log_nonexistent():
 
 
 def test_parse_log_divergent_captures_nan():
-    import math
     records = parse_log(str(FIXTURES / "divergent_log.txt"))
     losses = extract_metric_trajectory(records, "loss")
     # Line 11 has loss=nan — must be captured
@@ -223,7 +224,6 @@ def test_parse_log_tqdm_format(tmp_path):
 
 def test_parse_log_kv_fallback_warns_on_empty(tmp_path):
     """Auto-detected 'kv' format with no parseable metrics should warn."""
-    import warnings
     f = tmp_path / "weird.log"
     f.write_text("This is just a plain text log\nNo metrics here\nJust words\n")
     with warnings.catch_warnings(record=True) as w:
@@ -318,3 +318,266 @@ def test_parse_log_xgboost_file(tmp_path):
     assert len(records) == 3
     assert records[0]["iteration"] == 0.0
     assert records[2]["train-logloss"] == 0.600
+
+
+# --- Timezone-suffixed Python logging format ---
+
+
+def test_parse_python_logging_line_with_utc_timezone():
+    """Python logging format with UTC timezone suffix."""
+    line = "2024-01-15 10:30:45,123 UTC INFO epoch=5 loss=0.234"
+    metrics = parse_python_logging_line(line)
+    assert metrics["epoch"] == 5.0
+    assert abs(metrics["loss"] - 0.234) < 1e-6
+    assert "wall_time" in metrics
+
+
+def test_parse_python_logging_line_with_offset_timezone():
+    """Python logging format with +0800 offset timezone."""
+    line = "2024-01-15 10:30:45,123 +0800 INFO epoch=3 loss=0.5"
+    metrics = parse_python_logging_line(line)
+    assert metrics["epoch"] == 3.0
+    assert abs(metrics["loss"] - 0.5) < 1e-6
+
+
+def test_parse_python_logging_line_with_est_timezone():
+    """Python logging format with EST timezone abbreviation."""
+    line = "2024-01-15 10:30:45.123 EST WARNING lr=0.001 batch_loss=0.123"
+    metrics = parse_python_logging_line(line)
+    assert abs(metrics["lr"] - 0.001) < 1e-6
+    assert abs(metrics["batch_loss"] - 0.123) < 1e-6
+
+
+# --- XGBoost/LightGBM session fixture tests ---
+
+
+def test_parse_xgboost_session_fixture():
+    """Parse the XGBoost session fixture: 20 iterations of train-auc and val-auc."""
+    records = parse_log(str(FIXTURES / "xgboost_session_log.txt"))
+    assert len(records) == 20
+    # First iteration
+    assert records[0]["iteration"] == 0.0
+    assert records[0]["train-auc"] == 0.5
+    assert records[0]["val-auc"] == 0.498
+    # Last iteration
+    assert records[-1]["iteration"] == 19.0
+    assert records[-1]["val-auc"] == 0.8052
+    # Verify trajectory extraction works
+    val_auc = extract_metric_trajectory(records, "val-auc")
+    assert len(val_auc) == 20
+    assert val_auc[-1] > val_auc[0]  # AUC should increase
+
+
+def test_parse_lightgbm_session_fixture():
+    """Parse the LightGBM session fixture: possessive key format with apostrophes."""
+    records = parse_log(str(FIXTURES / "lightgbm_session_log.txt"))
+    assert len(records) == 20
+    # LightGBM keys normalized: "training's binary_logloss" → "training_binary_logloss"
+    assert "training_binary_logloss" in records[0]
+    assert "valid_1_binary_logloss" in records[0]
+    # First iteration
+    assert records[0]["iteration"] == 1.0
+    assert records[0]["training_binary_logloss"] == 0.68
+    assert records[0]["valid_1_binary_logloss"] == 0.685
+    # Last iteration
+    assert records[-1]["iteration"] == 20.0
+    assert records[-1]["training_binary_logloss"] == 0.4
+    # Trajectory extraction
+    val_loss = extract_metric_trajectory(records, "valid_1_binary_logloss")
+    assert len(val_loss) == 20
+    assert val_loss[-1] < val_loss[0]  # logloss should decrease
+
+
+def test_xgboost_fixture_divergence_detection():
+    """XGBoost AUC metrics work with divergence detection (higher-is-better)."""
+    records = parse_log(str(FIXTURES / "xgboost_session_log.txt"))
+    val_auc = extract_metric_trajectory(records, "val-auc")
+    result = check_divergence(val_auc, lower_is_better=False)
+    assert result["diverged"] is False
+
+
+def test_lightgbm_fixture_divergence_detection():
+    """LightGBM logloss metrics work with divergence detection (lower-is-better)."""
+    records = parse_log(str(FIXTURES / "lightgbm_session_log.txt"))
+    val_loss = extract_metric_trajectory(records, "valid_1_binary_logloss")
+    result = check_divergence(val_loss, lower_is_better=True)
+    assert result["diverged"] is False
+
+
+def test_parse_xgboost_line_lightgbm_possessive():
+    """LightGBM possessive format: training's X → training_X."""
+    line = "[5]\ttraining's binary_logloss:0.4500\tvalid_1's binary_logloss:0.5100"
+    m = parse_xgboost_line(line)
+    assert m["iteration"] == 5.0
+    assert m["training_binary_logloss"] == 0.45
+    assert m["valid_1_binary_logloss"] == 0.51
+
+
+def test_detect_format_lightgbm():
+    """LightGBM bracket lines with possessive keys detected as 'xgboost' format."""
+    lines = [
+        "[1]\ttraining's binary_logloss:0.6800\tvalid_1's binary_logloss:0.6850",
+        "[2]\ttraining's binary_logloss:0.6650\tvalid_1's binary_logloss:0.6720",
+    ]
+    assert detect_format(lines) == "xgboost"
+
+
+class TestHuggingFaceTrainerFormat:
+    """Tests for HuggingFace Trainer log format parsing (Task 3.6)."""
+
+    def test_parse_hf_trainer_line_basic(self):
+        line = "{'loss': 0.5, 'learning_rate': 5e-05, 'epoch': 1.0}"
+        result = parse_hf_trainer_line(line)
+        assert result == {'loss': 0.5, 'learning_rate': 5e-05, 'epoch': 1.0}
+
+    def test_parse_hf_trainer_line_with_whitespace(self):
+        line = "  {'loss': 0.3214, 'grad_norm': 1.5, 'epoch': 2.0}  "
+        result = parse_hf_trainer_line(line)
+        assert 'loss' in result
+        assert result['loss'] == 0.3214
+
+    def test_parse_hf_trainer_line_non_numeric_filtered(self):
+        line = "{'loss': 0.5, 'some_string': 'hello', 'epoch': 1.0}"
+        result = parse_hf_trainer_line(line)
+        assert 'loss' in result
+        assert 'epoch' in result
+        assert 'some_string' not in result
+
+    def test_parse_hf_trainer_line_not_matching(self):
+        line = "loss: 0.5"
+        result = parse_hf_trainer_line(line)
+        assert result == {}
+
+    def test_parse_hf_trainer_line_empty(self):
+        result = parse_hf_trainer_line("")
+        assert result == {}
+
+    def test_detect_format_hf_trainer(self):
+        lines = [
+            "{'loss': 0.5, 'learning_rate': 5e-05, 'epoch': 1.0}",
+            "{'loss': 0.4, 'learning_rate': 4e-05, 'epoch': 2.0}",
+            "{'loss': 0.3, 'learning_rate': 3e-05, 'epoch': 3.0}",
+        ]
+        fmt = detect_format(lines)
+        assert fmt == "hf_trainer"
+
+    def test_parse_log_hf_trainer_integration(self, tmp_path):
+        log_content = "\n".join([
+            "Some header text",
+            "{'loss': 0.5, 'learning_rate': 5e-05, 'epoch': 1.0}",
+            "{'loss': 0.4, 'learning_rate': 4e-05, 'epoch': 2.0}",
+            "{'loss': 0.3, 'learning_rate': 3e-05, 'epoch': 3.0}",
+        ])
+        log_file = tmp_path / "hf_train.log"
+        log_file.write_text(log_content)
+        results = parse_log(str(log_file))
+        assert len(results) == 3
+        assert results[0]['loss'] == 0.5
+        assert results[2]['epoch'] == 3.0
+
+
+class TestEmptyInputEdgeCases:
+    """Edge case tests for empty inputs (Task 3.5)."""
+
+    def test_parse_csv_lines_empty(self):
+        result = parse_csv_lines([])
+        assert result == []
+
+    def test_detect_format_empty(self):
+        result = detect_format([])
+        assert isinstance(result, str)  # should return a default format, not crash
+
+    def test_parse_log_empty_file(self, tmp_path):
+        empty_file = tmp_path / "empty.log"
+        empty_file.write_text("")
+        result = parse_log(str(empty_file))
+        assert result == []
+
+    def test_parse_log_nonexistent_file(self):
+        result = parse_log("/nonexistent/path/to/file.log")
+        assert result == []
+
+
+class TestUnicodeLogFile:
+    """Test Unicode handling in log files (Task 3.7)."""
+
+    def test_parse_log_unicode_metric_names(self, tmp_path):
+        log_content = "époque: 1, perte: 0.5, précision: 0.8\népoque: 2, perte: 0.3, précision: 0.9\n"
+        log_file = tmp_path / "unicode.log"
+        log_file.write_text(log_content, encoding="utf-8")
+        results = parse_log(str(log_file))
+        assert len(results) >= 0  # should not crash on Unicode
+
+    def test_parse_log_unicode_comments(self, tmp_path):
+        log_content = "# 训练日志 - Training log\nloss: 0.5, accuracy: 0.8\nloss: 0.3, accuracy: 0.9\n"
+        log_file = tmp_path / "unicode_comments.log"
+        log_file.write_text(log_content, encoding="utf-8")
+        results = parse_log(str(log_file))
+        assert len(results) == 2
+        assert results[0]['loss'] == 0.5
+
+
+def test_parse_python_logging_non_matching():
+    """Non-matching line returns empty dict."""
+    result = parse_python_logging_line("Just some random text")
+    assert result == {}
+
+
+def test_parse_tqdm_value_error():
+    """Tqdm line with malformed numeric value should skip that value."""
+    line = "100%|████| 100/100 [00:01<00:00, loss=e+, acc=95.0]"
+    result = parse_tqdm_line(line)
+    assert "loss" not in result  # e+ is not a valid float
+    assert result.get("acc") == 95.0  # valid value still parsed
+
+
+def test_parse_xgboost_empty_segment():
+    """XGBoost line with empty segments between tabs should skip them (line 83)."""
+    # Space-only segment between tabs becomes empty after strip()
+    line = "[10]\ttrain-auc:0.85\t \tval-auc:0.80"
+    result = parse_xgboost_line(line)
+    assert result["iteration"] == 10.0
+    assert result["train-auc"] == 0.85
+    assert result["val-auc"] == 0.80
+
+
+def test_parse_xgboost_primary_value_error():
+    """Primary regex matches but float() fails → ValueError continue (lines 93-94)."""
+    # "1.2.3" matches [0-9eE.+\\-]+ but float("1.2.3") raises ValueError
+    line = "[5]\ttrain-auc:1.2.3"
+    result = parse_xgboost_line(line)
+    assert result["iteration"] == 5.0
+    assert "train-auc" not in result  # skipped due to ValueError
+
+
+def test_parse_xgboost_fallback_regex():
+    """Segment failing primary regex falls back to secondary regex (lines 97-99)."""
+    # Trailing text causes primary regex (anchored at $) to fail
+    line = "[5]\ttrain:0.85 info"
+    result = parse_xgboost_line(line)
+    assert result["iteration"] == 5.0
+    assert result.get("train") == 0.85
+
+
+def test_parse_xgboost_fallback_value_error():
+    """Fallback regex matches but float() fails → ValueError continue (lines 100-101)."""
+    # Trailing text fails primary; fallback finds key:1.2.3 but float fails
+    line = "[5]\ttrain:1.2.3 trailing"
+    result = parse_xgboost_line(line)
+    assert result["iteration"] == 5.0
+    assert "train" not in result
+
+
+def test_parse_hf_trainer_malformed_json():
+    """HF Trainer line that looks right but has invalid JSON content."""
+    line = "{'key': undefined}"
+    result = parse_hf_trainer_line(line)
+    assert result == {}
+
+
+def test_parse_kv_line_nan_bare():
+    """KV line with 'nan' value should parse as float NaN."""
+    line = "loss=nan lr=0.001"
+    result = parse_kv_line(line)
+    assert math.isnan(result["loss"])
+    assert result["lr"] == 0.001

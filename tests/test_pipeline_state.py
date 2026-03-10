@@ -9,8 +9,13 @@ Phase numbering (after prerequisites addition):
 """
 
 import json
+import os as _os
+import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
+
+import pytest
 
 from pipeline_state import validate_phase_requirements, save_state, load_state, cleanup_stale
 
@@ -561,3 +566,193 @@ def test_validate_phase3_blocks_on_failed_prerequisites(tmp_path):
     result = validate_phase_requirements(3, str(tmp_path))
     assert result["valid"] is False
     assert any("prerequisites" in m.lower() or "ready_for_baseline" in m.lower() for m in result["missing"])
+
+
+# --- User choices backup and recovery ---
+
+
+def test_save_state_creates_user_choices_backup(tmp_path):
+    """save_state writes a separate user-choices-backup.json file."""
+    choices = {"primary_metric": "accuracy", "lower_is_better": False}
+    save_state(6, 1, [], str(tmp_path), user_choices=choices)
+    backup_path = tmp_path / "user-choices-backup.json"
+    assert backup_path.is_file()
+    backup = json.loads(backup_path.read_text())
+    assert backup == choices
+
+
+def test_save_state_no_backup_without_user_choices(tmp_path):
+    """save_state without user_choices does not create a backup file."""
+    save_state(3, 1, [], str(tmp_path))
+    backup_path = tmp_path / "user-choices-backup.json"
+    assert not backup_path.is_file()
+
+
+def test_load_state_recovers_from_corrupt_state_with_backup(tmp_path):
+    """If pipeline-state.json is corrupt but backup exists, recover user_choices."""
+    choices = {"primary_metric": "loss", "lower_is_better": True, "target_value": 0.01}
+    # First save normally to create the backup
+    save_state(6, 2, [], str(tmp_path), user_choices=choices)
+    # Now corrupt the main state file
+    (tmp_path / "pipeline-state.json").write_text("{corrupt json!!!")
+    state = load_state(str(tmp_path))
+    assert state is not None
+    assert state["status"] == "recovered"
+    assert state["user_choices"] == choices
+
+
+def test_load_state_corrupt_no_backup_returns_none(tmp_path):
+    """If both state and backup are missing/corrupt, returns None."""
+    (tmp_path / "pipeline-state.json").write_text("{bad}")
+    state = load_state(str(tmp_path))
+    assert state is None
+
+
+# --- Full user_choices roundtrip (Task 3.2) ---
+
+
+class TestFullUserChoicesRoundtrip:
+    """All 20+ documented user_choices fields survive save/load (Task 3.2)."""
+
+    def test_all_user_choices_fields_persist(self, tmp_path):
+        all_choices = {
+            "primary_metric": "accuracy",
+            "divergence_metric": "loss",
+            "divergence_lower_is_better": True,
+            "lower_is_better": False,
+            "target_value": 0.95,
+            "train_command": "python train.py",
+            "eval_command": "python eval.py",
+            "train_data_path": "/data/train.csv",
+            "val_data_path": "/data/val.csv",
+            "prepared_train_path": "/data/prepared/train.csv",
+            "prepared_val_path": "/data/prepared/val.csv",
+            "env_manager": "conda",
+            "env_name": "ml-env",
+            "model_category": "supervised",
+            "user_papers": ["paper1.pdf", "paper2.pdf"],
+            "budget_mode": "autonomous",
+            "difficulty": "moderate",
+            "difficulty_multiplier": 15,
+            "method_proposal_scope": "training",
+            "method_proposal_iterations": 3,
+            "hp_batches_per_round": 3,
+        }
+
+        save_state(4, 1, [], str(tmp_path), user_choices=all_choices)
+        loaded = load_state(str(tmp_path))
+
+        assert loaded is not None
+        loaded_choices = loaded.get("user_choices", {})
+
+        for key, value in all_choices.items():
+            assert key in loaded_choices, f"Missing key: {key}"
+            assert loaded_choices[key] == value, f"Mismatch for {key}: {loaded_choices[key]} != {value}"
+
+
+# --- Coverage tests for save_state / load_state edge cases ---
+
+
+def test_save_state_write_failure(tmp_path):
+    """save_state should propagate exception and clean up temp on write failure."""
+    exp_root = str(tmp_path / "exp")
+    (tmp_path / "exp").mkdir()
+    with pytest.raises(OSError):
+        with mock.patch("pipeline_state.os.fdopen", side_effect=OSError("disk full")):
+            save_state(phase=1, iteration=0, running_exp_ids=[], exp_root=exp_root)
+    # Verify no temp files left behind
+    assert not list((tmp_path / "exp").glob("*.tmp"))
+
+
+def test_save_state_backup_write_failure(tmp_path):
+    """Main save succeeds even when user_choices backup fails."""
+    exp_root = str(tmp_path / "exp")
+    original_mkstemp = tempfile.mkstemp
+    call_count = [0]
+
+    def mock_mkstemp(*args, **kwargs):
+        call_count[0] += 1
+        if call_count[0] == 2:  # Second call is the backup
+            raise OSError("backup failed")
+        return original_mkstemp(*args, **kwargs)
+
+    with mock.patch("pipeline_state.tempfile.mkstemp", side_effect=mock_mkstemp):
+        path = save_state(phase=1, iteration=0, running_exp_ids=[],
+                          exp_root=exp_root, user_choices={"metric": "loss"})
+    assert Path(path).exists()
+    state = json.loads(Path(path).read_text())
+    assert state["user_choices"]["metric"] == "loss"
+
+
+def test_load_state_both_corrupt(tmp_path):
+    """Returns None when both main state and backup are corrupt."""
+    exp_root = tmp_path / "exp"
+    exp_root.mkdir()
+    (exp_root / "pipeline-state.json").write_text("NOT JSON")
+    (exp_root / "user-choices-backup.json").write_text("ALSO NOT JSON")
+    result = load_state(str(exp_root))
+    assert result is None
+
+
+def test_cli_save_invalid_json_running_ids(run_main, tmp_path):
+    """CLI save with invalid JSON for running_ids should error."""
+    r = run_main("pipeline_state.py", str(tmp_path), "save", "1", "0", "not_json")
+    assert r.returncode == 1
+    assert "invalid" in r.stdout.lower() or "error" in r.stdout.lower()
+
+
+def test_cli_load_no_state(run_main, tmp_path):
+    """CLI load with no state should print 'No pipeline state found.'"""
+    r = run_main("pipeline_state.py", str(tmp_path), "load")
+    assert r.returncode == 0
+    assert "no pipeline state" in r.stdout.lower()
+
+
+def test_cli_cleanup_nothing(run_main, tmp_path):
+    """CLI cleanup with nothing stale should report 'Nothing to clean up.'"""
+    r = run_main("pipeline_state.py", str(tmp_path), "cleanup")
+    assert r.returncode == 0
+    assert "nothing to clean" in r.stdout.lower()
+
+
+def test_cleanup_stale_pipeline_write_failure(tmp_path):
+    """cleanup_stale re-raises after cleaning temp file on write failure (lines 235-237)."""
+    exp_root = tmp_path / "exp"
+    exp_root.mkdir()
+    stale_time = (datetime.now(tz=timezone.utc) - timedelta(hours=10)).isoformat()
+    state = {
+        "phase": 6, "iteration": 1,
+        "status": "running",
+        "running_exp_ids": ["exp-old"],
+        "timestamp": stale_time,
+    }
+    (exp_root / "pipeline-state.json").write_text(json.dumps(state))
+    original_fdopen = _os.fdopen
+
+    def mock_fdopen(fd, *args, **kwargs):
+        _os.close(fd)  # Close fd to prevent leak
+        raise OSError("disk full during cleanup")
+
+    with mock.patch("pipeline_state.os.fdopen", side_effect=mock_fdopen):
+        with pytest.raises(OSError, match="disk full"):
+            cleanup_stale(str(exp_root))
+
+
+def test_cleanup_stale_exp_result_write_failure(tmp_path):
+    """cleanup_stale re-raises when marking stale exp-result fails (lines 268-270)."""
+    exp_root = tmp_path / "exp"
+    results = exp_root / "results"
+    results.mkdir(parents=True)
+    stale_time = (datetime.now(tz=timezone.utc) - timedelta(hours=10)).isoformat()
+    (results / "exp-001.json").write_text(json.dumps({
+        "exp_id": "exp-001", "status": "running", "timestamp": stale_time,
+        "config": {}, "metrics": {},
+    }))
+    # No pipeline-state.json so skip that path — go directly to exp results
+    def mock_fdopen(fd, *args, **kwargs):
+        _os.close(fd)
+        raise OSError("disk full during exp rewrite")
+
+    with mock.patch("pipeline_state.os.fdopen", side_effect=mock_fdopen):
+        with pytest.raises(OSError, match="disk full"):
+            cleanup_stale(str(exp_root))

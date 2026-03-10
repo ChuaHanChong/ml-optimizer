@@ -10,6 +10,7 @@ from conftest import _write_result
 
 from error_tracker import (
     create_event,
+    load_cross_project,
     log_event,
     load_error_log,
     detect_patterns,
@@ -187,7 +188,6 @@ def test_cross_project_integration(tmp_path):
     update_cross_project(str(plugin_root), str(tmp_path / "project_b"), str(exp_b))
 
     # Cross-project should detect shared divergence pattern
-    from error_tracker import load_cross_project
     memory = load_cross_project(str(plugin_root))
     cross_patterns = detect_cross_project_patterns(memory)
     ids = [p["pattern_id"] for p in cross_patterns]

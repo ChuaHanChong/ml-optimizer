@@ -1,6 +1,7 @@
 """Tests for implement_utils.py."""
 
 import json
+import os
 import subprocess
 from pathlib import Path
 from unittest.mock import patch, MagicMock
@@ -26,6 +27,7 @@ from implement_utils import (
 )
 SAMPLE_FINDINGS = FIXTURES / "sample_research_findings.md"
 SAMPLE_FINDINGS_REF = FIXTURES / "sample_research_findings_with_reference.md"
+SAMPLE_FINDINGS_KNOWLEDGE = FIXTURES / "sample_research_findings_knowledge.md"
 
 
 # --- slugify ---
@@ -514,3 +516,139 @@ def test_parse_proposals_double_hash(tmp_path):
     proposals = parse_research_proposals(str(f))
     assert len(proposals) == 1
     assert proposals[0]["name"] == "Test Technique"
+
+
+# --- proposal_source extraction ---
+
+
+def test_parse_proposals_knowledge_source():
+    """Knowledge-mode proposals have proposal_source='llm_knowledge'."""
+    proposals = parse_research_proposals(str(SAMPLE_FINDINGS_KNOWLEDGE))
+    assert len(proposals) == 3
+    for p in proposals:
+        assert p["proposal_source"] == "llm_knowledge"
+        assert p["implementation_strategy"] == "from_scratch"
+
+
+def test_parse_proposals_paper_source_default():
+    """Old findings without proposal_source default to 'paper'."""
+    proposals = parse_research_proposals(str(SAMPLE_FINDINGS))
+    for p in proposals:
+        assert p["proposal_source"] == "paper"
+
+
+def test_cli_parse_knowledge_proposals(run_main):
+    """CLI parses knowledge-mode findings and includes proposal_source."""
+    r = run_main("implement_utils.py", str(SAMPLE_FINDINGS_KNOWLEDGE), '[1,2]')
+    assert r.returncode == 0
+    output = json.loads(r.stdout)
+    assert len(output["proposals"]) == 2
+    for p in output["proposals"]:
+        assert p["proposal_source"] == "llm_knowledge"
+
+
+# --- CLI missing-args edge cases ---
+
+
+def test_cli_analyze_missing_repo_path(run_main):
+    """CLI analyze subcommand with no repo_path prints usage and exits 1."""
+    r = run_main("implement_utils.py", "analyze")
+    assert r.returncode == 1
+    assert "Usage" in r.stdout
+
+
+def test_cli_default_parse_missing_selected(run_main):
+    """CLI default mode with only findings path (no selected_json) exits 1."""
+    r = run_main("implement_utils.py", str(SAMPLE_FINDINGS))
+    assert r.returncode == 1
+    assert "Usage" in r.stdout
+
+
+def test_cli_clone_invalid_url(run_main, tmp_path):
+    """CLI clone subcommand with non-GitHub/GitLab URL exits 1 with error JSON."""
+    dest = tmp_path / "dest_repo"
+    r = run_main("implement_utils.py", "clone", "https://example.com/repo", str(dest))
+    assert r.returncode == 1
+    output = json.loads(r.stdout)
+    assert output["success"] is False
+    assert "github.com" in output["error"]
+
+
+# --- clone_reference_repo generic exception ---
+
+
+def test_clone_reference_repo_generic_exception():
+    """Generic exception in clone returns error dict (lines 251-252)."""
+    with patch("implement_utils.subprocess.run",
+               side_effect=OSError("permission denied")):
+        result = clone_reference_repo("https://github.com/user/repo", "/tmp/dest")
+    assert result["success"] is False
+    assert "permission denied" in result["error"]
+
+
+# --- analyze_reference_structure OS-error edge cases ---
+
+
+def test_analyze_unreadable_file(tmp_path):
+    """analyze_reference_structure skips files that can't be read (lines 303-304)."""
+    py_file = tmp_path / "model.py"
+    py_file.write_text("import torch")
+    os.chmod(str(py_file), 0o000)
+    try:
+        result = analyze_reference_structure(str(tmp_path))
+        assert isinstance(result, dict)
+        # File is listed (os.walk finds it) but content can't be analyzed
+        assert "model.py" in result["python_files"]
+    finally:
+        os.chmod(str(py_file), 0o644)
+
+
+def test_analyze_unreadable_requirements(tmp_path):
+    """analyze_reference_structure handles unreadable requirements.txt (lines 335-336)."""
+    (tmp_path / "model.py").write_text("x = 1\n")
+    req = tmp_path / "requirements.txt"
+    req.write_text("torch>=2.0\n")
+    os.chmod(str(req), 0o000)
+    try:
+        result = analyze_reference_structure(str(tmp_path))
+        assert result["requirements"] == []
+    finally:
+        os.chmod(str(req), 0o644)
+
+
+def test_analyze_unreadable_readme(tmp_path):
+    """analyze_reference_structure handles unreadable README.md (lines 345-346)."""
+    (tmp_path / "model.py").write_text("x = 1\n")
+    readme = tmp_path / "README.md"
+    readme.write_text("# My Project\n")
+    os.chmod(str(readme), 0o000)
+    try:
+        result = analyze_reference_structure(str(tmp_path))
+        assert result["readme_summary"] == ""
+    finally:
+        os.chmod(str(readme), 0o644)
+
+
+def test_analyze_skips_docs_and_test_dirs(tmp_path):
+    """analyze_reference_structure skips files in docs/ and test dirs (line 297)."""
+    # Create files in various skip directories
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir()
+    (docs_dir / "guide.py").write_text("x = 1\n")
+
+    tests_dir = tmp_path / "src" / "tests"
+    tests_dir.mkdir(parents=True)
+    (tests_dir / "check.py").write_text("x = 1\n")
+
+    test_dir = tmp_path / "src" / "test"
+    test_dir.mkdir(parents=True)
+    (test_dir / "verify.py").write_text("x = 1\n")
+
+    # Create a normal file that should be included
+    (tmp_path / "model.py").write_text("x = 1\n")
+
+    result = analyze_reference_structure(str(tmp_path))
+    assert "model.py" in result["python_files"]
+    assert "docs/guide.py" not in result["python_files"]
+    assert "src/tests/check.py" not in result["python_files"]
+    assert "src/test/verify.py" not in result["python_files"]

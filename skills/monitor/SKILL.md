@@ -57,25 +57,35 @@ If the watched metric is not found in the parsed records, attempt auto-detection
 
 1. **Case-insensitive match:** Try `metric_to_watch.lower()` against all keys lowercased
 2. **Prefix variants:** Try `train_<metric>`, `val_<metric>`, `<metric>_train` (e.g., `loss` → `train_loss`, `val_loss`)
+   **Disambiguation:** If multiple prefix variants match (e.g., both `train_loss` and `val_loss`), prefer `val_<metric>` — validation loss is a better divergence signal than training loss. Log which variant was selected to dev_notes.
 3. **Substring match:** Look for any key containing `metric_to_watch` as a substring (e.g., `"loss"` matches `"total_loss"`)
-4. **Report missing:** If no match found after all fallbacks, log a warning and report the available metric names to the orchestrator. Do not treat this as divergence. Continue monitoring the experiment without divergence checks — return status `healthy` when the experiment completes naturally. The orchestrator should still wait for experiment completion.
+4. **Report missing:** If no match found after all fallbacks, log a warning and report the available metric names to the orchestrator. Do not treat this as divergence. Return status `unmonitored` with the list of available metrics. The orchestrator handles this status by continuing without divergence checks but with a hard timeout fallback.
 
 ### 2c: Check for Divergence
 
-Run divergence detection on the extracted trajectory, passing `lower_is_better`:
+Run divergence detection on the extracted trajectory, passing `lower_is_better` and model-category-aware thresholds:
 ```bash
 python3 -c "
 import json, sys
 sys.path.insert(0, '$HOME/.claude/plugins/ml-optimizer/scripts')
-from detect_divergence import check_divergence
+from detect_divergence import check_divergence, get_thresholds_for_category
 from parse_logs import parse_log, extract_metric_trajectory
 
 records = parse_log('experiments/logs/<exp_id>/train.log')
 values = extract_metric_trajectory(records, '<metric>')
-result = check_divergence(values, lower_is_better=<lower_is_better>)
+kwargs = get_thresholds_for_category('<model_category or None>')
+kwargs['lower_is_better'] = <lower_is_better>
+result = check_divergence(values, **kwargs)
 print(json.dumps(result))
 "
 ```
+
+Alternatively, use the CLI with the `--model-category` flag:
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/detect_divergence.py '<json_values>' --model-category <model_category>
+```
+
+This applies category-specific thresholds automatically (e.g., RL uses `explosion_threshold=20.0` to avoid false positives on reward spikes).
 
 ### 2d: Take Action on Divergence
 
@@ -98,9 +108,9 @@ If divergence is detected:
    **Warning:** Never use bare `pkill -f "<exp_id>"` — it could match unrelated processes.
 
 2. **Record the divergence:**
-   - Read the current experiment result file
-   - Update status to `"diverged"`
-   - Add divergence details to notes:
+   - Read the current experiment result file (if it exists)
+   - **Ownership check:** If the file already has `status: "completed"` or `status: "failed"`, do NOT overwrite — the experiment finished first. Log to dev_notes: "Monitor detected divergence for <exp_id> but experiment already completed with status '<status>' — skipping overwrite." Skip to step 3.
+   - If the file does not exist, or has `status: "running"`: update status to `"diverged"` and add divergence details to notes:
      ```json
      {
        "status": "diverged",
@@ -208,3 +218,5 @@ Return to the orchestrator a dict per experiment:
 - `metric_trajectory`: `[]` (empty — watched metric was never parsed)
 - `latest_metrics`: All other available metrics from the final log line (the watched metric will be absent from this dict)
 - `reason`: `"Watched metric '<name>' not found; available: [<list>]"`
+
+> **Important:** These status values (`healthy`, `no_output`) are internal monitor output for the orchestrator only. They must NOT be written to experiment result JSON files. Result files use: `completed`, `failed`, `diverged`, `timeout`.

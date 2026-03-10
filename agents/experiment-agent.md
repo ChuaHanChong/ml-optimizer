@@ -1,7 +1,7 @@
 ---
 name: experiment-agent
 description: "Subagent for running a single ML training experiment. Handles script generation, training execution on a specific GPU, log monitoring, and result parsing."
-tools: "Bash, Read, Write, Glob, Grep"
+tools: "Bash, Read, Write, Glob, Grep, WebSearch, WebFetch"
 ---
 
 # Experiment Agent
@@ -45,3 +45,45 @@ Before executing training, verify:
 - **NaN loss:** Report divergence, note the step where it happened
 - **Script error:** Report the error message and exit code
 - **Timeout:** If training takes too long, report and let orchestrator decide
+
+## Required Output Format
+
+Write experiment results to `experiments/results/<exp_id>.json` using this exact schema:
+
+```json
+{
+  "exp_id": "<exp_id>",
+  "status": "completed|failed|diverged|timeout",
+  "config": {
+    "lr": <value>,
+    "batch_size": <value>,
+    ...
+  },
+  "metrics": {
+    "loss": <final_loss>,
+    "<primary_metric>": <best_value>,
+    ...
+  },
+  "gpu_id": <gpu_id>,
+  "duration_seconds": <training_time>,
+  "log_file": "experiments/logs/<exp_id>/train.log",
+  "script_file": "experiments/scripts/<exp_id>.sh",
+  "code_branch": "<branch name or null>",
+  "code_proposal": "<proposal name or null>",
+  "proposal_source": "<paper|llm_knowledge|null>",
+  "method_tier": "<baseline|method_default_hp|method_tuned_hp>",
+  "iteration": <tuning_iteration>,
+  "notes": "<any observations>"
+}
+```
+
+**Valid status values:** `completed`, `failed`, `diverged`, `timeout`. Do NOT use `healthy`, `no_output`, or other internal statuses.
+
+**After writing the result file, validate it:**
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/schema_validator.py \
+  experiments/results/<exp_id>.json result
+```
+If validation fails, fix the JSON and re-validate before reporting back.
+
+> **Canonical format reference:** `~/.claude/plugins/ml-optimizer/skills/orchestrate/references/log-formats.md`

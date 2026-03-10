@@ -31,7 +31,7 @@ def parse_python_logging_line(line: str) -> dict:
     Extracts key=value or key: value metrics from the message part,
     plus a wall_time field with the timestamp.
     """
-    m = re.match(r'^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.\d]*)\s+\S+\s+(.*)', line)
+    m = re.match(r'^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.\d]*)(?:\s+(?:(?!DEBUG\b|INFO\b|WARNING\b|WARN\b|ERROR\b|CRITICAL\b|FATAL\b|TRACE\b)[A-Z]{2,5}|[+-]\d{4}))?\s+\S+\s+(.*)', line)
     if not m:
         return {}
     timestamp, message = m.group(1), m.group(2)
@@ -65,8 +65,9 @@ def parse_tqdm_line(line: str) -> dict:
 def parse_xgboost_line(line: str) -> dict:
     """Parse XGBoost/LightGBM bracket-prefixed log lines.
 
-    Matches: [10] train-auc:0.85 val-auc:0.80
-    Also: [100] validation_0-logloss:0.345
+    Matches: [10]\\ttrain-auc:0.85\\tval-auc:0.80
+    Also: [100]\\tvalidation_0-logloss:0.345
+    Also LightGBM: [1]\\ttraining's binary_logloss:0.6800\\tvalid_1's binary_logloss:0.6850
     """
     m = re.match(r'^\[(\d+)\]\s+(.+)', line.strip())
     if not m:
@@ -74,12 +75,30 @@ def parse_xgboost_line(line: str) -> dict:
     iteration = int(m.group(1))
     rest = m.group(2)
     metrics = {"iteration": float(iteration)}
-    for kv_match in re.finditer(r'([\w][\w.-]*)\s*:\s*([0-9eE.+\-]+)', rest):
-        key, value = kv_match.group(1), kv_match.group(2)
-        try:
-            metrics[key] = float(value)
-        except ValueError:
+    # Split by tab to handle LightGBM keys with spaces/apostrophes
+    segments = re.split(r'\t+', rest)
+    for segment in segments:
+        segment = segment.strip()
+        if not segment:
             continue
+        # Match "key:value" — key is everything before the last colon+number
+        kv_match = re.match(r'(.+?)\s*:\s*([0-9eE.+\-]+)$', segment)
+        if kv_match:
+            key = kv_match.group(1).strip()
+            # Normalize LightGBM possessive keys: "training's X" → "training_X"
+            key = re.sub(r"'s\s+", "_", key)
+            key = re.sub(r"\s+", "_", key)
+            try:
+                metrics[key] = float(kv_match.group(2))
+            except ValueError:
+                continue
+        else:
+            # Fallback: try original regex for space-separated entries
+            for kv in re.finditer(r'([\w][\w.-]*)\s*:\s*([0-9eE.+\-]+)', segment):
+                try:
+                    metrics[kv.group(1)] = float(kv.group(2))
+                except ValueError:
+                    continue
     return metrics
 
 
@@ -90,6 +109,22 @@ def parse_json_line(line: str) -> dict:
         if isinstance(data, dict):
             return {k: v for k, v in data.items() if isinstance(v, (int, float))}
     except json.JSONDecodeError:
+        pass
+    return {}
+
+
+def parse_hf_trainer_line(line: str) -> dict:
+    """Parse HuggingFace Trainer log line: {'loss': 0.5, 'learning_rate': 5e-5, 'epoch': 1.0}"""
+    stripped = line.strip()
+    m = re.match(r"^\{.*'.*':.*\}$", stripped)
+    if not m:
+        return {}
+    try:
+        converted = stripped.replace("'", '"')
+        data = json.loads(converted)
+        if isinstance(data, dict):
+            return {k: v for k, v in data.items() if isinstance(v, (int, float))}
+    except (json.JSONDecodeError, ValueError):
         pass
     return {}
 
@@ -139,8 +174,15 @@ def detect_format(lines: list[str]) -> str:
     # Check for XGBoost/LightGBM bracket format
     for line in lines[:5]:
         stripped = line.strip()
-        if stripped and re.match(r'^\[\d+\]\s+\S+\s*:', stripped):
+        if stripped and re.match(r'^\[\d+\]\s+\S+.*?:', stripped):
             return "xgboost"
+    # Check for HuggingFace Trainer format (single-quote Python dicts)
+    hf_count = 0
+    for line in lines:
+        if parse_hf_trainer_line(line):
+            hf_count += 1
+    if hf_count >= 2:
+        return "hf_trainer"
     # Check if first non-empty line looks like CSV header
     for line in lines[:3]:
         stripped = line.strip()
@@ -173,6 +215,13 @@ def parse_log(filepath: str, fmt: str | None = None) -> list[dict]:
         return [m for line in lines if (m := parse_tqdm_line(line))]
     elif fmt == "xgboost":
         return [m for line in lines if (m := parse_xgboost_line(line))]
+    elif fmt == "hf_trainer":
+        results = []
+        for line in lines:
+            parsed = parse_hf_trainer_line(line)
+            if parsed:
+                results.append(parsed)
+        return results
     else:
         result = [m for line in lines if (m := parse_kv_line(line))]
         if auto_detected and not result and lines:

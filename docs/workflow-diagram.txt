@@ -28,8 +28,8 @@ ENTRY POINT
                           AGENT ROSTER (5 types)
 ================================================================================
 
-  +-------------------+  Tools: Bash, Read, Write, Glob, Grep
-  | prerequisites-    |
+  +-------------------+  Tools: Bash, Read, Write, Glob, Grep,
+  | prerequisites-    |  WebSearch, WebFetch
   | agent (procedural)|
   +-------------------+
 
@@ -39,7 +39,7 @@ ENTRY POINT
   +-------------------+  claude-mem:mem-search (cross-session)
 
   +-------------------+  Tools: Bash, Read, Write, Edit, Glob, Grep,
-  | implement-agent   |  WebFetch
+  | implement-agent   |  WebSearch, WebFetch
   | (ultrathink)      |  External: context7 (API docs),
   +-------------------+  feature-dev:code-explorer, superpowers:systematic-debugging
 
@@ -48,8 +48,8 @@ ENTRY POINT
   | (ultrathink)      |
   +-------------------+
 
-  +-------------------+  Tools: Bash, Read, Write, Glob, Grep
-  | experiment-agent  |
+  +-------------------+  Tools: Bash, Read, Write, Glob, Grep,
+  | experiment-agent  |  WebSearch, WebFetch
   | (procedural)      |
   +-------------------+
 
@@ -211,7 +211,7 @@ ENTRY POINT
 
     +---------------------------------------------------------------+
     |  Strategy A — Git Branch (default):                           |
-    |    For each proposal:                                         |
+    |    Parallel via git worktrees (one Agent per proposal):       |
     |      1. git checkout -b ml-opt/<slug> from base branch        |
     |      2. Apply code changes                                    |
     |      3. Validate syntax (py_compile)                          |
@@ -283,18 +283,28 @@ ENTRY POINT
   |  |  - python3 scripts/detect_divergence.py '<values>'              | |
   |  |  - Returns: healthy | diverged | unmonitored                    | |
   |  |                                                                 | |
-  |  |  "unmonitored" (NEW): metric not found after fallbacks          | |
+  |  |  "unmonitored": metric not found after fallbacks                | |
   |  |    → warn user, rely on hard timeout as safety net              | |
   |  |  "diverged": kill training, mark experiment as diverged         | |
+  |  |                                                                 | |
+  |  |  Recovery mechanisms:                                           | |
+  |  |    - Early batch abort: ≥2 diverge within 60s → cancel rest     | |
+  |  |    - All-diverge recovery: all diverge → retry halved LR        | |
+  |  |    - OOM feedback: record max_batch_size for next hp-tune       | |
   |  +-----------------------------------------------------------------+ |
   |                    |                                                 |
   |                    v                                                 |
   |  +-----------------------------------------------------------------+ |
-  |  |  6.4  ANALYZE                                                   | |
+  |  |  6.4  ANALYZE + SPECULATIVE HP-TUNE (parallel)                   | |
   |  |  Agent: tuning-agent --> ml-optimizer:analyze skill             | |
   |  |                                                                 | |
+  |  |  Runs IN PARALLEL with a speculative hp-tune call:              | |
+  |  |    - If analyze says "continue" and speculative proposals pass  | |
+  |  |      validation → use them immediately (saves 30-60s idle time) | |
+  |  |    - If analyze says stop/pivot → discard speculative proposals | |
+  |  |                                                                 | |
   |  |  Inputs: results_dir, primary_metric, lower_is_better,          | |
-  |  |          remaining_budget (NEW)                                 | |
+  |  |          remaining_budget                                       | |
   |  |                                                                 | |
   |  |  Decision tree:                                                 | |
   |  |    "continue"         → next HP iteration                       | |
@@ -362,7 +372,7 @@ ENTRY POINT
     |    - Ranking of all experiments                              |
     |    - HP sensitivity analysis (Spearman correlations)         |
     |    - ASCII charts (comparison, timeline, sensitivity)        |
-    |    - Matplotlib progress chart (if available)                |
+    |    - Matplotlib progress chart                               |
     |    - Error pattern summary                                   |
     |    - Proposal outcome tracking                               |
     |                                                              |
@@ -374,7 +384,7 @@ ENTRY POINT
 
   Reads: All experiments/results/*.json, error-log.json
   Writes: experiments/reports/optimization-report.md
-          experiments/reports/progress_chart.png (optional)
+          experiments/reports/progress_chart.png
 
                     |
                     v

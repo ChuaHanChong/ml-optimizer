@@ -614,7 +614,7 @@ When the implementation manifest contains multiple code branches:
    - **Trigger:** If `>= 2` experiments in the same batch diverge AND all divergences occurred within 60 seconds of their respective start times:
      1. Cancel remaining running experiments in the batch (kill processes)
      2. Mark cancelled experiments as `status: "cancelled"` with `notes: "Early batch abort — mass divergence detected"`
-     3. Log to error tracker: `category: "experiment_failure", severity: "critical", source: "orchestrate", message: "Early batch abort: <N_diverged> of <batch_size> experiments diverged within 60s of start"`
+     3. Log to error tracker: `category: "training_failure", severity: "critical", source: "orchestrate", message: "Early batch abort: <N_diverged> of <batch_size> experiments diverged within 60s of start"`
      4. Log to dev_notes: "Early batch abort at iteration <N>: <diverged_count> experiments diverged within 60s. Cancelled <cancelled_count> remaining."
      5. Proceed directly to step 4 with partial results
    - **Rationale:** Divergence within 60 seconds indicates a systematic config problem (LR too high, NaN initialization) that will affect all similar configs. Two or more confirms it's systematic, not a fluke.
@@ -628,7 +628,7 @@ When the implementation manifest contains multiple code branches:
      If an experiment exceeds the timeout:
      1. Kill the experiment process
      2. Set `status: "timeout"` in the experiment result JSON
-     3. Log to error tracker: `category: "experiment_failure", severity: "warning", message: "Experiment <exp_id> timed out after <duration>s (limit: <max_duration>s)"`
+     3. Log to error tracker: `category: "timeout", severity: "warning", message: "Experiment <exp_id> timed out after <duration>s (limit: <max_duration>s)"`
      4. Continue with the remaining experiments in the batch
    - Save pipeline state after each batch completes
 
@@ -745,7 +745,7 @@ When the implementation manifest contains multiple code branches:
 
    a. **Log the trigger:**
       ```bash
-      python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_info","severity":"info","source":"orchestrate","message":"Autonomous research round triggered after <N> HP batches","phase":7,"iteration":<iteration>,"context":{"batches_since_last_research":<N>,"method_proposal_iterations":<M>}}'
+      python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"orchestrate","message":"Autonomous research round triggered after <N> HP batches","phase":7,"iteration":<iteration>,"context":{"batches_since_last_research":<N>,"method_proposal_iterations":<M>}}'
       ```
 
    b. **Generate proposals:** Invoke `ml-optimizer:research` with:
@@ -758,7 +758,7 @@ When the implementation manifest contains multiple code branches:
       - If research returns new proposals (not all filtered by deduplication): proceed to implement
       - If research returns **no new proposals** (all deduplicated): skip implement, double `hp_batches_per_round` (exponential backoff), log:
         ```bash
-        python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_info","severity":"info","source":"orchestrate","message":"Research round yielded no new proposals — increasing cadence to <new_value> batches","phase":7,"iteration":<iteration>}'
+        python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"orchestrate","message":"Research round yielded no new proposals — increasing cadence to <new_value> batches","phase":7,"iteration":<iteration>}'
         ```
 
    d. **Implement proposals (no user confirmation):** In autonomous mode, ALL returned proposals are implemented automatically (the user opted into autonomous operation). Invoke `ml-optimizer:implement` with the research findings. This creates new `ml-opt/<slug>` branches.
@@ -1010,10 +1010,10 @@ Full report: experiments/reports/final-report.md
 - **GPU unavailable:** Fall back to single-GPU sequential execution
 - **Training crashes:** Record the error, skip to next experiment in batch
 - **All experiments diverge in a batch:**
-  - **Recovery attempt:** Before stopping, attempt a recovery batch with halved learning rates (divide all LR values by 2). Log to error tracker: `category: "experiment_failure", severity: "warning", message: "All experiments diverged — attempting recovery with halved LRs"`.
+  - **Recovery attempt:** Before stopping, attempt a recovery batch with halved learning rates (divide all LR values by 2). Log to error tracker: `category: "training_failure", severity: "warning", message: "All experiments diverged — attempting recovery with halved LRs"`.
   - If the recovery batch also all-diverges: stop the loop and report to user. In autonomous mode, log to dev_notes and proceed to Phase 9 (report). In interactive mode, use AskUserQuestion to inform user.
 - **OOM feedback to hp-tune:** When an experiment fails with `CUDA out of memory`:
-  1. Record the OOM-causing batch size in the error tracker: `category: "experiment_failure", context: {"oom_batch_size": <batch_size>}`
+  1. Record the OOM-causing batch size in the error tracker: `category: "training_failure", context: {"oom_batch_size": <batch_size>}`
   2. On the next hp-tune invocation, pass `max_batch_size` constraint (one step below the OOM-causing batch size) so hp-tune avoids proposing configs that will OOM again
   3. If multiple OOM events occur, use the smallest OOM-causing batch size as the constraint
 - **Script not found:** Ask user to provide the correct training command

@@ -269,6 +269,50 @@ def test_validate_undefined_phase(tmp_path):
     assert any("No validation rules" in w for w in result["warnings"])
 
 
+def test_validate_phase7_requires_baseline(tmp_path):
+    """Phase 7 (experiment loop) requires baseline.json with metrics+config."""
+    (tmp_path / "results").mkdir()
+    result = validate_phase_requirements(7, str(tmp_path))
+    assert not result["valid"]
+    assert any("baseline.json" in m for m in result["missing"])
+
+
+def test_validate_phase7_with_valid_baseline(tmp_path):
+    """Phase 7 passes with valid baseline."""
+    results = tmp_path / "results"
+    results.mkdir()
+    (results / "baseline.json").write_text('{"metrics":{"loss":1.0},"config":{"lr":0.001}}')
+    result = validate_phase_requirements(7, str(tmp_path))
+    assert result["valid"]
+
+
+def test_validate_phase8_requires_manifest(tmp_path):
+    """Phase 8 (stacking) requires baseline + implementation manifest."""
+    results = tmp_path / "results"
+    results.mkdir()
+    (results / "baseline.json").write_text('{"metrics":{"loss":1.0},"config":{"lr":0.001}}')
+    result = validate_phase_requirements(8, str(tmp_path))
+    assert not result["valid"]
+    assert any("implementation-manifest" in m for m in result["missing"])
+
+
+def test_validate_phase9_requires_baseline(tmp_path):
+    """Phase 9 (report) requires baseline.json."""
+    (tmp_path / "results").mkdir()
+    result = validate_phase_requirements(9, str(tmp_path))
+    assert not result["valid"]
+    assert any("baseline.json" in m for m in result["missing"])
+
+
+def test_validate_phase9_with_baseline(tmp_path):
+    """Phase 9 passes with baseline."""
+    results = tmp_path / "results"
+    results.mkdir()
+    (results / "baseline.json").write_text('{"metrics":{"loss":1.0},"config":{}}')
+    result = validate_phase_requirements(9, str(tmp_path))
+    assert result["valid"]
+
+
 # --- save_state / load_state ---
 
 

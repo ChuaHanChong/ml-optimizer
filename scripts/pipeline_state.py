@@ -90,6 +90,50 @@ def validate_phase_requirements(phase: int, exp_root: str) -> dict:
             if "proposals" not in manifest:
                 warnings.append("implementation-manifest.json missing 'proposals' key")
 
+    elif phase == 7:
+        # Experiment loop: baseline.json must exist with metrics+config
+        baseline_path = root / "results" / "baseline.json"
+        if not baseline_path.is_file():
+            missing.append("results/baseline.json does not exist")
+        else:
+            try:
+                data = json.loads(baseline_path.read_text())
+            except (json.JSONDecodeError, OSError):
+                missing.append("results/baseline.json is not valid JSON")
+                data = {}
+            if "metrics" not in data:
+                missing.append("results/baseline.json missing 'metrics' key")
+            if "config" not in data:
+                missing.append("results/baseline.json missing 'config' key")
+
+    elif phase == 8:
+        # Stacking: baseline.json + implementation-manifest.json required
+        baseline_path = root / "results" / "baseline.json"
+        if not baseline_path.is_file():
+            missing.append("results/baseline.json does not exist")
+        manifest_path = root / "results" / "implementation-manifest.json"
+        if not manifest_path.is_file():
+            missing.append(
+                "results/implementation-manifest.json does not exist"
+                " (stacking requires method branches)"
+            )
+        else:
+            try:
+                manifest = json.loads(manifest_path.read_text())
+            except (json.JSONDecodeError, OSError):
+                warnings.append("implementation-manifest.json is not valid JSON")
+                manifest = {}
+            if "proposals" not in manifest:
+                warnings.append(
+                    "implementation-manifest.json missing 'proposals' key"
+                )
+
+    elif phase == 9:
+        # Report: baseline.json must exist
+        baseline_path = root / "results" / "baseline.json"
+        if not baseline_path.is_file():
+            missing.append("results/baseline.json does not exist")
+
     else:
         warnings.append(f"No validation rules defined for phase {phase}")
 

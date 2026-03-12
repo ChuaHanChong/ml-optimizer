@@ -215,15 +215,15 @@ At the following points, log an error event using the error tracker:
 
 ### When evaluation command fails:
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"training_failure","severity":"critical","source":"baseline","message":"Baseline eval command failed: <error>","phase":2,"context":{"command":"<eval_command>","exit_code":<code>}}'
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"training_failure","severity":"critical","source":"baseline","message":"Baseline eval command failed: <error>","phase":3,"context":{"command":"<eval_command>","exit_code":<code>}}'
 ```
 
 ### When metrics are not parseable from output:
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"config_error","severity":"warning","source":"baseline","message":"Could not parse metrics from baseline output","phase":2,"context":{"output_preview":"<first 200 chars>"}}'
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"config_error","severity":"warning","source":"baseline","message":"Could not parse metrics from baseline output","phase":3,"context":{"output_preview":"<first 200 chars>"}}'
 ```
 
 ### When GPU profiling fails:
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"resource_error","severity":"info","source":"baseline","message":"GPU profiling failed — no GPU detected or nvidia-smi error","phase":2}'
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"resource_error","severity":"info","source":"baseline","message":"GPU profiling failed — no GPU detected or nvidia-smi error","phase":3}'
 ```

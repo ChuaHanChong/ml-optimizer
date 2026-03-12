@@ -324,6 +324,15 @@ def test_save_state_preserves_existing_user_choices(tmp_path):
     assert state["phase"] == 3
 
 
+def test_save_state_empty_dict_clears_user_choices(tmp_path):
+    """Passing user_choices={} clears choices instead of preserving old ones."""
+    save_state(0, 0, [], str(tmp_path), user_choices={"primary_metric": "acc"})
+    save_state(3, 1, [], str(tmp_path), user_choices={})
+    state = load_state(str(tmp_path))
+    assert state is not None
+    assert state.get("user_choices") == {}
+
+
 def test_load_state_corrupt_json(tmp_path):
     """Loading corrupt JSON returns None."""
     (tmp_path / "pipeline-state.json").write_text("{invalid json")

@@ -565,6 +565,7 @@ When the implementation manifest contains multiple code branches:
      - `lower_is_better`: Whether lower values are better
      - `remaining_budget`: How many more experiments can be run before hitting the budget limit. Calculated as `max_experiments - total_experiments_so_far` (where `max_experiments` is set by the adaptive difficulty assessment or user override). HP-tune must cap proposals at `min(max(num_gpus, 1), remaining_budget)`.
      - `code_branches`: List of validated code branches from the implementation manifest (e.g., `["ml-opt/perceptual-loss", "ml-opt/cosine-scheduler"]`), or `[]` for HP-only optimization. HP-tune uses this in iteration 1 to generate one config per branch + one for baseline.
+     - `max_batch_size` *(optional)*: One step below the smallest OOM-causing batch size from error tracker. Omit if no OOM events have occurred. See "OOM feedback to hp-tune" in Error Handling.
    - It reads past results and proposes the next batch of configs
    - Number of configs = `min(max(num_gpus, 1), remaining_budget)` (capped to prevent budget overshoot)
    - **Check hp-tune recommendation:** If hp-tune output includes `"recommendation": "stop"`, log it to error tracker with `category: "pipeline_inefficiency"` and note it for the analyze step. Analyze makes the final continue/pivot/stop decision, but hp-tune's recommendation provides an early signal of search space exhaustion.
@@ -868,7 +869,7 @@ Then count entries in the result. If fewer than 5, skip to Phase 9.
 
 **Checkpoint:**
 - **Interactive mode:** Ask user: "{N} methods showed improvement over baseline. Would you like to stack them to find compound gains? The best methods will be merged sequentially."
-  - If user declines → skip to Phase 7
+  - If user declines → skip to Phase 9
 - **Autonomous mode:** Auto-proceed. Log to dev_notes: "Auto-entering stacking phase with {N} improved methods."
 
 ### Stacking Loop
@@ -917,6 +918,10 @@ Then count entries in the result. If fewer than 5, skip to Phase 9.
       - **If improved:** Keep this stack step.
         - Update `stack_base_branch = ml-opt/stack-<order>`
         - **Optional HP-tune:** If the improvement is > 1% AND remaining budget allows, invoke `ml-optimizer:hp-tune` with:
+          - `project_root`: Project root directory
+          - `num_gpus`: Number of available GPUs
+          - `primary_metric`: The metric to optimize (from Phase 0)
+          - `lower_is_better`: Whether lower values are better
           - `code_branches`: [current stack branch]
           - `iteration`: 1
           - `remaining_budget`: min(2, actual remaining)

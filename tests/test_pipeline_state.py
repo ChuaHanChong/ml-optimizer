@@ -306,11 +306,22 @@ def test_save_and_load_state_with_user_choices(tmp_path):
 
 
 def test_save_state_without_user_choices_has_no_key(tmp_path):
-    """Save state without user_choices omits the key entirely."""
+    """Save state without user_choices and no prior state omits the key."""
     save_state(3, 1, [], str(tmp_path))
     state = load_state(str(tmp_path))
     assert state is not None
     assert "user_choices" not in state
+
+
+def test_save_state_preserves_existing_user_choices(tmp_path):
+    """Save state without user_choices preserves previously saved choices."""
+    save_state(0, 0, [], str(tmp_path), user_choices={"primary_metric": "acc"})
+    # Second save without explicit user_choices should preserve the old ones
+    save_state(3, 1, [], str(tmp_path))
+    state = load_state(str(tmp_path))
+    assert state is not None
+    assert state["user_choices"]["primary_metric"] == "acc"
+    assert state["phase"] == 3
 
 
 def test_load_state_corrupt_json(tmp_path):

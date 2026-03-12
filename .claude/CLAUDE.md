@@ -49,8 +49,8 @@ Phase 2: prerequisites → Validate dataset format, prepare data, install depend
 Phase 3: baseline → Establish baseline metrics
 Phase 4: User checkpoint
 Phase 5: research → Find techniques via web/papers
-Phase 5.1: implement → Apply proposals as git branches
-Phase 6: Experiment loop (autonomous, pipelined):
+Phase 6: implement → Apply proposals as git branches
+Phase 7: Experiment loop (autonomous, pipelined):
          hp-tune → propose configs (or use speculative proposals from previous iteration)
          experiment → run training (parallel across GPUs)
          monitor → watch for divergence (concurrent with experiments)
@@ -58,11 +58,11 @@ Phase 6: Experiment loop (autonomous, pipelined):
          [method_proposal] → mid-loop research + implement
          [research_round] → autonomous cadence-based research
          review → Mid-pipeline review (async in autonomous mode, sync in interactive)
-Phase 6.5: Method stacking (if 5+ methods improved):
-           Sequential accumulation — merge best methods one by one
-           LLM conflict resolution, skip-on-failure
-           Optional HP-tune per stack step
-Phase 7: report → Final optimization report
+Phase 8: Method stacking (if 5+ methods improved):
+         Sequential accumulation — merge best methods one by one
+         LLM conflict resolution, skip-on-failure
+         Optional HP-tune per stack step
+Phase 9: report → Final optimization report
          review → Self-improvement analysis (optional, end-of-session)
 ```
 
@@ -88,7 +88,7 @@ Analytical agents (hp-tune, research, analyze, implement) use "ultrathink" promp
 Agents are dispatched as `general-purpose` subagents and can invoke external skills:
 - **research-agent**: Uses `context7` for framework API docs, `claude-mem:mem-search` for cross-session learning
 - **implement-agent**: Uses `context7` for API docs, `feature-dev:code-explorer` for codebase analysis, `superpowers:systematic-debugging` for error recovery
-- **orchestrator**: Uses `claude-mem:mem-search` in Phase 1 for cross-session recall, `feature-dev:code-reviewer` in Phase 5.1 for post-implementation quality review
+- **orchestrator**: Uses `claude-mem:mem-search` in Phase 1 for cross-session recall, `feature-dev:code-reviewer` in Phase 6 for post-implementation quality review
 
 ### Python Scripts (`scripts/`)
 
@@ -133,7 +133,7 @@ experiments/
 
 The research skill supports `source: "both"` mode where the LLM proposes optimization methods using its training knowledge supplemented by web search. Proposals are scoped by `scope_level`: `"training"` (safest), `"architecture"`, or `"full"`. This is triggered:
 - **Pre-loop** (Phase 4, option 5): User chooses to generate method proposals before the experiment loop
-- **Mid-loop** (Phase 6, step 7): When analyze recommends `pivot_type: "method_proposal"` or `"qualitative_change"`
+- **Mid-loop** (Phase 7, step 7): When analyze recommends `pivot_type: "method_proposal"` or `"qualitative_change"`
 
 Both triggers require user confirmation of scope and proposals. Knowledge-based proposals have confidence capped at 7/10.
 
@@ -153,7 +153,7 @@ Stacking experiments also carry `code_branches` (array of combined branches), `s
 
 ### Pipeline Resumption
 
-The orchestrator can be stopped and resumed. On restart it reads `pipeline-state.json` and uses `cleanup_stale()` to handle interrupted experiments (marks them as failed after a timeout). Phase validation via `validate_phase_requirements()` prevents cascading failures. Pipeline state persists Phase 0 user choices (`primary_metric`, `divergence_metric`, `divergence_lower_is_better`, `lower_is_better`, `target_value`, `train_command`, `eval_command`, `train_data_path`, `val_data_path`, `prepared_train_path`, `prepared_val_path`, `env_manager`, `env_name`, `model_category`, `user_papers`, `budget_mode`, `difficulty`, `difficulty_multiplier`, `method_proposal_scope`, `method_proposal_iterations`, `hp_batches_per_round`) via `save_state(user_choices={...})` so they survive interruptions without re-asking the user. A separate `user-choices-backup.json` provides redundant recovery if the main state file corrupts.
+The orchestrator can be stopped and resumed. On restart it reads `pipeline-state.json` and uses `cleanup_stale()` to handle interrupted experiments (marks them as failed after a timeout). Phase validation via `validate_phase_requirements()` prevents cascading failures. Pipeline state persists Phase 0 user choices (`primary_metric`, `divergence_metric`, `divergence_lower_is_better`, `lower_is_better`, `target_value`, `train_command`, `eval_command`, `train_data_path`, `val_data_path`, `prepared_train_path`, `prepared_val_path`, `env_manager`, `env_name`, `model_category`, `user_papers`, `budget_mode`, `difficulty`, `difficulty_multiplier`, `method_proposal_scope`, `method_proposal_iterations`, `hp_batches_per_round`) via `save_state(user_choices={...})` so they survive interruptions without re-asking the user. The experiment loop also persists `consecutive_stop_count` (for autonomous mode's 3-consecutive-stop exit rule) at the root level of pipeline state. A separate `user-choices-backup.json` provides redundant recovery if the main state file corrupts.
 
 ## Key Design Patterns
 
@@ -163,8 +163,8 @@ The orchestrator can be stopped and resumed. On restart it reads `pipeline-state
 - **Spearman correlation**: `result_analyzer.py` uses rank correlation with average-rank tie-breaking to identify HP-metric relationships (no scipy dependency).
 - **Dual implementation strategy**: Research proposals include an `implementation_strategy` field (`from_scratch` or `from_reference`). The implement agent dispatches accordingly — either implementing from paper descriptions (Section 8) or cloning and adapting reference repos (Section 9). Strategy is decided by the research agent based on repo availability and quality.
 - **Research skill modes**: The research skill accepts `source` (`"web"` | `"knowledge"` | `"both"`), `scope_level` (`"training"` | `"architecture"` | `"full"`), and `output_path` parameters. Knowledge mode skips web search and uses LLM training knowledge only.
-- **Autonomous mode auto-skip**: When `budget_mode == "autonomous"`, all user checkpoints after Phase 0 are auto-resolved (Phase 1 plan → auto-approve, Phase 2 partial prereqs → proceed, Phase 4 direction → method proposals, Phase 5 proposal selection → all proposals, Phase 5.1 dependencies → auto-install, license warnings → auto-accept, Phase 6 mid-loop scope/proposals → use stored scope + accept all, RL polarity → auto-infer, Phase 7 self-review → auto-run). Only unrecoverable errors (Phase 2 failed) still block. Phase 3 unknown errors exit with partial results in autonomous mode. Decisions are logged to dev_notes and error tracker for post-session review. The implement skill auto-stashes dirty working trees, and the prerequisites skill auto-resolves format/env mismatches.
-- **Speculative hp-tune**: In Phase 6, the orchestrator starts a background hp-tune call in parallel with analyze. If analyze says "continue" and proposals pass validation (no pruned branches, within budget, no duplicates), the proposals are used immediately — eliminating 30-60s of GPU idle time per batch. If analyze says stop/pivot, speculative proposals are discarded.
+- **Autonomous mode auto-skip**: When `budget_mode == "autonomous"`, all user checkpoints after Phase 0 are auto-resolved (Phase 1 plan → auto-approve, Phase 2 partial prereqs → proceed, Phase 4 direction → method proposals, Phase 5 proposal selection → all proposals, Phase 6 dependencies → auto-install, license warnings → auto-accept, Phase 7 mid-loop scope/proposals → use stored scope + accept all, RL polarity → auto-infer, Phase 9 self-review → auto-run). Only unrecoverable errors (Phase 2 failed) still block. Phase 3 unknown errors exit with partial results in autonomous mode. Decisions are logged to dev_notes and error tracker for post-session review. The implement skill auto-stashes dirty working trees, and the prerequisites skill auto-resolves format/env mismatches.
+- **Speculative hp-tune**: In Phase 7, the orchestrator starts a background hp-tune call in parallel with analyze. If analyze says "continue" and proposals pass validation (no pruned branches, within budget, no duplicates), the proposals are used immediately — eliminating 30-60s of GPU idle time per batch. If analyze says stop/pivot, speculative proposals are discarded.
 - **Parallel research**: All WebSearch calls in the research skill are issued simultaneously in a single tool-call message. WebFetch follow-ups for different URLs are also parallelized. Domain-specific query sets (NLP, CV, RL, time-series) are issued alongside generic queries.
 - **Parallel implementation**: When using git branch strategy with multiple proposals, each proposal is implemented in a separate git worktree via parallel Agent dispatches. File-backup strategy remains sequential.
 - **Async mid-pipeline review**: In autonomous mode, mid-pipeline review runs in the background while the next experiment batch starts. Suggestions are applied one batch late — acceptable trade-off vs blocking the pipeline.
@@ -182,7 +182,7 @@ The orchestrator can be stopped and resumed. On restart it reads `pipeline-state
 - **Pre-flight file validation**: The implement skill validates all `files_to_modify` exist before creating branches or starting implementation. Missing-file proposals are marked `preflight_failed`.
 - **Early batch abort**: If >= 2 experiments diverge within 60 seconds of start, remaining experiments in the batch are cancelled to save compute.
 - **Tabular ML adaptive timeout**: For non-iterative frameworks, experiment timeout is computed from `fit_duration * (max_iters / profiling_iters) * 2` instead of a generic 4-hour fallback.
-- **Method stacking (Phase 6.5)**: After independent method testing identifies ≥5 methods that improve over baseline, the orchestrator sequentially merges them in descending order of improvement. Each stack step creates `ml-opt/stack-<N>` by merging the next method into the current best stack. Clean merges proceed directly; conflicts are resolved by the implement-agent. If a combination degrades performance, that method is skipped. Optional HP-tuning (1-2 iterations, narrowed scope) is applied when a combo shows >1% improvement. Stacking state persists in `pipeline-state.json` for resumption. Requires git branch strategy — skipped for `file_backup` projects.
+- **Method stacking (Phase 8)**: After independent method testing identifies ≥5 methods that improve over baseline, the orchestrator sequentially merges them in descending order of improvement. Each stack step creates `ml-opt/stack-<N>` by merging the next method into the current best stack. Clean merges proceed directly; conflicts are resolved by the implement-agent. If a combination degrades performance, that method is skipped. Optional HP-tuning (1-2 iterations, narrowed scope) is applied when a combo shows >1% improvement. Stacking state persists in `pipeline-state.json` for resumption. Requires git branch strategy — skipped for `file_backup` projects.
 
 ## Test Fixtures
 
@@ -194,6 +194,6 @@ The orchestrator can be stopped and resumed. On restart it reads `pipeline-state
 - **`implement_utils.py` has three CLI modes**: default (parse proposals), `clone <url> <dest>`, and `analyze <path>`. Each has different argument patterns.
 - **Metric routing is split**: Monitor/divergence always uses loss (lower-is-better). Analyze/hp-tune use the user's `primary_metric`. Mixing these up causes silent wrong behavior.
 - **Branch experiments are independent**: Results on `ml-opt/branch-a` tell you nothing about what HPs will work on `ml-opt/branch-b`. The tuning agent must group by `code_branch` before analyzing trends.
-- **Mid-pipeline review auto-triggers**: In Phase 6, the orchestrator checks error patterns after each batch. If `wasted_budget` pattern reaches ≥ 3 occurrences OR the last 2 consecutive batches had zero successful experiments, it invokes the review skill with `scope: "session"` to suggest course corrections. It can also be invoked manually at end of session.
+- **Mid-pipeline review auto-triggers**: In Phase 7, the orchestrator checks error patterns after each batch. If `wasted_budget` pattern reaches ≥ 3 occurrences OR the last 2 consecutive batches had zero successful experiments, it invokes the review skill with `scope: "session"` to suggest course corrections. It can also be invoked manually at end of session.
 - **Tabular ML frameworks skip divergence monitoring**: When the detected framework is scikit-learn, XGBoost, or LightGBM, the orchestrator sets `divergence_metric` to `null` and skips the monitor skill. The baseline skill skips GPU profiling and throughput estimation for these frameworks.
-- **Research findings files can be multiple**: `research-findings.md` (Phase 5 web search), `research-findings-method-proposals.md` (Phase 6 pre-loop), `research-findings-method-proposals-iter<N>.md` (Phase 6 mid-loop triggers). The research skill's deduplication checks all of these to avoid re-proposing tried techniques.
+- **Research findings files can be multiple**: `research-findings.md` (Phase 5 web search), `research-findings-method-proposals.md` (Phase 7 pre-loop), `research-findings-method-proposals-iter<N>.md` (Phase 7 mid-loop triggers). The research skill's deduplication checks all of these to avoid re-proposing tried techniques.

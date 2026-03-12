@@ -134,8 +134,13 @@ def save_state(
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "status": "running",
     }
+    # Preserve existing user_choices if not explicitly provided
     if user_choices:
         state["user_choices"] = user_choices
+    else:
+        existing = load_state(exp_root)
+        if existing and existing.get("user_choices"):
+            state["user_choices"] = existing["user_choices"]
 
     state_path = root / "pipeline-state.json"
     tmp_fd, tmp_path = tempfile.mkstemp(dir=str(root), suffix=".tmp")

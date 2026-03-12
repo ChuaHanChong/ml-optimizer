@@ -1634,6 +1634,46 @@ def test_success_metrics_baseline_zero(tmp_path):
     assert metrics is not None
 
 
+def test_success_metrics_improvement_pct_sign_lower_is_better(tmp_path):
+    """improvement_pct is positive for lower_is_better improvements."""
+    exp_root = tmp_path / "experiments"
+    results = exp_root / "results"
+    results.mkdir(parents=True)
+    (results / "baseline.json").write_text(json.dumps({
+        "exp_id": "baseline", "status": "completed",
+        "config": {}, "metrics": {"loss": 1.0}
+    }))
+    (results / "exp-001.json").write_text(json.dumps({
+        "exp_id": "exp-001", "status": "completed",
+        "config": {"lr": 0.001}, "metrics": {"loss": 0.5}
+    }))
+    metrics = compute_success_metrics(str(exp_root), "loss", True)
+    assert metrics["improvement_rate"] == 1.0
+    top = metrics["top_configs"]
+    assert len(top) == 1
+    assert top[0]["improvement_pct"] == 50.0  # positive for improvement
+
+
+def test_success_metrics_improvement_pct_sign_higher_is_better(tmp_path):
+    """improvement_pct is positive for higher_is_better improvements."""
+    exp_root = tmp_path / "experiments"
+    results = exp_root / "results"
+    results.mkdir(parents=True)
+    (results / "baseline.json").write_text(json.dumps({
+        "exp_id": "baseline", "status": "completed",
+        "config": {}, "metrics": {"acc": 70.0}
+    }))
+    (results / "exp-001.json").write_text(json.dumps({
+        "exp_id": "exp-001", "status": "completed",
+        "config": {"lr": 0.001}, "metrics": {"acc": 77.0}
+    }))
+    metrics = compute_success_metrics(str(exp_root), "acc", False)
+    assert metrics["improvement_rate"] == 1.0
+    top = metrics["top_configs"]
+    assert len(top) == 1
+    assert top[0]["improvement_pct"] == 10.0  # positive for improvement
+
+
 def test_proposal_outcomes_impl_error_status(tmp_path):
     """Manifest with implementation_error status counted (lines 777-778)."""
     exp_root = tmp_path / "experiments"

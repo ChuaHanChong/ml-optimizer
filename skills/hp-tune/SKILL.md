@@ -75,7 +75,7 @@ If this is the first tuning iteration (only baseline exists):
 
 **If budget forces branch dropping:** When `remaining_budget < len(code_branches) + 1`, some branches must be skipped. Prioritize by research proposal ranking (higher `impact × confidence` first). Log a warning to error_tracker:
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"warning","source":"hp-tune","message":"Budget insufficient to test all branches. Testing <N> of <M> branches (dropped: <list>). Prioritized by proposal ranking.","phase":6,"iteration":<iteration>}'
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"warning","source":"hp-tune","message":"Budget insufficient to test all branches. Testing <N> of <M> branches (dropped: <list>). Prioritized by proposal ranking.","phase":7,"iteration":<iteration>}'
 ```
 
 **If `code_branches` is empty (HP-only):**
@@ -138,12 +138,12 @@ Before finalizing, check each proposed config:
 
 ### If proposals duplicate previously tried configs (caught in step 4.3):
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"hp-tune","message":"Regenerated <N> proposals due to duplication with past configs","phase":6,"iteration":<iteration>}'
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"hp-tune","message":"Regenerated <N> proposals due to duplication with past configs","phase":7,"iteration":<iteration>}'
 ```
 
 ### If remaining_budget <= 0:
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"warning","source":"hp-tune","message":"Budget exhausted with <N> experiments completed","phase":6,"iteration":<iteration>,"context":{"total_experiments":<N>}}'
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"warning","source":"hp-tune","message":"Budget exhausted with <N> experiments completed","phase":7,"iteration":<iteration>,"context":{"total_experiments":<N>}}'
 ```
 
 ## Step 5: Write Proposed Configs
@@ -192,7 +192,7 @@ For each proposed config, write a JSON file:
 - If `code_branch` is null: set `proposal_source` to `null`
 - Iterations 2+: carry forward from the branch's original `proposal_source`
 - `"paper"`: Proposal originated from web research (Phase 5)
-- `"llm_knowledge"`: Proposal originated from LLM knowledge (Phase 6 method proposals)
+- `"llm_knowledge"`: Proposal originated from LLM knowledge (Phase 7 method proposals)
 - `null`: For baseline experiments (no code change)
 
 Use `experiment_setup.py` to generate proper experiment IDs:

@@ -1,4 +1,5 @@
 __pycache__/
 .worktrees/
 .coverage
+*.egg-info/
 docs/plans/

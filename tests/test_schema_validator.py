@@ -516,6 +516,18 @@ def test_validate_result_code_branches_elements_must_be_strings():
     assert any("code_branches" in e for e in result["errors"])
 
 
+def test_validate_result_stack_base_exp_must_be_string():
+    """stack_base_exp must be a string if present."""
+    data = {
+        "exp_id": "exp-stack-001", "status": "completed",
+        "config": {}, "metrics": {"loss": 0.5},
+        "stack_base_exp": 123,
+    }
+    result = validate_result(data)
+    assert result["valid"] is False
+    assert any("stack_base_exp" in e for e in result["errors"])
+
+
 def test_validate_result_valid_method_tier():
     """A result with valid method_tier passes validation."""
     for tier in ["baseline", "method_default_hp", "method_tuned_hp"]:

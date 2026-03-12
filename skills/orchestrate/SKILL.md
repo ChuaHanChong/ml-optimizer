@@ -927,16 +927,18 @@ Then count entries in the result. If fewer than 5, skip to Phase 7.
         - Log: "Method <slug> skipped in stacking (metric degraded by X%)"
         - Continue to next method (next stack branch re-branches from last successful stack)
 
-4. **Save stacking state** to `pipeline-state.json` after each stack step (for resumption):
+4. **Save stacking state** to `pipeline-state.json` via `save_state(user_choices={"stacking": {...}})` after each stack step (for resumption):
    ```json
    {
-     "stacking": {
-       "ranked_methods": ["method-b", "method-a", "method-c"],
-       "current_stack_order": 3,
-       "stack_base_branch": "ml-opt/stack-2",
-       "stack_base_exp": "exp-stack-002",
-       "skipped_methods": ["method-c"],
-       "stacked_methods": ["method-b", "method-a"]
+     "user_choices": {
+       "stacking": {
+         "ranked_methods": ["method-b", "method-a", "method-c"],
+         "current_stack_order": 3,
+         "stack_base_branch": "ml-opt/stack-2",
+         "stack_base_exp": "exp-stack-002",
+         "skipped_methods": ["method-c"],
+         "stacked_methods": ["method-b", "method-a"]
+       }
      }
    }
    ```
@@ -946,7 +948,7 @@ Then count entries in the result. If fewer than 5, skip to Phase 7.
 
 ### Stacking Phase Resumption
 
-On pipeline restart, if `pipeline-state.json` contains a `stacking` key:
+On pipeline restart, if `pipeline-state.json` contains a `stacking` key in `user_choices`:
 1. Read stacking state
 2. Resume from `current_stack_order + 1`
 3. Continue with remaining methods in `ranked_methods` that aren't in `stacked_methods` or `skipped_methods`

@@ -120,6 +120,10 @@ def validate_result(data: dict) -> dict:
         if not isinstance(data["stacking_order"], int) or data["stacking_order"] < 1:
             errors.append("'stacking_order' must be a positive integer")
 
+    if "stack_base_exp" in data:
+        if not isinstance(data["stack_base_exp"], str):
+            errors.append("'stack_base_exp' must be a string")
+
     return {"valid": len(errors) == 0, "errors": errors, "warnings": []}
 
 

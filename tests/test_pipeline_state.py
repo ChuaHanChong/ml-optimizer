@@ -357,6 +357,32 @@ def test_save_state_without_user_choices_has_no_key(tmp_path):
     assert "user_choices" not in state
 
 
+def test_save_state_with_consecutive_stop_count(tmp_path):
+    """consecutive_stop_count is persisted at root level."""
+    save_state(7, 3, [], str(tmp_path), consecutive_stop_count=2)
+    state = load_state(str(tmp_path))
+    assert state is not None
+    assert state["consecutive_stop_count"] == 2
+
+
+def test_save_state_preserves_consecutive_stop_count(tmp_path):
+    """consecutive_stop_count is preserved when not explicitly provided."""
+    save_state(7, 3, [], str(tmp_path), consecutive_stop_count=2)
+    save_state(7, 4, [], str(tmp_path))
+    state = load_state(str(tmp_path))
+    assert state is not None
+    assert state["consecutive_stop_count"] == 2
+
+
+def test_save_state_resets_consecutive_stop_count(tmp_path):
+    """consecutive_stop_count=0 explicitly resets the counter."""
+    save_state(7, 3, [], str(tmp_path), consecutive_stop_count=2)
+    save_state(7, 4, [], str(tmp_path), consecutive_stop_count=0)
+    state = load_state(str(tmp_path))
+    assert state is not None
+    assert state["consecutive_stop_count"] == 0
+
+
 def test_save_state_preserves_existing_user_choices(tmp_path):
     """Save state without user_choices preserves previously saved choices."""
     save_state(0, 0, [], str(tmp_path), user_choices={"primary_metric": "acc"})

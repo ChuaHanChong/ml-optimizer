@@ -674,7 +674,8 @@ def compute_success_metrics(
                     if _is_better(val, baseline_val, lower_is_better):
                         beat_count += 1
                         if baseline_val != 0:
-                            pct = ((val - baseline_val) / abs(baseline_val)) * 100
+                            delta = baseline_val - val if lower_is_better else val - baseline_val
+                            pct = round(delta / abs(baseline_val) * 100, 2)
                         else:
                             pct = None
                         improvements.append({

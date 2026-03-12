@@ -18,17 +18,17 @@
 - **Estimated training time:** [per experiment]
 
 ## Approach
-### Phase 1: Hyperparameter Tuning
+### Tier 1: Hyperparameter Tuning
 - Learning rate range: [min, max]
 - Batch size options: [constrained by GPU memory]
 - Scheduler: [options]
 - Regularization: [dropout, weight decay ranges]
 
-### Phase 2: Architecture Changes (if applicable)
+### Tier 2: Architecture Changes (if applicable)
 - [Change 1 from research]
 - [Change 2 from research]
 
-### Phase 3: Training Strategy
+### Tier 3: Training Strategy
 - [Data augmentation changes]
 - [Loss function modifications]
 - [Multi-stage training]

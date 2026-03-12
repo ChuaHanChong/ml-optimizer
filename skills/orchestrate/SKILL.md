@@ -674,7 +674,7 @@ When the implementation manifest contains multiple code branches:
    - If analyze says **stop**:
      - Discard speculative proposals.
      - In `"auto"` or `"custom"` mode: exit loop
-     - In `"autonomous"` mode: log the stop recommendation but continue the loop. Only force-stop if analyze recommends stop 3 consecutive times (indicating true convergence, not a one-off plateau).
+     - In `"autonomous"` mode: log the stop recommendation but continue the loop. Only force-stop if analyze recommends stop 3 consecutive times (indicating true convergence, not a one-off plateau). Track via `consecutive_stop_count` in pipeline state: increment on each "stop" recommendation, reset to 0 on "continue" or "pivot". Persist via `save_state()` at the end of each iteration. On pipeline resume, read from state (default 0).
    - **If analyze output is malformed or contains an unexpected action:** Treat as `agent_failure`. Log to error tracker. Retry analyze once with a simplified prompt: "Based on the experiment results, should we continue, pivot, or stop? Respond with exactly one of: continue, pivot, stop." If retry also fails, default to `continue` if remaining_budget > 0, or `stop` if budget exhausted.
    - **Safety limit:** Maximum experiments budget depends on `budget_mode` from Phase 1:
      - `"auto"` (default): `max(num_gpus, 1) × difficulty_multiplier` (easy=8, moderate=15, hard=25)
@@ -950,8 +950,12 @@ Then count entries in the result. If fewer than 5, skip to Phase 9.
 
 On pipeline restart, if `pipeline-state.json` contains a `stacking` key in `user_choices`:
 1. Read stacking state
-2. Resume from `current_stack_order + 1`
-3. Continue with remaining methods in `ranked_methods` that aren't in `stacked_methods` or `skipped_methods`
+2. **Validate before resuming:**
+   a. `current_stack_order < len(ranked_methods)` — if not, stacking is already complete; skip to Phase 9
+   b. Verify `ml-opt/stack-<current_stack_order>` branch exists (`git branch --list`). If missing, log error to error tracker and skip to Phase 9 with partial results.
+   c. Verify `stack_base_exp` result file is readable. If missing, fall back to the last known good stack result from `stacked_methods`.
+3. Resume from `current_stack_order + 1`
+4. Continue with remaining methods in `ranked_methods` that aren't in `stacked_methods` or `skipped_methods`
 
 ## Phase 9: Report
 

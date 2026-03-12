@@ -35,6 +35,8 @@ This returns:
 - Deltas vs baseline
 - HP correlations
 
+**Branch-aware analysis:** If experiments span multiple `code_branch` values, the global result analyzer output mixes HP correlations across branches. Before computing correlations in Step 2, filter the JSON output by `code_branch` field and analyze each group separately. Do NOT mix HP correlations across branches — identical HPs on different code branches are independent experiments. If only one branch (or all null/baseline), global analysis is sufficient.
+
 ## Step 1.1: Filter Results
 
 Before analysis, filter out non-completed experiments:

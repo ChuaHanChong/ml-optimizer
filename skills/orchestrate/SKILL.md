@@ -110,7 +110,7 @@ You are an ML optimization orchestrator. You coordinate the full optimization pi
      - GPU check is optional (XGBoost/LightGBM may use GPU; scikit-learn does not)
      - Divergence monitoring is typically unnecessary (training is fast, no iterative loss to watch)
      - The experiment budget should use the CPU fallback: `max(num_gpus, 1) × 5`
-     - Set `divergence_metric` to `null` (do not ask Q7) and skip the monitor skill during Phase 6. Divergence detection is only meaningful for frameworks with iterative training loops.
+     - Set `divergence_metric` to `null` (do not ask Q7) and skip the monitor skill during Phase 7. Divergence detection is only meaningful for frameworks with iterative training loops.
    - **RL detection:** If the codebase imports `gym`, `gymnasium`, `stable-baselines3`, `ray.rllib`, `tianshou`, or `cleanrl`:
      - Set `model_category = "rl"` in user_choices
      - The primary_metric is likely "reward" or "episode_return" — confirm with user
@@ -166,7 +166,7 @@ You are an ML optimization orchestrator. You coordinate the full optimization pi
 
    Store the budget mode as `budget_mode` in user_choices (`"auto"`, `"autonomous"`, or `"custom"`). Default: `"auto"`.
 
-   **Note:** Autonomous mode skips ALL user checkpoints after Phase 0 discovery (Phase 4 direction, Phase 5 proposal selection, Phase 5.1 dependency/license approval, Pre-Loop method proposal selection). All decisions are auto-resolved with logging to dev_notes and error tracker for post-session review.
+   **Note:** Autonomous mode skips ALL user checkpoints after Phase 0 discovery (Phase 4 direction, Phase 5 proposal selection, Phase 6 dependency/license approval, Pre-Loop method proposal selection). All decisions are auto-resolved with logging to dev_notes and error tracker for post-session review.
 
    If autonomous, also store `hp_batches_per_round` (default: 3). This controls how often the orchestrator auto-triggers a full research → implement cycle. Set to a higher value (e.g., 5-10) for slower research cadence.
 
@@ -227,7 +227,7 @@ Invoke the `ml-optimizer:prerequisites` skill with:
 1. Read `prerequisites.json` → `dataset.prepared` field
 2. If `true`, extract `dataset.prepared_train_path` and `dataset.prepared_val_path`
 3. Store these as `prepared_train_path` and `prepared_val_path` in `user_choices` (see below)
-4. When invoking baseline (Phase 3) and experiments (Phase 6), pass these prepared paths so training uses the prepared data instead of the original paths
+4. When invoking baseline (Phase 3) and experiments (Phase 7), pass these prepared paths so training uses the prepared data instead of the original paths
 5. **Training command update:** If the training command contains the original `train_data_path` as a CLI argument, substitute the prepared path. For example: if `train_command` is `python train.py --data_dir /original/path`, replace it with `python train.py --data_dir /prepared/path`. If data paths are in a config file, create a modified config copy.
 
 Persist Phase 0 user choices including data/env info in `user_choices`:
@@ -277,15 +277,15 @@ If baseline fails, diagnose from the error message in baseline.json or error tra
 
 **Retry logic:** Attempt up to 2 retries with adjustments from the table above. Log each retry to the error tracker.
 
-**Autonomous mode Phase 3 unknown error:** If `budget_mode == "autonomous"` and baseline fails with an unknown error after 2 retries: log the full error to error tracker with `category: "agent_failure", severity: "critical"`, log to dev_notes: "Baseline failed after 2 retries with unknown error — exiting with partial results (autonomous mode)". Exit the pipeline and proceed to Phase 7 (report) with whatever partial results exist. Do NOT use AskUserQuestion.
+**Autonomous mode Phase 3 unknown error:** If `budget_mode == "autonomous"` and baseline fails with an unknown error after 2 retries: log the full error to error tracker with `category: "agent_failure", severity: "critical"`, log to dev_notes: "Baseline failed after 2 retries with unknown error — exiting with partial results (autonomous mode)". Exit the pipeline and proceed to Phase 9 (report) with whatever partial results exist. Do NOT use AskUserQuestion.
 
 **Skip-baseline fallback:** If all retries fail, offer to create a synthetic baseline.json with user-provided metric values. Mark profiling fields as `null`. This allows the experiment loop to proceed without throughput-based timeout estimation.
 
-**Autonomous mode:** If `budget_mode == "autonomous"`, do NOT create a synthetic baseline (no user to provide metric values). Instead, exit the pipeline and proceed to Phase 7 (report) with partial results. Log to error tracker: `category: "agent_failure", severity: "critical", source: "orchestrate", message: "Baseline failed — cannot create synthetic baseline in autonomous mode"`.
+**Autonomous mode:** If `budget_mode == "autonomous"`, do NOT create a synthetic baseline (no user to provide metric values). Instead, exit the pipeline and proceed to Phase 9 (report) with partial results. Log to error tracker: `category: "agent_failure", severity: "critical", source: "orchestrate", message: "Baseline failed — cannot create synthetic baseline in autonomous mode"`.
 
 ## Phase 4: User Checkpoint (Post-Baseline)
 
-**Autonomous mode auto-skip:** If `budget_mode == "autonomous"`, skip the user question below. Auto-select option 5 (method proposals) with `method_proposal_scope = "architecture"` (balanced default). Log to dev_notes: `"Autonomous mode: auto-selected method proposals (scope: architecture)"`. Then proceed directly to the Pre-Loop method proposal section (within Phase 6).
+**Autonomous mode auto-skip:** If `budget_mode == "autonomous"`, skip the user question below. Auto-select option 5 (method proposals) with `method_proposal_scope = "architecture"` (balanced default). Log to dev_notes: `"Autonomous mode: auto-selected method proposals (scope: architecture)"`. Then proceed directly to the Pre-Loop method proposal section (within Phase 7).
 
 Use AskUserQuestion to show baseline results and ask for direction:
 
@@ -324,7 +324,7 @@ If the user selects option 5:
    3. Full scope (everything including data pipeline and loss functions) — most aggressive
    ```
 2. Store `method_proposal_scope` in pipeline state user_choices (values: `"training"`, `"architecture"`, `"full"`)
-3. Skip Phase 5 (web research) — method proposals will be generated in Phase 6 Pre-Loop
+3. Skip Phase 5 (web research) — method proposals will be generated in Phase 7 Pre-Loop
 
 ## Phase 5: Research (Optional)
 
@@ -362,7 +362,7 @@ Which proposals should I pursue?
 - [4] Skip research, just tune HPs
 ```
 
-## Phase 5.1: Implement Research Proposals
+## Phase 6: Implement Research Proposals
 
 If the user selected research proposals that require code changes (not just HP tuning):
 
@@ -405,7 +405,7 @@ If the user selected research proposals that require code changes (not just HP t
    - If the reviewer flags critical issues, mark the proposal as `validation_failed` and skip it
    - If the reviewer flags minor issues (style, non-blocking), log them but proceed
 
-## Phase 6: Experiment Loop (Autonomous)
+## Phase 7: Experiment Loop (Autonomous)
 
 This loop runs autonomously without user checkpoints until complete or blocked.
 
@@ -471,7 +471,7 @@ If `method_proposal_scope` is set in user_choices (i.e., user chose option 5 in 
 
 4. **Check implementation results** from `experiments/results/implementation-manifest.json`:
    - Merge validated method proposal branches into the `code_branches` list
-   - Follow the same handling as Phase 5.1 (failed proposals, dependencies, license warnings)
+   - Follow the same handling as Phase 6 (failed proposals, dependencies, license warnings)
 
 5. **Store method proposal state:**
    - `method_proposal_iterations`: 1 (initial)
@@ -688,7 +688,7 @@ When the implementation manifest contains multiple code branches:
 
    a. **Budget gate:** If `remaining_budget < 3`, skip method proposals and recommend stop with current best result. Log:
       ```bash
-      python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"orchestrate","message":"Method proposals skipped: remaining_budget (<N>) < 3","phase":6,"iteration":<iteration>}'
+      python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"orchestrate","message":"Method proposals skipped: remaining_budget (<N>) < 3","phase":7,"iteration":<iteration>}'
       ```
 
    b. **Scope confirmation:**
@@ -706,7 +706,7 @@ When the implementation manifest contains multiple code branches:
 
       Which scope? (1/2/3/4)
       ```
-      If user chooses 4 (skip), exit the loop and proceed to Phase 7 (report).
+      If user chooses 4 (skip), exit the loop and proceed to Phase 9 (report).
 
    c. **Generate proposals:** Invoke `ml-optimizer:research` with:
       - `source`: `"both"`
@@ -744,7 +744,7 @@ When the implementation manifest contains multiple code branches:
 
    a. **Log the trigger:**
       ```bash
-      python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_info","severity":"info","source":"orchestrate","message":"Autonomous research round triggered after <N> HP batches","phase":6,"iteration":<iteration>,"context":{"batches_since_last_research":<N>,"method_proposal_iterations":<M>}}'
+      python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_info","severity":"info","source":"orchestrate","message":"Autonomous research round triggered after <N> HP batches","phase":7,"iteration":<iteration>,"context":{"batches_since_last_research":<N>,"method_proposal_iterations":<M>}}'
       ```
 
    b. **Generate proposals:** Invoke `ml-optimizer:research` with:
@@ -757,7 +757,7 @@ When the implementation manifest contains multiple code branches:
       - If research returns new proposals (not all filtered by deduplication): proceed to implement
       - If research returns **no new proposals** (all deduplicated): skip implement, double `hp_batches_per_round` (exponential backoff), log:
         ```bash
-        python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_info","severity":"info","source":"orchestrate","message":"Research round yielded no new proposals — increasing cadence to <new_value> batches","phase":6,"iteration":<iteration>}'
+        python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_info","severity":"info","source":"orchestrate","message":"Research round yielded no new proposals — increasing cadence to <new_value> batches","phase":7,"iteration":<iteration>}'
         ```
 
    d. **Implement proposals (no user confirmation):** In autonomous mode, ALL returned proposals are implemented automatically (the user opted into autonomous operation). Invoke `ml-optimizer:implement` with the research findings. This creates new `ml-opt/<slug>` branches.
@@ -807,7 +807,7 @@ When the implementation manifest contains multiple code branches:
      - If review suggests stopping: follow the stop recommendation
    - Log the mid-pipeline review:
      ```bash
-     python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"orchestrate","message":"Mid-pipeline review triggered after consecutive failures","phase":6,"iteration":<iteration>,"context":{"trigger":"consecutive_failures"}}'
+     python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"orchestrate","message":"Mid-pipeline review triggered after consecutive failures","phase":7,"iteration":<iteration>,"context":{"trigger":"consecutive_failures"}}'
      ```
 
 10. **Loop back:** After steps 6/7/8/9, increment `batches_since_last_research` and return to step 1 (Get HP configs). The loop continues until the Decision step (6) or budget exhaustion forces an exit.
@@ -854,9 +854,9 @@ Agent(
 )
 ```
 
-## Phase 6.5: Method Stacking (Sequential Accumulation)
+## Phase 8: Method Stacking (Sequential Accumulation)
 
-**Pre-check:** If the implementation manifest uses `strategy: "file_backup"` (non-git project), skip stacking entirely. Log to dev_notes: "Stacking requires git branches — skipped for file-backup projects." Proceed to Phase 7.
+**Pre-check:** If the implementation manifest uses `strategy: "file_backup"` (non-git project), skip stacking entirely. Log to dev_notes: "Stacking requires git branches — skipped for file-backup projects." Proceed to Phase 9.
 
 **Trigger:** When the experiment loop ends (analyze recommends `stop` or budget exhausted) AND `methods_with_improvement >= 5`.
 
@@ -864,7 +864,7 @@ Count `methods_with_improvement` by calling `rank_methods_for_stacking()` from `
 ```bash
 python3 scripts/result_analyzer.py <results_dir> <metric> [baseline_id] [lower_is_better]
 ```
-Then count entries in the result. If fewer than 5, skip to Phase 7.
+Then count entries in the result. If fewer than 5, skip to Phase 9.
 
 **Checkpoint:**
 - **Interactive mode:** Ask user: "{N} methods showed improvement over baseline. Would you like to stack them to find compound gains? The best methods will be merged sequentially."
@@ -953,7 +953,7 @@ On pipeline restart, if `pipeline-state.json` contains a `stacking` key in `user
 2. Resume from `current_stack_order + 1`
 3. Continue with remaining methods in `ranked_methods` that aren't in `stacked_methods` or `skipped_methods`
 
-## Phase 7: Report
+## Phase 9: Report
 
 After the experiment loop exits:
 
@@ -1002,7 +1002,7 @@ Full report: experiments/reports/final-report.md
 - **Training crashes:** Record the error, skip to next experiment in batch
 - **All experiments diverge in a batch:**
   - **Recovery attempt:** Before stopping, attempt a recovery batch with halved learning rates (divide all LR values by 2). Log to error tracker: `category: "experiment_failure", severity: "warning", message: "All experiments diverged — attempting recovery with halved LRs"`.
-  - If the recovery batch also all-diverges: stop the loop and report to user. In autonomous mode, log to dev_notes and proceed to Phase 7 (report). In interactive mode, use AskUserQuestion to inform user.
+  - If the recovery batch also all-diverges: stop the loop and report to user. In autonomous mode, log to dev_notes and proceed to Phase 9 (report). In interactive mode, use AskUserQuestion to inform user.
 - **OOM feedback to hp-tune:** When an experiment fails with `CUDA out of memory`:
   1. Record the OOM-causing batch size in the error tracker: `category: "experiment_failure", context: {"oom_batch_size": <batch_size>}`
   2. On the next hp-tune invocation, pass `max_batch_size` constraint (one step below the OOM-causing batch size) so hp-tune avoids proposing configs that will OOM again
@@ -1019,9 +1019,9 @@ When an agent dispatch fails (crash, timeout, invalid output):
 python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"agent_failure","severity":"critical","source":"orchestrate","message":"<failure description>","agent":"<agent_type>","phase":<phase>,"iteration":<iteration>}'
 ```
 
-### After analyze recommends stop or pivot (Phase 6):
+### After analyze recommends stop or pivot (Phase 7):
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"warning","source":"orchestrate","message":"<analyze recommendation and reason>","phase":6,"iteration":<iteration>,"context":{"action":"<continue|pivot|stop>","reason":"<from analyze>"}}'
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"warning","source":"orchestrate","message":"<analyze recommendation and reason>","phase":7,"iteration":<iteration>,"context":{"action":"<continue|pivot|stop>","reason":"<from analyze>"}}'
 ```
 
 ### On pipeline resumption from interrupted state:
@@ -1029,7 +1029,7 @@ python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '
 python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"orchestrate","message":"Pipeline resumed from interrupted state","phase":<resumed_phase>}'
 ```
 
-### After review skill failure (Phase 6 or Phase 7):
+### After review skill failure (Phase 7 or Phase 9):
 If the review skill crashes or produces invalid output:
 ```bash
 python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"agent_failure","severity":"warning","source":"orchestrate","message":"Review skill failed: <error description>","phase":<phase>}'

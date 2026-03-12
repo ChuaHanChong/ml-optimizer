@@ -25,13 +25,13 @@ From the orchestrator:
 - `exp_root`: Path to experiments/ directory (for error logging)
 - `source`: One of `"web"` (default), `"knowledge"`, or `"both"`. Controls how proposals are generated:
   - `"web"`: Current behavior — web search + paper analysis (Phase 5)
-  - `"knowledge"`: LLM proposes methods from its own training knowledge (Phase 6 method proposals)
+  - `"knowledge"`: LLM proposes methods from its own training knowledge (Phase 7 method proposals)
   - `"both"`: Web search first, then supplement with knowledge-based proposals
 - `scope_level`: One of `"training"` (default), `"architecture"`, or `"full"`. Constrains what categories of changes can be proposed:
   - `"training"`: Optimizer, LR schedulers, warmup strategies, gradient clipping/accumulation, mixed precision, loss functions, weight decay, data augmentation, regularization (dropout, label smoothing), EMA
   - `"architecture"`: All of `training` + attention mechanism changes, normalization layer changes, activation function changes, block design changes, skip connection modifications
   - `"full"`: All of `architecture` + data pipeline changes, preprocessing, tokenization, feature engineering, ensemble approaches, distillation, curriculum learning, training-free methods (pruning, quantization, sparsification), test-time adaptation (TTA, test-time augmentation), inference-time search (MCTS, beam search)
-- `output_path`: Where to write findings (default: `experiments/reports/research-findings.md`). When called from Phase 6, use `experiments/reports/research-findings-method-proposals.md`
+- `output_path`: Where to write findings (default: `experiments/reports/research-findings.md`). When called from Phase 7, use `experiments/reports/research-findings-method-proposals.md`
 
 ## Step 1: Analyze User-Provided Papers (if any)
 
@@ -55,7 +55,7 @@ If the user provided papers or URLs:
 Before searching, check for existing findings files:
 
 1. Check `experiments/reports/research-findings.md` (Phase 5 web-based proposals)
-2. Check `experiments/reports/research-findings-method-proposals*.md` (Phase 6 method proposals)
+2. Check `experiments/reports/research-findings-method-proposals*.md` (Phase 7 method proposals)
 3. If any exist, read them and extract all previously proposed technique names
 4. When generating new proposals, exclude techniques that were already proposed
 5. This prevents re-proposing the same techniques on subsequent optimization runs

@@ -23,7 +23,7 @@ From the orchestrator or hp-tune skill:
 - `iteration`: HP tuning iteration that produced this config (integer, from hp-tune proposed config)
 - `prepared_train_path`: Path to prepared training data (optional, from prerequisites)
 - `prepared_val_path`: Path to prepared validation data (optional, from prerequisites)
-- `code_branches`: List of method branches combined in this stacking experiment (optional, from orchestrator Phase 6.5)
+- `code_branches`: List of method branches combined in this stacking experiment (optional, from orchestrator Phase 8)
 - `stacking_order`: Position in the stacking chain — 1 = best method alone, 2 = best + second, etc. (optional, integer)
 - `stack_base_exp`: Experiment ID of the previous stack step this builds on (optional)
 

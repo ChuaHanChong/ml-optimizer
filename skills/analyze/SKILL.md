@@ -149,7 +149,7 @@ Output:
 - `research`, `method_proposal`, `qualitative_change`: Trigger research → implement cycle (step 7 in orchestrate). Requires `remaining_budget >= 3`.
   - `qualitative_change`: Fundamental approach change within current code (e.g., different optimizer, scheduler, augmentation). No web research trigger — the implement agent applies the change directly.
   - `method_proposal`: New techniques needed that go beyond the current codebase. Triggers research (web + LLM knowledge) → implement cycle.
-See orchestrate SKILL.md Phase 6 step 6 "Pivot dispatch by type" for details.
+See orchestrate SKILL.md Phase 7 step 6 "Pivot dispatch by type" for details.
 
 ### Stop
 **When:** Goal reached OR no more improvement possible
@@ -174,12 +174,12 @@ After each analysis, log notable inefficiencies to the error tracker:
 
 ### If all experiments in batch diverged or failed:
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"warning","source":"analyze","message":"All <N> experiments in batch <batch> diverged/failed — wasted budget","phase":6,"iteration":<batch_number>,"context":{"experiments_wasted":<N>}}'
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"warning","source":"analyze","message":"All <N> experiments in batch <batch> diverged/failed — wasted budget","phase":7,"iteration":<batch_number>,"context":{"experiments_wasted":<N>}}'
 ```
 
 ### If recommending stop due to diminishing returns:
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"analyze","message":"Diminishing returns: last <N> batches showed <X%> improvement","phase":6,"context":{"total_experiments":<N>}}'
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"analyze","message":"Diminishing returns: last <N> batches showed <X%> improvement","phase":7,"context":{"total_experiments":<N>}}'
 ```
 
 ### If a code branch consistently underperforms baseline:

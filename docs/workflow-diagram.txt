@@ -204,8 +204,8 @@ ENTRY POINT
                     |
                     v
 
-  PHASE 5.1: IMPLEMENT
-  =====================
+  PHASE 6: IMPLEMENT
+  ===================
   Agent: implement-agent --> ml-optimizer:implement skill
   Post-review: feature-dev:code-reviewer (quality check)
 
@@ -237,7 +237,7 @@ ENTRY POINT
                     |
                     v
 
-  PHASE 6: EXPERIMENT LOOP
+  PHASE 7: EXPERIMENT LOOP
   =========================
   Budget modes:
     auto:       max_experiments = max(num_gpus, 1) × difficulty_multiplier
@@ -249,7 +249,7 @@ ENTRY POINT
   |                                                                      |
   |  ITERATION START                                                     |
   |  +-----------------------------------------------------------------+ |
-  |  |  6.1  HP-TUNE                                                   | |
+  |  |  7.1  HP-TUNE                                                   | |
   |  |  Agent: tuning-agent --> ml-optimizer:hp-tune skill             | |
   |  |                                                                 | |
   |  |  Inputs: past results (grouped by code_branch), remaining_budget| |
@@ -263,7 +263,7 @@ ENTRY POINT
   |                    |                                                 |
   |                    v                                                 |
   |  +-----------------------------------------------------------------+ |
-  |  |  6.2  EXPERIMENT                                                | |
+  |  |  7.2  EXPERIMENT                                                | |
   |  |  Agent: experiment-agent --> ml-optimizer:experiment skill      | |
   |  |                                                                 | |
   |  |  - Generate training scripts per config                         | |
@@ -275,7 +275,7 @@ ENTRY POINT
   |                    |                                                 |
   |                    v                                                 |
   |  +-----------------------------------------------------------------+ |
-  |  |  6.3  MONITOR (concurrent with experiment)                      | |
+  |  |  7.3  MONITOR (concurrent with experiment)                      | |
   |  |  Skill: ml-optimizer:monitor                                    | |
   |  |  (skipped for tabular ML: sklearn, XGBoost, LightGBM)           | |
   |  |                                                                 | |
@@ -295,7 +295,7 @@ ENTRY POINT
   |                    |                                                 |
   |                    v                                                 |
   |  +-----------------------------------------------------------------+ |
-  |  |  6.4  ANALYZE + SPECULATIVE HP-TUNE (parallel)                   | |
+  |  |  7.4  ANALYZE + SPECULATIVE HP-TUNE (parallel)                   | |
   |  |  Agent: tuning-agent --> ml-optimizer:analyze skill             | |
   |  |                                                                 | |
   |  |  Runs IN PARALLEL with a speculative hp-tune call:              | |
@@ -308,8 +308,8 @@ ENTRY POINT
   |  |                                                                 | |
   |  |  Decision tree:                                                 | |
   |  |    "continue"         → next HP iteration                       | |
-  |  |    "stop"             → go to Phase 7 report                    | |
-  |  |    "method_proposal"  → trigger 6.5 research pivot              | |
+  |  |    "stop"             → go to Phase 9 report                    | |
+  |  |    "method_proposal"  → trigger 7.5 research pivot              | |
   |  |      (requires remaining_budget >= 3)                           | |
   |  |    "qualitative_change" → trigger full research                 | |
   |  |      (requires remaining_budget >= 5)                           | |
@@ -321,10 +321,10 @@ ENTRY POINT
   |         |         |    proposal"   change"                           |
   |         |         |          |          |                            |
   |         |         v          +----+-----+                            |
-  |         |    Phase 7              |                                  |
+  |         |    Phase 9              |                                  |
   |         |                         v                                  |
   |  +------+----------------------------------------------------------+ |
-  |  |  6.5  RESEARCH PIVOT (triggered by analyze)                     | |
+  |  |  7.5  RESEARCH PIVOT (triggered by analyze)                     | |
   |  |  Agent: research-agent --> ml-optimizer:research (source:"both")| |
   |  |  Then: implement-agent --> ml-optimizer:implement               | |
   |  |  User confirmation required for scope + proposals               | |
@@ -332,7 +332,7 @@ ENTRY POINT
   |         |                                                            |
   |         v                                                            |
   |  +----------------------------------------------------------------+  |
-  |  |  6.6  AUTONOMOUS RESEARCH CADENCE                              |  |
+  |  |  7.6  AUTONOMOUS RESEARCH CADENCE                              |  |
   |  |  (autonomous mode only, method_proposal_scope set)             |  |
   |  |                                                                |  |
   |  |  Every hp_batches_per_round batches (default 3):               |  |
@@ -343,7 +343,7 @@ ENTRY POINT
   |         |                                                            |
   |         v                                                            |
   |  +----------------------------------------------------------------+  |
-  |  |  6.7  MID-PIPELINE REVIEW (auto-triggered)                     |  |
+  |  |  7.7  MID-PIPELINE REVIEW (auto-triggered)                     |  |
   |  |  Skill: ml-optimizer:review (scope: "session")                 |  |
   |  |                                                                |  |
   |  |  Triggers:                                                     |  |
@@ -353,7 +353,7 @@ ENTRY POINT
   |  |  Output: course correction suggestions in session-review.md    |  |
   |  +----------------------------------------------------------------+  |
   |         |                                                            |
-  |         +-- Loop back to 6.1 HP-TUNE (if budget remains) -->             |
+  |         +-- Loop back to 7.1 HP-TUNE (if budget remains) -->             |
   |                                                                      |
   +============================ END LOOP ================================+
 
@@ -362,7 +362,38 @@ ENTRY POINT
        or 3 consecutive stops in autonomous mode)
                     v
 
-  PHASE 7: REPORT
+  PHASE 8: METHOD STACKING (post-loop, if applicable)
+  ====================================================
+  Agent: orchestrator dispatches implement-agent + experiment-agent
+  Requires: git branch strategy (skipped for file_backup projects)
+
+  Trigger: experiment loop ends AND >= 5 methods improved over baseline
+
+    +--------------------------------------------------------------+
+    |  1. Rank methods by improvement (descending) using           |
+    |     rank_methods_for_stacking() from result_analyzer.py      |
+    |                                                              |
+    |  2. Initialize: best method branch -> ml-opt/stack-1         |
+    |                                                              |
+    |  3. For each remaining method (in rank order):               |
+    |     a. Create ml-opt/stack-<N> by merging next method        |
+    |     b. Clean merge -> proceed; conflicts -> implement-agent  |
+    |     c. Run experiment with best individual HPs               |
+    |     d. If improved: keep stack, optional HP-tune (1-2 iters) |
+    |     e. If degraded: skip method, re-branch from last success |
+    |                                                              |
+    |  4. Save stacking state to pipeline-state.json (resumable)   |
+    +--------------------------------------------------------------+
+
+  Reads: results/exp-*.json, implementation-manifest.json, baseline.json
+  Writes: results/exp-*.json (stacked_default_hp / stacked_tuned_hp)
+          Git branches: ml-opt/stack-<N>
+
+                    |
+      (stacking complete or skipped)
+                    v
+
+  PHASE 9: REPORT
   ================
   Agent: tuning-agent --> ml-optimizer:report skill
 
@@ -380,6 +411,10 @@ ENTRY POINT
     |    Tier 1: baseline                                          |
     |    Tier 2: method_default_hp (isolated method effect)        |
     |    Tier 3: method_tuned_hp (combined HP + method effect)     |
+    |                                                              |
+    |  Stacking comparison (when stacking results present):        |
+    |    stacked_default_hp (combined methods, individual HPs)     |
+    |    stacked_tuned_hp (combined methods, tuned HPs)            |
     +--------------------------------------------------------------+
 
   Reads: All experiments/results/*.json, error-log.json
@@ -415,19 +450,21 @@ ENTRY POINT
          |                                | logs/baseline/train.log
   4      | baseline.json                  | (user decision)
   5      | baseline.json, user_choices    | reports/research-findings.md
-  5.1    | research-findings.md           | results/implementation-manifest.json
+  6      | research-findings.md           | results/implementation-manifest.json
          |                                | Git branches: ml-opt/<slug>
-  6.1    | results/exp-*.json             | results/proposed-configs/*.json
-  6.2    | proposed-configs               | results/exp-NNN.json
+  7.1    | results/exp-*.json             | results/proposed-configs/*.json
+  7.2    | proposed-configs               | results/exp-NNN.json
          |                                | logs/<exp-id>/train.log
          |                                | scripts/<exp-id>.sh
-  6.3    | logs/<exp-id>/train.log        | (status: healthy/diverged/unmonitored)
-  6.4    | results/, remaining_budget     | reports/analysis-batch-N.md
-  6.5    | reports/research-findings*.md  | reports/research-findings-method-proposals-iterN.md
-  6.6    | research-findings*.md          | research-findings-method-proposals-iterN.md
-         |                                | (autonomous cadence — same I/O as 6.5)
-  6.7    | reports/error-log.json         | reports/session-review.md
-  7      | results/, error-log.json       | reports/optimization-report.md
+  7.3    | logs/<exp-id>/train.log        | (status: healthy/diverged/unmonitored)
+  7.4    | results/, remaining_budget     | reports/analysis-batch-N.md
+  7.5    | reports/research-findings*.md  | reports/research-findings-method-proposals-iterN.md
+  7.6    | research-findings*.md          | research-findings-method-proposals-iterN.md
+         |                                | (autonomous cadence — same I/O as 7.5)
+  7.7    | reports/error-log.json         | reports/session-review.md
+  8      | results/exp-*.json,            | results/exp-*.json (stacking)
+         | implementation-manifest.json   | Git branches: ml-opt/stack-<N>
+  9      | results/, error-log.json       | reports/optimization-report.md
          |                                | reports/progress_chart.png
 
 
@@ -444,8 +481,12 @@ ENTRY POINT
   Agents with "ultrathink": Extended reasoning for complex decisions
   Agents "procedural": Direct execution, no extended reasoning
 
-  Three-tier fields in exp-*.json:
+  Three-tier + stacking fields in exp-*.json:
     "method_tier":     "baseline" | "method_default_hp" | "method_tuned_hp"
+                       | "stacked_default_hp" | "stacked_tuned_hp"
     "proposal_source": "paper" | "llm_knowledge" | null
+    "code_branches":   ["ml-opt/a", "ml-opt/b"] (stacking only)
+    "stacking_order":  integer position in stacking sequence
+    "stack_base_exp":  exp_id of previous stack step
 
 ================================================================================

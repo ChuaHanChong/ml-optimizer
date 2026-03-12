@@ -80,19 +80,21 @@ Use the ml-optimizer:orchestrate skill to optimize my model
 1. Understand model (read code + config, check GPUs)
 2. Prerequisites (validate dataset, prepare data, install deps)
 3. Establish baseline
-   -> User checkpoint: review baseline, choose direction
-4. Optional research
-   -> User checkpoint: review findings, pick proposals
-4.5. Implement proposals (if code changes needed)
-   -> Creates git branches, applies changes, validates
-5. Experiment loop (autonomous, branch-aware):
-   a. hp-tune proposes configs
+4. User checkpoint: review baseline, choose direction
+5. Research (web search + LLM knowledge for techniques)
+6. Implement proposals (creates git branches, applies + validates code changes)
+7. Experiment loop (autonomous, branch-aware):
+   a. hp-tune proposes configs (or uses speculative proposals from prior batch)
    b. experiment runs training (parallel across GPUs)
-   c. monitor watches for divergence
-   d. analyze decides: continue/pivot/stop
-   e. review auto-triggers after 3+ consecutive all-fail batches
-6. Generate final report
-   -> Optional review for self-improvement analysis
+   c. monitor watches for divergence (concurrent with experiments)
+   d. analyze + speculative hp-tune decides: continue / pivot / stop
+   e. method proposal trigger (if analyze recommends pivot)
+   f. autonomous research cadence (periodic in autonomous mode)
+   g. mid-pipeline review (auto-triggers on repeated failures)
+8. Method stacking (if 5+ methods improved over baseline):
+   -> Sequentially merges best methods, skip-on-failure, optional HP-tune per step
+9. Generate final report
+   -> Optional self-improvement review
 ```
 
 ## Project Directory Structure
@@ -131,7 +133,7 @@ Located in `scripts/`:
 | `implement_utils.py` | Proposal parsing, branch management, syntax validation, manifest writing |
 | `pipeline_state.py` | Pipeline state save/load/validate and stale experiment cleanup |
 | `schema_validator.py` | Validate experiment result, baseline, and manifest JSON schemas |
-| `plot_results.py` | ASCII bar/line charts for metric comparison and HP sensitivity |
+| `plot_results.py` | ASCII charts + matplotlib progress chart with method/HP annotations |
 | `prerequisites_check.py` | Dataset format detection, environment validation, GPU-aware install commands |
 | `error_tracker.py` | Error tracking, pattern detection, success metrics, suggestion ranking |
 
@@ -151,3 +153,7 @@ The plugin defines five subagent types in `agents/`:
 - **implement-agent** — Code change application and validation
 - **experiment-agent** — Single experiment execution on a GPU
 - **prerequisites-agent** — Dataset validation, environment setup, dependency installation
+
+## License
+
+MIT License. See [LICENSE](LICENSE) for details.

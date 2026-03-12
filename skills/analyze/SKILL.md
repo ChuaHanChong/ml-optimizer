@@ -90,6 +90,8 @@ For each code branch that has `method_default_hp` results:
 
 If no experiments have `method_tier` fields, skip this step entirely.
 
+**Fallback for missing per-branch baseline:** If a `method_default_hp` experiment exists but no per-branch baseline result is available, use the global baseline metric (from `baseline.json`) as the comparison point for computing the isolated method effect.
+
 ## Step 3: Decide Next Action
 
 Based on analysis, recommend ONE of:
@@ -144,7 +146,9 @@ Output:
 
 **Orchestrator contract:** The orchestrator dispatches each `pivot_type` as follows:
 - `branch_test`, `hp_expand`, `narrow_space`, `regularization`: Adjust search space and invoke hp-tune. No research round.
-- `research`, `method_proposal`, `qualitative_change`: Trigger research → implement cycle (step 6.5 in orchestrate). Requires `remaining_budget >= 3`.
+- `research`, `method_proposal`, `qualitative_change`: Trigger research → implement cycle (step 7 in orchestrate). Requires `remaining_budget >= 3`.
+  - `qualitative_change`: Fundamental approach change within current code (e.g., different optimizer, scheduler, augmentation). No web research trigger — the implement agent applies the change directly.
+  - `method_proposal`: New techniques needed that go beyond the current codebase. Triggers research (web + LLM knowledge) → implement cycle.
 See orchestrate SKILL.md Phase 6 step 6 "Pivot dispatch by type" for details.
 
 ### Stop
@@ -170,12 +174,12 @@ After each analysis, log notable inefficiencies to the error tracker:
 
 ### If all experiments in batch diverged or failed:
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"warning","source":"analyze","message":"All <N> experiments in batch <batch> diverged/failed — wasted budget","phase":5,"iteration":<batch_number>,"context":{"experiments_wasted":<N>}}'
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"warning","source":"analyze","message":"All <N> experiments in batch <batch> diverged/failed — wasted budget","phase":6,"iteration":<batch_number>,"context":{"experiments_wasted":<N>}}'
 ```
 
 ### If recommending stop due to diminishing returns:
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"analyze","message":"Diminishing returns: last <N> batches showed <X%> improvement","phase":5,"context":{"total_experiments":<N>}}'
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"analyze","message":"Diminishing returns: last <N> batches showed <X%> improvement","phase":6,"context":{"total_experiments":<N>}}'
 ```
 
 ### If a code branch consistently underperforms baseline:
@@ -238,3 +242,10 @@ Return to the orchestrator:
 - Improvement over baseline
 - Key findings summary
 - Path to the analysis report
+
+### Stacking Readiness
+
+Include in the analysis output:
+- `methods_with_improvement`: Count of unique code_branches whose best result beats baseline.
+  Compute using `rank_methods_for_stacking()` from `result_analyzer.py`.
+- `stacking_candidates`: List of method names (code_proposal values) that improved, ranked by improvement magnitude.

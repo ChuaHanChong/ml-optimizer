@@ -115,6 +115,27 @@ For each method proposal, summarize:
 
 If no experiments have `method_tier` fields, skip this section entirely.
 
+### Method Stacking Results (if stacking phase was run)
+
+If any results have `method_tier` of `"stacked_default_hp"` or `"stacked_tuned_hp"`, include a stacking table:
+
+```markdown
+## Method Stacking Results
+
+| Stack | Methods Added | <Metric> | vs Baseline | vs Previous Stack | Status |
+|-------|---------------|----------|-------------|-------------------|--------|
+| 1 | <best-method> | X.XX | +N.N% | — | kept |
+| 2 | + <second-method> | X.XX | +N.N% | +N.N% | kept |
+| 3 | + <third-method> | X.XX | — | -N.N% | skipped |
+| ... | ... | ... | ... | ... | ... |
+
+Final stack: <method-a> + <method-b> + <method-d>
+Compound gain: +N.N% over baseline
+Branch: ml-opt/stack-<N>
+```
+
+Sort by `stacking_order`. Show both cumulative gain (vs baseline) and incremental gain (vs previous stack step). Mark skipped methods.
+
 ## Step 3: Identify Best Configuration
 
 1. Find the experiment with the best primary metric

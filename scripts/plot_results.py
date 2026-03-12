@@ -8,7 +8,7 @@ from pathlib import Path
 # Allow importing sibling modules when run directly
 sys.path.insert(0, str(Path(__file__).parent))
 
-from result_analyzer import load_results, rank_by_metric
+from result_analyzer import build_experiment_description, load_results, rank_by_metric
 
 import matplotlib
 matplotlib.use("Agg")  # Non-interactive backend for file output
@@ -295,9 +295,15 @@ def plot_progress_chart(
     # Sort chronologically by exp_id
     ranked.sort(key=lambda x: x["exp_id"])
 
+    # Derive baseline config for description diffs
+    baseline_config = None
+    if "baseline" in results:
+        baseline_config = results["baseline"].get("config", {})
+
     indices: list[int] = []
     values: list[float] = []
     exp_ids: list[str] = []
+    descriptions: list[str] = []
     is_new_best: list[bool] = []
     best_so_far: list[float] = []
     current_best = None
@@ -308,6 +314,11 @@ def plot_progress_chart(
         indices.append(i)
         values.append(val)
         exp_ids.append(exp_id)
+        # Build a descriptive label from the full result data
+        full_data = results.get(exp_id, {})
+        descriptions.append(
+            build_experiment_description(exp_id, full_data, baseline_config)
+        )
 
         if current_best is None:
             current_best = val
@@ -321,6 +332,10 @@ def plot_progress_chart(
                 is_new_best.append(False)
         best_so_far.append(current_best)
 
+    # Count kept improvements for title
+    num_kept = sum(is_new_best)
+    num_total = len(ranked)
+
     # Separate kept and discarded
     kept_idx = [i for i, b in zip(indices, is_new_best) if b]
     kept_val = [v for v, b in zip(values, is_new_best) if b]
@@ -331,29 +346,33 @@ def plot_progress_chart(
 
     # Discarded experiments (gray)
     if disc_idx:
-        ax.scatter(disc_idx, disc_val, c="gray", s=50, alpha=0.5,
+        ax.scatter(disc_idx, disc_val, c="gray", s=30, alpha=0.5,
                    label="Discarded", zorder=2)
 
-    # Kept experiments (green)
+    # Kept experiments (green with dark edges)
     if kept_idx:
-        ax.scatter(kept_idx, kept_val, c="green", s=80, edgecolors="darkgreen",
-                   label="New best", zorder=3)
+        ax.scatter(kept_idx, kept_val, c="#2ecc71", s=80, edgecolors="black",
+                   linewidths=0.5, label="New best", zorder=3)
 
-    # Running best frontier (blue step line)
-    ax.step(indices, best_so_far, where="post", color="royalblue",
-            linewidth=1.5, alpha=0.7, label="Running best", zorder=1)
+    # Running best frontier (green step line)
+    ax.step(indices, best_so_far, where="post", color="#27ae60",
+            linewidth=2, alpha=0.7, label="Running best", zorder=1)
 
-    # Annotate kept experiments
+    # Annotate kept experiments with descriptions
     for i, b in zip(indices, is_new_best):
         if b:
             ax.annotate(
-                exp_ids[i], (i, values[i]),
-                textcoords="offset points", xytext=(5, 8),
-                fontsize=7, rotation=30, ha="left",
+                descriptions[i], (i, values[i]),
+                textcoords="offset points", xytext=(6, 6),
+                fontsize=8, rotation=30, ha="left", va="bottom",
+                color="#1a7a3a", alpha=0.9,
             )
 
     direction = "lower is better" if lower_is_better else "higher is better"
-    ax.set_title(f"Optimization Progress: {metric} ({direction})")
+    ax.set_title(
+        f"Optimization Progress: {num_total} Experiments, "
+        f"{num_kept} Improvements ({metric}, {direction})"
+    )
     ax.set_xlabel("Experiment")
     ax.set_ylabel(metric)
     ax.legend(loc="best", fontsize=8)

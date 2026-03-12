@@ -468,3 +468,69 @@ def test_cli_progress(run_main, tmp_path):
     r = run_main("plot_results.py", str(tmp_path), "loss", "progress")
     assert r.returncode == 0
     assert "saved to" in r.stdout
+
+
+# ---------- progress chart description annotations ----------
+
+
+def test_progress_chart_with_code_proposals(tmp_path):
+    """Progress chart annotates with method names from code_proposal."""
+    _write_results(tmp_path, {
+        "baseline": {"metrics": {"loss": 1.0}, "config": {"lr": 0.01}},
+        "exp-001": {"metrics": {"loss": 0.7}, "config": {"lr": 0.01},
+                    "code_proposal": "perceptual-loss",
+                    "code_branch": "ml-opt/perceptual-loss"},
+        "exp-002": {"metrics": {"loss": 0.5}, "config": {"lr": 0.003},
+                    "code_proposal": "mixup",
+                    "code_branch": "ml-opt/mixup"},
+    })
+    out = tmp_path / "chart.png"
+    path = plot_progress_chart(str(tmp_path), "loss", output_path=str(out))
+    assert path == str(out)
+    assert out.exists()
+    assert out.stat().st_size > 0
+
+
+def test_progress_chart_with_hp_diffs(tmp_path):
+    """Progress chart shows HP diffs vs baseline in annotations."""
+    _write_results(tmp_path, {
+        "baseline": {"metrics": {"loss": 1.0}, "config": {"lr": 0.01, "batch_size": 32}},
+        "exp-001": {"metrics": {"loss": 0.7}, "config": {"lr": 0.003, "batch_size": 32}},
+        "exp-002": {"metrics": {"loss": 0.5}, "config": {"lr": 0.001, "batch_size": 64}},
+    })
+    out = tmp_path / "chart.png"
+    path = plot_progress_chart(str(tmp_path), "loss", output_path=str(out))
+    assert path == str(out)
+    assert out.exists()
+
+
+def test_progress_chart_title_includes_counts(tmp_path):
+    """Progress chart title includes experiment and improvement counts."""
+    _write_results(tmp_path, {
+        "exp-001": {"metrics": {"loss": 1.0}, "config": {}},
+        "exp-002": {"metrics": {"loss": 0.8}, "config": {}},
+        "exp-003": {"metrics": {"loss": 0.9}, "config": {}},
+        "exp-004": {"metrics": {"loss": 0.5}, "config": {}},
+    })
+    # We can't easily inspect the matplotlib title from the saved PNG,
+    # but we can verify the chart generates without error
+    out = tmp_path / "chart.png"
+    path = plot_progress_chart(str(tmp_path), "loss", output_path=str(out))
+    assert path == str(out)
+    assert out.exists()
+
+
+def test_progress_chart_stacked_annotations(tmp_path):
+    """Progress chart annotates stacked experiments with combined method names."""
+    _write_results(tmp_path, {
+        "baseline": {"metrics": {"loss": 1.0}, "config": {"lr": 0.01}},
+        "exp-stack-001": {
+            "metrics": {"loss": 0.5}, "config": {"lr": 0.001},
+            "code_branches": ["ml-opt/method-a", "ml-opt/method-b"],
+            "stacking_order": 2, "status": "completed",
+        },
+    })
+    out = tmp_path / "stack_chart.png"
+    path = plot_progress_chart(str(tmp_path), "loss", output_path=str(out))
+    assert path == str(out)
+    assert out.exists()

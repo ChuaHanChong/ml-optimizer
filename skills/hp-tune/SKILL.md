@@ -138,12 +138,12 @@ Before finalizing, check each proposed config:
 
 ### If proposals duplicate previously tried configs (caught in step 4.3):
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"hp-tune","message":"Regenerated <N> proposals due to duplication with past configs","phase":5,"iteration":<iteration>}'
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"hp-tune","message":"Regenerated <N> proposals due to duplication with past configs","phase":6,"iteration":<iteration>}'
 ```
 
 ### If remaining_budget <= 0:
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"warning","source":"hp-tune","message":"Budget exhausted with <N> experiments completed","phase":5,"iteration":<iteration>,"context":{"total_experiments":<N>}}'
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"warning","source":"hp-tune","message":"Budget exhausted with <N> experiments completed","phase":6,"iteration":<iteration>,"context":{"total_experiments":<N>}}'
 ```
 
 ## Step 5: Write Proposed Configs
@@ -184,9 +184,13 @@ For each proposed config, write a JSON file:
 - `"baseline"`: No code branch, running baseline HPs on original code
 - `"method_default_hp"`: Has a code branch, iteration 1 (testing the code change with baseline/default HPs)
 - `"method_tuned_hp"`: Has a code branch, iteration 2+ (tuning HPs on the code branch)
+- `"stacked_default_hp"`: Stacked branch, first run (testing combined code with best individual HPs)
+- `"stacked_tuned_hp"`: Stacked branch, after HP tuning (tuning HPs on the stacked code)
 
 **`proposal_source` rules:**
-- Carry from the implementation manifest's `proposal_source` field for the corresponding branch
+- If config has `code_branch`: inherit `proposal_source` from the implementation manifest's matching proposal entry
+- If `code_branch` is null: set `proposal_source` to `null`
+- Iterations 2+: carry forward from the branch's original `proposal_source`
 - `"paper"`: Proposal originated from web research (Phase 5)
 - `"llm_knowledge"`: Proposal originated from LLM knowledge (Phase 6 method proposals)
 - `null`: For baseline experiments (no code change)
@@ -232,3 +236,15 @@ Recommend stopping the tuning loop if:
 **Note:** The "<1% improvement" threshold is **relative** to the baseline value (i.e., `delta / baseline * 100`). For metrics with very small absolute values (e.g., loss=0.001), even a tiny absolute change may be a large relative improvement. Always use percentage change, not absolute delta, for stopping decisions.
 
 Include a `"recommendation": "continue"|"stop"` field in your output.
+
+### HP-Tuning for Stacked Methods
+
+When invoked during the stacking phase (identifiable by `method_tier: "stacked_default_hp"` in recent results):
+
+1. **Starting point:** Use the HP config from the best individual method in the stack (passed as `baseline_config`).
+2. **Narrow scope:** Only vary HPs that the newly added method likely interacts with. For example:
+   - New loss function → vary `learning_rate`, `weight_decay`
+   - New augmentation → vary `batch_size`, `learning_rate`
+   - New scheduler → vary `learning_rate`, `warmup_steps`
+3. **Budget:** Cap at 2 iterations maximum during stacking.
+4. **Proposals:** Generate `min(max(num_gpus, 1), remaining_budget)` configs, all targeting the stack branch.

@@ -19,10 +19,13 @@ From the orchestrator or hp-tune skill:
 - `code_branch`: Git branch with code changes (optional, from implement manifest)
 - `code_proposal`: Name of the research proposal (optional, for tagging results)
 - `proposal_source`: Origin of the proposal — `"paper"`, `"llm_knowledge"`, or `null` (pass-through from hp-tune)
-- `method_tier`: Which tier this experiment belongs to — `"baseline"`, `"method_default_hp"`, or `"method_tuned_hp"` (pass-through from hp-tune)
+- `method_tier`: Which tier this experiment belongs to — `"baseline"`, `"method_default_hp"`, `"method_tuned_hp"`, `"stacked_default_hp"`, or `"stacked_tuned_hp"` (pass-through from hp-tune)
 - `iteration`: HP tuning iteration that produced this config (integer, from hp-tune proposed config)
 - `prepared_train_path`: Path to prepared training data (optional, from prerequisites)
 - `prepared_val_path`: Path to prepared validation data (optional, from prerequisites)
+- `code_branches`: List of method branches combined in this stacking experiment (optional, from orchestrator Phase 6.5)
+- `stacking_order`: Position in the stacking chain — 1 = best method alone, 2 = best + second, etc. (optional, integer)
+- `stack_base_exp`: Experiment ID of the previous stack step this builds on (optional)
 
 ## Reference
 
@@ -57,7 +60,7 @@ Before building the training command, verify:
    ```
    Warn if less than 5 GB free.
 
-2. **Timeout enforcement:** Compute a timeout for the training command:
+2. **Timeout enforcement:** If the orchestrator passes a `timeout_seconds` value, use it directly (it computes `baseline_training_time * 3`). Otherwise, compute a timeout:
    - If `baseline.json` has `profiling.estimated_timeout_seconds` (tabular ML): `timeout_seconds = profiling.estimated_timeout_seconds`
    - Else if `baseline.json` has `profiling.throughput_samples_per_sec` (iterative DL): `timeout_seconds = int(1.5 × (dataset_size × epochs) / throughput)`
    - If neither available: `timeout_seconds = 14400` (4 hours default)
@@ -220,8 +223,11 @@ Write experiment results to `experiments/results/<exp_id>.json`:
   "code_branch": "<branch name or null>",
   "code_proposal": "<proposal name or null>",
   "proposal_source": "<paper|llm_knowledge|null>",
-  "method_tier": "<baseline|method_default_hp|method_tuned_hp>",
+  "method_tier": "<baseline|method_default_hp|method_tuned_hp|stacked_default_hp|stacked_tuned_hp>",
   "iteration": <tuning_iteration>,
+  "code_branches": ["<branch1>", "<branch2>"],
+  "stacking_order": <integer>,
+  "stack_base_exp": "<exp_id of previous stack step>",
   "notes": "<any observations>"
 }
 ```

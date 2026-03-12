@@ -71,11 +71,19 @@ Write experiment results to `experiments/results/<exp_id>.json` using this exact
   "code_branch": "<branch name or null>",
   "code_proposal": "<proposal name or null>",
   "proposal_source": "<paper|llm_knowledge|null>",
-  "method_tier": "<baseline|method_default_hp|method_tuned_hp>",
+  "method_tier": "<baseline|method_default_hp|method_tuned_hp|stacked_default_hp|stacked_tuned_hp>",
   "iteration": <tuning_iteration>,
+  "code_branches": ["<branch1>", "<branch2>"],
+  "stacking_order": <integer>,
+  "stack_base_exp": "<exp_id of previous stack step>",
   "notes": "<any observations>"
 }
 ```
+
+**Stacking fields** (optional — only for stacked experiments):
+- `code_branches` (array of strings): Lists all method branches combined in this experiment. Null/absent for single-method experiments.
+- `stacking_order` (integer): Position in the stacking accumulation chain (1 = best method alone, 2 = best + second, etc.).
+- `stack_base_exp` (string): Experiment ID of the previous stack step this builds on.
 
 **Valid status values:** `completed`, `failed`, `diverged`, `timeout`. Do NOT use `healthy`, `no_output`, or other internal statuses.
 

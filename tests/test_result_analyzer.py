@@ -6,7 +6,7 @@ import pytest
 
 from conftest import _write_results
 
-from result_analyzer import load_results, rank_by_metric, compute_deltas, identify_correlations, analyze, spearman_correlation, group_by_method_tier
+from result_analyzer import load_results, rank_by_metric, compute_deltas, identify_correlations, analyze, spearman_correlation, group_by_method_tier, build_experiment_description, rank_methods_for_stacking
 
 
 def test_load_results(tmp_path):
@@ -507,3 +507,241 @@ class TestEmptyInputEdgeCases:
     def test_rank_by_metric_empty(self):
         result = rank_by_metric({}, "accuracy")
         assert result == []
+
+
+# ---------- build_experiment_description ----------
+
+
+def test_build_description_with_code_proposal():
+    """Description includes code_proposal name."""
+    data = {"code_proposal": "perceptual-loss", "config": {"lr": 0.001}}
+    desc = build_experiment_description("exp-001", data)
+    assert "perceptual-loss" in desc
+
+
+def test_build_description_strips_branch_prefix():
+    """Branch prefix ml-opt/ is stripped from description."""
+    data = {"code_branch": "ml-opt/cosine-scheduler", "config": {}}
+    desc = build_experiment_description("exp-001", data)
+    assert "cosine-scheduler" in desc
+    assert "ml-opt/" not in desc
+
+
+def test_build_description_hp_diff_vs_baseline():
+    """Description shows HP changes relative to baseline."""
+    baseline_config = {"lr": 0.01, "batch_size": 32}
+    data = {"config": {"lr": 0.003, "batch_size": 32}}
+    desc = build_experiment_description("exp-002", data, baseline_config)
+    assert "lr=0.003" in desc
+    # batch_size unchanged, should not appear
+    assert "batch_size" not in desc
+
+
+def test_build_description_method_and_hp_diff():
+    """Description combines method name and HP diff."""
+    baseline_config = {"lr": 0.01}
+    data = {"code_proposal": "mixup", "config": {"lr": 0.005}}
+    desc = build_experiment_description("exp-003", data, baseline_config)
+    assert "mixup" in desc
+    assert "lr=0.005" in desc
+
+
+def test_build_description_fallback_to_exp_id():
+    """Falls back to exp_id when no rich fields present."""
+    data = {"config": {}}
+    desc = build_experiment_description("exp-007", data)
+    assert desc == "exp-007"
+
+
+def test_build_description_truncation():
+    """Long descriptions are truncated to max_len."""
+    data = {"code_proposal": "very-long-proposal-name-that-exceeds-limit",
+            "config": {"learning_rate": 0.0001, "weight_decay": 0.01}}
+    desc = build_experiment_description("exp-001", data, max_len=30)
+    assert len(desc) <= 30
+    assert desc.endswith("...")
+
+
+def test_build_description_no_baseline_shows_first_hp():
+    """Without baseline config, shows first interesting HP."""
+    data = {"config": {"lr": 0.01, "batch_size": 64}}
+    desc = build_experiment_description("exp-001", data, baseline_config=None)
+    # Should show at least one HP value
+    assert "=" in desc
+
+
+def test_build_description_code_proposal_preferred_over_branch():
+    """code_proposal is preferred over code_branch."""
+    data = {"code_proposal": "label-smoothing",
+            "code_branch": "ml-opt/label-smoothing",
+            "config": {}}
+    desc = build_experiment_description("exp-001", data)
+    assert "label-smoothing" in desc
+
+
+# ---------- build_experiment_description — stacked experiments ----------
+
+
+def test_build_description_stacked_experiment():
+    """Stacked experiments show combined method names."""
+    data = {
+        "code_branches": ["ml-opt/perceptual-loss", "ml-opt/cosine-scheduler"],
+        "stacking_order": 2,
+        "config": {"lr": 0.003},
+    }
+    desc = build_experiment_description("exp-stack-001", data)
+    assert "perceptual-loss" in desc
+    assert "cosine-scheduler" in desc
+
+
+def test_build_description_stacked_truncation():
+    """Long stacked descriptions are truncated."""
+    data = {
+        "code_branches": [f"ml-opt/method-{c}" for c in "abcdefghij"],
+        "config": {},
+    }
+    desc = build_experiment_description("exp-stack-010", data, max_len=30)
+    assert len(desc) <= 30
+    assert desc.endswith("...")
+
+
+# ---------- group_by_method_tier — stacked tiers ----------
+
+
+def test_group_by_method_tier_stacked(tmp_path):
+    """group_by_method_tier handles stacked tier values."""
+    _write_results(tmp_path, {
+        "baseline": {"metrics": {"loss": 1.0}, "method_tier": "baseline"},
+        "exp-001": {"metrics": {"loss": 0.8}, "method_tier": "method_tuned_hp"},
+        "exp-stack-001": {"metrics": {"loss": 0.6}, "method_tier": "stacked_default_hp",
+                          "code_branches": ["ml-opt/a", "ml-opt/b"], "stacking_order": 2},
+        "exp-stack-002": {"metrics": {"loss": 0.5}, "method_tier": "stacked_tuned_hp",
+                          "code_branches": ["ml-opt/a", "ml-opt/b"], "stacking_order": 2},
+    })
+    results = load_results(str(tmp_path))
+    groups = group_by_method_tier(results)
+    assert "stacked_default_hp" in groups
+    assert "stacked_tuned_hp" in groups
+    assert len(groups["stacked_default_hp"]) == 1
+    assert len(groups["stacked_tuned_hp"]) == 1
+
+
+# ---------- rank_methods_for_stacking ----------
+
+
+def test_rank_methods_for_stacking_basic(tmp_path):
+    """Methods are ranked by improvement magnitude over baseline."""
+    _write_results(tmp_path, {
+        "baseline": {"metrics": {"loss": 1.0}, "config": {"lr": 0.01}},
+        "exp-001": {"metrics": {"loss": 0.8}, "config": {"lr": 0.01},
+                    "code_branch": "ml-opt/method-a", "code_proposal": "method-a",
+                    "method_tier": "method_tuned_hp", "status": "completed"},
+        "exp-002": {"metrics": {"loss": 0.6}, "config": {"lr": 0.001},
+                    "code_branch": "ml-opt/method-b", "code_proposal": "method-b",
+                    "method_tier": "method_tuned_hp", "status": "completed"},
+        "exp-003": {"metrics": {"loss": 0.9}, "config": {"lr": 0.01},
+                    "code_branch": "ml-opt/method-c", "code_proposal": "method-c",
+                    "method_tier": "method_tuned_hp", "status": "completed"},
+    })
+    results = load_results(str(tmp_path))
+    ranked = rank_methods_for_stacking(results, "loss", lower_is_better=True)
+    # method-b improved most (0.6 vs 1.0), then method-a (0.8), then method-c (0.9)
+    assert len(ranked) == 3
+    assert ranked[0]["code_proposal"] == "method-b"
+    assert ranked[1]["code_proposal"] == "method-a"
+    assert ranked[2]["code_proposal"] == "method-c"
+
+
+def test_rank_methods_excludes_non_improvements(tmp_path):
+    """Methods that didn't improve over baseline are excluded."""
+    _write_results(tmp_path, {
+        "baseline": {"metrics": {"loss": 1.0}, "config": {"lr": 0.01}},
+        "exp-001": {"metrics": {"loss": 0.8}, "config": {"lr": 0.01},
+                    "code_branch": "ml-opt/method-a", "code_proposal": "method-a",
+                    "method_tier": "method_tuned_hp", "status": "completed"},
+        "exp-002": {"metrics": {"loss": 1.2}, "config": {"lr": 0.001},
+                    "code_branch": "ml-opt/method-b", "code_proposal": "method-b",
+                    "method_tier": "method_tuned_hp", "status": "completed"},
+    })
+    results = load_results(str(tmp_path))
+    ranked = rank_methods_for_stacking(results, "loss", lower_is_better=True)
+    assert len(ranked) == 1
+    assert ranked[0]["code_proposal"] == "method-a"
+
+
+def test_rank_methods_picks_best_per_branch(tmp_path):
+    """When a branch has multiple experiments, uses the best result."""
+    _write_results(tmp_path, {
+        "baseline": {"metrics": {"loss": 1.0}, "config": {"lr": 0.01}},
+        "exp-001": {"metrics": {"loss": 0.9}, "config": {"lr": 0.01},
+                    "code_branch": "ml-opt/method-a", "code_proposal": "method-a",
+                    "method_tier": "method_default_hp", "status": "completed"},
+        "exp-002": {"metrics": {"loss": 0.7}, "config": {"lr": 0.001},
+                    "code_branch": "ml-opt/method-a", "code_proposal": "method-a",
+                    "method_tier": "method_tuned_hp", "status": "completed"},
+    })
+    results = load_results(str(tmp_path))
+    ranked = rank_methods_for_stacking(results, "loss", lower_is_better=True)
+    assert len(ranked) == 1
+    assert ranked[0]["best_metric"] == 0.7
+    assert ranked[0]["best_config"] == {"lr": 0.001}
+
+
+def test_rank_methods_higher_is_better(tmp_path):
+    """Ranking works with higher-is-better metrics."""
+    _write_results(tmp_path, {
+        "baseline": {"metrics": {"accuracy": 0.7}, "config": {}},
+        "exp-001": {"metrics": {"accuracy": 0.9}, "config": {},
+                    "code_branch": "ml-opt/method-a", "code_proposal": "method-a",
+                    "method_tier": "method_tuned_hp", "status": "completed"},
+        "exp-002": {"metrics": {"accuracy": 0.8}, "config": {},
+                    "code_branch": "ml-opt/method-b", "code_proposal": "method-b",
+                    "method_tier": "method_tuned_hp", "status": "completed"},
+    })
+    results = load_results(str(tmp_path))
+    ranked = rank_methods_for_stacking(results, "accuracy", lower_is_better=False)
+    assert ranked[0]["code_proposal"] == "method-a"  # 0.9 > 0.8
+
+
+def test_rank_methods_empty_results(tmp_path):
+    """Returns empty list when no methods improved."""
+    _write_results(tmp_path, {
+        "baseline": {"metrics": {"loss": 1.0}, "config": {}},
+    })
+    results = load_results(str(tmp_path))
+    ranked = rank_methods_for_stacking(results, "loss", lower_is_better=True)
+    assert ranked == []
+
+
+def test_rank_methods_non_finite_excluded(tmp_path):
+    """Experiments with NaN/Inf metrics are excluded from stacking ranking."""
+    _write_results(tmp_path, {
+        "baseline": {"metrics": {"loss": 1.0}, "config": {}},
+        "exp-001": {"metrics": {"loss": 0.8}, "config": {},
+                    "code_branch": "ml-opt/method-a", "code_proposal": "method-a",
+                    "status": "completed"},
+        "exp-002": {"metrics": {"loss": float("nan")}, "config": {},
+                    "code_branch": "ml-opt/method-b", "code_proposal": "method-b",
+                    "status": "completed"},
+        "exp-003": {"metrics": {"loss": float("inf")}, "config": {},
+                    "code_branch": "ml-opt/method-c", "code_proposal": "method-c",
+                    "status": "completed"},
+    })
+    results = load_results(str(tmp_path))
+    ranked = rank_methods_for_stacking(results, "loss", lower_is_better=True)
+    assert len(ranked) == 1
+    assert ranked[0]["code_proposal"] == "method-a"
+
+
+def test_rank_methods_zero_baseline(tmp_path):
+    """Ranking works when baseline metric is near zero (improvement_pct=None)."""
+    _write_results(tmp_path, {
+        "baseline": {"metrics": {"loss": 0.0}, "config": {}},
+        "exp-001": {"metrics": {"loss": -0.5}, "config": {},
+                    "code_branch": "ml-opt/method-a", "code_proposal": "method-a",
+                    "status": "completed"},
+    })
+    results = load_results(str(tmp_path))
+    ranked = rank_methods_for_stacking(results, "loss", lower_is_better=True)
+    assert len(ranked) == 1
+    assert ranked[0]["improvement_pct"] is None

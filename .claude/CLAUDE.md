@@ -58,6 +58,10 @@ Phase 6: Experiment loop (autonomous, pipelined):
          [method_proposal] → mid-loop research + implement
          [research_round] → autonomous cadence-based research
          review → Mid-pipeline review (async in autonomous mode, sync in interactive)
+Phase 6.5: Method stacking (if 5+ methods improved):
+           Sequential accumulation — merge best methods one by one
+           LLM conflict resolution, skip-on-failure
+           Optional HP-tune per stack step
 Phase 7: report → Final optimization report
          review → Self-improvement analysis (optional, end-of-session)
 ```
@@ -129,7 +133,7 @@ experiments/
 
 The research skill supports `source: "both"` mode where the LLM proposes optimization methods using its training knowledge supplemented by web search. Proposals are scoped by `scope_level`: `"training"` (safest), `"architecture"`, or `"full"`. This is triggered:
 - **Pre-loop** (Phase 4, option 5): User chooses to generate method proposals before the experiment loop
-- **Mid-loop** (Phase 6, step 6.5): When analyze recommends `pivot_type: "method_proposal"` or `"qualitative_change"`
+- **Mid-loop** (Phase 6, step 7): When analyze recommends `pivot_type: "method_proposal"` or `"qualitative_change"`
 
 Both triggers require user confirmation of scope and proposals. Knowledge-based proposals have confidence capped at 7/10.
 
@@ -140,6 +144,12 @@ Experiments carry two tracking fields:
 - **`proposal_source`**: `"paper"` | `"llm_knowledge"` | `null` — origin of the method
 
 This enables three-tier attribution: baseline metrics → method with default HPs (isolated method effect) → method with tuned HPs (combined effect). The report skill generates a three-tier comparison table when these fields are present.
+
+Additionally, stacking experiments use:
+- **`stacked_default_hp`**: Combined methods tested with best individual HPs
+- **`stacked_tuned_hp`**: Combined methods after HP-tuning
+
+Stacking experiments also carry `code_branches` (array of combined branches), `stacking_order`, and `stack_base_exp`.
 
 ### Pipeline Resumption
 
@@ -172,6 +182,7 @@ The orchestrator can be stopped and resumed. On restart it reads `pipeline-state
 - **Pre-flight file validation**: The implement skill validates all `files_to_modify` exist before creating branches or starting implementation. Missing-file proposals are marked `preflight_failed`.
 - **Early batch abort**: If >= 2 experiments diverge within 60 seconds of start, remaining experiments in the batch are cancelled to save compute.
 - **Tabular ML adaptive timeout**: For non-iterative frameworks, experiment timeout is computed from `fit_duration * (max_iters / profiling_iters) * 2` instead of a generic 4-hour fallback.
+- **Method stacking (Phase 6.5)**: After independent method testing identifies ≥5 methods that improve over baseline, the orchestrator sequentially merges them in descending order of improvement. Each stack step creates `ml-opt/stack-<N>` by merging the next method into the current best stack. Clean merges proceed directly; conflicts are resolved by the implement-agent. If a combination degrades performance, that method is skipped. Optional HP-tuning (1-2 iterations, narrowed scope) is applied when a combo shows >1% improvement. Stacking state persists in `pipeline-state.json` for resumption. Requires git branch strategy — skipped for `file_backup` projects.
 
 ## Test Fixtures
 

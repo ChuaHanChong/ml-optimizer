@@ -188,7 +188,7 @@ You are an ML optimization orchestrator. You coordinate the full optimization pi
 
    **Budget by mode:**
    - `"auto"`: `max_experiments = max(num_gpus, 1) × difficulty_multiplier` (8, 15, or 25 based on assessed difficulty)
-   - `"autonomous"`: `max_experiments = 999` (effectively unlimited — loop runs until user interrupts or context window exhaustion). In autonomous mode, the analyze skill's `"stop"` recommendation is logged but NOT enforced — the loop continues. The only hard stops are: user interruption, context window limit, or all reasonable approaches exhausted (analyze recommends stop 3 consecutive times). Research → implement cycles auto-trigger every `hp_batches_per_round` batches (see step 6.6).
+   - `"autonomous"`: `max_experiments = 999` (effectively unlimited — loop runs until user interrupts or context window exhaustion). In autonomous mode, the analyze skill's `"stop"` recommendation is logged but NOT enforced — the loop continues. The only hard stops are: user interruption, context window limit, or all reasonable approaches exhausted (analyze recommends stop 3 consecutive times). Research → implement cycles auto-trigger every `hp_batches_per_round` batches (see step 8).
    - `"custom"`: `max_experiments = custom_budget` (user-specified value)
 
 ## Phase 2: Prerequisites Check
@@ -285,7 +285,7 @@ If baseline fails, diagnose from the error message in baseline.json or error tra
 
 ## Phase 4: User Checkpoint (Post-Baseline)
 
-**Autonomous mode auto-skip:** If `budget_mode == "autonomous"`, skip the user question below. Auto-select option 5 (method proposals) with `method_proposal_scope = "architecture"` (balanced default). Log to dev_notes: `"Autonomous mode: auto-selected method proposals (scope: architecture)"`. Then proceed directly to Phase 5.1 / Pre-Loop method proposal generation.
+**Autonomous mode auto-skip:** If `budget_mode == "autonomous"`, skip the user question below. Auto-select option 5 (method proposals) with `method_proposal_scope = "architecture"` (balanced default). Log to dev_notes: `"Autonomous mode: auto-selected method proposals (scope: architecture)"`. Then proceed directly to the Pre-Loop method proposal section (within Phase 6).
 
 Use AskUserQuestion to show baseline results and ask for direction:
 
@@ -478,7 +478,7 @@ If `method_proposal_scope` is set in user_choices (i.e., user chose option 5 in 
 
 ### Pre-Loop: Route `hp_only` Research Proposals
 
-When processing research proposals (from Phase 5 or mid-loop step 6.5), check each proposal's `type` field:
+When processing research proposals (from Phase 5 or mid-loop step 7), check each proposal's `type` field:
 - **`type: "hp_only"`**: These proposals recommend search space modifications (e.g., "try cyclical learning rates", "increase weight decay range") rather than code changes. Route them directly to hp-tune as search space adjustments — skip the implement skill entirely. Merge the suggested HP ranges into the existing `search_space` dict.
 - **`type: "code_change"` or no type field**: Route through implement as normal (create branches, validate, etc.).
 
@@ -489,7 +489,7 @@ This prevents unnecessary implementation overhead for proposals that only affect
 Initialize the research round counter for autonomous mode:
 - `batches_since_last_research = 0`
 - This counter tracks how many HP tuning batches have run since the last research → implement cycle
-- In autonomous mode, when this counter reaches `hp_batches_per_round`, step 6.6 auto-triggers a new research round
+- In autonomous mode, when this counter reaches `hp_batches_per_round`, step 8 auto-triggers a new research round
 
 ### Pre-Loop: Save Pipeline State
 
@@ -668,8 +668,8 @@ When the implementation manifest contains multiple code branches:
      - `"hp_expand"`: Widen the search space around the best config (extend LR range by 2× in each direction). Pass updated `search_space` to hp-tune.
      - `"narrow_space"`: Constrain the search space to the range around the best result (analyze's `suggestion` field contains bounds). Pass narrowed `search_space` to hp-tune.
      - `"regularization"`: Add regularization HPs (weight_decay, dropout) to the search space or expand their range. Pass updated `search_space` to hp-tune. No research needed.
-     - `"research"`: Route to step 6.5 (same as `method_proposal`). Requires `remaining_budget >= 5`.
-     - `"method_proposal"`, `"qualitative_change"`: Route to step 6.5 (existing handling). Requires `remaining_budget >= 3`.
+     - `"research"`: Route to step 7 (same as `method_proposal`). Requires `remaining_budget >= 5`.
+     - `"method_proposal"`, `"qualitative_change"`: Route to step 7 (existing handling). Requires `remaining_budget >= 3`.
      - **Unknown pivot_type:** Treat as `"hp_expand"` (safest default). Log to error tracker.
    - If analyze says **stop**:
      - Discard speculative proposals.
@@ -682,7 +682,7 @@ When the implementation manifest contains multiple code branches:
      - `"autonomous"`: 999 (effectively unlimited — runs until interrupted or 3 consecutive stop recommendations)
      After budget exhausted, force exit and report. When `num_gpus=0` (CPU-only, e.g., scikit-learn), the multiplier applies to `1`.
 
-6.5. **Mid-loop method proposal trigger** (when analyze recommends new methods):
+7. **Mid-loop method proposal trigger** (when analyze recommends new methods):
 
    If analyze returns `pivot_type: "method_proposal"` or `pivot_type: "qualitative_change"`:
 
@@ -725,12 +725,12 @@ When the implementation manifest contains multiple code branches:
 
    g. **Update state:**
       - Increment `method_proposal_iterations` in user_choices
-      - Deduct expected cost from `remaining_budget`: `expected_cost = len(new_branches) + 1` (one experiment per branch + one baseline comparison)
+      - Deduct expected cost from `remaining_budget`: `expected_cost = len(new_branches) * max(num_gpus, 1)` (accounts for GPU-parallel batch sizing per branch)
       - Save pipeline state
 
    h. **Continue loop:** Loop back to step 1 (hp-tune) with the expanded `code_branches` list. Reset `batches_since_last_research = 0`.
 
-6.6. **Research round check** (autonomous mode only — cadence-based research trigger):
+8. **Research round check** (autonomous mode only — cadence-based research trigger):
 
    This step auto-triggers research → implement on a regular cadence, independent of analyze's pivot recommendation. It only applies in autonomous mode with `method_proposal_scope` set.
 
@@ -738,7 +738,7 @@ When the implementation manifest contains multiple code branches:
    - `budget_mode == "autonomous"`
    - `method_proposal_scope` is set (user opted into method proposals)
    - `batches_since_last_research >= hp_batches_per_round`
-   - Step 6.5 did NOT already trigger this iteration (avoid double research)
+   - Step 7 did NOT already trigger this iteration (avoid double research)
 
    **If conditions met:**
 
@@ -762,7 +762,7 @@ When the implementation manifest contains multiple code branches:
 
    d. **Implement proposals (no user confirmation):** In autonomous mode, ALL returned proposals are implemented automatically (the user opted into autonomous operation). Invoke `ml-optimizer:implement` with the research findings. This creates new `ml-opt/<slug>` branches.
 
-   e. **Merge into experiment loop:** Same as step 6.5f — add new validated branches to `code_branches`, reset iteration counter for new branches.
+   e. **Merge into experiment loop:** Same as step 7f — add new validated branches to `code_branches`, reset iteration counter for new branches.
 
    f. **Update state:**
       - Increment `method_proposal_iterations`
@@ -771,7 +771,7 @@ When the implementation manifest contains multiple code branches:
 
    **If conditions NOT met:** Increment `batches_since_last_research` and continue.
 
-7. **Mid-pipeline review check** (after step 6/6.5/6.6, before looping):
+9. **Mid-pipeline review check** (after step 6/7/8, before looping):
    Run pattern detection:
    ```bash
    python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> patterns
@@ -810,7 +810,7 @@ When the implementation manifest contains multiple code branches:
      python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"orchestrate","message":"Mid-pipeline review triggered after consecutive failures","phase":6,"iteration":<iteration>,"context":{"trigger":"consecutive_failures"}}'
      ```
 
-8. **Loop back:** After steps 6/6.5/6.6/7, increment `batches_since_last_research` and return to step 1 (Get HP configs). The loop continues until the Decision step (6) or budget exhaustion forces an exit.
+10. **Loop back:** After steps 6/7/8/9, increment `batches_since_last_research` and return to step 1 (Get HP configs). The loop continues until the Decision step (6) or budget exhaustion forces an exit.
 
 ### Speculative Proposal Validation
 
@@ -853,6 +853,105 @@ Agent(
   subagent_type: "general-purpose"
 )
 ```
+
+## Phase 6.5: Method Stacking (Sequential Accumulation)
+
+**Pre-check:** If the implementation manifest uses `strategy: "file_backup"` (non-git project), skip stacking entirely. Log to dev_notes: "Stacking requires git branches — skipped for file-backup projects." Proceed to Phase 7.
+
+**Trigger:** When the experiment loop ends (analyze recommends `stop` or budget exhausted) AND `methods_with_improvement >= 5`.
+
+Count `methods_with_improvement` by calling `rank_methods_for_stacking()` from `result_analyzer.py`:
+```bash
+python3 scripts/result_analyzer.py <results_dir> <metric> [baseline_id] [lower_is_better]
+```
+Then count entries in the result. If fewer than 5, skip to Phase 7.
+
+**Checkpoint:**
+- **Interactive mode:** Ask user: "{N} methods showed improvement over baseline. Would you like to stack them to find compound gains? The best methods will be merged sequentially."
+  - If user declines → skip to Phase 7
+- **Autonomous mode:** Auto-proceed. Log to dev_notes: "Auto-entering stacking phase with {N} improved methods."
+
+### Stacking Loop
+
+1. **Rank methods** by improvement magnitude (descending) using `rank_methods_for_stacking()`.
+
+2. **Initialize stack:** The best method's branch becomes `ml-opt/stack-1`. No experiment needed — its existing best result serves as the stack baseline.
+
+3. **For each remaining method** (rank 2, 3, ... N):
+
+   a. **Create stack branch:**
+   ```bash
+   git checkout -b ml-opt/stack-<order> ml-opt/stack-<order-1>
+   # (For order=2, branch from ml-opt/stack-1 which is the best method's branch)
+   ```
+
+   b. **Merge the next method:**
+   ```bash
+   git merge ml-opt/<method-slug> --no-ff --no-edit
+   ```
+
+   c. **If clean merge** → proceed to validation.
+
+   d. **If merge conflicts** → dispatch implement-agent:
+      - **Prompt:** "Resolve merge conflicts in the following files. Both methods must be preserved: [method-A description] and [method-B description]. The goal is to combine their functionality."
+      - **Files:** List of conflicting files from `git diff --name-only --diff-filter=U`
+      - If implement-agent succeeds → `git add .` and `git commit -m "Resolve merge conflicts for stack-<order>"`
+      - If implement-agent fails → skip this method:
+        - `git merge --abort`
+        - Log to error tracker: `category: "implementation_error", message: "Stacking conflict unresolved for <method-slug>"`
+        - Continue to next method
+
+   e. **Validate** (syntax, import, forward pass — same as implement skill validation).
+      - If validation fails → skip: delete branch, log reason, continue.
+
+   f. **Run experiment** using the `ml-optimizer:experiment` skill:
+      - `code_branch`: `ml-opt/stack-<order>`
+      - `code_branches`: list of all methods in this stack
+      - `method_tier`: `"stacked_default_hp"`
+      - `stacking_order`: current order number
+      - `stack_base_exp`: exp_id of the previous stack's best result
+      - `config`: best HP config from the top method currently in the stack
+
+   g. **Evaluate result:**
+      - Compare to previous stack step's metric value.
+      - **If improved:** Keep this stack step.
+        - Update `stack_base_branch = ml-opt/stack-<order>`
+        - **Optional HP-tune:** If the improvement is > 1% AND remaining budget allows, invoke `ml-optimizer:hp-tune` with:
+          - `code_branches`: [current stack branch]
+          - `iteration`: 1
+          - `remaining_budget`: min(2, actual remaining)
+          - `search_space`: narrowed to HPs the newly added method likely interacts with (LLM judgment)
+        - If HP-tune improves further, record as `method_tier: "stacked_tuned_hp"`
+      - **If worse or equal:** Skip this method.
+        - Delete `ml-opt/stack-<order>` branch
+        - Log: "Method <slug> skipped in stacking (metric degraded by X%)"
+        - Continue to next method (next stack branch re-branches from last successful stack)
+
+4. **Save stacking state** to `pipeline-state.json` via `save_state(user_choices={"stacking": {...}})` after each stack step (for resumption):
+   ```json
+   {
+     "user_choices": {
+       "stacking": {
+         "ranked_methods": ["method-b", "method-a", "method-c"],
+         "current_stack_order": 3,
+         "stack_base_branch": "ml-opt/stack-2",
+         "stack_base_exp": "exp-stack-002",
+         "skipped_methods": ["method-c"],
+         "stacked_methods": ["method-b", "method-a"]
+       }
+     }
+   }
+   ```
+
+5. **Final result:** The last successful `ml-opt/stack-<N>` branch is the compound best.
+   Log to dev_notes: "Stacking complete. Final stack: [methods]. Compound gain: X% over baseline. Branch: ml-opt/stack-<N>"
+
+### Stacking Phase Resumption
+
+On pipeline restart, if `pipeline-state.json` contains a `stacking` key in `user_choices`:
+1. Read stacking state
+2. Resume from `current_stack_order + 1`
+3. Continue with remaining methods in `ranked_methods` that aren't in `stacked_methods` or `skipped_methods`
 
 ## Phase 7: Report
 

@@ -198,6 +198,140 @@ def identify_correlations(results: dict[str, dict], metric: str, lower_is_better
     return {"correlations": correlations}
 
 
+def build_experiment_description(
+    exp_id: str,
+    data: dict,
+    baseline_config: dict | None = None,
+    max_len: int = 45,
+) -> str:
+    """Build a short human-readable description for a progress chart annotation.
+
+    Combines the method name (from ``code_proposal``) with the most
+    distinctive HP change vs *baseline_config*.  Falls back to exp_id
+    when no richer information is available.
+
+    Returns a string of at most *max_len* characters.
+    """
+    parts: list[str] = []
+
+    # Stacked methods (multiple branches combined)
+    branches = data.get("code_branches")
+    if branches and isinstance(branches, list):
+        names = [b.removeprefix("ml-opt/") for b in branches]
+        parts.append(" + ".join(names))
+    else:
+        # Single method
+        proposal = data.get("code_proposal") or data.get("code_branch", "")
+        if proposal:
+            proposal = proposal.removeprefix("ml-opt/")
+            parts.append(proposal)
+
+    # HP diff vs baseline
+    config = data.get("config", {})
+    if config and baseline_config:
+        diffs: list[str] = []
+        for key in sorted(config):
+            cur = config[key]
+            base = baseline_config.get(key)
+            if base is not None and cur != base:
+                diffs.append(f"{key}={cur}")
+        if diffs:
+            parts.append(", ".join(diffs[:2]))  # top 2 HP changes
+    elif config and not baseline_config:
+        # No baseline to diff against — show top HP value
+        interesting = [(k, v) for k, v in config.items()
+                       if k not in ("exp_id", "gpu_id")]
+        if interesting:
+            k, v = interesting[0]
+            parts.append(f"{k}={v}")
+
+    desc = " | ".join(parts) if parts else exp_id
+    if len(desc) > max_len:
+        desc = desc[: max_len - 3] + "..."
+    return desc
+
+
+def rank_methods_for_stacking(
+    results: dict[str, dict],
+    metric: str,
+    lower_is_better: bool = True,
+) -> list[dict]:
+    """Rank methods by improvement over baseline for stacking.
+
+    For each code_branch, finds the best experiment result. Excludes methods
+    that didn't improve over baseline. Returns a list sorted by improvement
+    magnitude (most improved first).
+
+    Each entry contains: code_branch, code_proposal, best_metric,
+    best_config, best_exp_id, improvement_pct.
+    """
+    baseline = results.get("baseline", {})
+    baseline_metrics = baseline.get("metrics", baseline)
+    if metric not in baseline_metrics:
+        return []
+    baseline_val = baseline_metrics[metric]
+
+    # Group by code_branch, find best per branch
+    branch_best: dict[str, dict] = {}
+    for exp_id, data in results.items():
+        if exp_id == "baseline":
+            continue
+        branch = data.get("code_branch")
+        if not branch:
+            continue
+        status = data.get("status")
+        if status is not None and status != "completed":
+            continue
+        exp_metrics = data.get("metrics", data)
+        if metric not in exp_metrics:
+            continue
+        val = exp_metrics[metric]
+        if not isinstance(val, (int, float)) or not math.isfinite(val):
+            continue
+
+        if branch not in branch_best:
+            branch_best[branch] = {
+                "code_branch": branch,
+                "code_proposal": data.get("code_proposal", branch.removeprefix("ml-opt/")),
+                "best_metric": val,
+                "best_config": data.get("config", {}),
+                "best_exp_id": exp_id,
+            }
+        else:
+            current = branch_best[branch]["best_metric"]
+            better = val < current if lower_is_better else val > current
+            if better:
+                branch_best[branch]["best_metric"] = val
+                branch_best[branch]["best_config"] = data.get("config", {})
+                branch_best[branch]["best_exp_id"] = exp_id
+
+    # Filter to methods that improved over baseline and compute improvement
+    improved = []
+    for entry in branch_best.values():
+        val = entry["best_metric"]
+        if lower_is_better:
+            improved_over_baseline = val < baseline_val
+        else:
+            improved_over_baseline = val > baseline_val
+        if not improved_over_baseline:
+            continue
+        if abs(baseline_val) < 1e-8:
+            pct = None
+        else:
+            delta = baseline_val - val if lower_is_better else val - baseline_val
+            pct = round(delta / abs(baseline_val) * 100, 2)
+        entry["improvement_pct"] = pct
+        improved.append(entry)
+
+    # Sort by improvement magnitude (most improved first)
+    def _sort_key(e):
+        pct = e.get("improvement_pct")
+        return pct if pct is not None else 0.0
+
+    improved.sort(key=_sort_key, reverse=True)
+    return improved
+
+
 def group_by_method_tier(results: dict[str, dict]) -> dict[str, list[dict]]:
     """Group experiments by method_tier for three-tier analysis.
 

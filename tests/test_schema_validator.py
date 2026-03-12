@@ -453,6 +453,81 @@ def test_validate_result_neg_inf_metric():
     assert any("loss" in e and "finite" in e for e in result["errors"])
 
 
+def test_validate_result_stacked_method_tiers():
+    """Stacked method tier values pass validation."""
+    for tier in ["stacked_default_hp", "stacked_tuned_hp"]:
+        data = {
+            "exp_id": "exp-stack-001", "status": "completed",
+            "config": {"lr": 0.001}, "metrics": {"loss": 0.5},
+            "method_tier": tier,
+            "code_branches": ["ml-opt/perceptual-loss", "ml-opt/cosine-scheduler"],
+            "stacking_order": 2,
+            "stack_base_exp": "exp-012",
+        }
+        result = validate_result(data)
+        assert result["valid"] is True, f"method_tier '{tier}' should be valid"
+
+
+def test_validate_result_code_branches_must_be_list():
+    """code_branches must be a list if present."""
+    data = {
+        "exp_id": "exp-stack-001", "status": "completed",
+        "config": {}, "metrics": {"loss": 0.5},
+        "code_branches": "not-a-list",
+    }
+    result = validate_result(data)
+    assert result["valid"] is False
+    assert any("code_branches" in e for e in result["errors"])
+
+
+def test_validate_result_stacking_order_must_be_int():
+    """stacking_order must be a positive integer if present."""
+    data = {
+        "exp_id": "exp-stack-001", "status": "completed",
+        "config": {}, "metrics": {"loss": 0.5},
+        "stacking_order": "two",
+    }
+    result = validate_result(data)
+    assert result["valid"] is False
+    assert any("stacking_order" in e for e in result["errors"])
+
+
+def test_validate_result_stacking_order_zero():
+    """stacking_order of 0 fails validation (must be >= 1)."""
+    data = {
+        "exp_id": "exp-stack-001", "status": "completed",
+        "config": {}, "metrics": {"loss": 0.5},
+        "stacking_order": 0,
+    }
+    result = validate_result(data)
+    assert result["valid"] is False
+    assert any("stacking_order" in e for e in result["errors"])
+
+
+def test_validate_result_code_branches_elements_must_be_strings():
+    """code_branches elements must be strings."""
+    data = {
+        "exp_id": "exp-stack-001", "status": "completed",
+        "config": {}, "metrics": {"loss": 0.5},
+        "code_branches": [1, 2, 3],
+    }
+    result = validate_result(data)
+    assert result["valid"] is False
+    assert any("code_branches" in e for e in result["errors"])
+
+
+def test_validate_result_stack_base_exp_must_be_string():
+    """stack_base_exp must be a string if present."""
+    data = {
+        "exp_id": "exp-stack-001", "status": "completed",
+        "config": {}, "metrics": {"loss": 0.5},
+        "stack_base_exp": 123,
+    }
+    result = validate_result(data)
+    assert result["valid"] is False
+    assert any("stack_base_exp" in e for e in result["errors"])
+
+
 def test_validate_result_valid_method_tier():
     """A result with valid method_tier passes validation."""
     for tier in ["baseline", "method_default_hp", "method_tuned_hp"]:

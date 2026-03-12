@@ -20,8 +20,9 @@ EXPERIMENT_RESULT_OPTIONAL = [
     "gpu_id", "duration_seconds", "log_file", "script_file",
     "code_branch", "code_proposal", "notes",
     "method_tier", "proposal_source", "iteration",
+    "code_branches", "stacking_order", "stack_base_exp",
 ]
-VALID_METHOD_TIERS = ["baseline", "method_default_hp", "method_tuned_hp"]
+VALID_METHOD_TIERS = ["baseline", "method_default_hp", "method_tuned_hp", "stacked_default_hp", "stacked_tuned_hp"]
 VALID_STATUSES = ["completed", "failed", "diverged", "running", "pending", "timeout"]
 
 BASELINE_REQUIRED = ["exp_id", "status", "config", "metrics"]
@@ -108,6 +109,20 @@ def validate_result(data: dict) -> dict:
         errors.append(
             f"Invalid method_tier '{data['method_tier']}': must be one of {VALID_METHOD_TIERS}"
         )
+
+    if "code_branches" in data:
+        if not isinstance(data["code_branches"], list):
+            errors.append("'code_branches' must be a list")
+        elif not all(isinstance(b, str) for b in data["code_branches"]):
+            errors.append("'code_branches' elements must be strings")
+
+    if "stacking_order" in data:
+        if not isinstance(data["stacking_order"], int) or data["stacking_order"] < 1:
+            errors.append("'stacking_order' must be a positive integer")
+
+    if "stack_base_exp" in data:
+        if not isinstance(data["stack_base_exp"], str):
+            errors.append("'stack_base_exp' must be a string")
 
     return {"valid": len(errors) == 0, "errors": errors, "warnings": []}
 

@@ -756,3 +756,22 @@ def test_cleanup_stale_exp_result_write_failure(tmp_path):
     with mock.patch("pipeline_state.os.fdopen", side_effect=mock_fdopen):
         with pytest.raises(OSError, match="disk full"):
             cleanup_stale(str(exp_root))
+
+
+# --- Stacking state persistence ---
+
+
+def test_save_and_load_stacking_state(tmp_path):
+    """Stacking state is preserved through save/load cycle."""
+    stacking = {
+        "ranked_methods": ["perceptual-loss", "cosine-scheduler", "mixup"],
+        "current_stack_order": 2,
+        "stack_base_branch": "ml-opt/stack-2",
+        "stack_base_exp": "exp-015",
+        "skipped_methods": ["mixup"],
+        "stacked_methods": ["perceptual-loss", "cosine-scheduler"],
+    }
+    save_state(6, 5, [], str(tmp_path), user_choices={"stacking": stacking})
+    loaded = load_state(str(tmp_path))
+    assert loaded is not None
+    assert loaded["user_choices"]["stacking"] == stacking

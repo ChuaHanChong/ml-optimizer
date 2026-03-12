@@ -152,6 +152,7 @@ def save_state(
     exp_root: str,
     *,
     user_choices: dict | None = None,
+    consecutive_stop_count: int | None = None,
 ) -> str:
     """Write pipeline-state.json to exp_root.
 
@@ -165,6 +166,8 @@ def save_state(
             method_proposal_scope, method_proposal_iterations,
             hp_batches_per_round). These are preserved across pipeline
             resumptions.
+        consecutive_stop_count: Optional counter for autonomous mode's
+            3-consecutive-stop exit rule. Persisted at root level.
 
     Returns the path to the state file.
     """
@@ -178,13 +181,24 @@ def save_state(
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "status": "running",
     }
+    # Load existing state once if needed for preserving fields
+    existing = (
+        load_state(exp_root)
+        if (user_choices is None or consecutive_stop_count is None)
+        else None
+    )
+
     # Preserve existing user_choices if not explicitly provided
     if user_choices is not None:
         state["user_choices"] = user_choices
-    else:
-        existing = load_state(exp_root)
-        if existing and existing.get("user_choices"):
-            state["user_choices"] = existing["user_choices"]
+    elif existing and existing.get("user_choices"):
+        state["user_choices"] = existing["user_choices"]
+
+    # Preserve consecutive_stop_count for autonomous mode
+    if consecutive_stop_count is not None:
+        state["consecutive_stop_count"] = consecutive_stop_count
+    elif existing and "consecutive_stop_count" in existing:
+        state["consecutive_stop_count"] = existing["consecutive_stop_count"]
 
     state_path = root / "pipeline-state.json"
     tmp_fd, tmp_path = tempfile.mkstemp(dir=str(root), suffix=".tmp")

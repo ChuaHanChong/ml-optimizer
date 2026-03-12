@@ -135,7 +135,7 @@ def save_state(
         "status": "running",
     }
     # Preserve existing user_choices if not explicitly provided
-    if user_choices:
+    if user_choices is not None:
         state["user_choices"] = user_choices
     else:
         existing = load_state(exp_root)
@@ -153,7 +153,7 @@ def save_state(
         raise
 
     # Backup user_choices separately for recovery if main state corrupts
-    if user_choices:
+    if user_choices is not None:
         backup_path = root / "user-choices-backup.json"
         try:
             tmp_fd2, tmp_path2 = tempfile.mkstemp(dir=str(root), suffix=".tmp")

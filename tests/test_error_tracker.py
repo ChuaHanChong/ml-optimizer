@@ -726,6 +726,30 @@ def test_compute_proposal_outcomes_hp_stats(tmp_path):
     assert p["hp_proposals"]["total_run"] == 2
 
 
+def test_compute_proposal_outcomes_lower_is_better_sign(tmp_path):
+    """improvement_pct is positive when lower_is_better and val < baseline."""
+    results = tmp_path / "results"
+    results.mkdir()
+    manifest = {
+        "original_branch": "main",
+        "strategy": "git_branch",
+        "proposals": [
+            {"name": "weight-decay", "slug": "weight-decay",
+             "status": "validated", "branch": "ml-opt/weight-decay"},
+        ],
+    }
+    (results / "implementation-manifest.json").write_text(json.dumps(manifest))
+    _write_result(results, "baseline", "completed", {"lr": 0.001}, {"loss": 1.0})
+    _write_result(results, "exp-001", "completed", {"lr": 0.001}, {"loss": 0.5},
+                  code_branch="ml-opt/weight-decay")
+
+    p = compute_proposal_outcomes(str(tmp_path), "loss", lower_is_better=True)
+    assert len(p["research_proposals"]) == 1
+    rp = p["research_proposals"][0]
+    assert rp["beat_baseline"] == 1
+    assert rp["best_improvement"] == "50.0%"
+
+
 # ---------------------------------------------------------------------------
 # CLI tests for new modes
 # ---------------------------------------------------------------------------

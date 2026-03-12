@@ -809,8 +809,9 @@ def compute_proposal_outcomes(
             ):
                 beat += 1
                 if baseline_val != 0:
-                    pct = ((val - baseline_val) / abs(baseline_val)) * 100
-                    if best_imp is None or abs(pct) > abs(best_imp):
+                    delta = baseline_val - val if lower_is_better else val - baseline_val
+                    pct = round(delta / abs(baseline_val) * 100, 2)
+                    if best_imp is None or pct > (best_imp or 0):
                         best_imp = pct
 
         research_proposals.append({

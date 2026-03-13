@@ -32,7 +32,7 @@ No build step. No linter configured. Python 3.10+ required. The `scripts/` direc
 .claude-plugin/plugin.json  — Plugin metadata (name, version)
 commands/optimize.md        — /optimize slash command (entry point)
 skills/                     — Skill definitions (SKILL.md files)
-agents/                     — 5 subagent definitions
+agents/                     — 10 subagent definitions
 scripts/                    — Python utilities (stdlib only)
 memory/                     — Placeholder for future cross-project patterns
 tests/                      — pytest test suite
@@ -40,7 +40,7 @@ tests/                      — pytest test suite
 
 ### Skill Pipeline (Orchestrator Flow)
 
-The `orchestrate` skill coordinates a 10-phase pipeline. Each skill is invoked via `ml-optimizer:<skill-name>`:
+The `orchestrate` skill coordinates a 10-phase pipeline. Each phase dispatches a named agent via `Agent(subagent_type="ml-optimizer:<name>-agent")`:
 
 ```
 Phase 0: Discovery (plan mode, user Q&A — includes data paths and env manager)
@@ -76,16 +76,23 @@ The implement skill creates `ml-opt/<slug>` branches per research proposal. The 
 
 ### Agent Definitions (`agents/`)
 
-Five subagent types with specified tool access:
-- **research-agent**: WebSearch, WebFetch, Read, Write, Bash, Glob, Grep
-- **tuning-agent**: Read, Write, Bash, Glob, Grep, WebSearch, WebFetch
-- **implement-agent**: Bash, Read, Write, Edit, Glob, Grep, WebSearch, WebFetch
-- **experiment-agent**: Bash, Read, Write, Glob, Grep, WebSearch, WebFetch
-- **prerequisites-agent**: Bash, Read, Write, Glob, Grep, WebSearch, WebFetch
+Ten subagent types, each with a preloaded skill and specified tool access. The orchestrate skill dispatches agents directly via `Agent(subagent_type="ml-optimizer:<name>-agent")`. Skills are instruction documents only — they have `disable-model-invocation: true` and are not directly invocable.
 
-Analytical agents (hp-tune, research, analyze, implement) use "ultrathink" prompting. Procedural agents (experiment, monitor, prerequisites) do not.
+**Procedural agents** (`model: sonnet` — lower cost/latency, no ultrathink):
+- **baseline-agent**: Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:baseline]`
+- **monitor-agent**: Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:monitor]`
+- **experiment-agent**: Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:experiment]`
+- **prerequisites-agent**: Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:prerequisites]`
 
-Agents are dispatched as `general-purpose` subagents and can invoke external skills:
+**Analytical agents** (inherit parent model, ultrathink prompting):
+- **research-agent**: WebSearch, WebFetch, Read, Write, Bash, Glob, Grep, Skill — skills: `[ml-optimizer:research]`
+- **tuning-agent**: Read, Write, Bash, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:hp-tune]`
+- **implement-agent**: Bash, Read, Write, Edit, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:implement]`
+- **analysis-agent**: Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:analyze]`
+- **report-agent**: Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:report]`
+- **review-agent**: Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:review]`
+
+For parallel execution, use `run_in_background: true`. External skills are also available:
 - **research-agent**: Uses `context7` for framework API docs, `claude-mem:mem-search` for cross-session learning
 - **implement-agent**: Uses `context7` for API docs, `feature-dev:code-explorer` for codebase analysis, `superpowers:systematic-debugging` for error recovery
 - **orchestrator**: Uses `claude-mem:mem-search` in Phase 1 for cross-session recall, `feature-dev:code-reviewer` in Phase 6 for post-implementation quality review
@@ -125,7 +132,9 @@ experiments/
   reports/error-log.json             — Structured error event log
   reports/suggestion-history.json    — Suggestion feedback loop (tracks what was suggested)
   reports/session-review.md          — Self-improvement review (from review skill)
-  scripts/<exp-id>.sh                — Generated training scripts
+  scripts/<exp-id>/                  — Per-experiment command scripts (train, eval, etc.)
+  artifacts/                         — Model checkpoints, intermediate files, images, plots
+  artifacts/<exp-id>/                — Per-experiment artifacts (checkpoints, visualizations)
   dev_notes.md                       — Running session log
 ```
 
@@ -194,6 +203,6 @@ The orchestrator can be stopped and resumed. On restart it reads `pipeline-state
 - **`implement_utils.py` has three CLI modes**: default (parse proposals), `clone <url> <dest>`, and `analyze <path>`. Each has different argument patterns.
 - **Metric routing is split**: Monitor/divergence always uses loss (lower-is-better). Analyze/hp-tune use the user's `primary_metric`. Mixing these up causes silent wrong behavior.
 - **Branch experiments are independent**: Results on `ml-opt/branch-a` tell you nothing about what HPs will work on `ml-opt/branch-b`. The tuning agent must group by `code_branch` before analyzing trends.
-- **Mid-pipeline review auto-triggers**: In Phase 7, the orchestrator checks error patterns after each batch. If `wasted_budget` pattern reaches ≥ 3 occurrences OR the last 2 consecutive batches had zero successful experiments, it invokes the review skill with `scope: "session"` to suggest course corrections. It can also be invoked manually at end of session.
+- **Mid-pipeline review auto-triggers**: In Phase 7, the orchestrator checks error patterns after each batch. If `wasted_budget` pattern reaches ≥ 3 occurrences OR the last 2 consecutive batches had zero successful experiments, it dispatches the review agent with `scope: "session"` to suggest course corrections. It can also be invoked manually at end of session.
 - **Tabular ML frameworks skip divergence monitoring**: When the detected framework is scikit-learn, XGBoost, or LightGBM, the orchestrator sets `divergence_metric` to `null` and skips the monitor skill. The baseline skill skips GPU profiling and throughput estimation for these frameworks.
 - **Research findings files can be multiple**: `research-findings.md` (Phase 5 web search), `research-findings-method-proposals.md` (Phase 7 pre-loop), `research-findings-method-proposals-iter<N>.md` (Phase 7 mid-loop triggers). The research skill's deduplication checks all of these to avoid re-proposing tried techniques.

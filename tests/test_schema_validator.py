@@ -807,6 +807,17 @@ def test_validate_file_valid_prerequisites(tmp_path):
     assert result["valid"] is True
 
 
+def test_validate_result_accepts_artifacts_dir():
+    """Results with artifacts_dir field pass validation."""
+    data = {
+        "exp_id": "exp-001", "status": "completed",
+        "config": {"lr": 0.01}, "metrics": {"loss": 1.5},
+        "artifacts_dir": "experiments/artifacts/exp-001",
+    }
+    result = validate_result(data)
+    assert result["valid"], f"Errors: {result['errors']}"
+
+
 def test_validate_all_validators_return_warnings_key():
     """All validators return a 'warnings' key for API consistency."""
     for name, validator, data in [

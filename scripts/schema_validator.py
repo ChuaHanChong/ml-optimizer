@@ -21,6 +21,7 @@ EXPERIMENT_RESULT_OPTIONAL = [
     "code_branch", "code_proposal", "notes",
     "method_tier", "proposal_source", "iteration",
     "code_branches", "stacking_order", "stack_base_exp",
+    "artifacts_dir",
 ]
 VALID_METHOD_TIERS = ["baseline", "method_default_hp", "method_tuned_hp", "stacked_default_hp", "stacked_tuned_hp"]
 VALID_STATUSES = ["completed", "failed", "diverged", "running", "pending", "timeout"]

@@ -1,6 +1,7 @@
 ---
 name: baseline
 description: "Establish baseline metrics for an ML model. Runs evaluation, profiles GPU memory and training throughput, and creates the experiments directory structure. Use when: need to measure current model performance before optimization."
+disable-model-invocation: true
 ---
 
 # Baseline Evaluation

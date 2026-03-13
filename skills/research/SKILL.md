@@ -1,6 +1,7 @@
 ---
 name: research
 description: "Research ML optimization techniques via web search, paper analysis, or LLM knowledge. Extracts actionable proposals with implementation details, expected impact, and complexity ratings. Use when: need to find new techniques for improving an ML model."
+disable-model-invocation: true
 ---
 
 # ML Research Agent

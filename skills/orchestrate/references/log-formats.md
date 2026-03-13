@@ -23,7 +23,7 @@
   "gpu_id": 0,
   "duration_seconds": 3600,
   "log_file": "experiments/logs/exp-001/train.log",
-  "script_file": "experiments/scripts/exp-001.sh",
+  "script_file": "experiments/scripts/exp-001/exp-001.sh",
   "code_branch": "ml-opt/perceptual-loss|null",
   "code_proposal": "Perceptual Loss Function|null",
   "method_tier": "baseline|method_default_hp|method_tuned_hp|null",
@@ -144,6 +144,20 @@ Priority score: `(impact * confidence) / (11 - min(feasibility, 10))` where impa
 ```
 
 The `user_choices` field persists Phase 0 decisions so they survive orchestrator interruptions without re-asking the user.
+
+## Artifacts Directory (`experiments/artifacts/`)
+
+Per-experiment artifacts (checkpoints, intermediate files, visualizations):
+```
+experiments/artifacts/
+  <exp-id>/                          — Per-experiment subdirectory
+    *.pt, *.pth, *.ckpt, *.h5       — Model checkpoints
+    *.pkl, *.safetensors             — Serialized model weights
+    *.png, *.jpg                     — Visualizations, plots
+  progress_chart.png                 — Optimization progress chart (from report skill)
+```
+
+Created automatically by `experiment_setup.py`. The experiment skill creates per-experiment subdirectories before training and configures checkpoint save paths to point here.
 
 ## Batch Analysis (`experiments/reports/batch-<N>-analysis.md`)
 ```markdown

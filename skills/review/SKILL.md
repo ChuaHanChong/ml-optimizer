@@ -1,6 +1,7 @@
 ---
 name: review
 description: "Analyze error logs, experiment outcomes, and proposal effectiveness to generate improvement suggestions for the ML optimizer plugin. Can be invoked at end-of-session or mid-pipeline. Advisory only — presents suggestions, does not auto-apply changes. Use when: an optimization session has completed or encountered issues and you want to review what went wrong, what worked, and how the plugin could improve."
+disable-model-invocation: true
 ---
 
 # Self-Improvement Review

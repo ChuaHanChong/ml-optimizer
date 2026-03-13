@@ -1,6 +1,7 @@
 ---
 name: implement
 description: "Apply research proposals as code changes. Creates isolated git branches per proposal, implements modifications (architecture, loss, augmentation), validates with progressive checks, and produces a manifest for the experiment loop. Use when: research proposals need to be turned into actual code changes, or when implementing specific ML improvements before experiments."
+disable-model-invocation: true
 ---
 
 # Implement Research Proposals
@@ -119,7 +120,7 @@ Proposals can be implemented in parallel using git worktrees. Each proposal gets
      Agent(
        description: "Implement proposal: <proposal_name>",
        prompt: "Ultrathink. Implement the following ML research proposal in the worktree at experiments/impl-worktrees/<slug>. Project root (worktree): experiments/impl-worktrees/<slug>. Proposal: <full proposal details including name, slug, files_to_modify, implementation_steps, implementation_strategy>. After implementation: (1) validate syntax and imports using implement_utils.py, (2) create branch ml-opt/<slug>, (3) commit changes with message 'ml-opt: implement <proposal_name>', (4) report back with status, commit SHA, and any validation issues.",
-       subagent_type: "general-purpose",
+       subagent_type: "ml-optimizer:implement-agent",
        run_in_background: true
      )
    ```

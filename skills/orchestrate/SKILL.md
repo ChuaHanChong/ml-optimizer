@@ -193,15 +193,14 @@ You are an ML optimization orchestrator. You coordinate the full optimization pi
 
 ## Phase 2: Prerequisites Check
 
-Invoke the `ml-optimizer:prerequisites` skill with:
-- `project_root`: Project root directory
-- `framework`: ML framework detected in Phase 1
-- `training_script`: Path to the main training script from Phase 1
-- `config_path`: Path to training config from Phase 1 (if found)
-- `train_data_path`: From Phase 0 Q10
-- `val_data_path`: From Phase 0 Q10 (if separate)
-- `env_manager`: From Phase 0 Q11
-- `env_name`: From Phase 0 Q11 (if conda)
+Dispatch the prerequisites agent:
+```
+Agent(
+  description: "Check prerequisites",
+  prompt: "Check prerequisites for ML project. Parameters: project_root: {project_root}, framework: {framework}, training_script: {training_script}, config_path: {config_path}, train_data_path: {train_data_path}, val_data_path: {val_data_path}, env_manager: {env_manager}, env_name: {env_name}.",
+  subagent_type: "ml-optimizer:prerequisites-agent"
+)
+```
 
 **Check results** from `experiments/results/prerequisites.json`:
 - `ready_for_baseline = true` → proceed to Phase 3
@@ -253,11 +252,14 @@ user_choices = {
 
 ## Phase 3: Establish Baseline
 
-Invoke the `ml-optimizer:baseline` skill:
-- Pass the training command, eval command, and project root
-- Pass `model_category` from user_choices so baseline applies RL-specific or generative-specific evaluation
-- If `prepared_train_path` exists in `user_choices`, pass it so baseline uses the prepared data
-- If `prepared_val_path` exists in `user_choices`, pass it similarly
+Dispatch the baseline agent:
+```
+Agent(
+  description: "Establish baseline metrics",
+  prompt: "Establish baseline metrics. Parameters: project_root: {project_root}, train_command: {train_command}, eval_command: {eval_command}, model_category: {model_category}, prepared_train_path: {prepared_train_path or null}, prepared_val_path: {prepared_val_path or null}.",
+  subagent_type: "ml-optimizer:baseline-agent"
+)
+```
 - Wait for baseline results
 - Store in `experiments/results/baseline.json`
 
@@ -366,10 +368,14 @@ Which proposals should I pursue?
 
 If the user selected research proposals that require code changes (not just HP tuning):
 
-1. **Invoke `ml-optimizer:implement`** with:
-   - `findings_path`: `experiments/reports/research-findings.md`
-   - `selected_indices`: The proposal indices the user chose in the post-research checkpoint
-   - `project_root`: The project root directory
+1. **Dispatch the implement agent:**
+   ```
+   Agent(
+     description: "Implement research proposals",
+     prompt: "Ultrathink. Implement research proposals. Parameters: findings_path: experiments/reports/research-findings.md, selected_indices: {selected_indices}, project_root: {project_root}.",
+     subagent_type: "ml-optimizer:implement-agent"
+   )
+   ```
 
 2. **Check results** from `experiments/results/implementation-manifest.json`:
    - **All validated** → proceed to experiment loop with branch-aware execution
@@ -443,11 +449,14 @@ If no manifest exists, run HP-only experiments on the current code.
 
 If `method_proposal_scope` is set in user_choices (i.e., user chose option 5 in Phase 4):
 
-1. **Invoke `ml-optimizer:research`** with:
-   - `source`: `"both"`
-   - `scope_level`: from user_choices `method_proposal_scope`
-   - `output_path`: `"experiments/reports/research-findings-method-proposals.md"`
-   - All other standard inputs (`model_type`, `task`, `current_metrics`, `problem_description`, `exp_root`)
+1. **Dispatch the research agent:**
+   ```
+   Agent(
+     description: "Research method proposals",
+     prompt: "Ultrathink. Research ML optimization techniques. Parameters: source: both, scope_level: {method_proposal_scope}, output_path: experiments/reports/research-findings-method-proposals.md, model_type: {model_type}, task: {task}, current_metrics: {current_metrics}, problem_description: {problem_description}, exp_root: {exp_root}.",
+     subagent_type: "ml-optimizer:research-agent"
+   )
+   ```
 
 2. **Present proposals to user for confirmation** (same as Phase 5 post-research checkpoint):
 
@@ -464,10 +473,14 @@ If `method_proposal_scope` is set in user_choices (i.e., user chose option 5 in 
    - [4] Skip, just tune HPs on existing code
    ```
 
-3. **If user selects proposals:** Invoke `ml-optimizer:implement` with:
-   - `findings_path`: `"experiments/reports/research-findings-method-proposals.md"`
-   - `selected_indices`: The indices the user chose
-   - `project_root`: Project root directory
+3. **If user selects proposals:** Dispatch the implement agent:
+   ```
+   Agent(
+     description: "Implement method proposals",
+     prompt: "Ultrathink. Implement research proposals. Parameters: findings_path: experiments/reports/research-findings-method-proposals.md, selected_indices: {selected_indices}, project_root: {project_root}.",
+     subagent_type: "ml-optimizer:implement-agent"
+   )
+   ```
 
 4. **Check implementation results** from `experiments/results/implementation-manifest.json`:
    - Merge validated method proposal branches into the `code_branches` list
@@ -556,16 +569,17 @@ When the implementation manifest contains multiple code branches:
      2. If valid → use them as this iteration's configs. Skip hp-tune invocation entirely.
      3. If invalid → discard them and invoke hp-tune synchronously as normal.
    - **Otherwise (first iteration, or speculative proposals were discarded):**
-     - Invoke the `ml-optimizer:hp-tune` skill with parameters:
-     - `project_root`: Project root directory
-     - `num_gpus`: Number of available GPUs (determines batch size)
-     - `search_space`: HP search space dict from the plan
-     - `iteration`: Current loop iteration (1-based)
-     - `primary_metric`: The metric to optimize (from Phase 0)
-     - `lower_is_better`: Whether lower values are better
-     - `remaining_budget`: How many more experiments can be run before hitting the budget limit. Calculated as `max_experiments - total_experiments_so_far` (where `max_experiments` is set by the adaptive difficulty assessment or user override). HP-tune must cap proposals at `min(max(num_gpus, 1), remaining_budget)`.
-     - `code_branches`: List of validated code branches from the implementation manifest (e.g., `["ml-opt/perceptual-loss", "ml-opt/cosine-scheduler"]`), or `[]` for HP-only optimization. HP-tune uses this in iteration 1 to generate one config per branch + one for baseline.
-     - `max_batch_size` *(optional)*: One step below the smallest OOM-causing batch size from error tracker. Omit if no OOM events have occurred. See "OOM feedback to hp-tune" in Error Handling.
+     Dispatch the tuning agent:
+     ```
+     Agent(
+       description: "HP tuning iteration {iteration}",
+       prompt: "Ultrathink. Propose HP configurations. Parameters: project_root: {project_root}, num_gpus: {num_gpus}, search_space: {search_space}, iteration: {iteration}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, remaining_budget: {remaining_budget}, code_branches: {code_branches}, max_batch_size: {max_batch_size or omit}.",
+       subagent_type: "ml-optimizer:tuning-agent"
+     )
+     ```
+     - `remaining_budget`: `max_experiments - total_experiments_so_far`. HP-tune caps proposals at `min(max(num_gpus, 1), remaining_budget)`.
+     - `code_branches`: From implementation manifest, or `[]` for HP-only.
+     - `max_batch_size` *(optional)*: One step below the smallest OOM-causing batch size. Omit if no OOM events.
    - It reads past results and proposes the next batch of configs
    - Number of configs = `min(max(num_gpus, 1), remaining_budget)` (capped to prevent budget overshoot)
    - **Check hp-tune recommendation:** If hp-tune output includes `"recommendation": "stop"`, log it to error tracker with `category: "pipeline_inefficiency"` and note it for the analyze step. Analyze makes the final continue/pivot/stop decision, but hp-tune's recommendation provides an early signal of search space exhaustion.
@@ -590,14 +604,14 @@ When the implementation manifest contains multiple code branches:
    - Each experiment runs on a separate GPU
 
 3. **Monitor experiments:**
-   - **If `divergence_metric` is not null**, invoke `ml-optimizer:monitor` skill with parameters:
-     - `log_files`: List of log file paths (one per running experiment)
-     - `exp_ids`: Corresponding experiment IDs
-     - `project_root`: Project root directory
-     - `poll_interval`: Seconds between checks (default: 30)
-     - `metric_to_watch`: `<divergence_metric>` from Phase 0 (default: `"loss"` — see Metric Routing Rule)
-     - `lower_is_better`: `<divergence_lower_is_better>` from user_choices (True for loss-like metrics, False for reward-like metrics)
-     - `model_category`: From user_choices (e.g., "rl", "generative", or null for supervised)
+   - **If `divergence_metric` is not null**, dispatch the monitor agent:
+     ```
+     Agent(
+       description: "Monitor experiments for divergence",
+       prompt: "Monitor running experiments. Parameters: log_files: {log_files}, exp_ids: {exp_ids}, project_root: {project_root}, poll_interval: 30, metric_to_watch: {divergence_metric}, lower_is_better: {divergence_lower_is_better}, model_category: {model_category}.",
+       subagent_type: "ml-optimizer:monitor-agent"
+     )
+     ```
    - Monitor status handling:
      - `healthy`: Training is progressing normally — continue waiting
      - `diverged`: Stop the experiment automatically, record divergence reason in experiment results
@@ -634,21 +648,21 @@ When the implementation manifest contains multiple code branches:
 
 5. **Analyze results + speculative hp-tune (parallel):**
    - **Start analyze synchronously:**
-     - Invoke the `ml-optimizer:analyze` skill with parameters:
-       - `project_root`: Project root directory
-       - `batch_number`: Current loop iteration (1-based)
-       - `primary_metric`: From Phase 0 (NOT "loss" — see Metric Routing Rule)
-       - `lower_is_better`: Based on metric type
-       - `target_value`: From Phase 0 (or null)
-       - `remaining_budget`: `max_experiments - total_experiments_so_far` (analyze uses this in its pivot decision tree to gate research pivots)
+     ```
+     Agent(
+       description: "Analyze batch {N} results",
+       prompt: "Ultrathink. Analyze batch {N} results. Parameters: project_root: {project_root}, batch_number: {batch_number}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, target_value: {target_value or null}, remaining_budget: {remaining_budget}.",
+       subagent_type: "ml-optimizer:analysis-agent"
+     )
+     ```
      - It compares all experiments, ranks them, identifies patterns
      - It recommends: continue, pivot, or stop
    - **At the SAME TIME, start speculative hp-tune in background** (only if `remaining_budget > max(num_gpus, 1)`):
      ```
      Agent(
        description: "Speculative hp-tune for next batch",
-       prompt: "Ultrathink. This is a SPECULATIVE proposal — the orchestrator may discard these results if analyze recommends stop or pivot. Use the ml-optimizer:hp-tune skill with: project_root: {project_root}, num_gpus: {num_gpus}, search_space: {search_space}, iteration: {iteration + 1}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, remaining_budget: {remaining_budget - current_batch_size}, code_branches: {code_branches}.",
-       subagent_type: "general-purpose",
+       prompt: "Ultrathink. This is a SPECULATIVE proposal — the orchestrator may discard these results if analyze recommends stop or pivot. Parameters: project_root: {project_root}, num_gpus: {num_gpus}, search_space: {search_space}, iteration: {iteration + 1}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, remaining_budget: {remaining_budget - current_batch_size}, code_branches: {code_branches}.",
+       subagent_type: "ml-optimizer:tuning-agent",
        run_in_background: true
      )
      ```
@@ -709,18 +723,28 @@ When the implementation manifest contains multiple code branches:
       ```
       If user chooses 4 (skip), exit the loop and proceed to Phase 9 (report).
 
-   c. **Generate proposals:** Invoke `ml-optimizer:research` with:
-      - `source`: `"both"`
-      - `scope_level`: user's choice (`"training"` / `"architecture"` / `"full"`)
-      - `output_path`: `"experiments/reports/research-findings-method-proposals-iter<N>.md"` (where N = `method_proposal_iterations + 1`)
-      - All other standard inputs (project_root, model description, primary_metric, etc.)
+   c. **Generate proposals:** Dispatch the research agent:
+      ```
+      Agent(
+        description: "Mid-loop research proposals",
+        prompt: "Ultrathink. Research ML optimization techniques. Parameters: source: both, scope_level: {scope_level}, output_path: experiments/reports/research-findings-method-proposals-iter{N}.md, model_type: {model_type}, task: {task}, current_metrics: {current_metrics}, problem_description: {problem_description}, exp_root: {exp_root}.",
+        subagent_type: "ml-optimizer:research-agent"
+      )
+      ```
 
    d. **Present proposals:**
       **Autonomous mode auto-skip:** If `budget_mode == "autonomous"`, accept all proposals automatically. Log to dev_notes: "Autonomous mode: auto-accepted all N mid-loop method proposals". Skip AskUserQuestion.
 
       **Otherwise:** Show the generated proposals to the user for confirmation. The user can accept all, select a subset, or reject all (which exits the loop).
 
-   e. **Implement proposals:** Invoke `ml-optimizer:implement` with the confirmed method proposal findings. This creates new `ml-opt/<slug>` branches.
+   e. **Implement proposals:** Dispatch the implement agent with the confirmed method proposal findings. This creates new `ml-opt/<slug>` branches.
+      ```
+      Agent(
+        description: "Implement mid-loop proposals",
+        prompt: "Ultrathink. Implement research proposals. Parameters: findings_path: {findings_path}, selected_indices: {selected_indices}, project_root: {project_root}.",
+        subagent_type: "ml-optimizer:implement-agent"
+      )
+      ```
 
    f. **Merge into experiment loop:** Add the new validated branches to `code_branches`. Reset the iteration counter for these new branches only (they start at iteration 1 = `method_default_hp` tier). Existing branches keep their iteration count.
 
@@ -748,11 +772,14 @@ When the implementation manifest contains multiple code branches:
       python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"orchestrate","message":"Autonomous research round triggered after <N> HP batches","phase":7,"iteration":<iteration>,"context":{"batches_since_last_research":<N>,"method_proposal_iterations":<M>}}'
       ```
 
-   b. **Generate proposals:** Invoke `ml-optimizer:research` with:
-      - `source`: `"both"`
-      - `scope_level`: from user_choices `method_proposal_scope`
-      - `output_path`: `"experiments/reports/research-findings-method-proposals-iter<N>.md"` (where N = `method_proposal_iterations + 1`)
-      - All standard inputs (project_root, model description, primary_metric, etc.)
+   b. **Generate proposals:** Dispatch the research agent:
+      ```
+      Agent(
+        description: "Autonomous research round",
+        prompt: "Ultrathink. Research ML optimization techniques. Parameters: source: both, scope_level: {method_proposal_scope}, output_path: experiments/reports/research-findings-method-proposals-iter{N}.md, model_type: {model_type}, task: {task}, current_metrics: {current_metrics}, problem_description: {problem_description}, exp_root: {exp_root}.",
+        subagent_type: "ml-optimizer:research-agent"
+      )
+      ```
 
    c. **Check results:**
       - If research returns new proposals (not all filtered by deduplication): proceed to implement
@@ -761,7 +788,14 @@ When the implementation manifest contains multiple code branches:
         python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"orchestrate","message":"Research round yielded no new proposals — increasing cadence to <new_value> batches","phase":7,"iteration":<iteration>}'
         ```
 
-   d. **Implement proposals (no user confirmation):** In autonomous mode, ALL returned proposals are implemented automatically (the user opted into autonomous operation). Invoke `ml-optimizer:implement` with the research findings. This creates new `ml-opt/<slug>` branches.
+   d. **Implement proposals (no user confirmation):** In autonomous mode, ALL returned proposals are implemented automatically (the user opted into autonomous operation). Dispatch the implement agent with the research findings. This creates new `ml-opt/<slug>` branches.
+      ```
+      Agent(
+        description: "Implement autonomous research proposals",
+        prompt: "Ultrathink. Implement research proposals. Parameters: findings_path: {findings_path}, selected_indices: {all_indices}, project_root: {project_root}.",
+        subagent_type: "ml-optimizer:implement-agent"
+      )
+      ```
 
    e. **Merge into experiment loop:** Same as step 7f — add new validated branches to `code_branches`, reset iteration counter for new branches.
 
@@ -784,8 +818,8 @@ When the implementation manifest contains multiple code branches:
      ```
      Agent(
        description: "Async mid-pipeline review",
-       prompt: "Use the ml-optimizer:review skill. project_root: {project_root}, exp_root: {exp_root}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, scope: session.",
-       subagent_type: "general-purpose",
+       prompt: "Ultrathink. Run a mid-pipeline review. Parameters: project_root: {project_root}, exp_root: {exp_root}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, scope: session.",
+       subagent_type: "ml-optimizer:review-agent",
        run_in_background: true
      )
      ```
@@ -798,9 +832,14 @@ When the implementation manifest contains multiple code branches:
    - Log: "Mid-pipeline review started in background (autonomous mode)"
 
    **Otherwise (interactive/auto/custom):**
-   - Invoke `ml-optimizer:review` synchronously with:
-     - `project_root`, `exp_root`, `primary_metric`, `lower_is_better`
-     - `scope`: `"session"` (fast, no cross-project)
+   - Dispatch review agent synchronously:
+     ```
+     Agent(
+       description: "Mid-pipeline review",
+       prompt: "Ultrathink. Run a mid-pipeline review. Parameters: project_root: {project_root}, exp_root: {exp_root}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, scope: session.",
+       subagent_type: "ml-optimizer:review-agent"
+     )
+     ```
    - Read the review output's top suggestions
    - Apply relevant course corrections:
      - If review suggests narrowing LR range: pass constrained `search_space` to hp-tune
@@ -825,7 +864,7 @@ Before using speculative proposals from a previous iteration's background hp-tun
 If ANY check fails, discard ALL speculative proposals and invoke hp-tune synchronously with updated parameters.
 
 ### Parallel GPU Dispatch Pattern:
-When dispatching experiments across multiple GPUs, use the Agent tool with `subagent_type: "general-purpose"` for each experiment.
+When dispatching experiments across multiple GPUs, use the Agent tool with `subagent_type: "ml-optimizer:experiment-agent"` for each experiment.
 
 **If manifest strategy is `"file_backup"` (non-git project):** dispatch ONE experiment at a time (sequential). Wait for each to complete before starting the next. File-backup proposals share the same working directory and cannot run in parallel.
 
@@ -835,8 +874,8 @@ When dispatching experiments across multiple GPUs, use the Agent tool with `suba
 For each config in proposed_configs:
   Agent(
     description: "Run experiment {exp_id}",
-    prompt: "Use the ml-optimizer:experiment skill to run experiment {exp_id} with config: {config_json}. GPU: {gpu_id}. Project root: {project_root}. Train command: {train_command}. Eval command: {eval_command or null}. Code branch: {code_branch or null}. Code proposal: {code_proposal or null}. Proposal source: {proposal_source or null}. Method tier: {method_tier or null}. Iteration: {iteration}. Prepared train path: {prepared_train_path or null}. Prepared val path: {prepared_val_path or null}.",
-    subagent_type: "general-purpose",
+    prompt: "Run experiment {exp_id} with config: {config_json}. GPU: {gpu_id}. Project root: {project_root}. Train command: {train_command}. Eval command: {eval_command or null}. Code branch: {code_branch or null}. Code proposal: {code_proposal or null}. Proposal source: {proposal_source or null}. Method tier: {method_tier or null}. Iteration: {iteration}. Prepared train path: {prepared_train_path or null}. Prepared val path: {prepared_val_path or null}.",
+    subagent_type: "ml-optimizer:experiment-agent",
     run_in_background: true
   )
 ```
@@ -850,8 +889,8 @@ Example for analytical dispatch:
 ```
 Agent(
   description: "Analyze batch {N} results",
-  prompt: "Ultrathink. Use the ml-optimizer:analyze skill to analyze batch {N}. Project root: {project_root}. Primary metric: {primary_metric}. Lower is better: {lower_is_better}. Target: {target_value or null}. Remaining budget: {remaining_budget}.",
-  subagent_type: "general-purpose"
+  prompt: "Ultrathink. Analyze batch {N} results. Parameters: project_root: {project_root}. Primary metric: {primary_metric}. Lower is better: {lower_is_better}. Target: {target_value or null}. Remaining budget: {remaining_budget}.",
+  subagent_type: "ml-optimizer:analysis-agent"
 )
 ```
 
@@ -905,27 +944,27 @@ Then count entries in the result. If fewer than 5, skip to Phase 9.
    e. **Validate** (syntax, import, forward pass — same as implement skill validation).
       - If validation fails → skip: delete branch, log reason, continue.
 
-   f. **Run experiment** using the `ml-optimizer:experiment` skill:
-      - `code_branch`: `ml-opt/stack-<order>`
-      - `code_branches`: list of all methods in this stack
-      - `method_tier`: `"stacked_default_hp"`
-      - `stacking_order`: current order number
-      - `stack_base_exp`: exp_id of the previous stack's best result
-      - `config`: best HP config from the top method currently in the stack
+   f. **Run experiment** by dispatching the experiment agent:
+      ```
+      Agent(
+        description: "Run stacking experiment stack-{order}",
+        prompt: "Run stacking experiment. Parameters: exp_id: {exp_id}. Config: {config_json}. GPU: {gpu_id}. Project root: {project_root}. Train command: {train_command}. Eval command: {eval_command or null}. Code branch: ml-opt/stack-{order}. Method tier: stacked_default_hp. Stacking order: {order}. Stack base exp: {stack_base_exp}. Code branches: {code_branches_json}.",
+        subagent_type: "ml-optimizer:experiment-agent"
+      )
+      ```
 
    g. **Evaluate result:**
       - Compare to previous stack step's metric value.
       - **If improved:** Keep this stack step.
         - Update `stack_base_branch = ml-opt/stack-<order>`
-        - **Optional HP-tune:** If the improvement is > 1% AND remaining budget allows, invoke `ml-optimizer:hp-tune` with:
-          - `project_root`: Project root directory
-          - `num_gpus`: Number of available GPUs
-          - `primary_metric`: The metric to optimize (from Phase 0)
-          - `lower_is_better`: Whether lower values are better
-          - `code_branches`: [current stack branch]
-          - `iteration`: 1
-          - `remaining_budget`: min(2, actual remaining)
-          - `search_space`: narrowed to HPs the newly added method likely interacts with (LLM judgment)
+        - **Optional HP-tune:** If the improvement is > 1% AND remaining budget allows, dispatch the tuning agent:
+          ```
+          Agent(
+            description: "HP-tune stacked method stack-{order}",
+            prompt: "Ultrathink. Propose HP configs for stacked method. Parameters: project_root: {project_root}, num_gpus: {num_gpus}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, code_branches: [ml-opt/stack-{order}], iteration: 1, remaining_budget: {min(2, actual_remaining)}, search_space: {narrowed_search_space}.",
+            subagent_type: "ml-optimizer:tuning-agent"
+          )
+          ```
         - If HP-tune improves further, record as `method_tier: "stacked_tuned_hp"`
       - **If worse or equal:** Skip this method.
         - Delete `ml-opt/stack-<order>` branch
@@ -966,30 +1005,42 @@ On pipeline restart, if `pipeline-state.json` contains a `stacking` key in `user
 
 After the experiment loop exits:
 
-1. Invoke the `ml-optimizer:report` skill with parameters:
-   - `project_root`: Project root directory
-   - `primary_metric`: The metric that was optimized
-   - `lower_is_better`: Whether lower is better
-   - `model_description`: Brief model description (from Phase 1)
-   - `task_description`: What the model does (from Phase 0/1)
+1. Dispatch the report agent:
+   ```
+   Agent(
+     description: "Generate final optimization report",
+     prompt: "Generate a comprehensive final report. Parameters: project_root: {project_root}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, model_description: {model_description}, task_description: {task_description}.",
+     subagent_type: "ml-optimizer:report-agent"
+   )
+   ```
 2. It generates a comprehensive final report
 3. Sync errors to cross-project memory:
    ```bash
    python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> sync ~/.claude/plugins/ml-optimizer
    ```
 4. **Self-improvement review:**
-   **Autonomous mode auto-skip:** If `budget_mode == "autonomous"`, auto-run review with `scope: "session"`. Skip AskUserQuestion. Log to dev_notes: "Auto-running self-improvement review (autonomous mode)." Invoke `ml-optimizer:review` with:
-   - `project_root`, `exp_root`, `primary_metric`, `lower_is_better`
-   - `scope`: "session"
+   **Autonomous mode auto-skip:** If `budget_mode == "autonomous"`, auto-run review with `scope: "session"`. Skip AskUserQuestion. Log to dev_notes: "Auto-running self-improvement review (autonomous mode)." Dispatch the review agent:
+   ```
+   Agent(
+     description: "Self-improvement review (autonomous)",
+     prompt: "Ultrathink. Run self-improvement review. Parameters: project_root: {project_root}, exp_root: {exp_root}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, scope: session.",
+     subagent_type: "ml-optimizer:review-agent"
+   )
+   ```
 
    **Otherwise:** Ask the user:
    ```
    AskUserQuestion: "Would you like a self-improvement review? It analyzes what worked, what didn't, and suggests plugin improvements for future sessions."
    Options: ["Yes, run review", "No, skip"]
    ```
-   If yes, invoke `ml-optimizer:review` with:
-   - `project_root`, `exp_root`, `primary_metric`, `lower_is_better`
-   - `scope`: "both"
+   If yes, dispatch the review agent:
+   ```
+   Agent(
+     description: "Self-improvement review",
+     prompt: "Ultrathink. Run self-improvement review. Parameters: project_root: {project_root}, exp_root: {exp_root}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, scope: both.",
+     subagent_type: "ml-optimizer:review-agent"
+   )
+   ```
 5. Present the summary to the user:
 
 ```
@@ -1051,7 +1102,7 @@ The orchestrator ensures this structure exists in the target project:
 <project>/experiments/
   logs/<exp-id>/          # Raw training logs
   reports/                # All Markdown reports + research findings
-  scripts/<exp-id>.sh     # Bash scripts used
+  scripts/<exp-id>/        # Per-experiment command scripts
   results/<exp-id>.json   # Parsed metrics
   dev_notes.md            # Running log of session tasks by date
 ```

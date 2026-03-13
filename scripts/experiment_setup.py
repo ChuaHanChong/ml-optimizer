@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 
-SUBDIRS = ["logs", "reports", "scripts", "results"]
+SUBDIRS = ["logs", "reports", "scripts", "results", "artifacts"]
 
 
 def create_experiment_dirs(project_root: str) -> str:
@@ -98,7 +98,9 @@ def generate_train_script(
     lines.append("")
     lines.append(f"echo {shlex.quote(f'Experiment {exp_id} completed')}")
 
-    script_path = Path(scripts_dir) / f"{exp_id}.sh"
+    script_dir = Path(scripts_dir) / exp_id
+    script_dir.mkdir(parents=True, exist_ok=True)
+    script_path = script_dir / f"{exp_id}.sh"
     script_path.write_text("\n".join(lines))
     script_path.chmod(0o755)
     return str(script_path)

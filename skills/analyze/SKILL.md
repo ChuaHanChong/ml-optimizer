@@ -1,6 +1,7 @@
 ---
 name: analyze
 description: "Analyze ML experiment results after a batch completes. Ranks experiments, computes improvements over baseline, identifies HP correlations, and recommends next action (continue/pivot/stop). Use when: a batch of experiments has completed and results need analysis."
+disable-model-invocation: true
 ---
 
 # Experiment Analysis

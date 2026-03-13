@@ -1,7 +1,9 @@
 ---
 name: tuning-agent
 description: "Subagent for hyperparameter tuning reasoning. Analyzes past experiment results, identifies trends, and proposes the next batch of HP configurations with clear justification."
-tools: "Read, Write, Bash, Glob, Grep, WebSearch, WebFetch"
+tools: "Read, Write, Bash, Glob, Grep, Skill, WebSearch, WebFetch"
+skills:
+  - ml-optimizer:hp-tune
 ---
 
 # Tuning Agent

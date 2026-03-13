@@ -1,7 +1,9 @@
 ---
 name: implement-agent
 description: "Subagent for applying research-proposed code changes to an ML project. Handles branch creation, code editing, progressive validation, and manifest generation."
-tools: "Bash, Read, Write, Edit, Glob, Grep, WebSearch, WebFetch"
+tools: "Bash, Read, Write, Edit, Glob, Grep, Skill, WebSearch, WebFetch"
+skills:
+  - ml-optimizer:implement
 ---
 
 # Implement Agent

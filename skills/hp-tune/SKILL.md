@@ -1,6 +1,7 @@
 ---
 name: hp-tune
 description: "LLM-driven hyperparameter tuning for ML models. Reads past experiment results, reasons about the search space, and proposes the next batch of configurations. No Optuna/Bayesian — Claude reasons directly about what to try next. Use when: need to propose new HP configurations based on past results."
+disable-model-invocation: true
 ---
 
 # Hyperparameter Tuning (LLM-Driven)

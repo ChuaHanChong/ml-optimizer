@@ -20,7 +20,7 @@ from experiment_setup import (
 def test_create_experiment_dirs(tmp_path):
     exp_root = create_experiment_dirs(str(tmp_path))
     assert Path(exp_root).exists()
-    for subdir in ["logs", "reports", "scripts", "results"]:
+    for subdir in ["logs", "reports", "scripts", "results", "artifacts"]:
         assert (Path(exp_root) / subdir).exists()
     dev_notes = Path(exp_root) / "dev_notes.md"
     assert dev_notes.exists()

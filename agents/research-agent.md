@@ -1,7 +1,9 @@
 ---
 name: research-agent
 description: "Subagent for ML paper search and analysis. Finds relevant papers, extracts actionable techniques with implementation details, and ranks proposals by expected impact and feasibility."
-tools: "WebSearch, WebFetch, Read, Write, Bash, Glob, Grep"
+tools: "WebSearch, WebFetch, Read, Write, Bash, Glob, Grep, Skill"
+skills:
+  - ml-optimizer:research
 ---
 
 # Research Agent

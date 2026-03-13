@@ -20,37 +20,69 @@ ENTRY POINT
     +-------------------------------+
                     |
          Dispatches agents via
-         Agent tool (general-purpose)
+         Agent tool (named subagent types)
                     |
                     v
 
 ================================================================================
-                          AGENT ROSTER (5 types)
+                          AGENT ROSTER (10 types)
 ================================================================================
 
-  +-------------------+  Tools: Bash, Read, Write, Glob, Grep,
+  PROCEDURAL AGENTS (model: sonnet — lower cost/latency, no ultrathink)
+  ---------------------------------------------------------------------
+
+  +-------------------+  Tools: Bash, Read, Write, Glob, Grep, Skill,
   | prerequisites-    |  WebSearch, WebFetch
-  | agent (procedural)|
+  | agent (procedural)|  Skill: ml-optimizer:prerequisites
   +-------------------+
 
-  +-------------------+  Tools: WebSearch, WebFetch, Read, Write,
-  | research-agent    |  Bash, Glob, Grep
-  | (ultrathink)      |  External: context7 (API docs),
-  +-------------------+  claude-mem:mem-search (cross-session)
+  +-------------------+  Tools: Bash, Read, Write, Glob, Grep, Skill,
+  | baseline-agent    |  WebSearch, WebFetch
+  | (procedural)      |  Skill: ml-optimizer:baseline
+  +-------------------+
+
+  +-------------------+  Tools: Bash, Read, Write, Glob, Grep, Skill,
+  | experiment-agent  |  WebSearch, WebFetch
+  | (procedural)      |  Skill: ml-optimizer:experiment
+  +-------------------+
+
+  +-------------------+  Tools: Bash, Read, Write, Glob, Grep, Skill,
+  | monitor-agent     |  WebSearch, WebFetch
+  | (procedural)      |  Skill: ml-optimizer:monitor
+  +-------------------+
+
+  ANALYTICAL AGENTS (inherit parent model, ultrathink prompting)
+  --------------------------------------------------------------
+
+  +-------------------+  Tools: WebSearch, WebFetch, Read, Write, Bash,
+  | research-agent    |  Glob, Grep, Skill
+  | (ultrathink)      |  Skill: ml-optimizer:research
+  +-------------------+  External: context7, claude-mem:mem-search
 
   +-------------------+  Tools: Bash, Read, Write, Edit, Glob, Grep,
-  | implement-agent   |  WebSearch, WebFetch
-  | (ultrathink)      |  External: context7 (API docs),
-  +-------------------+  feature-dev:code-explorer, superpowers:systematic-debugging
+  | implement-agent   |  Skill, WebSearch, WebFetch
+  | (ultrathink)      |  Skill: ml-optimizer:implement
+  +-------------------+  External: context7, feature-dev:code-explorer,
+                         superpowers:systematic-debugging
 
-  +-------------------+  Tools: Read, Write, Bash, Glob, Grep,
+  +-------------------+  Tools: Read, Write, Bash, Glob, Grep, Skill,
   | tuning-agent      |  WebSearch, WebFetch
-  | (ultrathink)      |
+  | (ultrathink)      |  Skill: ml-optimizer:hp-tune
   +-------------------+
 
-  +-------------------+  Tools: Bash, Read, Write, Glob, Grep,
-  | experiment-agent  |  WebSearch, WebFetch
-  | (procedural)      |
+  +-------------------+  Tools: Bash, Read, Write, Glob, Grep, Skill,
+  | analysis-agent    |  WebSearch, WebFetch
+  | (ultrathink)      |  Skill: ml-optimizer:analyze
+  +-------------------+
+
+  +-------------------+  Tools: Bash, Read, Write, Glob, Grep, Skill,
+  | report-agent      |  WebSearch, WebFetch
+  | (analytical)      |  Skill: ml-optimizer:report
+  +-------------------+
+
+  +-------------------+  Tools: Bash, Read, Write, Glob, Grep, Skill,
+  | review-agent      |  WebSearch, WebFetch
+  | (ultrathink)      |  Skill: ml-optimizer:review
   +-------------------+
 
 ================================================================================
@@ -130,7 +162,7 @@ ENTRY POINT
 
   PHASE 3: BASELINE
   ==================
-  Agent: experiment-agent --> ml-optimizer:baseline skill
+  Agent: baseline-agent --> ml-optimizer:baseline skill
 
     +--------------------------------------------------------------+
     |  1. Run training with default HPs                            |
@@ -276,7 +308,7 @@ ENTRY POINT
   |                    v                                                 |
   |  +-----------------------------------------------------------------+ |
   |  |  7.3  MONITOR (concurrent with experiment)                      | |
-  |  |  Skill: ml-optimizer:monitor                                    | |
+  |  |  Agent: monitor-agent --> ml-optimizer:monitor skill            | |
   |  |  (skipped for tabular ML: sklearn, XGBoost, LightGBM)           | |
   |  |                                                                 | |
   |  |  - Watch divergence_metric (default: "loss")                    | |
@@ -295,8 +327,8 @@ ENTRY POINT
   |                    |                                                 |
   |                    v                                                 |
   |  +-----------------------------------------------------------------+ |
-  |  |  7.4  ANALYZE + SPECULATIVE HP-TUNE (parallel)                   | |
-  |  |  Agent: tuning-agent --> ml-optimizer:analyze skill             | |
+  |  |  7.4  ANALYZE + SPECULATIVE HP-TUNE (parallel)                  | |
+  |  |  Agent: analysis-agent --> ml-optimizer:analyze skill           | |
   |  |                                                                 | |
   |  |  Runs IN PARALLEL with a speculative hp-tune call:              | |
   |  |    - If analyze says "continue" and speculative proposals pass  | |
@@ -344,7 +376,7 @@ ENTRY POINT
   |         v                                                            |
   |  +----------------------------------------------------------------+  |
   |  |  7.7  MID-PIPELINE REVIEW (auto-triggered)                     |  |
-  |  |  Skill: ml-optimizer:review (scope: "session")                 |  |
+  |  |  Agent: review-agent --> ml-optimizer:review skill             |  |
   |  |                                                                |  |
   |  |  Triggers:                                                     |  |
   |  |    - wasted_budget pattern ≥ 3 occurrences                     |  |
@@ -353,7 +385,7 @@ ENTRY POINT
   |  |  Output: course correction suggestions in session-review.md    |  |
   |  +----------------------------------------------------------------+  |
   |         |                                                            |
-  |         +-- Loop back to 7.1 HP-TUNE (if budget remains) -->             |
+  |         +-- Loop back to 7.1 HP-TUNE (if budget remains) -->         |
   |                                                                      |
   +============================ END LOOP ================================+
 
@@ -395,7 +427,7 @@ ENTRY POINT
 
   PHASE 9: REPORT
   ================
-  Agent: tuning-agent --> ml-optimizer:report skill
+  Agent: report-agent --> ml-optimizer:report skill
 
     +--------------------------------------------------------------+
     |  Compile final optimization report:                          |
@@ -426,7 +458,7 @@ ENTRY POINT
 
   OPTIONAL: END-OF-SESSION REVIEW
   ================================
-  Skill: ml-optimizer:review (scope: "session")
+  Agent: review-agent --> ml-optimizer:review skill (scope: "session")
 
     - Self-improvement analysis
     - What worked, what didn't
@@ -472,14 +504,15 @@ ENTRY POINT
                               LEGEND
 ================================================================================
 
-  Agent dispatch:    orchestrator ---> agent ---> skill
+  Agent dispatch:    orchestrator --Agent(subagent_type="ml-optimizer:<name>-agent")--> agent
+  Agent preloads:    agent --skills: [ml-optimizer:<skill>]--> skill instructions
   User interaction:  [User]  <--->  [Orchestrator]
   Conditional:       (condition) ---> branch
   External skill:    context7, claude-mem, feature-dev, superpowers
   Data flow:         Reads: <file>  |  Writes: <file>
 
-  Agents with "ultrathink": Extended reasoning for complex decisions
-  Agents "procedural": Direct execution, no extended reasoning
+  Analytical agents (ultrathink): Extended reasoning, inherit parent model
+  Procedural agents (sonnet): Direct execution, lower cost/latency
 
   Three-tier + stacking fields in exp-*.json:
     "method_tier":     "baseline" | "method_default_hp" | "method_tuned_hp"

@@ -1,6 +1,7 @@
 ---
 name: experiment
 description: "Run a single ML training experiment. Generates bash scripts, executes training on a specified GPU, and parses results. Use when: need to run a training experiment with a specific configuration."
+disable-model-invocation: true
 ---
 
 # Experiment Runner
@@ -103,6 +104,20 @@ Read the training script to determine the override method:
 For config file approach, write a modified config to:
 `experiments/logs/<exp_id>/config.yaml`
 
+## Step 2.1: Artifact Storage
+
+Save model checkpoints, intermediate outputs, and visualizations to:
+```
+experiments/artifacts/<exp-id>/
+```
+
+Create the per-experiment subdirectory before training:
+```bash
+mkdir -p experiments/artifacts/<exp_id>
+```
+
+If the training command produces checkpoint files (`*.pt`, `*.pth`, `*.ckpt`, `*.h5`, `*.pkl`, `*.safetensors`), configure the save path to point here. Add the artifact path to the generated training script via `--checkpoint_dir`, `--save_dir`, `--output_dir`, or whichever flag the training script uses.
+
 ## Step 3: Generate Bash Script
 
 Use the experiment setup script:
@@ -131,13 +146,13 @@ The script must:
 - Run training with output logged to `experiments/logs/<exp_id>/train.log`
 - Include any environment variables needed
 
-Save to: `experiments/scripts/<exp_id>.sh`
+Save to: `experiments/scripts/<exp_id>/<exp_id>.sh`
 
 ## Step 4: Execute Training
 
 Run the experiment:
 ```bash
-bash experiments/scripts/<exp_id>.sh
+bash experiments/scripts/<exp_id>/<exp_id>.sh
 ```
 
 **For foreground execution** (when called directly):
@@ -219,7 +234,7 @@ Write experiment results to `experiments/results/<exp_id>.json`:
   "gpu_id": <gpu_id>,
   "duration_seconds": <training_time>,
   "log_file": "experiments/logs/<exp_id>/train.log",
-  "script_file": "experiments/scripts/<exp_id>.sh",
+  "script_file": "experiments/scripts/<exp_id>/<exp_id>.sh",
   "code_branch": "<branch name or null>",
   "code_proposal": "<proposal name or null>",
   "proposal_source": "<paper|llm_knowledge|null>",

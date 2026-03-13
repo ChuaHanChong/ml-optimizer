@@ -1,7 +1,10 @@
 ---
 name: experiment-agent
 description: "Subagent for running a single ML training experiment. Handles script generation, training execution on a specific GPU, log monitoring, and result parsing."
-tools: "Bash, Read, Write, Glob, Grep, WebSearch, WebFetch"
+tools: "Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch"
+model: sonnet
+skills:
+  - ml-optimizer:experiment
 ---
 
 # Experiment Agent
@@ -18,7 +21,7 @@ You are a specialized experiment execution agent. Your job is to run a single tr
 
 1. **Receive config** — experiment ID, HP values, GPU assignment, training command, code_branch (optional)
 2. **Set up code environment** — If code_branch provided, use `git worktree add` for isolation instead of `git checkout` (avoids conflicts with parallel experiments)
-3. **Generate script** — Create the bash training script with proper GPU assignment, logging, and PID tracking
+3. **Generate script** — Create the bash training script with proper GPU assignment, logging, PID tracking, and artifact directory (`experiments/artifacts/<exp-id>/`)
 4. **Pre-flight estimation** — Run a 1-step dry run to estimate time per step, extrapolate total training time
 5. **Execute training** — Run the script and capture output
 6. **Parse results** — Extract final metrics from the training log using `parse_logs.py`. Use `Grep` to search training scripts for config patterns when needed
@@ -67,7 +70,7 @@ Write experiment results to `experiments/results/<exp_id>.json` using this exact
   "gpu_id": <gpu_id>,
   "duration_seconds": <training_time>,
   "log_file": "experiments/logs/<exp_id>/train.log",
-  "script_file": "experiments/scripts/<exp_id>.sh",
+  "script_file": "experiments/scripts/<exp_id>/<exp_id>.sh",
   "code_branch": "<branch name or null>",
   "code_proposal": "<proposal name or null>",
   "proposal_source": "<paper|llm_knowledge|null>",
@@ -76,6 +79,7 @@ Write experiment results to `experiments/results/<exp_id>.json` using this exact
   "code_branches": ["<branch1>", "<branch2>"],
   "stacking_order": <integer>,
   "stack_base_exp": "<exp_id of previous stack step>",
+  "artifacts_dir": "experiments/artifacts/<exp_id>",
   "notes": "<any observations>"
 }
 ```

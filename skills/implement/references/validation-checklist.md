@@ -88,7 +88,49 @@ output = model.apply(variables, dummy_input)
 
 ---
 
-## Level 5: Loss Computes Without NaN (Recommended)
+## Level 5: Unit Tests (Recommended)
+
+Write and run a focused unit test for the implemented change.
+
+**Test location:** `experiments/tests/test_<slug>.py`
+
+Test the specific functionality introduced by the proposal — not the entire model.
+
+```python
+# Example: testing a new CutMix augmentation
+import torch
+from <module> import cutmix_data
+
+def test_cutmix_output_shape():
+    x = torch.randn(4, 3, 32, 32)
+    y = torch.randint(0, 10, (4,))
+    x_mixed, y_a, y_b, lam = cutmix_data(x, y)
+    assert x_mixed.shape == x.shape
+    assert 0.0 <= lam <= 1.0
+
+def test_cutmix_no_nan():
+    x = torch.randn(4, 3, 32, 32)
+    y = torch.randint(0, 10, (4,))
+    x_mixed, _, _, _ = cutmix_data(x, y)
+    assert not torch.isnan(x_mixed).any()
+```
+
+Run:
+```bash
+python3 -m pytest experiments/tests/test_<slug>.py -v --timeout=30
+```
+
+**Pass criteria:** All tests pass within timeout.
+**Failure handling:** Log as warning, do not block. Tests are informational — they catch issues that static validation misses.
+**Common test patterns:**
+- Shape preservation: `output.shape == expected_shape`
+- No NaN/Inf: `assert not torch.isnan(output).any()`
+- Value range: `assert output.min() >= 0` (for ReLU outputs, probabilities, etc.)
+- Gradient flow: `loss.backward(); assert param.grad is not None`
+
+---
+
+## Level 6: Loss Computes Without NaN (Recommended)
 
 Compute the loss with dummy data and check for NaN/Inf.
 
@@ -115,7 +157,7 @@ assert not jnp.isinf(loss), "Loss is Inf"
 
 ---
 
-## Level 6: Gradients Flow (Optional)
+## Level 7: Gradients Flow (Optional)
 
 Verify gradients propagate through new layers.
 
@@ -144,7 +186,7 @@ for g, v in zip(grads, model.trainable_variables):
 
 ---
 
-## Level 7: GPU Memory Within Bounds (Optional)
+## Level 8: GPU Memory Within Bounds (Optional)
 
 Check that the modified model fits in GPU memory at the expected batch size.
 
@@ -173,8 +215,8 @@ print(f"Peak GPU memory: {peak_mb:.0f} MiB")
 | Context | Levels to run |
 |---------|--------------|
 | Quick syntax check after edit | 1-2 |
-| Standard validation before commit | 1-4 |
-| Full validation before experiment | 1-6 |
-| Memory-sensitive changes | 1-7 |
+| Standard validation before commit | 1-5 |
+| Full validation before experiment | 1-7 |
+| Memory-sensitive changes | 1-8 |
 
-Levels 1-2 are mandatory and automated via `implement_utils.py`. Levels 3-7 require project-specific setup and are run as bash commands by the implement agent.
+Levels 1-2 are mandatory and automated via `implement_utils.py`. Level 5 (unit tests) is written and run by the implement agent. Levels 3-4 and 6-8 require project-specific setup and are run as bash commands by the implement agent.

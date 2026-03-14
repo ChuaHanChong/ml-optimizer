@@ -2,6 +2,7 @@
 name: experiment
 description: "Run a single ML training experiment. Generates bash scripts, executes training on a specified GPU, and parses results. Use when: need to run a training experiment with a specific configuration."
 disable-model-invocation: true
+user-invocable: false
 ---
 
 # Experiment Runner

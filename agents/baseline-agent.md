@@ -3,6 +3,7 @@ name: baseline-agent
 description: "Subagent for establishing baseline metrics. Runs evaluation, profiles GPU memory and training throughput, and creates the experiments directory structure."
 tools: "Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch"
 model: sonnet
+color: "#3B82F6"
 skills:
   - ml-optimizer:baseline
 ---

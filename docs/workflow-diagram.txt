@@ -51,7 +51,7 @@ ENTRY POINT
   | (procedural)      |  Skill: ml-optimizer:monitor
   +-------------------+
 
-  ANALYTICAL AGENTS (inherit parent model, ultrathink prompting)
+  ANALYTICAL AGENTS (model: opus, ultrathink prompting)
   --------------------------------------------------------------
 
   +-------------------+  Tools: WebSearch, WebFetch, Read, Write, Bash,
@@ -511,7 +511,7 @@ ENTRY POINT
   External skill:    context7, claude-mem, feature-dev, superpowers
   Data flow:         Reads: <file>  |  Writes: <file>
 
-  Analytical agents (ultrathink): Extended reasoning, inherit parent model
+  Analytical agents (ultrathink): Extended reasoning, model: opus
   Procedural agents (sonnet): Direct execution, lower cost/latency
 
   Three-tier + stacking fields in exp-*.json:

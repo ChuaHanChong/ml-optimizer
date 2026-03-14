@@ -22,7 +22,7 @@ python -m pytest tests/test_parse_logs.py -v   # single file
 python -m pytest tests/test_parse_logs.py::test_name -v  # single test
 ```
 
-No build step. No linter configured. Python 3.10+ required. The `scripts/` directory uses only the Python standard library.
+No build step. No linter configured. Python 3.10+ required. The `scripts/` directory uses only the Python standard library (except `plot_results.py` which requires matplotlib for chart generation).
 
 ## Architecture
 
@@ -76,7 +76,7 @@ The implement skill creates `ml-opt/<slug>` branches per research proposal. The 
 
 ### Agent Definitions (`agents/`)
 
-Ten subagent types, each with a preloaded skill and specified tool access. The orchestrate skill dispatches agents directly via `Agent(subagent_type="ml-optimizer:<name>-agent")`. Skills are instruction documents only — they have `disable-model-invocation: true` and are not directly invocable.
+Ten subagent types, each with a preloaded skill and specified tool access. The orchestrate skill dispatches agents directly via `Agent(subagent_type="ml-optimizer:<name>-agent")`. Skills are instruction documents only — they have `disable-model-invocation: true` and `user-invocable: false`, and are not directly invocable.
 
 **Procedural agents** (`model: sonnet` — lower cost/latency, no ultrathink):
 - **baseline-agent**: Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:baseline]`
@@ -84,10 +84,10 @@ Ten subagent types, each with a preloaded skill and specified tool access. The o
 - **experiment-agent**: Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:experiment]`
 - **prerequisites-agent**: Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:prerequisites]`
 
-**Analytical agents** (inherit parent model, ultrathink prompting):
-- **research-agent**: WebSearch, WebFetch, Read, Write, Bash, Glob, Grep, Skill — skills: `[ml-optimizer:research]`
+**Analytical agents** (`model: opus`, ultrathink prompting):
+- **research-agent**: WebSearch, WebFetch, Read, Write, Bash, Glob, Grep, Skill — skills: `[ml-optimizer:research, claude-mem:mem-search]`
 - **tuning-agent**: Read, Write, Bash, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:hp-tune]`
-- **implement-agent**: Bash, Read, Write, Edit, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:implement]`
+- **implement-agent**: Bash, Read, Write, Edit, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:implement, superpowers:systematic-debugging]`
 - **analysis-agent**: Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:analyze]`
 - **report-agent**: Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:report]`
 - **review-agent**: Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:review]`
@@ -177,7 +177,7 @@ The orchestrator can be stopped and resumed. On restart it reads `pipeline-state
 - **Parallel research**: All WebSearch calls in the research skill are issued simultaneously in a single tool-call message. WebFetch follow-ups for different URLs are also parallelized. Domain-specific query sets (NLP, CV, RL, time-series) are issued alongside generic queries.
 - **Parallel implementation**: When using git branch strategy with multiple proposals, each proposal is implemented in a separate git worktree via parallel Agent dispatches. File-backup strategy remains sequential.
 - **Async mid-pipeline review**: In autonomous mode, mid-pipeline review runs in the background while the next experiment batch starts. Suggestions are applied one batch late — acceptable trade-off vs blocking the pipeline.
-- **Configurable divergence thresholds**: `detect_divergence.py` supports per-model-category threshold overrides via `MODEL_CATEGORY_DEFAULTS` dict and `--model-category` CLI flag. RL models use `explosion_threshold=20.0` (prevents false positives on reward spikes), generative models use `plateau_patience=40` (accommodates slow convergence). Individual thresholds can also be overridden via `--explosion-threshold` and `--plateau-patience` CLI flags.
+- **Configurable divergence thresholds**: `detect_divergence.py` supports per-model-category threshold overrides via `MODEL_CATEGORY_DEFAULTS` dict and `--model-category` CLI flag. RL models use `explosion_threshold=20.0, plateau_patience=50` (prevents false positives on reward spikes). Generative models use `explosion_threshold=10.0, plateau_patience=40` (accommodates slow convergence). Individual thresholds can also be overridden via `--explosion-threshold` and `--plateau-patience` CLI flags.
 - **Experiment timeout**: Each experiment has a hard timeout of `baseline_training_time * 3` (fallback: 6 hours). Timed-out experiments are killed and marked `status: "timeout"`.
 - **Research failure recovery**: If web search fails, the orchestrator retries with `source: "knowledge"` (LLM-only). If that also fails, it continues with HP-only optimization. Each fallback is logged.
 - **OOM feedback loop**: When experiments OOM, the batch size is recorded in the error tracker. On the next hp-tune invocation, `max_batch_size` is passed to prevent re-proposing configs that will OOM.

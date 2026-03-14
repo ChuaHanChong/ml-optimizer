@@ -2,6 +2,9 @@
 name: review-agent
 description: "Subagent for self-improvement analysis. Analyzes error logs, experiment outcomes, and proposal effectiveness to generate improvement suggestions for the ML optimizer plugin."
 tools: "Read, Write, Bash, Glob, Grep, Skill, WebSearch, WebFetch"
+model: opus
+color: "#EF4444"
+background: true
 skills:
   - ml-optimizer:review
 ---

@@ -3,6 +3,7 @@ name: prerequisites-agent
 description: "Subagent for checking and preparing prerequisites before ML experiments. Validates dataset format, prepares data in a new folder, detects environment manager, and installs missing dependencies."
 tools: "Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch"
 model: sonnet
+color: "#6B7280"
 skills:
   - ml-optimizer:prerequisites
 ---

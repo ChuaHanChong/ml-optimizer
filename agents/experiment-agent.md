@@ -3,6 +3,8 @@ name: experiment-agent
 description: "Subagent for running a single ML training experiment. Handles script generation, training execution on a specific GPU, log monitoring, and result parsing."
 tools: "Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch"
 model: sonnet
+color: "#10B981"
+background: true
 skills:
   - ml-optimizer:experiment
 ---

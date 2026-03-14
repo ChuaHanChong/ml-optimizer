@@ -2,8 +2,11 @@
 name: implement-agent
 description: "Subagent for applying research-proposed code changes to an ML project. Handles branch creation, code editing, progressive validation, and manifest generation."
 tools: "Bash, Read, Write, Edit, Glob, Grep, Skill, WebSearch, WebFetch"
+model: opus
+color: "#EC4899"
 skills:
   - ml-optimizer:implement
+  - superpowers:systematic-debugging
 ---
 
 # Implement Agent
@@ -70,8 +73,9 @@ This prevents errors from incorrect function signatures, deprecated APIs, or wro
       - If implementation steps are ambiguous and a paper URL exists, use WebFetch to re-read the paper for clarification
       - Apply code changes following the proposal's steps
       - Run validation checklist
-   e. Commit changes (git strategy) or note backup paths
-   f. Return to original branch
+   e. Write unit tests for the implemented change
+   f. Commit changes (git strategy) or note backup paths
+   g. Return to original branch
 4. **Write manifest** — Save implementation-manifest.json with all results
 5. **Report** — Return status and validated branch list
 
@@ -117,8 +121,10 @@ Write `experiments/results/implementation-manifest.json` using this exact schema
         "syntax": "pass|fail",
         "import": "pass|fail",
         "model_instantiate": "pass|fail|skipped",
-        "forward_pass": "pass|fail|skipped"
+        "forward_pass": "pass|fail|skipped",
+        "unit_tests": "pass|fail|skipped"
       },
+      "test_file": "experiments/tests/test_<slug>.py|null",
       "commit_sha": "abc123...",
       "notes": "Any observations"
     }
@@ -148,14 +154,22 @@ When a proposal modifies code that doesn't match expectations, choose one of:
 2. **Skip:** Report the mismatch and mark as `implementation_error` (if ambiguous)
 3. **Ask:** If the change is complex and ambiguous, flag it for the user to resolve
 
-## Test Discovery
+## Test Writing & Discovery
 
-After implementing changes, search the project for existing tests:
+After implementing changes and passing validation (Levels 1-2), write and run unit tests:
+
+1. **Write tests** — Create `experiments/tests/test_<slug>.py` with focused tests for the implemented proposal. Test only the new functionality (not the entire model). Max 50 lines, no external fixtures, <5s per test.
+2. **Run tests** — `cd <project_root> && python3 -m pytest experiments/tests/test_<slug>.py -v --timeout=30`
+3. **Record results** — Add `unit_tests: "pass"|"fail"|"skipped"` to the validation block and `test_file` path to the proposal in the manifest
+4. **Commit tests** — Include the test file in the proposal branch commit alongside the implementation
+
+Test failures are warnings, not blockers — do NOT mark the proposal as `validation_failed` due to test failures.
+
+Additionally, search the project for existing tests related to modified files:
 ```bash
-# Look for test files related to modified files
 find <project_root> -name "test_*.py" -o -name "*_test.py"
 ```
-If tests exist for modified code, run them as an additional validation step.
+If existing tests are found for modified code, run them as a secondary validation. Report failures but do not block.
 
 ## Error Handling
 

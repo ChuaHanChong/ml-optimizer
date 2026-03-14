@@ -2,6 +2,8 @@
 name: analysis-agent
 description: "Subagent for analyzing ML experiment results after a batch completes. Ranks experiments, computes improvements over baseline, identifies HP correlations, and recommends next action (continue/pivot/stop)."
 tools: "Read, Write, Bash, Glob, Grep, Skill, WebSearch, WebFetch"
+model: opus
+color: "#06B6D4"
 skills:
   - ml-optimizer:analyze
 ---

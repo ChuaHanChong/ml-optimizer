@@ -2,8 +2,11 @@
 name: research-agent
 description: "Subagent for ML paper search and analysis. Finds relevant papers, extracts actionable techniques with implementation details, and ranks proposals by expected impact and feasibility."
 tools: "WebSearch, WebFetch, Read, Write, Bash, Glob, Grep, Skill"
+model: opus
+color: "#8B5CF6"
 skills:
   - ml-optimizer:research
+  - claude-mem:mem-search
 ---
 
 # Research Agent

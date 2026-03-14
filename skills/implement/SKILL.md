@@ -2,6 +2,7 @@
 name: implement
 description: "Apply research proposals as code changes. Creates isolated git branches per proposal, implements modifications (architecture, loss, augmentation), validates with progressive checks, and produces a manifest for the experiment loop. Use when: research proposals need to be turned into actual code changes, or when implementing specific ML improvements before experiments."
 disable-model-invocation: true
+user-invocable: false
 ---
 
 # Implement Research Proposals
@@ -276,7 +277,75 @@ Read `references/validation-checklist.md` and run checks progressively:
 
 See `references/validation-checklist.md` for commands. Attempt Level 3 validation when the project structure supports it (e.g., has a clear model factory or config-based instantiation).
 
-### 4f. Commit (git strategy only)
+### 4f. Write Unit Tests
+
+After validation passes (at least Level 1-2), write a focused unit test for the implemented proposal.
+
+**Test file location:** `experiments/tests/test_<slug>.py`
+
+**What to test (choose based on proposal type):**
+
+| Proposal Type | Test Focus |
+|---------------|-----------|
+| Loss function | Finite scalar output, correct shape, edge cases (zero input, batch=1) |
+| Augmentation | Output shape == input shape, batch operation, value range |
+| Architecture module | Forward pass shape, parameter count, gradient flow |
+| Scheduler/optimizer | Instantiation, step without error, LR changes as expected |
+| Regularization | Active in train mode, inactive in eval (if applicable) |
+| Data pipeline | Output shape/dtype correct, batch iteration works |
+
+**Test template:**
+
+```python
+"""Unit tests for ml-opt proposal: <proposal_name>."""
+import pytest
+
+# Framework-specific imports based on detected framework
+# PyTorch: import torch
+# TF/Keras: import tensorflow as tf
+# sklearn: import numpy as np
+
+
+class Test<ProposalClassName>:
+    """Tests for <proposal_name> implementation."""
+
+    def test_output_shape(self):
+        """Verify output shape matches expected dimensions."""
+        ...
+
+    def test_no_nan(self):
+        """Verify no NaN/Inf in output."""
+        ...
+
+    def test_edge_case(self):
+        """Verify behavior with edge-case inputs."""
+        ...
+```
+
+**Constraints:**
+- Max 50 lines per test file
+- No external test data — generate inline with `torch.randn`, `np.random`, etc.
+- Each test function must complete in <5 seconds
+- Import only the specific module/function being tested, not the full model
+
+**Run tests:**
+```bash
+cd <project_root> && python3 -m pytest experiments/tests/test_<slug>.py -v --timeout=30 2>&1 | head -50
+```
+
+**Record results in manifest:**
+- Add `"unit_tests"` field to the proposal's `validation` block: `"pass"`, `"fail"`, or `"skipped"`
+- Add `"test_file"` field to the proposal: path to the test file
+
+**If tests fail:** Log a warning but do NOT mark the proposal as `validation_failed`. Test failures are informational — they suggest the implementation may have issues but don't block experimentation.
+
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"implementation_error","severity":"info","source":"implement","message":"Unit tests failed for proposal <name>: <failure_summary>","context":{"proposal_name":"<name>","test_file":"experiments/tests/test_<slug>.py"}}'
+```
+
+**If test writing is not feasible** (e.g., the proposal only modifies config files, or the changed module requires complex setup that can't be isolated): set `validation.unit_tests: "skipped"` and `test_file: null`. Log reason in the proposal's `notes` field.
+
+### 4g. Commit (git strategy only)
 
 ```bash
 git add <modified_files>
@@ -285,7 +354,7 @@ git commit -m "ml-opt: implement <proposal_name>"
 
 Record the commit SHA for the manifest.
 
-### 4g. Return to original branch
+### 4h. Return to original branch
 
 ```bash
 git checkout <original_branch>
@@ -319,8 +388,10 @@ Write `experiments/results/implementation-manifest.json`:
         "syntax": "pass|fail",
         "import": "pass|fail",
         "model_instantiate": "pass|fail|skipped",
-        "forward_pass": "pass|fail|skipped"
+        "forward_pass": "pass|fail|skipped",
+        "unit_tests": "pass|fail|skipped"
       },
+      "test_file": "experiments/tests/test_<slug>.py|null",
       "commit_sha": "abc123...",
       "notes": "Any observations or warnings"
     }

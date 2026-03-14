@@ -2,6 +2,7 @@
 name: monitor
 description: "Monitor running ML training experiments for divergence. Polls log files, detects NaN/explosion/plateau, and kills diverging processes. Use when: experiments are running and need to be watched for training issues."
 disable-model-invocation: true
+user-invocable: false
 ---
 
 # Experiment Monitor

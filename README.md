@@ -169,7 +169,7 @@ Ten subagent types in `agents/`. The orchestrate skill dispatches agents directl
 | `experiment-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | sonnet | `ml-optimizer:experiment` |
 | `prerequisites-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | sonnet | `ml-optimizer:prerequisites` |
 
-Analytical agents use "ultrathink" prompting and inherit the parent model. Procedural agents use Sonnet for lower cost/latency.
+Analytical agents use "ultrathink" prompting and `model: opus`. Procedural agents use Sonnet for lower cost/latency.
 
 ## Hooks (Autonomous Mode Safeguards)
 

@@ -39,7 +39,7 @@ PROPOSAL_OPTIONAL = [
     "commit_sha", "notes", "type",
     "implementation_strategy", "reference_repo", "reference_files_used",
     "adaptation_notes", "files_created", "license_warning", "new_dependencies",
-    "proposal_source",
+    "proposal_source", "test_file",
 ]
 VALID_PROPOSAL_STATUSES = ["validated", "validation_failed", "implementation_error"]
 VALID_IMPLEMENTATION_STRATEGIES = ["from_scratch", "from_reference"]

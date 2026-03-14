@@ -238,3 +238,38 @@ def test_cli_no_args(run_main):
     r = run_main("experiment_setup.py")
     assert r.returncode == 1
     assert "Usage" in r.stdout
+
+
+# --- Fixed time budget ---
+
+
+def test_generate_train_script_with_time_budget(tmp_path):
+    """Script wraps command with timeout when time_budget is set."""
+    script_path = generate_train_script(
+        str(tmp_path), "exp-001", "python train.py",
+        gpu_id=0, time_budget=120
+    )
+    content = Path(script_path).read_text()
+    assert "timeout --signal=SIGTERM --kill-after=60 120" in content
+    assert "PIPESTATUS" in content
+    assert "Time budget" in content
+
+
+def test_generate_train_script_no_time_budget(tmp_path):
+    """Script has no timeout wrapper when time_budget is None."""
+    script_path = generate_train_script(
+        str(tmp_path), "exp-001", "python train.py",
+        gpu_id=0, time_budget=None
+    )
+    content = Path(script_path).read_text()
+    assert "timeout --signal=SIGTERM" not in content
+
+
+def test_generate_train_script_time_budget_zero_ignored(tmp_path):
+    """time_budget=0 is treated as no budget."""
+    script_path = generate_train_script(
+        str(tmp_path), "exp-001", "python train.py",
+        gpu_id=0, time_budget=0
+    )
+    content = Path(script_path).read_text()
+    assert "timeout --signal=SIGTERM" not in content

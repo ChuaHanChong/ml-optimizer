@@ -79,9 +79,38 @@ This creates:
   dev_notes.md
 ```
 
+## Step 2.1: Auto-Repair Loop (for eval/train commands)
+
+When executing evaluation or training commands (Steps 3 and 4), apply this retry pattern:
+
+1. **Attempt 1:** Run the command normally
+2. **If the command fails (non-zero exit code):**
+   - Capture stderr and the last 50 lines of stdout
+   - Log to error tracker: `category: "training_failure", severity: "warning", source: "baseline", message: "Command failed (attempt 1/3): <error_summary>", phase: 3, context: {"command": "<command>", "attempt": 1}`
+   - **Diagnose the error:**
+     - `ModuleNotFoundError` / `ImportError` → install the missing package, retry
+     - `FileNotFoundError` → check if the path exists, fix path references, retry
+     - `CUDA out of memory` → reduce batch size by 50% in the command, retry
+     - `RuntimeError: CUDA` → try `CUDA_VISIBLE_DEVICES=0`, retry
+     - `PermissionError` → fix file permissions, retry
+     - `SyntaxError` / `IndentationError` → **do NOT retry** (code bug, report to orchestrator)
+     - `KeyboardInterrupt` / `SIGTERM` → **do NOT retry** (intentional stop)
+     - Other errors → read relevant source code, propose a fix, retry
+   - **Attempt 2:** Re-run with fix applied
+3. **If attempt 2 also fails:**
+   - Log attempt 2 failure (same pattern, attempt: 2)
+   - Try a different approach (different package version, broader file search, further batch reduction)
+   - **Attempt 3:** Re-run with new fix
+4. **If attempt 3 fails:**
+   - Log with `severity: "critical"`, attempt: 3
+   - Give up. Report full error history (all 3 attempts) to the orchestrator
+   - The orchestrator's Phase 3 Failure Recovery table handles escalation
+
+**Loop detection:** If attempt 2 produces the same error message (first 200 chars) as attempt 1, skip attempt 3.
+
 ## Step 3: Run Baseline Evaluation
 
-1. Execute the evaluation command via Bash
+1. Execute the evaluation command via Bash (within the auto-repair loop above)
 2. Capture all output
 3. Parse output for metrics using the log parser:
    ```bash

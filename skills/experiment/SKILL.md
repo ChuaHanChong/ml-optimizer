@@ -62,10 +62,12 @@ Before building the training command, verify:
    ```
    Warn if less than 5 GB free.
 
-2. **Timeout enforcement:** If the orchestrator passes a `timeout_seconds` value, use it directly (it computes `baseline_training_time * 3`). Otherwise, compute a timeout:
-   - If `baseline.json` has `profiling.estimated_timeout_seconds` (tabular ML): `timeout_seconds = profiling.estimated_timeout_seconds`
-   - Else if `baseline.json` has `profiling.throughput_samples_per_sec` (iterative DL): `timeout_seconds = int(1.5 × (dataset_size × epochs) / throughput)`
-   - If neither available: `timeout_seconds = 14400` (4 hours default)
+2. **Timeout enforcement:**
+   - **If `fixed_time_budget` is set** (from Phase 0 user_choices): use it directly as `timeout_seconds`. All experiments train for exactly this many seconds. When the budget expires (exit code 124 from `timeout`), this is NOT an error — set `status: "completed"`. Include `"time_budget_seconds": <value>` in the result JSON.
+   - **Otherwise:** If the orchestrator passes a `timeout_seconds` value, use it directly (it computes `baseline_training_time * 3`). Otherwise, compute a timeout:
+     - If `baseline.json` has `profiling.estimated_timeout_seconds` (tabular ML): `timeout_seconds = profiling.estimated_timeout_seconds`
+     - Else if `baseline.json` has `profiling.throughput_samples_per_sec` (iterative DL): `timeout_seconds = int(1.5 × (dataset_size × epochs) / throughput)`
+     - If neither available: `timeout_seconds = 14400` (4 hours default)
    - Cap at 86400 (24 hours maximum)
    - Store `timeout_seconds` for use in Step 3 script generation
 
@@ -266,12 +268,38 @@ Return to the orchestrator:
 - Path to results file
 - Any issues encountered
 
-## Error Handling
+## Error Handling — Auto-Repair Loop
+
+When training fails, classify the error and either retry (up to 3 attempts) or report immediately:
+
+### Non-Retryable (report immediately, no retry):
+- **OOM** (`CUDA out of memory`): deterministic for same config — retrying wastes time. Write `status: "failed"`, log with `error_type: "oom"`
+- **Divergence** (detected by monitor): config is inherently unstable. Write `status: "diverged"`
+- **Timeout**: config takes too long. Write `status: "timeout"`
+- **SyntaxError / IndentationError**: code bug, not fixable by retry
+- **Identical error on retry**: if attempt 2 produces the same stderr (first 200 chars match), skip attempt 3
+
+### Retryable (auto-repair up to 3 attempts):
+1. **Attempt 1 fails:** Capture stderr, classify error
+2. **Diagnose and fix:**
+   - `FileNotFoundError` on checkpoint/data → verify paths, check worktree setup
+   - `RuntimeError: NCCL` / distributed error → retry with `CUDA_VISIBLE_DEVICES` single GPU
+   - `ImportError` / `ModuleNotFoundError` → install missing package
+   - `ValueError` / `TypeError` in config → check config override syntax (string vs number)
+   - `PermissionError` → fix file permissions
+   - `ConnectionError` / `HTTPError` → transient network error, wait 5s, retry
+3. **Log each retry:** `category: "training_failure", severity: "warning", source: "experiment", context: {"original_error": "<error>", "fix": "<description>", "attempt": <N>}`
+4. **Attempt 2** with fix → if fails with new error, apply new fix → **Attempt 3**
+5. **All 3 fail:** Write `status: "failed"`, include all error history in `notes`
+
+Retry time counts toward `duration_seconds` (single experiment, not separate entries).
+
+### Specific error handling:
 
 - **Training crashes:**
   - Capture the error output
+  - Apply auto-repair loop (above) for retryable errors
   - Write results with `"status": "failed"` and error message in notes
-  - Do NOT retry automatically — let the orchestrator decide
   - Log to error tracker:
     ```bash
     python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"training_failure","severity":"critical","source":"experiment","message":"<error description>","exp_id":"<exp_id>","config":<config_json>,"stack_trace":"<last 20 lines of stderr>"}'

@@ -432,6 +432,8 @@ EXPECTED_SCRIPTS = [
     "plot_results.py",
     "error_tracker.py",
     "prerequisites_check.py",
+    "dashboard.py",
+    "excalidraw_gen.py",
 ]
 
 
@@ -568,3 +570,97 @@ class TestDocumentation:
         assert "disable-model-invocation" in text, (
             "README.md should mention disable-model-invocation"
         )
+
+    def test_claude_md_mentions_stuck_protocol(self):
+        text = (PLUGIN_ROOT / ".claude" / "CLAUDE.md").read_text()
+        assert "stuck protocol" in text.lower(), (
+            "CLAUDE.md should mention stuck protocol"
+        )
+
+    def test_claude_md_mentions_dead_end_catalog(self):
+        text = (PLUGIN_ROOT / ".claude" / "CLAUDE.md").read_text()
+        assert "dead-end catalog" in text.lower() or "dead ends" in text.lower(), (
+            "CLAUDE.md should mention dead-end catalog"
+        )
+
+    def test_claude_md_mentions_research_agenda(self):
+        text = (PLUGIN_ROOT / ".claude" / "CLAUDE.md").read_text()
+        assert "research agenda" in text.lower() or "research-agenda" in text.lower(), (
+            "CLAUDE.md should mention research agenda"
+        )
+
+    def test_phase7_regenerates_dashboard(self):
+        text = (SKILLS_DIR / "orchestrate" / "references" / "phase-7-experiment-loop.md").read_text()
+        assert "dashboard.py" in text, (
+            "Phase 7 should regenerate dashboard after each batch"
+        )
+
+    def test_baseline_skill_mentions_auto_repair(self):
+        text = (SKILLS_DIR / "baseline" / "SKILL.md").read_text()
+        assert "auto-repair" in text.lower(), (
+            "Baseline skill should mention auto-repair loop"
+        )
+
+    def test_experiment_skill_mentions_auto_repair(self):
+        text = (SKILLS_DIR / "experiment" / "SKILL.md").read_text()
+        assert "auto-repair" in text.lower() or "retryable" in text.lower(), (
+            "Experiment skill should mention auto-repair or retryable errors"
+        )
+
+    def test_experiment_skill_oom_not_retried(self):
+        text = (SKILLS_DIR / "experiment" / "SKILL.md").read_text()
+        assert "non-retryable" in text.lower(), (
+            "Experiment skill should classify OOM as non-retryable"
+        )
+
+    def test_claude_md_mentions_immutable_baseline(self):
+        text = (PLUGIN_ROOT / ".claude" / "CLAUDE.md").read_text()
+        assert "immutable baseline" in text.lower() or "baseline_checksum" in text.lower(), (
+            "CLAUDE.md should mention immutable baseline"
+        )
+
+    def test_claude_md_mentions_fixed_time_budget(self):
+        text = (PLUGIN_ROOT / ".claude" / "CLAUDE.md").read_text()
+        assert "fixed_time_budget" in text or "fixed time budget" in text.lower(), (
+            "CLAUDE.md should mention fixed time budget"
+        )
+
+
+class TestSkillContracts:
+    """Verify skills reference the autoresearch-inspired features they consume."""
+
+    def test_analyze_skill_has_dead_end_logging(self):
+        text = (SKILLS_DIR / "analyze" / "SKILL.md").read_text()
+        assert "dead-end" in text.lower() or "dead end" in text.lower()
+
+    def test_analyze_skill_has_agenda_update(self):
+        text = (SKILLS_DIR / "analyze" / "SKILL.md").read_text()
+        assert "agenda" in text.lower()
+
+    def test_research_skill_checks_dead_ends(self):
+        text = (SKILLS_DIR / "research" / "SKILL.md").read_text()
+        assert "dead-end" in text.lower() or "dead end" in text.lower()
+
+    def test_research_skill_initializes_agenda(self):
+        text = (SKILLS_DIR / "research" / "SKILL.md").read_text()
+        assert "agenda" in text.lower()
+
+    def test_hp_tune_skill_checks_dead_ends(self):
+        text = (SKILLS_DIR / "hp-tune" / "SKILL.md").read_text()
+        assert "dead-end" in text.lower() or "dead end" in text.lower()
+
+    def test_hp_tune_skill_reads_agenda(self):
+        text = (SKILLS_DIR / "hp-tune" / "SKILL.md").read_text()
+        assert "agenda" in text.lower()
+
+    def test_report_skill_reads_agenda(self):
+        text = (SKILLS_DIR / "report" / "SKILL.md").read_text()
+        assert "agenda" in text.lower()
+
+    def test_experiment_skill_has_time_budget(self):
+        text = (SKILLS_DIR / "experiment" / "SKILL.md").read_text()
+        assert "fixed_time_budget" in text or "time_budget" in text
+
+    def test_phase7_has_baseline_verification(self):
+        text = (SKILLS_DIR / "orchestrate" / "references" / "phase-7-experiment-loop.md").read_text()
+        assert "verify-baseline" in text

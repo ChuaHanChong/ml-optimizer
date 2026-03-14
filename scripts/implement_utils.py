@@ -393,15 +393,114 @@ def write_manifest(path: str, data: dict) -> str:
     return str(p)
 
 
+def extract_branch_diff(project_root: str, branch: str) -> dict:
+    """Extract a structured diff summary between the current branch and a proposal branch.
+
+    Returns a dict with file counts, line changes, changed functions, and a
+    truncated diff snippet suitable for dashboard display.
+    """
+    root = Path(project_root)
+    if not is_git_repo(project_root):
+        return {"error": "Not a git repo", "files_changed": 0,
+                "lines_added": 0, "lines_removed": 0, "diff_summary": "",
+                "changed_functions": []}
+
+    try:
+        current = get_current_branch(project_root)
+    except Exception:
+        current = "main"
+
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--stat", f"{current}...{branch}"],
+            cwd=str(root), capture_output=True, text=True, timeout=30,
+        )
+        stat_output = result.stdout.strip()
+    except Exception:
+        stat_output = ""
+
+    # Parse --stat output for file count and line totals
+    files_changed = 0
+    lines_added = 0
+    lines_removed = 0
+    if stat_output:
+        for line in stat_output.splitlines():
+            m = re.search(r"(\d+) files? changed", line)
+            if m:
+                files_changed = int(m.group(1))
+            m_add = re.search(r"(\d+) insertions?\(\+\)", line)
+            if m_add:
+                lines_added = int(m_add.group(1))
+            m_del = re.search(r"(\d+) deletions?\(-\)", line)
+            if m_del:
+                lines_removed = int(m_del.group(1))
+
+    # Get function-level changes (def/class lines in the diff)
+    changed_functions = []
+    try:
+        result = subprocess.run(
+            ["git", "diff", f"{current}...{branch}", "-U0"],
+            cwd=str(root), capture_output=True, text=True, timeout=30,
+        )
+        for line in result.stdout.splitlines():
+            if line.startswith("@@") and "@@" in line[2:]:
+                # Extract function context from @@ header
+                header = line.split("@@")
+                if len(header) >= 3:
+                    func_ctx = header[2].strip()
+                    if func_ctx and func_ctx not in changed_functions:
+                        changed_functions.append(func_ctx)
+            elif line.startswith("+") and not line.startswith("+++"):
+                m = re.match(r"\+\s*(def |class )\s*(\w+)", line)
+                if m:
+                    fn = f"{m.group(1).strip()} {m.group(2)}"
+                    if fn not in changed_functions:
+                        changed_functions.append(fn)
+    except Exception:
+        pass
+
+    # Get a truncated diff snippet (first 50 meaningful lines)
+    diff_summary = ""
+    try:
+        result = subprocess.run(
+            ["git", "diff", f"{current}...{branch}", "--no-color"],
+            cwd=str(root), capture_output=True, text=True, timeout=30,
+        )
+        diff_lines = result.stdout.splitlines()
+        meaningful = [l for l in diff_lines
+                      if l.startswith("+") or l.startswith("-") or l.startswith("@@")]
+        diff_summary = "\n".join(meaningful[:50])
+        if len(meaningful) > 50:
+            diff_summary += f"\n... ({len(meaningful) - 50} more lines)"
+    except Exception:
+        pass
+
+    return {
+        "files_changed": files_changed,
+        "lines_added": lines_added,
+        "lines_removed": lines_removed,
+        "diff_summary": diff_summary,
+        "changed_functions": changed_functions[:20],
+    }
+
+
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Usage:")
         print("  implement_utils.py <findings_path> <selected_json>  — parse proposals")
         print("  implement_utils.py clone <repo_url> <dest_dir>      — clone reference repo")
         print("  implement_utils.py analyze <repo_path>              — analyze repo structure")
+        print("  implement_utils.py diff <project_root> <branch>     — extract branch diff summary")
         sys.exit(1)
 
-    if sys.argv[1] == "clone":
+    if sys.argv[1] == "diff":
+        if len(sys.argv) < 4:
+            print("Usage: implement_utils.py diff <project_root> <branch>")
+            sys.exit(1)
+        result = extract_branch_diff(sys.argv[2], sys.argv[3])
+        print(json.dumps(result, indent=2))
+        sys.exit(0)
+    elif sys.argv[1] == "clone":
         if len(sys.argv) < 4:
             print("Usage: implement_utils.py clone <repo_url> <dest_dir>")
             sys.exit(1)

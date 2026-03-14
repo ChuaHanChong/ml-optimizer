@@ -84,6 +84,10 @@ Pre-loop: validate state, load manifest, generate method proposals, route hp_onl
 
 Loop: hp-tune → experiment → monitor → analyze+speculative-hp-tune → decision (continue/pivot/stop) → mid-loop method proposals → research round check → mid-pipeline review → loop back.
 
+In autonomous mode, 3 consecutive stop recommendations trigger a **Stuck Protocol** (structured recovery) before exiting. The stuck protocol reads error patterns, dead ends, and research agenda, then dispatches the research agent for new approaches. If new proposals are found, the loop resumes. Triggers once per session to prevent infinite loops.
+
+After each batch, the live dashboard is regenerated (`dashboard.py --live`) so users can monitor progress in real-time. Baseline integrity is verified before each batch.
+
 ## Phase 8: Method Stacking (Sequential Accumulation)
 
 Read `references/phase-8-stacking.md` for the full workflow.

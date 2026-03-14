@@ -17,7 +17,10 @@ from unittest import mock
 
 import pytest
 
-from pipeline_state import validate_phase_requirements, save_state, load_state, cleanup_stale
+from pipeline_state import (
+    validate_phase_requirements, save_state, load_state, cleanup_stale,
+    _compute_baseline_checksum, verify_baseline_integrity,
+)
 
 
 # --- Phase 2: Prerequisites (no file requirements) ---
@@ -381,6 +384,30 @@ def test_save_state_resets_consecutive_stop_count(tmp_path):
     state = load_state(str(tmp_path))
     assert state is not None
     assert state["consecutive_stop_count"] == 0
+
+
+def test_save_state_with_stuck_protocol_triggered(tmp_path):
+    """stuck_protocol_triggered is persisted at root level."""
+    save_state(7, 5, [], str(tmp_path), stuck_protocol_triggered=True)
+    state = load_state(str(tmp_path))
+    assert state is not None
+    assert state["stuck_protocol_triggered"] is True
+
+
+def test_save_state_preserves_stuck_protocol_triggered(tmp_path):
+    """stuck_protocol_triggered is preserved when not explicitly provided."""
+    save_state(7, 5, [], str(tmp_path), stuck_protocol_triggered=True)
+    save_state(7, 6, [], str(tmp_path))
+    state = load_state(str(tmp_path))
+    assert state is not None
+    assert state["stuck_protocol_triggered"] is True
+
+
+def test_save_state_stuck_protocol_default_absent(tmp_path):
+    """stuck_protocol_triggered absent when never set."""
+    save_state(7, 1, [], str(tmp_path))
+    state = load_state(str(tmp_path))
+    assert "stuck_protocol_triggered" not in state
 
 
 def test_save_state_preserves_existing_user_choices(tmp_path):
@@ -865,3 +892,130 @@ def test_save_and_load_stacking_state(tmp_path):
     loaded = load_state(str(tmp_path))
     assert loaded is not None
     assert loaded["user_choices"]["stacking"] == stacking
+
+
+# --- Baseline checksum (immutable baseline) ---
+
+
+def test_compute_checksum_deterministic():
+    """Same metrics always produce the same checksum."""
+    m = {"loss": 0.5, "accuracy": 85.0}
+    assert _compute_baseline_checksum(m) == _compute_baseline_checksum(m)
+
+
+def test_compute_checksum_key_order_independent():
+    """Key insertion order doesn't affect checksum."""
+    m1 = {"accuracy": 85.0, "loss": 0.5}
+    m2 = {"loss": 0.5, "accuracy": 85.0}
+    assert _compute_baseline_checksum(m1) == _compute_baseline_checksum(m2)
+
+
+def test_compute_checksum_different_values():
+    """Different values produce different checksums."""
+    assert _compute_baseline_checksum({"loss": 0.5}) != _compute_baseline_checksum({"loss": 0.6})
+
+
+def test_compute_checksum_is_sha256():
+    """Checksum is a 64-char hex string (SHA-256)."""
+    c = _compute_baseline_checksum({"loss": 0.5})
+    assert len(c) == 64
+    assert all(ch in "0123456789abcdef" for ch in c)
+
+
+def test_save_state_with_baseline_checksum(tmp_path):
+    """baseline_checksum persists in pipeline state."""
+    save_state(3, 0, [], str(tmp_path), baseline_checksum="abc123")
+    state = load_state(str(tmp_path))
+    assert state["baseline_checksum"] == "abc123"
+
+
+def test_save_state_preserves_baseline_checksum(tmp_path):
+    """baseline_checksum preserved when not explicitly provided."""
+    save_state(3, 0, [], str(tmp_path), baseline_checksum="abc123")
+    save_state(7, 1, [], str(tmp_path))
+    state = load_state(str(tmp_path))
+    assert state["baseline_checksum"] == "abc123"
+
+
+def test_verify_baseline_integrity_valid(tmp_path):
+    """Verify passes when checksum matches."""
+    metrics = {"loss": 0.5, "accuracy": 85.0}
+    checksum = _compute_baseline_checksum(metrics)
+    save_state(3, 0, [], str(tmp_path), baseline_checksum=checksum)
+    results = tmp_path / "results"
+    results.mkdir()
+    (results / "baseline.json").write_text(json.dumps(
+        {"exp_id": "baseline", "config": {}, "metrics": metrics}))
+    result = verify_baseline_integrity(str(tmp_path))
+    assert result["valid"] is True
+
+
+def test_verify_baseline_integrity_mismatch(tmp_path):
+    """Verify fails when baseline metrics changed."""
+    original = {"loss": 0.5, "accuracy": 85.0}
+    checksum = _compute_baseline_checksum(original)
+    save_state(3, 0, [], str(tmp_path), baseline_checksum=checksum)
+    results = tmp_path / "results"
+    results.mkdir()
+    tampered = {"loss": 0.3, "accuracy": 90.0}
+    (results / "baseline.json").write_text(json.dumps(
+        {"exp_id": "baseline", "config": {}, "metrics": tampered}))
+    result = verify_baseline_integrity(str(tmp_path))
+    assert result["valid"] is False
+    assert "mismatch" in result["error"].lower()
+
+
+def test_verify_baseline_no_state(tmp_path):
+    """Verify returns valid with warning when no state file."""
+    result = verify_baseline_integrity(str(tmp_path))
+    assert result["valid"] is True
+    assert result.get("warning") is not None
+
+
+def test_verify_baseline_no_checksum_legacy(tmp_path):
+    """Verify returns valid with warning for legacy pipelines."""
+    save_state(3, 0, [], str(tmp_path))
+    result = verify_baseline_integrity(str(tmp_path))
+    assert result["valid"] is True
+    assert "legacy" in result.get("warning", "").lower()
+
+
+def test_verify_baseline_missing_file(tmp_path):
+    """Verify fails when baseline.json doesn't exist."""
+    save_state(3, 0, [], str(tmp_path), baseline_checksum="abc")
+    result = verify_baseline_integrity(str(tmp_path))
+    assert result["valid"] is False
+
+
+def test_verify_baseline_corrupt_json(tmp_path):
+    """Verify fails when baseline.json is corrupt."""
+    save_state(3, 0, [], str(tmp_path), baseline_checksum="abc")
+    results = tmp_path / "results"
+    results.mkdir()
+    (results / "baseline.json").write_text("{bad json")
+    result = verify_baseline_integrity(str(tmp_path))
+    assert result["valid"] is False
+
+
+def test_cli_verify_baseline_valid(run_main, tmp_path):
+    """CLI verify-baseline exits 0 when checksum matches."""
+    metrics = {"loss": 0.5}
+    checksum = _compute_baseline_checksum(metrics)
+    save_state(3, 0, [], str(tmp_path), baseline_checksum=checksum)
+    results = tmp_path / "results"
+    results.mkdir()
+    (results / "baseline.json").write_text(json.dumps({"metrics": metrics}))
+    r = run_main("pipeline_state.py", str(tmp_path), "verify-baseline")
+    assert r.returncode == 0
+    out = json.loads(r.stdout)
+    assert out["valid"] is True
+
+
+def test_cli_verify_baseline_mismatch(run_main, tmp_path):
+    """CLI verify-baseline exits 1 on checksum mismatch."""
+    save_state(3, 0, [], str(tmp_path), baseline_checksum="wrong")
+    results = tmp_path / "results"
+    results.mkdir()
+    (results / "baseline.json").write_text(json.dumps({"metrics": {"loss": 0.5}}))
+    r = run_main("pipeline_state.py", str(tmp_path), "verify-baseline")
+    assert r.returncode == 1

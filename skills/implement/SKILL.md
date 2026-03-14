@@ -354,6 +354,17 @@ git commit -m "ml-opt: implement <proposal_name>"
 
 Record the commit SHA for the manifest.
 
+### 4g.1. Extract diff summary and write explanation
+
+After committing, extract a structured diff summary for the dashboard:
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/implement_utils.py diff <project_root> <branch>
+```
+
+Store the result as `diff_summary` in the manifest proposal entry.
+
+Also write an `explanation` field — a 1-2 sentence plain-language description of what the code change does and why it should improve the primary metric. For example: "Replaces CrossEntropyLoss with FocalLoss to better handle class imbalance, which should improve accuracy on minority classes." This explanation is shown in the live dashboard to help users understand each method without reading code.
+
 ### 4h. Return to original branch
 
 ```bash
@@ -392,6 +403,8 @@ Write `experiments/results/implementation-manifest.json`:
         "unit_tests": "pass|fail|skipped"
       },
       "test_file": "experiments/tests/test_<slug>.py|null",
+      "explanation": "Plain-language description of what changed and why it should improve the metric",
+      "diff_summary": {"files_changed": 2, "lines_added": 45, "lines_removed": 10, "changed_functions": ["train_step", "compute_loss"]},
       "commit_sha": "abc123...",
       "notes": "Any observations or warnings"
     }

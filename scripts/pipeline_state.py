@@ -1,12 +1,70 @@
 #!/usr/bin/env python3
 """State validation and pipeline resumption utilities."""
 
+import hashlib
 import json
 import os
 import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
+
+
+def _compute_baseline_checksum(metrics: dict) -> str:
+    """Compute a deterministic SHA-256 checksum of a baseline metrics dict.
+
+    Uses canonical JSON serialization (sorted keys, compact separators)
+    so the hash is reproducible across runs.
+    """
+    canonical = json.dumps(metrics, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def verify_baseline_integrity(exp_root: str) -> dict:
+    """Verify baseline.json metrics haven't changed since checksum was stored.
+
+    Returns {"valid": bool, "error": str|None, "checksum": str|None}.
+    Backward-compatible: returns valid=True with warning for legacy pipelines
+    without checksums.
+    """
+    state = load_state(exp_root)
+
+    if state is None:
+        return {"valid": True, "error": None, "checksum": None,
+                "warning": "No pipeline state found"}
+
+    stored = state.get("baseline_checksum")
+    if stored is None:
+        return {"valid": True, "error": None, "checksum": None,
+                "warning": "No baseline_checksum in pipeline state (legacy pipeline)"}
+
+    baseline_path = Path(exp_root) / "results" / "baseline.json"
+    if not baseline_path.is_file():
+        return {"valid": False, "error": "baseline.json does not exist",
+                "checksum": stored}
+
+    try:
+        data = json.loads(baseline_path.read_text())
+    except (json.JSONDecodeError, OSError) as e:
+        return {"valid": False, "error": f"baseline.json is not valid JSON: {e}",
+                "checksum": stored}
+
+    metrics = data.get("metrics")
+    if metrics is None:
+        return {"valid": False, "error": "baseline.json missing 'metrics' key",
+                "checksum": stored}
+
+    current = _compute_baseline_checksum(metrics)
+    if current != stored:
+        return {
+            "valid": False,
+            "error": (f"Baseline integrity check FAILED: metrics checksum mismatch. "
+                      f"Stored: {stored[:16]}..., Current: {current[:16]}..."),
+            "checksum": stored,
+            "current_checksum": current,
+        }
+
+    return {"valid": True, "error": None, "checksum": stored}
 
 
 def validate_phase_requirements(phase: int, exp_root: str) -> dict:
@@ -153,6 +211,8 @@ def save_state(
     *,
     user_choices: dict | None = None,
     consecutive_stop_count: int | None = None,
+    stuck_protocol_triggered: bool | None = None,
+    baseline_checksum: str | None = None,
 ) -> str:
     """Write pipeline-state.json to exp_root.
 
@@ -168,6 +228,8 @@ def save_state(
             resumptions.
         consecutive_stop_count: Optional counter for autonomous mode's
             3-consecutive-stop exit rule. Persisted at root level.
+        stuck_protocol_triggered: Whether the stuck protocol has been
+            triggered this session. Prevents infinite recovery loops.
 
     Returns the path to the state file.
     """
@@ -184,7 +246,8 @@ def save_state(
     # Load existing state once if needed for preserving fields
     existing = (
         load_state(exp_root)
-        if (user_choices is None or consecutive_stop_count is None)
+        if (user_choices is None or consecutive_stop_count is None
+            or stuck_protocol_triggered is None or baseline_checksum is None)
         else None
     )
 
@@ -199,6 +262,18 @@ def save_state(
         state["consecutive_stop_count"] = consecutive_stop_count
     elif existing and "consecutive_stop_count" in existing:
         state["consecutive_stop_count"] = existing["consecutive_stop_count"]
+
+    # Preserve stuck_protocol_triggered for autonomous mode
+    if stuck_protocol_triggered is not None:
+        state["stuck_protocol_triggered"] = stuck_protocol_triggered
+    elif existing and "stuck_protocol_triggered" in existing:
+        state["stuck_protocol_triggered"] = existing["stuck_protocol_triggered"]
+
+    # Preserve baseline_checksum (immutable baseline integrity)
+    if baseline_checksum is not None:
+        state["baseline_checksum"] = baseline_checksum
+    elif existing and "baseline_checksum" in existing:
+        state["baseline_checksum"] = existing["baseline_checksum"]
 
     state_path = root / "pipeline-state.json"
     tmp_fd, tmp_path = tempfile.mkstemp(dir=str(root), suffix=".tmp")
@@ -397,6 +472,11 @@ if __name__ == "__main__":
                 print(f"  - {item}")
         else:
             print("Nothing to clean up.")
+
+    elif action == "verify-baseline":
+        result = verify_baseline_integrity(exp_root)
+        print(json.dumps(result, indent=2))
+        sys.exit(0 if result["valid"] else 1)
 
     else:
         print(f"Unknown action: {action}")

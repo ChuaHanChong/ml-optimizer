@@ -30,6 +30,14 @@ from error_tracker import (
     cleanup_memory,
     log_suggestion,
     get_suggestion_history,
+    log_dead_end,
+    get_dead_ends,
+    is_dead_end,
+    _normalize_technique,
+    init_agenda,
+    get_agenda,
+    update_agenda_item,
+    add_agenda_idea,
     _atomic_write_json,
     _cli_main,
     _load_results,
@@ -1767,3 +1775,359 @@ def test_detect_patterns_branch_underperformance(tmp_path):
     patterns = detect_patterns(load_error_log(exp_root)["events"])
     ids = [p["pattern_id"] for p in patterns]
     assert "branch_underperformance" in ids
+
+
+# ---------------------------------------------------------------------------
+# Dead-end catalog
+# ---------------------------------------------------------------------------
+
+
+def test_log_dead_end_basic(tmp_path):
+    """log_dead_end creates dead-ends.json and returns path."""
+    exp_root = str(tmp_path)
+    entry = {"technique": "perceptual-loss", "reason": "5% worse than baseline"}
+    path = log_dead_end(exp_root, entry)
+    assert "dead-ends.json" in path
+    dead_ends = get_dead_ends(exp_root)
+    assert len(dead_ends) == 1
+    assert dead_ends[0]["technique"] == "perceptual-loss"
+    assert "timestamp" in dead_ends[0]
+
+
+def test_log_dead_end_multiple(tmp_path):
+    """Multiple dead ends accumulate."""
+    exp_root = str(tmp_path)
+    log_dead_end(exp_root, {"technique": "mixup", "reason": "no improvement"})
+    log_dead_end(exp_root, {"technique": "cutout", "reason": "degraded accuracy"})
+    dead_ends = get_dead_ends(exp_root)
+    assert len(dead_ends) == 2
+
+
+def test_log_dead_end_with_best_result(tmp_path):
+    """Dead end entries can include best_result details."""
+    exp_root = str(tmp_path)
+    log_dead_end(exp_root, {
+        "technique": "focal-loss",
+        "reason": "worse on all configs",
+        "branch": "ml-opt/focal-loss",
+        "experiments_tried": 4,
+        "best_result": {"metric": "accuracy", "value": 0.82, "baseline": 0.85},
+        "source": "analyze",
+    })
+    de = get_dead_ends(exp_root)[0]
+    assert de["branch"] == "ml-opt/focal-loss"
+    assert de["best_result"]["baseline"] == 0.85
+
+
+def test_get_dead_ends_empty(tmp_path):
+    """get_dead_ends returns [] when no file exists."""
+    assert get_dead_ends(str(tmp_path)) == []
+
+
+def test_get_dead_ends_corrupt(tmp_path):
+    """get_dead_ends returns [] when file is corrupt."""
+    reports = tmp_path / "reports"
+    reports.mkdir(parents=True)
+    (reports / "dead-ends.json").write_text("NOT JSON")
+    assert get_dead_ends(str(tmp_path)) == []
+
+
+def test_is_dead_end_exact_match(tmp_path):
+    """is_dead_end matches exact technique names."""
+    exp_root = str(tmp_path)
+    log_dead_end(exp_root, {"technique": "perceptual-loss", "reason": "bad"})
+    assert is_dead_end(exp_root, "perceptual-loss") is True
+    assert is_dead_end(exp_root, "label-smoothing") is False
+
+
+def test_is_dead_end_fuzzy_match(tmp_path):
+    """is_dead_end does fuzzy matching (case, hyphens, substrings)."""
+    exp_root = str(tmp_path)
+    log_dead_end(exp_root, {"technique": "Perceptual-Loss", "reason": "bad"})
+    # Case insensitive
+    assert is_dead_end(exp_root, "perceptual-loss") is True
+    assert is_dead_end(exp_root, "PERCEPTUAL-LOSS") is True
+    # Hyphen/underscore normalization
+    assert is_dead_end(exp_root, "perceptual_loss") is True
+    # Substring match (query is substring of cataloged)
+    assert is_dead_end(exp_root, "perceptual") is True
+    # Reverse substring (cataloged is substring of query)
+    assert is_dead_end(exp_root, "deep perceptual loss function") is True
+
+
+def test_is_dead_end_empty_query(tmp_path):
+    """is_dead_end returns False for empty query."""
+    exp_root = str(tmp_path)
+    log_dead_end(exp_root, {"technique": "test", "reason": "bad"})
+    assert is_dead_end(exp_root, "") is False
+    assert is_dead_end(exp_root, "  ") is False
+
+
+def test_normalize_technique():
+    """_normalize_technique handles various formats."""
+    assert _normalize_technique("Perceptual-Loss") == "perceptual loss"
+    assert _normalize_technique("  label_smoothing  ") == "label smoothing"
+    assert _normalize_technique("CutMix") == "cutmix"
+
+
+def test_dead_end_generates_markdown(tmp_path):
+    """log_dead_end generates companion dead-ends.md."""
+    exp_root = str(tmp_path)
+    log_dead_end(exp_root, {
+        "technique": "mixup",
+        "reason": "no improvement on this dataset",
+        "branch": "ml-opt/mixup",
+        "experiments_tried": 3,
+    })
+    md_path = tmp_path / "reports" / "dead-ends.md"
+    assert md_path.exists()
+    md = md_path.read_text()
+    assert "mixup" in md
+    assert "no improvement" in md
+    assert "ml-opt/mixup" in md
+
+
+def test_cli_dead_end_add(run_main, tmp_path):
+    """CLI dead-end add creates entry."""
+    entry_json = json.dumps({"technique": "test-tech", "reason": "failed"})
+    r = run_main("error_tracker.py", str(tmp_path), "dead-end", "add", entry_json)
+    assert r.returncode == 0
+    out = json.loads(r.stdout)
+    assert out["logged"] is True
+    assert get_dead_ends(str(tmp_path))[0]["technique"] == "test-tech"
+
+
+def test_cli_dead_end_list(run_main, tmp_path):
+    """CLI dead-end list returns all entries."""
+    log_dead_end(str(tmp_path), {"technique": "a", "reason": "r1"})
+    log_dead_end(str(tmp_path), {"technique": "b", "reason": "r2"})
+    r = run_main("error_tracker.py", str(tmp_path), "dead-end", "list")
+    assert r.returncode == 0
+    entries = json.loads(r.stdout)
+    assert len(entries) == 2
+
+
+def test_cli_dead_end_check(run_main, tmp_path):
+    """CLI dead-end check returns match status."""
+    log_dead_end(str(tmp_path), {"technique": "focal-loss", "reason": "bad"})
+    r = run_main("error_tracker.py", str(tmp_path), "dead-end", "check", "focal-loss")
+    assert r.returncode == 0
+    result = json.loads(r.stdout)
+    assert result["is_dead_end"] is True
+
+    r2 = run_main("error_tracker.py", str(tmp_path), "dead-end", "check", "cosine-loss")
+    result2 = json.loads(r2.stdout)
+    assert result2["is_dead_end"] is False
+
+
+def test_cli_dead_end_missing_sub(run_main, tmp_path):
+    """CLI dead-end without sub-action exits 1."""
+    r = run_main("error_tracker.py", str(tmp_path), "dead-end")
+    assert r.returncode == 1
+
+
+def test_cli_dead_end_add_missing_json(run_main, tmp_path):
+    """CLI dead-end add without JSON exits 1."""
+    r = run_main("error_tracker.py", str(tmp_path), "dead-end", "add")
+    assert r.returncode == 1
+
+
+def test_cli_dead_end_add_invalid_json(run_main, tmp_path):
+    """CLI dead-end add with invalid JSON exits 1."""
+    r = run_main("error_tracker.py", str(tmp_path), "dead-end", "add", "NOT_JSON")
+    assert r.returncode == 1
+
+
+# ---------------------------------------------------------------------------
+# Research agenda
+# ---------------------------------------------------------------------------
+
+
+def test_init_agenda(tmp_path):
+    """init_agenda creates agenda JSON with default fields."""
+    exp_root = str(tmp_path)
+    ideas = [
+        {"id": "idea-1", "name": "CutMix augmentation", "priority": 8},
+        {"id": "idea-2", "name": "Cosine annealing", "priority": 6},
+    ]
+    path = init_agenda(exp_root, ideas)
+    assert "research-agenda.json" in path
+    agenda = get_agenda(exp_root)
+    assert len(agenda) == 2
+    assert agenda[0]["status"] == "untried"
+    assert agenda[0]["initial_priority"] == 8
+    assert agenda[0]["evidence"] == []
+
+
+def test_get_agenda_empty(tmp_path):
+    """get_agenda returns [] when no file exists."""
+    assert get_agenda(str(tmp_path)) == []
+
+
+def test_get_agenda_corrupt(tmp_path):
+    """get_agenda returns [] when file is corrupt."""
+    reports = tmp_path / "reports"
+    reports.mkdir(parents=True)
+    (reports / "research-agenda.json").write_text("CORRUPT")
+    assert get_agenda(str(tmp_path)) == []
+
+
+def test_update_agenda_item_status(tmp_path):
+    """update_agenda_item changes status and adds evidence."""
+    exp_root = str(tmp_path)
+    init_agenda(exp_root, [{"id": "idea-1", "name": "Test", "priority": 7}])
+    found = update_agenda_item(exp_root, "idea-1", {
+        "status": "tried",
+        "priority": 4,
+        "evidence": {"batch": 3, "result": "2% worse than baseline"},
+        "lessons": "Did not help on small datasets",
+    })
+    assert found is True
+    idea = get_agenda(exp_root)[0]
+    assert idea["status"] == "tried"
+    assert idea["priority"] == 4
+    assert len(idea["evidence"]) == 1
+    assert idea["lessons"] == "Did not help on small datasets"
+
+
+def test_update_agenda_item_evidence_appends(tmp_path):
+    """update_agenda_item appends evidence, not replaces."""
+    exp_root = str(tmp_path)
+    init_agenda(exp_root, [{"id": "idea-1", "name": "Test"}])
+    update_agenda_item(exp_root, "idea-1", {
+        "evidence": {"batch": 1, "result": "first try"},
+    })
+    update_agenda_item(exp_root, "idea-1", {
+        "evidence": {"batch": 2, "result": "second try"},
+    })
+    idea = get_agenda(exp_root)[0]
+    assert len(idea["evidence"]) == 2
+    assert idea["evidence"][0]["batch"] == 1
+    assert idea["evidence"][1]["batch"] == 2
+
+
+def test_update_agenda_item_not_found(tmp_path):
+    """update_agenda_item returns False when id not found."""
+    exp_root = str(tmp_path)
+    init_agenda(exp_root, [{"id": "idea-1", "name": "Test"}])
+    found = update_agenda_item(exp_root, "nonexistent", {"status": "tried"})
+    assert found is False
+
+
+def test_add_agenda_idea(tmp_path):
+    """add_agenda_idea appends to existing agenda."""
+    exp_root = str(tmp_path)
+    init_agenda(exp_root, [{"id": "idea-1", "name": "Original"}])
+    add_agenda_idea(exp_root, {"id": "idea-2", "name": "New idea", "priority": 9})
+    agenda = get_agenda(exp_root)
+    assert len(agenda) == 2
+    assert agenda[1]["name"] == "New idea"
+    assert agenda[1]["priority"] == 9
+
+
+def test_add_agenda_idea_no_existing(tmp_path):
+    """add_agenda_idea works even when no agenda exists yet."""
+    exp_root = str(tmp_path)
+    add_agenda_idea(exp_root, {"id": "idea-1", "name": "First"})
+    agenda = get_agenda(exp_root)
+    assert len(agenda) == 1
+
+
+def test_agenda_generates_markdown(tmp_path):
+    """init_agenda generates companion research-agenda.md."""
+    exp_root = str(tmp_path)
+    init_agenda(exp_root, [
+        {"id": "idea-1", "name": "CutMix", "priority": 8, "source": "paper"},
+        {"id": "idea-2", "name": "Label smoothing", "priority": 6, "source": "llm_knowledge"},
+    ])
+    md_path = tmp_path / "reports" / "research-agenda.md"
+    assert md_path.exists()
+    md = md_path.read_text()
+    assert "CutMix" in md
+    assert "Label smoothing" in md
+    assert "Active Ideas" in md
+
+
+def test_agenda_md_sections(tmp_path):
+    """Agenda markdown has correct sections based on idea status."""
+    exp_root = str(tmp_path)
+    init_agenda(exp_root, [
+        {"id": "a", "name": "Active", "status": "untried"},
+        {"id": "b", "name": "Tried", "status": "tried"},
+        {"id": "c", "name": "Winner", "status": "improved"},
+        {"id": "d", "name": "Failed", "status": "dead-end", "lessons": "too slow"},
+    ])
+    md = (tmp_path / "reports" / "research-agenda.md").read_text()
+    assert "Successful Techniques" in md
+    assert "Active Ideas" in md
+    assert "Tried" in md
+    assert "Dead Ends" in md
+    assert "too slow" in md
+
+
+def test_agenda_priority_preserved_on_update(tmp_path):
+    """Updating non-priority fields preserves priority."""
+    exp_root = str(tmp_path)
+    init_agenda(exp_root, [{"id": "idea-1", "name": "Test", "priority": 8}])
+    update_agenda_item(exp_root, "idea-1", {"status": "tried"})
+    idea = get_agenda(exp_root)[0]
+    assert idea["priority"] == 8
+    assert idea["initial_priority"] == 8
+
+
+def test_cli_agenda_init(run_main, tmp_path):
+    """CLI agenda init creates agenda."""
+    ideas = json.dumps([{"id": "i1", "name": "Test idea", "priority": 7}])
+    r = run_main("error_tracker.py", str(tmp_path), "agenda", "init", ideas)
+    assert r.returncode == 0
+    out = json.loads(r.stdout)
+    assert out["initialized"] is True
+    assert out["count"] == 1
+
+
+def test_cli_agenda_list(run_main, tmp_path):
+    """CLI agenda list returns all ideas."""
+    init_agenda(str(tmp_path), [{"id": "i1", "name": "A"}, {"id": "i2", "name": "B"}])
+    r = run_main("error_tracker.py", str(tmp_path), "agenda", "list")
+    assert r.returncode == 0
+    ideas = json.loads(r.stdout)
+    assert len(ideas) == 2
+
+
+def test_cli_agenda_update(run_main, tmp_path):
+    """CLI agenda update modifies an idea."""
+    init_agenda(str(tmp_path), [{"id": "i1", "name": "Test"}])
+    updates = json.dumps({"status": "tried", "priority": 3})
+    r = run_main("error_tracker.py", str(tmp_path), "agenda", "update", "i1", updates)
+    assert r.returncode == 0
+    out = json.loads(r.stdout)
+    assert out["updated"] is True
+    idea = get_agenda(str(tmp_path))[0]
+    assert idea["status"] == "tried"
+
+
+def test_cli_agenda_add(run_main, tmp_path):
+    """CLI agenda add appends a new idea."""
+    init_agenda(str(tmp_path), [{"id": "i1", "name": "Original"}])
+    idea = json.dumps({"id": "i2", "name": "Added", "priority": 9})
+    r = run_main("error_tracker.py", str(tmp_path), "agenda", "add", idea)
+    assert r.returncode == 0
+    assert len(get_agenda(str(tmp_path))) == 2
+
+
+def test_cli_agenda_missing_sub(run_main, tmp_path):
+    """CLI agenda without sub-action exits 1."""
+    r = run_main("error_tracker.py", str(tmp_path), "agenda")
+    assert r.returncode == 1
+
+
+def test_cli_agenda_init_missing_json(run_main, tmp_path):
+    """CLI agenda init without JSON exits 1."""
+    r = run_main("error_tracker.py", str(tmp_path), "agenda", "init")
+    assert r.returncode == 1
+
+
+def test_cli_agenda_update_missing_args(run_main, tmp_path):
+    """CLI agenda update without enough args exits 1."""
+    r = run_main("error_tracker.py", str(tmp_path), "agenda", "update", "i1")
+    assert r.returncode == 1

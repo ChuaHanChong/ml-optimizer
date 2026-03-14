@@ -38,7 +38,12 @@ After the experiment loop exits:
      subagent_type: "ml-optimizer:review-agent"
    )
    ```
-5. Present the summary to the user:
+5. Generate the progress dashboard:
+   ```bash
+   python3 ~/.claude/plugins/ml-optimizer/scripts/dashboard.py <exp_root>
+   ```
+
+6. Present the summary to the user:
 
 ```
 Optimization complete!
@@ -51,4 +56,5 @@ Key findings:
 - [finding 2]
 
 Full report: experiments/reports/final-report.md
+Dashboard: experiments/reports/dashboard.html
 ```

@@ -17,6 +17,34 @@ Run the plugin structure validation tests:
 
 Report any failures. If all pass, continue.
 
+## Step 1.1: Validate new scripts
+
+Verify the autoresearch-inspired scripts are importable:
+
+```bash
+/data/hanchong/miniconda3/bin/python -c "import sys; sys.path.insert(0, 'scripts'); import dashboard; import excalidraw_gen; print('dashboard.py and excalidraw_gen.py: OK')"
+```
+
+Quick functional check:
+```bash
+# Dashboard generates HTML from empty experiments dir
+mkdir -p /tmp/diag-test/results && /data/hanchong/miniconda3/bin/python scripts/dashboard.py /tmp/diag-test && echo "Dashboard: OK"
+
+# Excalidraw generates pipeline diagram
+/data/hanchong/miniconda3/bin/python scripts/excalidraw_gen.py /tmp/diag-test pipeline loss && echo "Excalidraw: OK"
+
+# Baseline integrity check (no state = valid with warning)
+/data/hanchong/miniconda3/bin/python scripts/pipeline_state.py /tmp/diag-test verify-baseline && echo "Baseline verify: OK"
+
+# Dead-end catalog
+/data/hanchong/miniconda3/bin/python scripts/error_tracker.py /tmp/diag-test dead-end list && echo "Dead-end catalog: OK"
+
+# Research agenda
+/data/hcchua/.claude/plugins/ml-optimizer/scripts/error_tracker.py /tmp/diag-test agenda list && echo "Research agenda: OK"
+
+rm -rf /tmp/diag-test
+```
+
 ## Step 2: Agent dispatch smoke tests
 
 Dispatch each of the 10 agents with a minimal smoke-test prompt. Run them in 2 batches of 5 for speed.
@@ -61,7 +89,13 @@ If yes:
    - budget: 2 experiments (minimal)
    - scope: HP-only (no research/implement — faster)
    - env: conda base
-4. Verify `experiments/` directory is created with baseline.json, exp-*.json, and final-report.md
+4. Verify `experiments/` directory is created with:
+   - `results/baseline.json` — baseline metrics established
+   - `results/exp-*.json` — experiment results
+   - `reports/final-report.md` — final optimization report
+   - `reports/dashboard.html` — progress dashboard generated
+   - `pipeline-state.json` — contains `baseline_checksum` (immutable baseline)
+   - `artifacts/pipeline-overview.excalidraw` — pipeline diagram generated
 
 ## Step 4: Report
 
@@ -70,9 +104,16 @@ Summarize results:
 ```text
 ML Optimizer End-to-End Diagnostic Results
 ================================
-Structural tests: X/Y passed
-Agent dispatch:   10/10 passed (or list failures)
-Pipeline run:     [passed/skipped/failed]
+Structural tests:    X/Y passed
+Script validation:   dashboard.py ✓, excalidraw_gen.py ✓, verify-baseline ✓
+Agent dispatch:      10/10 passed (or list failures)
+Pipeline run:        [passed/skipped/failed]
+New features:
+  - Dashboard:       [generated/not tested]
+  - Excalidraw:      [generated/not tested]
+  - Baseline checksum: [verified/not tested]
+  - Dead-end catalog:  [functional/not tested]
+  - Research agenda:   [functional/not tested]
 
 Issues found: [none or list]
 ```

@@ -17,6 +17,7 @@ from implement_utils import (
     clone_reference_repo,
     create_proposal_branch,
     detect_conflicts,
+    extract_branch_diff,
     get_current_branch,
     is_git_repo,
     parse_research_proposals,
@@ -652,3 +653,54 @@ def test_analyze_skips_docs_and_test_dirs(tmp_path):
     assert "docs/guide.py" not in result["python_files"]
     assert "src/tests/check.py" not in result["python_files"]
     assert "src/test/verify.py" not in result["python_files"]
+
+
+# ---------------------------------------------------------------------------
+# extract_branch_diff
+# ---------------------------------------------------------------------------
+
+
+def test_extract_branch_diff_not_git(tmp_path):
+    """extract_branch_diff returns error dict for non-git directory."""
+    result = extract_branch_diff(str(tmp_path), "some-branch")
+    assert result["error"] == "Not a git repo"
+    assert result["files_changed"] == 0
+    assert result["diff_summary"] == ""
+
+
+def test_extract_branch_diff_basic(tmp_path):
+    """extract_branch_diff returns structured diff data for a git repo."""
+    # Set up a real git repo with a branch
+    subprocess.run(["git", "init"], cwd=str(tmp_path), capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@test.com"],
+                   cwd=str(tmp_path), capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"],
+                   cwd=str(tmp_path), capture_output=True)
+
+    # Create initial file and commit
+    (tmp_path / "train.py").write_text("def train():\n    pass\n")
+    subprocess.run(["git", "add", "."], cwd=str(tmp_path), capture_output=True)
+    subprocess.run(["git", "commit", "-m", "initial"],
+                   cwd=str(tmp_path), capture_output=True)
+
+    # Create a branch with changes
+    subprocess.run(["git", "checkout", "-b", "ml-opt/test"],
+                   cwd=str(tmp_path), capture_output=True)
+    (tmp_path / "train.py").write_text("def train():\n    print('improved')\n")
+    (tmp_path / "loss.py").write_text("def focal_loss():\n    pass\n")
+    subprocess.run(["git", "add", "."], cwd=str(tmp_path), capture_output=True)
+    subprocess.run(["git", "commit", "-m", "add focal loss"],
+                   cwd=str(tmp_path), capture_output=True)
+
+    # Go back to main
+    subprocess.run(["git", "checkout", "main"],
+                   cwd=str(tmp_path), capture_output=True, check=False)
+    # Try master if main doesn't exist
+    subprocess.run(["git", "checkout", "master"],
+                   cwd=str(tmp_path), capture_output=True, check=False)
+
+    result = extract_branch_diff(str(tmp_path), "ml-opt/test")
+    assert result["files_changed"] >= 1
+    assert result["lines_added"] >= 1
+    assert isinstance(result["changed_functions"], list)
+    assert isinstance(result["diff_summary"], str)

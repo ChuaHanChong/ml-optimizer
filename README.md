@@ -13,6 +13,21 @@ The ml-optimizer plugin understands your ML model, establishes baselines, resear
 - Structured `experiments/` directory in your project
 - User checkpoints after baseline and research; experiment loop is autonomous
 
+### Autonomous Mode Features (Autoresearch-Inspired)
+
+Inspired by [karpathy/autoresearch](https://github.com/karpathy/autoresearch), [autoresearch-gen](https://github.com/liviaellen/autoresearch-gen), and [autosae](https://github.com/alif-munim/autosae):
+
+| Feature | What it does |
+|---------|-------------|
+| **Stuck Protocol** | After 3 consecutive stop recommendations, triggers structured recovery — reads error patterns, dead ends, and research agenda, dispatches research agent for new approaches |
+| **Dead-End Catalog** | Tracks techniques conclusively shown to be unpromising. Research and hp-tune agents consult it before proposing, preventing wasted budget |
+| **Research Agenda** | Living document initialized from proposals, reprioritized after each batch based on experimental evidence |
+| **Progress Dashboard** | Self-contained HTML dashboard with auto-refresh (`--live`), SVG timeline, sortable results, HP sensitivity, method explanations |
+| **Excalidraw Diagrams** | Pipeline overview, experiment comparison, HP landscape, and architecture change diagrams in Excalidraw JSON format |
+| **Immutable Baseline** | SHA-256 checksum of baseline metrics verified before each batch — halts if metrics are modified |
+| **Auto-Repair Loop** | Intra-agent retry (3 attempts) for retryable errors. OOM/SyntaxError not retried |
+| **Fixed Time Budget** | Optional fixed wall-clock duration per experiment for deterministic comparability |
+
 ## Prerequisites
 
 ### Required

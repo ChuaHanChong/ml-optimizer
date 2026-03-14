@@ -108,12 +108,14 @@ All scripts work as both importable modules and CLI tools:
 | `detect_divergence.py` | `python3 scripts/detect_divergence.py '<json_values>' [--higher-is-better] [--model-category rl\|generative\|supervised] [--explosion-threshold N] [--plateau-patience N]` — detect NaN/explosion/plateau with configurable thresholds |
 | `result_analyzer.py` | `python3 scripts/result_analyzer.py <results_dir> <metric> [baseline_id] [lower_is_better]` |
 | `experiment_setup.py` | Generates experiment IDs and directory structure |
-| `implement_utils.py` | `python3 scripts/implement_utils.py <findings.md> '<indices_json>'` — parse proposals; also `clone <url> <dest>` and `analyze <path>` subcommands |
-| `pipeline_state.py` | `python3 scripts/pipeline_state.py <exp_root> validate|save|load|cleanup` |
+| `implement_utils.py` | `python3 scripts/implement_utils.py <findings.md> '<indices_json>'` — parse proposals; also `clone <url> <dest>`, `analyze <path>`, and `diff <project_root> <branch>` subcommands |
+| `pipeline_state.py` | `python3 scripts/pipeline_state.py <exp_root> validate|save|load|cleanup|verify-baseline` |
 | `schema_validator.py` | `python3 scripts/schema_validator.py <filepath> result\|baseline\|manifest\|prerequisites` — validates JSON against expected schemas |
 | `plot_results.py` | `python3 scripts/plot_results.py <results_dir> <metric> comparison\|timeline\|sensitivity <hp>\|progress [--higher-is-better]` — ASCII charts + matplotlib progress chart |
 | `prerequisites_check.py` | `python3 scripts/prerequisites_check.py scan-imports\|check-packages\|detect-env\|detect-format\|detect-format-project\|validate-data\|bulk-install-cmd\|gpu-install-cmd` — dataset, environment, and GPU-aware install validation |
-| `error_tracker.py` | `python3 scripts/error_tracker.py <exp_root> log\|show\|patterns\|summary\|sync\|success\|proposals\|rank\|cleanup\|log-suggestion\|suggestion-history` — error tracking, pattern detection, success metrics, proposal outcomes, suggestion ranking, suggestion history |
+| `dashboard.py` | `python3 scripts/dashboard.py <exp_root> [--live] [--serve --port 8080]` — generate self-contained HTML dashboard with progress timeline, results table, HP sensitivity, research agenda, error summary, method explanations. `--live` enables 30s auto-refresh. |
+| `excalidraw_gen.py` | `python3 scripts/excalidraw_gen.py <exp_root> pipeline\|comparison\|hp-landscape\|architecture <args>` — generate Excalidraw JSON diagrams (pipeline overview, experiment comparison, HP landscape, architecture changes) |
+| `error_tracker.py` | `python3 scripts/error_tracker.py <exp_root> log\|show\|patterns\|summary\|sync\|success\|proposals\|rank\|cleanup\|log-suggestion\|suggestion-history\|dead-end <add\|list\|check>\|agenda <init\|update\|list\|add>` — error tracking, pattern detection, success metrics, proposal outcomes, suggestion ranking, suggestion history, dead-end catalog, research agenda |
 
 ### State & Output (in target project)
 
@@ -131,10 +133,16 @@ experiments/
   reports/                           — Analysis reports, research findings (web + method proposals)
   reports/error-log.json             — Structured error event log
   reports/suggestion-history.json    — Suggestion feedback loop (tracks what was suggested)
+  reports/dead-ends.json             — Dead-end catalog (techniques conclusively shown to be unpromising)
+  reports/dead-ends.md               — Human-readable dead-end companion
+  reports/research-agenda.json       — Living research agenda (reprioritized after each batch)
+  reports/research-agenda.md         — Human-readable research agenda companion
+  reports/dashboard.html              — Self-contained HTML progress dashboard
   reports/session-review.md          — Self-improvement review (from review skill)
   scripts/<exp-id>/                  — Per-experiment command scripts (train, eval, etc.)
   artifacts/                         — Model checkpoints, intermediate files, images, plots
   artifacts/<exp-id>/                — Per-experiment artifacts (checkpoints, visualizations)
+  artifacts/*.excalidraw             — Excalidraw diagrams (pipeline, comparison, HP landscape, architecture)
   dev_notes.md                       — Running session log
 ```
 
@@ -162,7 +170,7 @@ Stacking experiments also carry `code_branches` (array of combined branches), `s
 
 ### Pipeline Resumption
 
-The orchestrator can be stopped and resumed. On restart it reads `pipeline-state.json` and uses `cleanup_stale()` to handle interrupted experiments (marks them as failed after a timeout). Phase validation via `validate_phase_requirements()` prevents cascading failures. Pipeline state persists Phase 0 user choices (`primary_metric`, `divergence_metric`, `divergence_lower_is_better`, `lower_is_better`, `target_value`, `train_command`, `eval_command`, `train_data_path`, `val_data_path`, `prepared_train_path`, `prepared_val_path`, `env_manager`, `env_name`, `model_category`, `user_papers`, `budget_mode`, `difficulty`, `difficulty_multiplier`, `method_proposal_scope`, `method_proposal_iterations`, `hp_batches_per_round`) via `save_state(user_choices={...})` so they survive interruptions without re-asking the user. The experiment loop also persists `consecutive_stop_count` (for autonomous mode's 3-consecutive-stop exit rule) at the root level of pipeline state. A separate `user-choices-backup.json` provides redundant recovery if the main state file corrupts.
+The orchestrator can be stopped and resumed. On restart it reads `pipeline-state.json` and uses `cleanup_stale()` to handle interrupted experiments (marks them as failed after a timeout). Phase validation via `validate_phase_requirements()` prevents cascading failures. Pipeline state persists Phase 0 user choices (`primary_metric`, `divergence_metric`, `divergence_lower_is_better`, `lower_is_better`, `target_value`, `train_command`, `eval_command`, `train_data_path`, `val_data_path`, `prepared_train_path`, `prepared_val_path`, `env_manager`, `env_name`, `model_category`, `user_papers`, `budget_mode`, `difficulty`, `difficulty_multiplier`, `method_proposal_scope`, `method_proposal_iterations`, `hp_batches_per_round`) via `save_state(user_choices={...})` so they survive interruptions without re-asking the user. The experiment loop also persists `consecutive_stop_count` (for autonomous mode's stuck protocol trigger), `stuck_protocol_triggered` (prevents infinite recovery loops), and `baseline_checksum` (SHA-256 of baseline metrics for integrity verification) at the root level of pipeline state. A separate `user-choices-backup.json` provides redundant recovery if the main state file corrupts.
 
 ## Key Design Patterns
 
@@ -184,6 +192,12 @@ The orchestrator can be stopped and resumed. On restart it reads `pipeline-state
 - **All-diverge recovery**: If all experiments in a batch diverge, a recovery batch with halved learning rates is attempted before stopping.
 - **HP-only research routing**: Research proposals with `type: "hp_only"` skip the implement skill and are routed directly to hp-tune as search space modifications.
 - **Tabular ML HP strategy**: For tree-based models (sklearn/XGBoost/LightGBM), iteration 1 explores `max_depth`/`n_estimators` first instead of learning rate.
+- **Fixed time budget**: Optional `fixed_time_budget` (seconds) in Phase 0 user_choices. When set, every experiment trains for exactly N wall-clock seconds using the `timeout` command wrapper. Framework-native time limits (Lightning `--max_time`, HuggingFace `timeout` in TrainingArguments) are preferred when available. Results include `time_budget_seconds` for downstream analysis. HP-tune adjusts proposals for the budget (shorter convergence schedules, appropriate LR scaling). Makes experiment metrics directly comparable without duration normalization.
+- **Auto-repair loop**: When training or evaluation commands fail during baseline establishment or experiment execution, the agent captures stderr, diagnoses the error, applies a fix (install package, adjust path, reduce batch size), and retries up to 3 times. OOM errors are not retried (deterministic). SyntaxErrors are not retried (code bugs). Identical errors on consecutive attempts skip further retries (loop detection). Each retry is logged to the error tracker. This is intra-agent retry, separate from the orchestrator's Phase 3 retry logic.
+- **Immutable baseline**: After baseline is established (Phase 3), a SHA-256 checksum of the baseline metrics dict is stored in `pipeline-state.json`. Before each experiment batch (Phase 7) and on pipeline resumption, the checksum is verified against `baseline.json`. If the metrics have changed (accidental modification, file corruption, or tampering), the pipeline halts with a critical error. Prevents invalid experiment comparisons during long autonomous runs.
+- **Stuck protocol**: In autonomous mode, when 3 consecutive stop recommendations occur, the orchestrator triggers a structured recovery instead of exiting. It reads error patterns, success metrics, dead ends, and the research agenda, then dispatches the research agent with full failure context. If new proposals are found, the loop resumes with `consecutive_stop_count` reset. Triggers once per session (`stuck_protocol_triggered` in pipeline state) to prevent infinite loops. If the protocol finds no new approaches, the loop exits normally.
+- **Research agenda as living document**: `error_tracker.py` maintains `research-agenda.json` — a prioritized list of optimization ideas that evolves over the session. The research skill initializes it from proposals (Phase 5). The analyze skill updates it after each batch: marking ideas as tried/improved/dead-end, adjusting priorities based on evidence, and adding new ideas suggested by experimental results. The hp-tune skill reads it to understand which untried techniques are high-priority. The report skill includes a summary in the final report.
+- **Dead-end catalog**: `error_tracker.py` maintains `dead-ends.json` tracking techniques conclusively shown to be unpromising. The research and hp-tune skills consult this catalog before proposing new techniques, preventing wasted budget on proven dead ends. Fuzzy matching (case-insensitive, substring containment, hyphen/underscore normalization) prevents near-duplicate re-proposals. The analyze skill logs dead ends when branches are pruned or all experiments fail.
 - **Concurrent-safe error logging**: `error_tracker.py` uses `fcntl.flock()` file locking around the read-modify-write in `log_event()` to prevent concurrent agents from losing events.
 - **Result file filtering**: `result_analyzer.py` only loads `exp-*.json` and `baseline.json` files, preventing non-experiment files from inflating counts.
 - **HuggingFace Trainer log format**: `parse_logs.py` detects and parses HuggingFace Trainer's single-quote Python dict format (`{'loss': 0.5, 'epoch': 1.0}`).

@@ -191,6 +191,21 @@ python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '
 python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"analyze","message":"Branch <branch> underperforms baseline across all HP configs","code_branch":"<branch>","context":{"experiments_on_branch":<N>,"best_vs_baseline":"<delta%>"}}'
 ```
 
+## Step 3.2: Log Dead Ends
+
+When a technique is conclusively unpromising, log it to the dead-end catalog so it's never re-proposed:
+
+**When to log a dead end:**
+- A code branch is pruned (>5% worse than baseline across all HP configs)
+- All experiments in a batch diverge or fail after recovery attempt
+- Analyze recommends stop and a specific method showed no improvement after tuning
+
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> dead-end add '{"technique":"<technique_name>","reason":"<why it failed>","branch":"<ml-opt/branch or null>","experiments_tried":<N>,"best_result":{"metric":"<primary_metric>","value":<best_value>,"baseline":<baseline_value>},"source":"analyze"}'
+```
+
+Do not log dead ends for techniques that showed mixed results (some improvement, some regression) — only for those conclusively worse.
+
 ## Step 4: Write Batch Analysis Report
 
 Write to `experiments/reports/batch-<N>-analysis.md`:
@@ -226,6 +241,43 @@ Write to `experiments/reports/batch-<N>-analysis.md`:
 **Reason:** [detailed justification]
 **Next steps:** [if continuing, what to try]
 ```
+
+## Step 4.1: Update Research Agenda
+
+If a research agenda exists (`experiments/reports/research-agenda.json`), update it based on this batch's results:
+
+```bash
+# Check if agenda exists
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> agenda list
+```
+
+For each code branch tested in this batch, find the corresponding agenda item and update it:
+
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> agenda update '<idea_id>' '{"status":"<tried|improved|dead-end>","priority":<new_priority>,"evidence":{"batch":<N>,"result":"<summary of results vs baseline>"},"lessons":"<what was learned>"}'
+```
+
+**Priority adjustment rules:**
+- If improved over baseline: increase priority by 1-2 points, set `status: "improved"`
+- If mixed results (some configs better, some worse): keep priority, set `status: "tried"`, add evidence
+- If conclusively worse (>5% below baseline across all configs): decrease priority to 1, set `status: "dead-end"`, also log to dead-end catalog (Step 3.2)
+
+**Add evidence-suggested ideas:** If the analysis reveals new optimization directions (e.g., LR sensitivity is very high → try cyclical LR), add them:
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> agenda add '{"id":"evidence-<N>","name":"<new idea>","priority":<score>,"source":"experimental_evidence","scope":"training"}'
+```
+
+Skip this step if no agenda file exists (e.g., HP-only optimization without research phase).
+
+## Step 4.2: Time-Budget-Normalized Analysis
+
+If experiments have `time_budget_seconds` set (all experiments ran for the same wall-clock duration):
+- **Direct comparison is valid** — all experiments had equal compute time, so metric deltas reflect true efficiency differences
+- No duration normalization needed
+- **Convergence check:** If many experiments show improving trends at cutoff (metric still decreasing/increasing), recommend a longer time budget in the next iteration
+- Note in the batch report: "All experiments ran with {time_budget}s fixed time budget — metrics are directly comparable"
+
+Skip this step if `time_budget_seconds` is not present in experiment results.
 
 ## Step 5: Update Dev Notes
 

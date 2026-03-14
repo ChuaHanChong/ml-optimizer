@@ -72,8 +72,15 @@ def generate_train_script(
     gpu_id: int = 0,
     log_file: str | None = None,
     env_vars: dict | None = None,
+    time_budget: int | None = None,
 ) -> str:
-    """Generate a bash training script from parameters."""
+    """Generate a bash training script from parameters.
+
+    When *time_budget* is set (seconds), the training command is wrapped
+    with ``timeout --signal=SIGTERM`` so all experiments train for the same
+    wall-clock duration.  Exit code 124 (budget reached) is treated as
+    success, not failure.
+    """
     if log_file is None:
         log_file = f"experiments/logs/{exp_id}/train.log"
 
@@ -94,7 +101,18 @@ def generate_train_script(
 
     # Training command with logging
     lines.append(f"echo {shlex.quote(f'Starting experiment {exp_id} on GPU {gpu_id}')}")
-    lines.append(f"{train_command} 2>&1 | tee {shlex.quote(log_file)}")
+    if time_budget is not None and time_budget > 0:
+        lines.append(f"echo {shlex.quote(f'Time budget: {time_budget}s')}")
+        lines.append(
+            f"timeout --signal=SIGTERM --kill-after=60 {time_budget} "
+            f"{train_command} 2>&1 | tee {shlex.quote(log_file)}"
+        )
+        lines.append("EXIT_CODE=${PIPESTATUS[0]}")
+        lines.append(f"if [ $EXIT_CODE -eq 124 ]; then")
+        lines.append(f"    echo {shlex.quote(f'Time budget reached ({time_budget}s) — training stopped normally')}")
+        lines.append(f"fi")
+    else:
+        lines.append(f"{train_command} 2>&1 | tee {shlex.quote(log_file)}")
     lines.append("")
     lines.append(f"echo {shlex.quote(f'Experiment {exp_id} completed')}")
 

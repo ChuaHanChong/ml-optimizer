@@ -58,6 +58,24 @@ python3 ~/.claude/plugins/ml-optimizer/scripts/result_analyzer.py \
 
 **Branch-aware analysis:** Group past results by `code_branch` field before analysis. Experiments on different code branches should be analyzed separately — HP sensitivities may differ between branches. For example, `lr=0.001` on a perceptual-loss branch may behave very differently from `lr=0.001` on baseline code.
 
+**Check dead-end catalog:** Read techniques that were conclusively shown to be unpromising:
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> dead-end list
+```
+Avoid proposing HP configs for branches/methods listed as dead ends. Focus HP exploration on branches that still show potential.
+
+**Check research agenda:** Read the living research agenda for context on which untried techniques are high-priority:
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> agenda list
+```
+If high-priority untried ideas exist, consider whether HP exploration should focus on branches related to those ideas (to maximize their potential) or on the current best branch.
+
+**Time-budget-aware proposals:** If `fixed_time_budget` is set (all experiments train for the same wall-clock duration):
+- Estimate steps fitting in budget: `estimated_steps = fixed_time_budget × baseline_throughput_steps_per_sec`
+- Propose LR schedules appropriate for that step count (e.g., 1-cycle over estimated_steps)
+- Avoid proposing epoch counts — the time budget controls duration
+- For short budgets (< 120s), avoid slow-convergence schedules (cosine annealing over 100+ epochs)
+
 From this analysis, understand:
 - **Best result so far:** Which config AND branch gave the best metric value?
 - **Worst result:** What should be avoided?

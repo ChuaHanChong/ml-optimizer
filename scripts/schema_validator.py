@@ -21,7 +21,7 @@ EXPERIMENT_RESULT_OPTIONAL = [
     "code_branch", "code_proposal", "notes",
     "method_tier", "proposal_source", "iteration",
     "code_branches", "stacking_order", "stack_base_exp",
-    "artifacts_dir",
+    "artifacts_dir", "time_budget_seconds",
 ]
 VALID_METHOD_TIERS = ["baseline", "method_default_hp", "method_tuned_hp", "stacked_default_hp", "stacked_tuned_hp"]
 VALID_STATUSES = ["completed", "failed", "diverged", "running", "pending", "timeout"]
@@ -39,7 +39,7 @@ PROPOSAL_OPTIONAL = [
     "commit_sha", "notes", "type",
     "implementation_strategy", "reference_repo", "reference_files_used",
     "adaptation_notes", "files_created", "license_warning", "new_dependencies",
-    "proposal_source", "test_file",
+    "proposal_source", "test_file", "explanation", "diff_summary",
 ]
 VALID_PROPOSAL_STATUSES = ["validated", "validation_failed", "implementation_error"]
 VALID_IMPLEMENTATION_STRATEGIES = ["from_scratch", "from_reference"]

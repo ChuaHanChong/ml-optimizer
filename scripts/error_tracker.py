@@ -889,6 +889,294 @@ def cleanup_memory(
 
 
 # ---------------------------------------------------------------------------
+# Dead-end catalog
+# ---------------------------------------------------------------------------
+
+
+def _dead_ends_path(exp_root: str) -> Path:
+    """Return the path to the dead-ends JSON file."""
+    return Path(exp_root) / "reports" / "dead-ends.json"
+
+
+def _dead_ends_md_path(exp_root: str) -> Path:
+    """Return the path to the dead-ends Markdown companion."""
+    return Path(exp_root) / "reports" / "dead-ends.md"
+
+
+def _normalize_technique(name: str) -> str:
+    """Normalize a technique name for fuzzy matching."""
+    return name.lower().strip().replace("-", " ").replace("_", " ")
+
+
+def log_dead_end(exp_root: str, entry: dict) -> str:
+    """Append a dead-end entry. Returns the JSON file path.
+
+    *entry* should contain at minimum ``technique`` and ``reason``.
+    Optional fields: ``branch``, ``experiments_tried``, ``best_result``,
+    ``source``.  ``timestamp`` is auto-added.
+    """
+    path = _dead_ends_path(exp_root)
+    lock_path = path.with_suffix(".lock")
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    entry.setdefault("timestamp", datetime.now(timezone.utc).isoformat())
+    entry.setdefault("source", "unknown")
+
+    with open(lock_path, "w") as lock_fd:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        try:
+            dead_ends = get_dead_ends(exp_root)
+            dead_ends.append(entry)
+            _atomic_write_json(path, {"dead_ends": dead_ends})
+            _generate_dead_ends_md(exp_root, dead_ends)
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+    return str(path)
+
+
+def get_dead_ends(exp_root: str) -> list[dict]:
+    """Return all dead-end entries."""
+    path = _dead_ends_path(exp_root)
+    if not path.is_file():
+        return []
+    try:
+        data = json.loads(path.read_text())
+        return data.get("dead_ends", [])
+    except (json.JSONDecodeError, OSError):
+        return []
+
+
+def is_dead_end(exp_root: str, technique_name: str) -> bool:
+    """Check if a technique is in the dead-end catalog (fuzzy match).
+
+    Matches when the normalized query is a substring of a cataloged
+    technique name, or vice versa.
+    """
+    query = _normalize_technique(technique_name)
+    if not query:
+        return False
+    for entry in get_dead_ends(exp_root):
+        cataloged = _normalize_technique(entry.get("technique", ""))
+        if not cataloged:
+            continue
+        if query in cataloged or cataloged in query:
+            return True
+    return False
+
+
+def _generate_dead_ends_md(exp_root: str, dead_ends: list[dict]) -> None:
+    """Write the human-readable dead-ends.md companion file."""
+    lines = ["# Dead Ends\n", "Techniques that were tried and conclusively failed.\n"]
+    for i, de in enumerate(dead_ends, 1):
+        tech = de.get("technique", "unknown")
+        reason = de.get("reason", "no reason given")
+        branch = de.get("branch", "")
+        tried = de.get("experiments_tried", "?")
+        ts = de.get("timestamp", "")
+        source = de.get("source", "")
+        lines.append(f"## {i}. {tech}\n")
+        lines.append(f"- **Reason**: {reason}")
+        if branch:
+            lines.append(f"- **Branch**: `{branch}`")
+        lines.append(f"- **Experiments tried**: {tried}")
+        if source:
+            lines.append(f"- **Source**: {source}")
+        best = de.get("best_result")
+        if isinstance(best, dict):
+            metric = best.get("metric", "?")
+            val = best.get("value", "?")
+            base = best.get("baseline", "?")
+            lines.append(f"- **Best result**: {metric}={val} (baseline={base})")
+        if ts:
+            lines.append(f"- **Logged**: {ts}")
+        lines.append("")
+    md_path = _dead_ends_md_path(exp_root)
+    md_path.write_text("\n".join(lines))
+
+
+# ---------------------------------------------------------------------------
+# Research agenda
+# ---------------------------------------------------------------------------
+
+
+def _agenda_path(exp_root: str) -> Path:
+    """Return the path to the research agenda JSON file."""
+    return Path(exp_root) / "reports" / "research-agenda.json"
+
+
+def _agenda_md_path(exp_root: str) -> Path:
+    """Return the path to the research agenda Markdown companion."""
+    return Path(exp_root) / "reports" / "research-agenda.md"
+
+
+def init_agenda(exp_root: str, ideas: list[dict]) -> str:
+    """Initialize the research agenda from a list of ideas. Returns JSON path.
+
+    Each idea should have at minimum ``id`` and ``name``.
+    Optional fields: ``priority``, ``source``, ``scope``, ``status``.
+    """
+    path = _agenda_path(exp_root)
+    lock_path = path.with_suffix(".lock")
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    for idea in ideas:
+        idea.setdefault("status", "untried")
+        idea.setdefault("priority", 5.0)
+        idea.setdefault("initial_priority", idea["priority"])
+        idea.setdefault("source", "unknown")
+        idea.setdefault("scope", "training")
+        idea.setdefault("evidence", [])
+        idea.setdefault("lessons", "")
+        idea.setdefault("related_dead_end", None)
+
+    with open(lock_path, "w") as lock_fd:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        try:
+            _atomic_write_json(path, {"ideas": ideas})
+            _generate_agenda_md(exp_root, ideas)
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+    return str(path)
+
+
+def get_agenda(exp_root: str) -> list[dict]:
+    """Return all agenda ideas."""
+    path = _agenda_path(exp_root)
+    if not path.is_file():
+        return []
+    try:
+        data = json.loads(path.read_text())
+        return data.get("ideas", [])
+    except (json.JSONDecodeError, OSError):
+        return []
+
+
+def update_agenda_item(exp_root: str, idea_id: str, updates: dict) -> bool:
+    """Update a single agenda item by id. Returns True if found and updated.
+
+    *updates* can include any fields: ``status``, ``priority``,
+    ``evidence`` (appended, not replaced), ``lessons``,
+    ``related_dead_end``.
+    """
+    path = _agenda_path(exp_root)
+    lock_path = path.with_suffix(".lock")
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(lock_path, "w") as lock_fd:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        try:
+            ideas = get_agenda(exp_root)
+            found = False
+            for idea in ideas:
+                if idea.get("id") == idea_id:
+                    # Append evidence rather than replace (don't mutate caller's dict)
+                    if "evidence" in updates:
+                        existing = idea.get("evidence", [])
+                        new_ev = updates["evidence"]
+                        if isinstance(new_ev, list):
+                            existing.extend(new_ev)
+                        else:
+                            existing.append(new_ev)
+                        idea["evidence"] = existing
+                    # Apply all other fields (skip evidence since it was handled above)
+                    for k, v in updates.items():
+                        if k != "evidence":
+                            idea[k] = v
+                    found = True
+                    break
+            if found:
+                _atomic_write_json(path, {"ideas": ideas})
+                _generate_agenda_md(exp_root, ideas)
+            return found
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+
+
+def add_agenda_idea(exp_root: str, idea: dict) -> str:
+    """Add a new idea to the agenda mid-session. Returns JSON path."""
+    path = _agenda_path(exp_root)
+    lock_path = path.with_suffix(".lock")
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    idea.setdefault("status", "untried")
+    idea.setdefault("priority", 5.0)
+    idea.setdefault("initial_priority", idea["priority"])
+    idea.setdefault("source", "unknown")
+    idea.setdefault("scope", "training")
+    idea.setdefault("evidence", [])
+    idea.setdefault("lessons", "")
+    idea.setdefault("related_dead_end", None)
+
+    with open(lock_path, "w") as lock_fd:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        try:
+            ideas = get_agenda(exp_root)
+            ideas.append(idea)
+            _atomic_write_json(path, {"ideas": ideas})
+            _generate_agenda_md(exp_root, ideas)
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+    return str(path)
+
+
+def _generate_agenda_md(exp_root: str, ideas: list[dict]) -> None:
+    """Write the human-readable research-agenda.md companion file."""
+    active = [i for i in ideas if i.get("status") == "untried"]
+    tried = [i for i in ideas if i.get("status") == "tried"]
+    improved = [i for i in ideas if i.get("status") == "improved"]
+    dead = [i for i in ideas if i.get("status") == "dead-end"]
+
+    active.sort(key=lambda x: x.get("priority", 0), reverse=True)
+
+    lines = ["# Research Agenda\n"]
+
+    if improved:
+        lines.append("## Successful Techniques\n")
+        for idea in improved:
+            lines.append(f"- **{idea.get('name', '?')}** (priority: {idea.get('priority', '?')}, source: {idea.get('source', '?')})")
+            for ev in idea.get("evidence", []):
+                if isinstance(ev, dict):
+                    lines.append(f"  - Batch {ev.get('batch', '?')}: {ev.get('result', '?')}")
+            if idea.get("lessons"):
+                lines.append(f"  - Lesson: {idea['lessons']}")
+        lines.append("")
+
+    if active:
+        lines.append("## Active Ideas (sorted by priority)\n")
+        for idea in active:
+            lines.append(f"- **{idea.get('name', '?')}** (priority: {idea.get('priority', '?')}, source: {idea.get('source', '?')}, scope: {idea.get('scope', '?')})")
+        lines.append("")
+
+    if tried:
+        lines.append("## Tried (mixed or neutral results)\n")
+        for idea in tried:
+            lines.append(f"- **{idea.get('name', '?')}** (priority: {idea.get('priority', '?')})")
+            for ev in idea.get("evidence", []):
+                if isinstance(ev, dict):
+                    lines.append(f"  - Batch {ev.get('batch', '?')}: {ev.get('result', '?')}")
+            if idea.get("lessons"):
+                lines.append(f"  - Lesson: {idea['lessons']}")
+        lines.append("")
+
+    if dead:
+        lines.append("## Dead Ends\n")
+        for idea in dead:
+            lines.append(f"- ~~{idea.get('name', '?')}~~ — {idea.get('lessons', 'no details')}")
+        lines.append("")
+
+    # Lessons learned section
+    all_lessons = [i.get("lessons", "") for i in ideas if i.get("lessons")]
+    if all_lessons:
+        lines.append("## Lessons Learned\n")
+        for lesson in all_lessons:
+            lines.append(f"- {lesson}")
+        lines.append("")
+
+    md_path = _agenda_md_path(exp_root)
+    md_path.write_text("\n".join(lines))
+
+
+# ---------------------------------------------------------------------------
 # Suggestion history / feedback loop
 # ---------------------------------------------------------------------------
 
@@ -938,7 +1226,7 @@ def _cli_main() -> None:
     """CLI entry point."""
     if len(sys.argv) < 3:
         print("Usage: error_tracker.py <exp_root> <action> [args...]", file=sys.stderr)
-        print("Actions: log <event_json>, show [category], patterns, summary, sync <plugin_root>, success <metric> <lower>, proposals <metric> <lower>, rank [total], cleanup <plugin_root> [max_sessions], log-suggestion <pattern_id> [scope], suggestion-history", file=sys.stderr)
+        print("Actions: log <event_json>, show [category], patterns, summary, sync <plugin_root>, success <metric> <lower>, proposals <metric> <lower>, rank [total], cleanup <plugin_root> [max_sessions], log-suggestion <pattern_id> [scope], suggestion-history, dead-end <add|list|check> [args], agenda <init|update|list|add> [args]", file=sys.stderr)
         sys.exit(1)
 
     exp_root = sys.argv[1]
@@ -1055,6 +1343,84 @@ def _cli_main() -> None:
     elif action == "suggestion-history":
         history = get_suggestion_history(exp_root)
         print(json.dumps(history, indent=2))
+
+    elif action == "dead-end":
+        if len(sys.argv) < 4:
+            print("Usage: error_tracker.py <exp_root> dead-end <add|list|check> [args]", file=sys.stderr)
+            sys.exit(1)
+        sub = sys.argv[3]
+        if sub == "add":
+            if len(sys.argv) < 5:
+                print("Usage: error_tracker.py <exp_root> dead-end add <entry_json>", file=sys.stderr)
+                sys.exit(1)
+            try:
+                entry = json.loads(sys.argv[4])
+            except json.JSONDecodeError:
+                print("Error: invalid JSON", file=sys.stderr)
+                sys.exit(1)
+            path = log_dead_end(exp_root, entry)
+            print(json.dumps({"logged": True, "path": path}))
+        elif sub == "list":
+            dead_ends = get_dead_ends(exp_root)
+            print(json.dumps(dead_ends, indent=2))
+        elif sub == "check":
+            if len(sys.argv) < 5:
+                print("Usage: error_tracker.py <exp_root> dead-end check <technique_name>", file=sys.stderr)
+                sys.exit(1)
+            name = sys.argv[4]
+            result = is_dead_end(exp_root, name)
+            print(json.dumps({"technique": name, "is_dead_end": result}))
+        else:
+            print(f"Unknown dead-end sub-action: {sub}", file=sys.stderr)
+            sys.exit(1)
+
+    elif action == "agenda":
+        if len(sys.argv) < 4:
+            print("Usage: error_tracker.py <exp_root> agenda <init|update|list|add> [args]", file=sys.stderr)
+            sys.exit(1)
+        sub = sys.argv[3]
+        if sub == "init":
+            if len(sys.argv) < 5:
+                print("Usage: error_tracker.py <exp_root> agenda init <ideas_json>", file=sys.stderr)
+                sys.exit(1)
+            try:
+                ideas = json.loads(sys.argv[4])
+            except json.JSONDecodeError:
+                print("Error: invalid JSON", file=sys.stderr)
+                sys.exit(1)
+            if not isinstance(ideas, list):
+                ideas = [ideas]
+            path = init_agenda(exp_root, ideas)
+            print(json.dumps({"initialized": True, "count": len(ideas), "path": path}))
+        elif sub == "update":
+            if len(sys.argv) < 6:
+                print("Usage: error_tracker.py <exp_root> agenda update <idea_id> <updates_json>", file=sys.stderr)
+                sys.exit(1)
+            idea_id = sys.argv[4]
+            try:
+                updates = json.loads(sys.argv[5])
+            except json.JSONDecodeError:
+                print("Error: invalid JSON", file=sys.stderr)
+                sys.exit(1)
+            found = update_agenda_item(exp_root, idea_id, updates)
+            print(json.dumps({"updated": found, "idea_id": idea_id}))
+        elif sub == "list":
+            ideas = get_agenda(exp_root)
+            print(json.dumps(ideas, indent=2))
+        elif sub == "add":
+            if len(sys.argv) < 5:
+                print("Usage: error_tracker.py <exp_root> agenda add <idea_json>", file=sys.stderr)
+                sys.exit(1)
+            try:
+                idea = json.loads(sys.argv[4])
+            except json.JSONDecodeError:
+                print("Error: invalid JSON", file=sys.stderr)
+                sys.exit(1)
+            path = add_agenda_idea(exp_root, idea)
+            print(json.dumps({"added": True, "path": path}))
+        else:
+            print(f"Unknown agenda sub-action: {sub}", file=sys.stderr)
+            sys.exit(1)
 
     else:
         print(f"Unknown action: {action}", file=sys.stderr)

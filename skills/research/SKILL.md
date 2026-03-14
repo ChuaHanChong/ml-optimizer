@@ -52,15 +52,19 @@ If the user provided papers or URLs:
    - Assess expected impact
    - Identify risks
 
-## Step 1.1: Check for Existing Research (Deduplication)
+## Step 1.1: Check for Existing Research and Dead Ends (Deduplication)
 
-Before searching, check for existing findings files:
+Before searching, check for existing findings and dead ends:
 
 1. Check `experiments/reports/research-findings.md` (Phase 5 web-based proposals)
 2. Check `experiments/reports/research-findings-method-proposals*.md` (Phase 7 method proposals)
-3. If any exist, read them and extract all previously proposed technique names
-4. When generating new proposals, exclude techniques that were already proposed
-5. This prevents re-proposing the same techniques on subsequent optimization runs
+3. **Check dead-end catalog** — techniques conclusively shown to be unpromising:
+   ```bash
+   python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> dead-end list
+   ```
+4. If any exist, read them and extract all previously proposed technique names AND dead-end technique names
+5. When generating new proposals, exclude techniques that were already proposed OR are in the dead-end catalog
+6. This prevents re-proposing the same techniques and avoids wasting budget on proven dead ends
 
 **Fuzzy matching rules:** When comparing a new technique name against previously proposed names:
 - Normalize both names: lowercase, strip trailing "loss", "function", "scheduler", "strategy", "method", "technique"
@@ -312,6 +316,26 @@ Write to the path specified by `output_path` (default: `experiments/reports/rese
 ## Not Recommended
 - [Technique X]: [Why it's not suitable for this project]
 ```
+
+## Step 5.1: Initialize Research Agenda
+
+After writing the research findings, initialize the research agenda from the proposals. This creates a living document that the analyze skill updates after each batch.
+
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> agenda init '<ideas_json>'
+```
+
+Where `<ideas_json>` is a JSON array of ideas derived from the proposals:
+```json
+[
+  {"id": "proposal-1-slug", "name": "<Proposal 1 name>", "priority": <priority_score>, "source": "<paper|llm_knowledge>", "scope": "<training|architecture|full>"},
+  {"id": "proposal-2-slug", "name": "<Proposal 2 name>", "priority": <priority_score>, "source": "<paper|llm_knowledge>", "scope": "<scope_level>"}
+]
+```
+
+Use the proposal's priority score (from ranking) as the initial priority. The `id` should be a URL-safe slug of the proposal name (lowercase, hyphens, no spaces).
+
+If a research agenda already exists (e.g., mid-loop research), use `agenda add` instead to append new ideas without overwriting the existing ones.
 
 ## Step 6: Summary for Orchestrator
 

@@ -20,6 +20,21 @@ import json; print(json.dumps(validate_phase_requirements(6, '<exp_root>')))
 
 If validation fails, stop and report the missing prerequisites to the user.
 
+## Pre-Loop: Verify Baseline Integrity
+
+Verify the baseline metrics haven't been modified since Phase 3:
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/pipeline_state.py <exp_root> verify-baseline
+```
+
+If exit code is non-zero (baseline checksum mismatch): **HALT the pipeline immediately.** Log to error tracker:
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"config_error","severity":"critical","source":"orchestrate","message":"Baseline integrity check FAILED — metrics may have been modified. Pipeline halted.","phase":7}'
+```
+Report the error to the user. Do NOT continue — all experiment comparisons would be invalid.
+
+If the verification returns a warning (legacy pipeline without checksum): log to dev_notes and continue normally.
+
 ## Pre-Loop: Load Implementation Manifest
 
 If `experiments/results/implementation-manifest.json` exists:
@@ -255,6 +270,10 @@ When the implementation manifest contains multiple code branches:
      ```
    - If `remaining_budget <= max(num_gpus, 1)`: skip speculative hp-tune (not enough budget for another full batch)
    - Analyze completes first (it's synchronous). Speculative hp-tune may still be running.
+   - **Live dashboard update:** After analyze completes, regenerate the dashboard so users can monitor progress in real-time:
+     ```bash
+     python3 ~/.claude/plugins/ml-optimizer/scripts/dashboard.py <exp_root> --live
+     ```
    - **Wait policy:** If analyze says "continue" and speculative hp-tune has not completed, wait up to 120 seconds. If it completes in time, validate and use. If it doesn't, discard and invoke hp-tune synchronously. Log timeout to error tracker with `category: "agent_failure", severity: "info"`.
    - If analyze says "pivot" or "stop", discard speculative hp-tune immediately — do not wait.
 
@@ -276,7 +295,29 @@ When the implementation manifest contains multiple code branches:
    - If analyze says **stop**:
      - Discard speculative proposals.
      - In `"auto"` or `"custom"` mode: exit loop
-     - In `"autonomous"` mode: log the stop recommendation but continue the loop. Only force-stop if analyze recommends stop 3 consecutive times (indicating true convergence, not a one-off plateau). Track via `consecutive_stop_count` in pipeline state: increment on each "stop" recommendation, reset to 0 on "continue" or "pivot". Persist via `save_state()` at the end of each iteration. On pipeline resume, read from state (default 0).
+     - In `"autonomous"` mode: log the stop recommendation but continue the loop. Increment `consecutive_stop_count` in pipeline state (reset to 0 on "continue" or "pivot"). Persist via `save_state()` at the end of each iteration. On pipeline resume, read from state (default 0).
+       - **On 3 consecutive stops → Stuck Protocol** (instead of immediate exit):
+         If `consecutive_stop_count >= 3` AND `stuck_protocol_triggered` is false:
+         1. Set `stuck_protocol_triggered = true` in pipeline state
+         2. Read error patterns: `python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> patterns`
+         3. Read success metrics: `python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> success <primary_metric> <lower_is_better>`
+         4. Read dead-end catalog: `python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> dead-end list`
+         5. Read research agenda: `python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> agenda list`
+         6. Dispatch the research agent with all failure context:
+            ```
+            Agent(
+              description: "Stuck protocol — find new approaches",
+              prompt: "Ultrathink. The optimization is stuck — 3 consecutive batches showed no improvement. Find new approaches that haven't been tried. Parameters: source: both, model_type: {model_type}, task: {task}, current_metrics: {best_metrics}, problem_description: {problem_description}, exp_root: {exp_root}, scope_level: {method_proposal_scope or 'architecture'}. CONTEXT: Error patterns: {patterns}. Success metrics: {success}. Dead ends (DO NOT re-propose): {dead_ends}. Research agenda: {agenda}. Focus on techniques NOT in the dead-end catalog.",
+              subagent_type: "ml-optimizer:research-agent"
+            )
+            ```
+         7. If research returns new proposals (not all deduplicated against dead ends):
+            - Route to step 7 (mid-loop method proposal trigger) for implementation
+            - Reset `consecutive_stop_count` to 0
+            - Log: "Stuck protocol succeeded — {N} new proposals found. Resuming loop."
+            - Continue loop
+         8. If research returns no new proposals: exit loop. Log: "Stuck protocol exhausted — no new proposals found."
+       - **On 3 consecutive stops after stuck protocol already triggered:** Exit loop immediately (prevents infinite recovery loops).
    - **If analyze output is malformed or contains an unexpected action:** Treat as `agent_failure`. Log to error tracker. Retry analyze once with a simplified prompt: "Based on the experiment results, should we continue, pivot, or stop? Respond with exactly one of: continue, pivot, stop." If retry also fails, default to `continue` if remaining_budget > 0, or `stop` if budget exhausted.
    - **Safety limit:** Maximum experiments budget depends on `budget_mode` from Phase 1:
      - `"auto"` (default): `max(num_gpus, 1) × difficulty_multiplier` (easy=8, moderate=15, hard=25)

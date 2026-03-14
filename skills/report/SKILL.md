@@ -47,6 +47,20 @@ If so, read for proposals that were tried.
 Also check for method proposal findings: `experiments/reports/research-findings-method-proposals*.md`.
 If any exist, read them for method proposals that were tried.
 
+### Read research agenda (if applicable)
+Check if `experiments/reports/research-agenda.json` exists:
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> agenda list
+```
+If ideas exist, include a "Research Agenda Summary" section in the report showing: successful techniques, tried-but-neutral, dead ends, and remaining untried ideas.
+
+### Read dead-end catalog (if applicable)
+Check if `experiments/reports/dead-ends.json` exists:
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> dead-end list
+```
+If entries exist, include a "Dead Ends" section listing techniques that were tried and conclusively failed.
+
 ### Read implementation manifest (if applicable)
 Check if `experiments/results/implementation-manifest.json` exists.
 If so, read for: validated proposals, branches, files modified, conflicts.
@@ -200,6 +214,24 @@ Include a reference to this image in the report:
 ```
 
 If matplotlib is not available, skip this step (the ASCII charts provide the same information).
+
+### Excalidraw diagrams
+
+Generate Excalidraw diagrams for interactive exploration:
+
+```bash
+# Pipeline overview
+python3 ~/.claude/plugins/ml-optimizer/scripts/excalidraw_gen.py \
+  <project_root>/experiments pipeline <primary_metric>
+```
+
+If the best result used a code branch (method proposal), also generate an architecture diagram:
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/excalidraw_gen.py \
+  <project_root>/experiments architecture <best_proposal_name>
+```
+
+Reference the generated `.excalidraw` files in the report: users can open them at excalidraw.com for interactive exploration.
 
 ## Step 6: Write the Report
 

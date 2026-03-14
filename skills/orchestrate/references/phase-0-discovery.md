@@ -32,10 +32,11 @@
        - If the metric name doesn't match either list, ask: "Is a lower value of [metric] better (like loss) or is a higher value better (like reward)?"
        Store as `divergence_lower_is_better` in user_choices.
    8. **Optimization type:** Are you optimizing training performance or inference performance? (This plugin focuses on **training** optimization — inference optimization like quantization, pruning, or ONNX conversion is out of scope.)
-   9. **Anything else** I should know about this model or training setup?
-   10. **Dataset location:** Where are your training and validation datasets?
+   9. **Fixed time budget** (optional): Should all experiments train for the same wall-clock duration? (e.g., "60 seconds each" for rapid comparison, or leave blank for default timeout behavior). This makes results directly comparable but may not allow full convergence.
+   10. **Anything else** I should know about this model or training setup?
+   11. **Dataset location:** Where are your training and validation datasets?
        - Directory path(s), or "embedded in code" if the training script downloads/generates data
-   11. **Environment:** Which environment manager do you use?
+   12. **Environment:** Which environment manager do you use?
        - conda (environment name?) / uv / pip / venv / poetry / other
    ```
 

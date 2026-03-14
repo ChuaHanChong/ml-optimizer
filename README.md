@@ -13,6 +13,21 @@ The ml-optimizer plugin understands your ML model, establishes baselines, resear
 - Structured `experiments/` directory in your project
 - User checkpoints after baseline and research; experiment loop is autonomous
 
+### Autonomous Mode Features (Autoresearch-Inspired)
+
+Inspired by [karpathy/autoresearch](https://github.com/karpathy/autoresearch), [autoresearch-gen](https://github.com/liviaellen/autoresearch-gen), and [autosae](https://github.com/alif-munim/autosae):
+
+| Feature | What it does |
+|---------|-------------|
+| **Stuck Protocol** | After 3 consecutive stop recommendations, triggers structured recovery — reads error patterns, dead ends, and research agenda, dispatches research agent for new approaches |
+| **Dead-End Catalog** | Tracks techniques conclusively shown to be unpromising. Research and hp-tune agents consult it before proposing, preventing wasted budget |
+| **Research Agenda** | Living document initialized from proposals, reprioritized after each batch based on experimental evidence |
+| **Progress Dashboard** | Self-contained HTML dashboard with auto-refresh (`--live`), SVG timeline, sortable results, HP sensitivity, method explanations |
+| **Excalidraw Diagrams** | Pipeline overview, experiment comparison, HP landscape, and architecture change diagrams in Excalidraw JSON format |
+| **Immutable Baseline** | SHA-256 checksum of baseline metrics verified before each batch — halts if metrics are modified |
+| **Auto-Repair Loop** | Intra-agent retry (3 attempts) for retryable errors. OOM/SyntaxError not retried |
+| **Fixed Time Budget** | Optional fixed wall-clock duration per experiment for deterministic comparability |
+
 ## Prerequisites
 
 ### Required
@@ -138,7 +153,9 @@ All scripts in `scripts/` use only the standard library and work as both importa
 | `schema_validator.py` | `python3 scripts/schema_validator.py <filepath> result\|baseline\|manifest\|prerequisites` |
 | `plot_results.py` | `python3 scripts/plot_results.py <results_dir> <metric> comparison\|timeline\|sensitivity <hp>\|progress [--higher-is-better]` |
 | `prerequisites_check.py` | `python3 scripts/prerequisites_check.py scan-imports\|check-packages\|detect-env\|detect-format\|detect-format-project\|validate-data\|bulk-install-cmd\|gpu-install-cmd` |
-| `error_tracker.py` | `python3 scripts/error_tracker.py <exp_root> log\|show\|patterns\|summary\|sync\|success\|proposals\|rank\|cleanup\|log-suggestion\|suggestion-history` |
+| `error_tracker.py` | `python3 scripts/error_tracker.py <exp_root> log\|show\|patterns\|summary\|sync\|success\|proposals\|rank\|cleanup\|log-suggestion\|suggestion-history\|dead-end <add\|list\|check>\|agenda <init\|update\|list\|add>` |
+| `dashboard.py` | `python3 scripts/dashboard.py <exp_root> [--live] [--serve --port 8080]` — self-contained HTML dashboard with auto-refresh |
+| `excalidraw_gen.py` | `python3 scripts/excalidraw_gen.py <exp_root> pipeline\|comparison\|hp-landscape\|architecture <args>` — Excalidraw JSON diagrams |
 
 ## Running Tests
 
@@ -158,12 +175,12 @@ Ten subagent types in `agents/`. The orchestrate skill dispatches agents directl
 
 | Agent | Tools | Model | Preloaded Skill |
 |-------|-------|-------|-----------------|
-| `research-agent` | WebSearch, WebFetch, Read, Write, Bash, Glob, Grep, Skill | inherited (ultrathink) | `ml-optimizer:research` |
-| `implement-agent` | Bash, Read, Write, Edit, Glob, Grep, Skill, WebSearch, WebFetch | inherited (ultrathink) | `ml-optimizer:implement` |
-| `tuning-agent` | Read, Write, Bash, Glob, Grep, Skill, WebSearch, WebFetch | inherited (ultrathink) | `ml-optimizer:hp-tune` |
-| `analysis-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | inherited (ultrathink) | `ml-optimizer:analyze` |
-| `report-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | inherited | `ml-optimizer:report` |
-| `review-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | inherited (ultrathink) | `ml-optimizer:review` |
+| `research-agent` | WebSearch, WebFetch, Read, Write, Bash, Glob, Grep, Skill | opus (ultrathink) | `ml-optimizer:research` |
+| `implement-agent` | Bash, Read, Write, Edit, Glob, Grep, Skill, WebSearch, WebFetch | opus (ultrathink) | `ml-optimizer:implement` |
+| `tuning-agent` | Read, Write, Bash, Glob, Grep, Skill, WebSearch, WebFetch | opus (ultrathink) | `ml-optimizer:hp-tune` |
+| `analysis-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | opus (ultrathink) | `ml-optimizer:analyze` |
+| `report-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | opus | `ml-optimizer:report` |
+| `review-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | opus (ultrathink) | `ml-optimizer:review` |
 | `baseline-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | sonnet | `ml-optimizer:baseline` |
 | `monitor-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | sonnet | `ml-optimizer:monitor` |
 | `experiment-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | sonnet | `ml-optimizer:experiment` |

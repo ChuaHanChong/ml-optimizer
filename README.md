@@ -138,7 +138,9 @@ All scripts in `scripts/` use only the standard library and work as both importa
 | `schema_validator.py` | `python3 scripts/schema_validator.py <filepath> result\|baseline\|manifest\|prerequisites` |
 | `plot_results.py` | `python3 scripts/plot_results.py <results_dir> <metric> comparison\|timeline\|sensitivity <hp>\|progress [--higher-is-better]` |
 | `prerequisites_check.py` | `python3 scripts/prerequisites_check.py scan-imports\|check-packages\|detect-env\|detect-format\|detect-format-project\|validate-data\|bulk-install-cmd\|gpu-install-cmd` |
-| `error_tracker.py` | `python3 scripts/error_tracker.py <exp_root> log\|show\|patterns\|summary\|sync\|success\|proposals\|rank\|cleanup\|log-suggestion\|suggestion-history` |
+| `error_tracker.py` | `python3 scripts/error_tracker.py <exp_root> log\|show\|patterns\|summary\|sync\|success\|proposals\|rank\|cleanup\|log-suggestion\|suggestion-history\|dead-end <add\|list\|check>\|agenda <init\|update\|list\|add>` |
+| `dashboard.py` | `python3 scripts/dashboard.py <exp_root> [--live] [--serve --port 8080]` — self-contained HTML dashboard with auto-refresh |
+| `excalidraw_gen.py` | `python3 scripts/excalidraw_gen.py <exp_root> pipeline\|comparison\|hp-landscape\|architecture <args>` — Excalidraw JSON diagrams |
 
 ## Running Tests
 
@@ -158,12 +160,12 @@ Ten subagent types in `agents/`. The orchestrate skill dispatches agents directl
 
 | Agent | Tools | Model | Preloaded Skill |
 |-------|-------|-------|-----------------|
-| `research-agent` | WebSearch, WebFetch, Read, Write, Bash, Glob, Grep, Skill | inherited (ultrathink) | `ml-optimizer:research` |
-| `implement-agent` | Bash, Read, Write, Edit, Glob, Grep, Skill, WebSearch, WebFetch | inherited (ultrathink) | `ml-optimizer:implement` |
-| `tuning-agent` | Read, Write, Bash, Glob, Grep, Skill, WebSearch, WebFetch | inherited (ultrathink) | `ml-optimizer:hp-tune` |
-| `analysis-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | inherited (ultrathink) | `ml-optimizer:analyze` |
-| `report-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | inherited | `ml-optimizer:report` |
-| `review-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | inherited (ultrathink) | `ml-optimizer:review` |
+| `research-agent` | WebSearch, WebFetch, Read, Write, Bash, Glob, Grep, Skill | opus (ultrathink) | `ml-optimizer:research` |
+| `implement-agent` | Bash, Read, Write, Edit, Glob, Grep, Skill, WebSearch, WebFetch | opus (ultrathink) | `ml-optimizer:implement` |
+| `tuning-agent` | Read, Write, Bash, Glob, Grep, Skill, WebSearch, WebFetch | opus (ultrathink) | `ml-optimizer:hp-tune` |
+| `analysis-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | opus (ultrathink) | `ml-optimizer:analyze` |
+| `report-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | opus | `ml-optimizer:report` |
+| `review-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | opus (ultrathink) | `ml-optimizer:review` |
 | `baseline-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | sonnet | `ml-optimizer:baseline` |
 | `monitor-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | sonnet | `ml-optimizer:monitor` |
 | `experiment-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | sonnet | `ml-optimizer:experiment` |

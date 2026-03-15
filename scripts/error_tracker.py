@@ -47,7 +47,8 @@ VALID_SEVERITIES = ["critical", "warning", "info"]
 VALID_SOURCES = [
     "orchestrate", "baseline", "research", "implement",
     "hp-tune", "experiment", "monitor", "analyze", "report", "review",
-    "prerequisites",
+    "prerequisites", "hook:detect-critical-errors", "hook:bash-safety",
+    "hook:file-guardrail", "hook:subagent-stop", "hook:pre-compact",
 ]
 
 # Monotonic counter for unique event IDs within a process

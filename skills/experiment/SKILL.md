@@ -151,6 +151,39 @@ The script must:
 
 Save to: `experiments/scripts/<exp_id>/<exp_id>.sh`
 
+## Step 3.1: Write Placeholder Result
+
+Before starting training, write a placeholder result file so the monitor and `cleanup_stale` can track this experiment:
+
+```json
+{
+  "exp_id": "<exp_id>",
+  "status": "running",
+  "config": <config>,
+  "metrics": {},
+  "gpu_id": <gpu_id>,
+  "log_file": "experiments/logs/<exp_id>/train.log",
+  "script_file": "experiments/scripts/<exp_id>/<exp_id>.sh",
+  "code_branch": "<code_branch or null>",
+  "code_proposal": "<code_proposal or null>",
+  "proposal_source": "<proposal_source or null>",
+  "method_tier": "<method_tier or null>",
+  "iteration": <iteration>,
+  "timestamp": "<ISO 8601 UTC timestamp>",
+  "notes": "Training in progress"
+}
+```
+
+Write to: `experiments/results/<exp_id>.json`
+
+**Why:** This prevents a race condition where the monitor detects divergence and writes a minimal result file (missing metadata like `code_branch`, `method_tier`, `iteration`) before the experiment agent has written anything. With the placeholder, the monitor sees `status: "running"` and updates to `"diverged"` while preserving all metadata fields.
+
+Validate the placeholder:
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/schema_validator.py \
+  experiments/results/<exp_id>.json result
+```
+
 ## Step 4: Execute Training
 
 Run the experiment:
@@ -202,11 +235,13 @@ After training completes:
    python3 ~/.claude/plugins/ml-optimizer/scripts/parse_logs.py experiments/logs/<exp_id>/train.log
    ```
 
-2. If an eval command exists, run evaluation:
+2. **If an eval command was provided, run evaluation** (mandatory — the primary_metric often comes from eval output):
    ```bash
    <eval_command>
    ```
    Parse eval output for final metrics.
+
+   **Worktree experiments:** Evaluation MUST run inside the worktree directory (before `git worktree remove`). Copy model checkpoints/artifacts from the worktree to `experiments/artifacts/<exp_id>/` BEFORE removing the worktree.
 
 3. Extract key metrics:
    - Final loss value
@@ -217,6 +252,8 @@ After training completes:
 4. **Validate required metrics:** Ensure `metrics` includes the `divergence_metric` (for monitor) and `primary_metric` (for analyze/hp-tune). If either is missing from parsed output, check the raw log for alternative names (e.g., `train_loss`, `val_loss`). If a match is found, include it under both the original and canonical name. If not found, set to `null` and log a warning.
 
 ## Step 6: Write Results
+
+**Note:** This overwrites the placeholder result from Step 3.1. If the monitor has already updated the placeholder to `status: "diverged"`, check the current file status first — if the experiment completed successfully despite the monitor's divergence call, use `status: "completed"` (the experiment's own metrics are authoritative).
 
 Write experiment results to `experiments/results/<exp_id>.json`:
 

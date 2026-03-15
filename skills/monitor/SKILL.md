@@ -200,7 +200,7 @@ When `divergence_metric` is a reward metric (`lower_is_better = False`):
 
 ## Error Handling
 
-- **Log file doesn't exist yet:** Wait up to 60 seconds for it to appear, then report error
+- **Log file doesn't exist yet:** Wait up to 60 seconds for it to appear (or 180 seconds if the experiment has a `code_branch` — worktree setup, dataset downloads, and dependency resolution add significant startup time). If the log file still doesn't exist after the wait period, check whether the experiment process is still alive (via PID file at `experiments/logs/<exp_id>/pid`). If the process is alive, extend the wait by another 60 seconds. If the process is dead or no PID file exists, report error immediately.
 - **Log file format unrecognized:** Try all parsers, report if none work
 - **Process already dead:** Check exit code, mark as failed if non-zero
 - **Permission errors:** Report and skip that experiment

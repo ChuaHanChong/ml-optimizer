@@ -72,13 +72,21 @@ set -e
 export CUDA_VISIBLE_DEVICES={gpu_id}
 
 mkdir -p experiments/logs/{exp_id}
+mkdir -p experiments/artifacts/{exp_id}
 echo $$ > experiments/logs/{exp_id}/pid
 
 # Set up isolated worktree for code branch
 git worktree add experiments/worktrees/{exp_id} {code_branch}
 cd experiments/worktrees/{exp_id}
 
+# Training
 {train_command} 2>&1 | tee ../../logs/{exp_id}/train.log
+
+# Copy artifacts out of worktree before cleanup
+cp -r *.pt *.pth *.ckpt *.h5 *.pkl *.safetensors ../../artifacts/{exp_id}/ 2>/dev/null || true
+
+# Evaluation — MUST run inside worktree before cleanup
+{eval_command} 2>&1 | tee ../../logs/{exp_id}/eval.log
 
 # Cleanup worktree
 cd -

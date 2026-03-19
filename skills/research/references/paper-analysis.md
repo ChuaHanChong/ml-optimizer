@@ -25,6 +25,7 @@ For each paper, extract:
   - Quality indicators (stars, recency, official vs community)
   - Relevant files (which files contain the core implementation)
   - Framework (PyTorch, TensorFlow, JAX, etc.)
+  - **Repo exploration:** Use `mcp__alphaxiv__read_files_from_github_repository(githubUrl, path="/")` for structured repo exploration — returns file tree + top-level files in one call. Drill into implementation directories with `path: "src/"` or `path: "models/"`. Falls back to WebFetch on the README URL if alphaxiv is unavailable.
 - **Implementation strategy recommendation:**
   - `from_reference`: Quality repo exists, code is extractable, compatible framework or translatable
   - `from_scratch`: No repo, incompatible framework requiring full rewrite, or repo too entangled to extract
@@ -51,6 +52,8 @@ Be skeptical when:
 - Reference repo uses incompatible framework with deep infrastructure entanglement
 - Reference repo has no license (legal risk for adaptation)
 - Reference repo is >3 years old with deprecated dependencies
+- Paper only available as a preprint with no peer review AND no reference implementation
+- alphaxiv structured summary shows conflicting claims between abstract and results sections
 
 ## Search Strategy
 
@@ -81,6 +84,40 @@ Be skeptical when:
 ### For graph learning improvements:
 - Search: "graph neural network [task] improvement <year>"
 - Look for: message passing alternatives, over-smoothing solutions, graph transformers
+
+## Paper Content Extraction with alphaxiv
+
+When analyzing papers found via any source, use alphaxiv's content tools for efficient extraction:
+
+### For individual paper analysis:
+Use `mcp__alphaxiv__get_paper_content(url)` to get a structured summary (~2000 tokens). This is faster and more LLM-friendly than raw WebFetch. Use `fullText: true` only when the summary lacks implementation details.
+
+### For targeted extraction across multiple papers:
+Use `mcp__alphaxiv__answer_pdf_queries` to ask specific questions about multiple papers simultaneously:
+```
+mcp__alphaxiv__answer_pdf_queries(
+  urls: ["<paper_1_url>", "<paper_2_url>", "<paper_3_url>"],
+  queries: [
+    "What is the core technique and how does it differ from standard approaches?",
+    "What specific code/architecture changes are needed to implement this?",
+    "What hyperparameters does this introduce and what are the recommended ranges?",
+    "What improvement was reported, on which benchmark, and what was the baseline?",
+    "What are the computational overhead and memory requirements?"
+  ]
+)
+```
+This is especially useful when comparing multiple candidate techniques — a single call extracts the same information from all papers.
+
+### For reference repo exploration:
+Use `mcp__alphaxiv__read_files_from_github_repository` to explore paper codebases:
+1. Start with `path: "/"` to get the repo structure and top-level files (README, LICENSE, setup.py)
+2. Drill into the implementation directory (e.g., `path: "models/"` or `path: "src/"`)
+3. Read specific implementation files for core technique code
+
+This replaces the need to clone repos locally for initial assessment. Reserve cloning (via `implement_utils.py clone`) for the implement phase when actual code adaptation happens.
+
+### Fallback:
+If alphaxiv tools are unavailable, use `WebFetch(url)` for paper content and `WebFetch` on GitHub README URLs for repo assessment.
 
 ## Previously Tried Techniques
 

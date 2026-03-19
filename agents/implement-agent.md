@@ -1,7 +1,7 @@
 ---
 name: implement-agent
 description: "Subagent for applying research-proposed code changes to an ML project. Handles branch creation, code editing, progressive validation, and manifest generation."
-tools: "Bash, Read, Write, Edit, Glob, Grep, Skill, WebSearch, WebFetch"
+tools: "Bash, Read, Write, Edit, Glob, Grep, Skill, WebSearch, WebFetch, mcp__alphaxiv__read_files_from_github_repository, mcp__alphaxiv__answer_pdf_queries"
 model: opus
 color: "#EC4899"
 skills:
@@ -45,6 +45,39 @@ When implementing framework-specific changes (e.g., adding a PyTorch scheduler, 
 2. `mcp__plugin_context7_context7__query-docs` — query specific API docs
 
 This prevents errors from incorrect function signatures, deprecated APIs, or wrong parameter names.
+
+## Reference Repo Exploration (alphaxiv)
+
+For `from_reference` proposals, use alphaxiv MCP tools to explore reference repos **before cloning** and to clarify ambiguous implementation details from source papers.
+
+### Structured repo exploration (pre-clone assessment):
+```
+mcp__alphaxiv__read_files_from_github_repository(githubUrl: "https://github.com/org/repo", path: "/")
+```
+Returns the full file tree AND top-level file contents (README, LICENSE, setup.py) in one call. Use to:
+- Verify that `reference_files` from the proposal actually exist in the repo
+- Check the LICENSE file directly (skip if research agent already verified)
+- Understand repo structure before deciding what to clone or read
+- If `reference_files` are wrong or missing, explore directories to find the correct paths:
+  ```
+  mcp__alphaxiv__read_files_from_github_repository(githubUrl: "https://github.com/org/repo", path: "src/models/")
+  ```
+
+**When to skip local cloning:** If the reference code is isolated to 2-3 files and doesn't require running locally, read them directly via alphaxiv instead of cloning the entire repo. This saves time and avoids cleanup.
+
+### Paper clarification (for ambiguous implementation steps):
+```
+mcp__alphaxiv__answer_pdf_queries(
+  urls: ["https://arxiv.org/abs/XXXX.XXXXX"],
+  queries: ["What is the exact formula for the proposed loss function?", "What initialization scheme is used?", "What are the training hyperparameters?"]
+)
+```
+Use when the proposal's implementation steps are unclear and the source paper URL is available.
+
+### Fallback:
+If alphaxiv tools are unavailable, fall back to:
+- `implement_utils.py clone` + `implement_utils.py analyze` for repo exploration
+- `WebFetch` on the paper URL for implementation clarification
 
 ## Your Workflow
 

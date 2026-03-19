@@ -55,15 +55,17 @@ ENTRY POINT
   --------------------------------------------------------------
 
   +-------------------+  Tools: WebSearch, WebFetch, Read, Write, Bash,
-  | research-agent    |  Glob, Grep, Skill
+  | research-agent    |  Glob, Grep, Skill + alphaxiv MCP (6 tools)
   | (ultrathink)      |  Skill: ml-optimizer:research
-  +-------------------+  External: context7, claude-mem:mem-search
+  +-------------------+  External: context7, claude-mem:mem-search,
+                         alphaxiv (search, content, repo)
 
   +-------------------+  Tools: Bash, Read, Write, Edit, Glob, Grep,
-  | implement-agent   |  Skill, WebSearch, WebFetch
+  | implement-agent   |  Skill, WebSearch, WebFetch + alphaxiv MCP (2 tools)
   | (ultrathink)      |  Skill: ml-optimizer:implement
   +-------------------+  External: context7, feature-dev:code-explorer,
-                         superpowers:systematic-debugging
+                         superpowers:systematic-debugging,
+                         alphaxiv (repo reader, PDF Q&A)
 
   +-------------------+  Tools: Read, Write, Bash, Glob, Grep, Skill,
   | tuning-agent      |  WebSearch, WebFetch
@@ -211,9 +213,9 @@ ENTRY POINT
 
     +--------------------------------------------------------------+
     |  Source modes:                                               |
-    |    "web"       — WebSearch + WebFetch only                   |
+    |    "web"       — WebSearch + alphaxiv MCP (parallel)         |
     |    "knowledge" — LLM training knowledge (confidence cap 7/10)|
-    |    "both"      — LLM proposals + web validation              |
+    |    "both"      — LLM proposals + web/alphaxiv validation     |
     |                                                              |
     |  Scope levels:                                               |
     |    "training"      — HPs, schedulers, augmentation (safest)  |
@@ -548,7 +550,8 @@ ENTRY POINT
   Agent preloads:    agent --skills: [ml-optimizer:<skill>]--> skill instructions
   User interaction:  [User]  <--->  [Orchestrator]
   Conditional:       (condition) ---> branch
-  External skill:    context7, claude-mem, feature-dev, superpowers
+  External skill:    context7, claude-mem, feature-dev, superpowers, alphaxiv
+  MCP servers:       alphaxiv (paper search/analysis), claude-mem (cross-session memory)
   Data flow:         Reads: <file>  |  Writes: <file>
 
   Analytical agents (ultrathink): Extended reasoning, model: opus

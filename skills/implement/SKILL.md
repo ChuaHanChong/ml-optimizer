@@ -184,6 +184,27 @@ Check the proposal's `implementation_strategy` field and follow the appropriate 
 
 Follow `references/implementation-patterns.md` Section 9.
 
+0. **Pre-clone exploration (alphaxiv):**
+
+   Before cloning, use alphaxiv to explore the repo remotely:
+   ```
+   mcp__alphaxiv__read_files_from_github_repository(githubUrl: "<reference_repo_url>", path: "/")
+   ```
+   This returns the file tree + top-level files (README, LICENSE) in one call. Use it to:
+   - **Verify `reference_files`** from the proposal actually exist. If they don't, explore directories to find the correct paths.
+   - **Check LICENSE** directly. If restrictive or missing, set `license_warning` immediately.
+   - **Assess scope**: If the relevant code is in 2-3 files with no complex internal dependencies, read them directly via alphaxiv and skip local cloning entirely.
+
+   If the proposal's implementation steps are ambiguous and a source paper URL is available, clarify with:
+   ```
+   mcp__alphaxiv__answer_pdf_queries(
+     urls: ["<source_paper_url>"],
+     queries: ["What is the exact implementation of the proposed technique?", "What hyperparameters are introduced and what are the defaults?"]
+   )
+   ```
+
+   **Fallback:** If alphaxiv is unavailable, proceed directly to step 1 (local cloning).
+
 1. **Clone reference repo:**
    ```bash
    python3 ~/.claude/plugins/ml-optimizer/scripts/implement_utils.py clone <reference_repo_url> experiments/reference-repos/<slug>

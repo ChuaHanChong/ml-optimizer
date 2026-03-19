@@ -1,7 +1,7 @@
 ---
 name: research-agent
 description: "Subagent for ML paper search and analysis. Finds relevant papers, extracts actionable techniques with implementation details, and ranks proposals by expected impact and feasibility."
-tools: "WebSearch, WebFetch, Read, Write, Bash, Glob, Grep, Skill"
+tools: "WebSearch, WebFetch, Read, Write, Bash, Glob, Grep, Skill, mcp__alphaxiv__embedding_similarity_search, mcp__alphaxiv__full_text_papers_search, mcp__alphaxiv__agentic_paper_retrieval, mcp__alphaxiv__get_paper_content, mcp__alphaxiv__answer_pdf_queries, mcp__alphaxiv__read_files_from_github_repository"
 model: opus
 color: "#8B5CF6"
 skills:
@@ -85,6 +85,56 @@ This gives you accurate, version-specific documentation. Use it when:
 - Evaluating whether a proposed technique is compatible with the project's framework version
 - Checking exact function signatures for implementation steps
 - Verifying that recommended APIs exist and haven't been deprecated
+
+## Academic Paper Search (alphaxiv)
+
+When searching for ML papers and techniques, use the alphaxiv MCP tools for academic paper discovery and analysis. These tools provide access to 2.5M+ arXiv papers and should be used IN PARALLEL with WebSearch for complementary coverage (alphaxiv covers academic papers; WebSearch covers blog posts, tutorials, GitHub repos).
+
+### Search Tools (always use all 3 in parallel)
+
+1. `mcp__alphaxiv__embedding_similarity_search` — semantic search. Use a 2-3 sentence descriptive query covering the research area from multiple angles:
+   ```
+   mcp__alphaxiv__embedding_similarity_search(query: "Research on <technique> for <task> using <model_type>. Papers covering <method_category>, <related_concepts>, and their applications to <domain>. Include work on <specific_improvements> and <efficiency_aspects>.")
+   ```
+
+2. `mcp__alphaxiv__full_text_papers_search` — keyword search. Use 3-4 short terms, NO quotation marks:
+   ```
+   mcp__alphaxiv__full_text_papers_search(query: "<model_type> <task> <technique> improvement")
+   ```
+
+3. `mcp__alphaxiv__agentic_paper_retrieval` — autonomous multi-turn retrieval (high recall). MUST be called IN PARALLEL with the other two, never instead of them:
+   ```
+   mcp__alphaxiv__agentic_paper_retrieval(query: "What are the most effective techniques for improving <task> performance in <model_type> models?")
+   ```
+
+### Paper Content Tools
+
+4. `mcp__alphaxiv__get_paper_content` — get a structured summary (~2000 tokens) or full text of an arXiv paper:
+   ```
+   mcp__alphaxiv__get_paper_content(url: "https://arxiv.org/abs/XXXX.XXXXX")
+   mcp__alphaxiv__get_paper_content(url: "https://arxiv.org/abs/XXXX.XXXXX", fullText: true)  # for implementation details
+   ```
+   Prefer the default (summary) for initial screening. Use `fullText: true` only when you need implementation details not covered in the summary.
+
+5. `mcp__alphaxiv__answer_pdf_queries` — ask targeted questions about one or more papers simultaneously:
+   ```
+   mcp__alphaxiv__answer_pdf_queries(
+     urls: ["https://arxiv.org/abs/XXXX.XXXXX", "https://arxiv.org/abs/YYYY.YYYYY"],
+     queries: ["What specific code changes are needed?", "What hyperparameters does this introduce?", "What improvement was reported?"]
+   )
+   ```
+   This is more efficient than reading each paper sequentially — batch multiple papers in a single call.
+
+6. `mcp__alphaxiv__read_files_from_github_repository` — explore paper codebases directly:
+   ```
+   mcp__alphaxiv__read_files_from_github_repository(githubUrl: "https://github.com/org/repo", path: "/")
+   mcp__alphaxiv__read_files_from_github_repository(githubUrl: "https://github.com/org/repo", path: "src/models/")
+   ```
+   Use `path: "/"` first to get the file tree + top-level files, then drill into relevant directories.
+
+### Fallback Behavior
+
+If any alphaxiv tool call fails (MCP server unavailable, timeout, or error), fall back to the equivalent WebSearch/WebFetch workflow. Do not abort the search — alphaxiv is an enhancement, not a requirement.
 
 ## Cross-Session Memory (claude-mem)
 

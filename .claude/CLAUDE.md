@@ -24,6 +24,16 @@ python -m pytest tests/test_parse_logs.py::test_name -v  # single test
 
 No build step. No linter configured. Python 3.10+ required. The `scripts/` directory uses only the Python standard library (except `plot_results.py` which requires matplotlib for chart generation).
 
+## MCP Server Dependencies (Recommended)
+
+| MCP Server | Purpose | Used by | Required? |
+|------------|---------|---------|-----------|
+| **alphaxiv** (`api.alphaxiv.org/mcp/v1`) | Academic paper search (2.5M+ arXiv papers), paper content extraction, PDF Q&A, GitHub repo exploration | research-agent (6 tools), implement-agent (2 tools) | No — falls back to WebSearch/WebFetch |
+| **claude-mem** | Cross-session memory — recalls past optimization sessions, avoids re-proposing failed techniques | research-agent, orchestrator (Phase 1) | No — works without but loses cross-session learning |
+| **context7** | Framework API documentation lookup (PyTorch, TensorFlow, etc.) | research-agent, implement-agent | No — falls back to WebSearch |
+
+The plugin works without any MCP servers but benefits significantly from alphaxiv (better paper discovery and analysis) and claude-mem (learning across optimization sessions).
+
 ## Architecture
 
 ### Plugin Structure
@@ -85,16 +95,16 @@ Ten subagent types, each with a preloaded skill and specified tool access. The o
 - **prerequisites-agent**: Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:prerequisites]`
 
 **Analytical agents** (`model: opus`, ultrathink prompting):
-- **research-agent**: WebSearch, WebFetch, Read, Write, Bash, Glob, Grep, Skill — skills: `[ml-optimizer:research, claude-mem:mem-search]`
+- **research-agent**: WebSearch, WebFetch, Read, Write, Bash, Glob, Grep, Skill, alphaxiv MCP tools (6) — skills: `[ml-optimizer:research, claude-mem:mem-search]`
 - **tuning-agent**: Read, Write, Bash, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:hp-tune]`
-- **implement-agent**: Bash, Read, Write, Edit, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:implement, superpowers:systematic-debugging]`
+- **implement-agent**: Bash, Read, Write, Edit, Glob, Grep, Skill, WebSearch, WebFetch, alphaxiv MCP tools (2: repo reader, PDF Q&A) — skills: `[ml-optimizer:implement, superpowers:systematic-debugging]`
 - **analysis-agent**: Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:analyze]`
 - **report-agent**: Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:report]`
 - **review-agent**: Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:review]`
 
 For parallel execution, use `run_in_background: true`. External skills are also available:
-- **research-agent**: Uses `context7` for framework API docs, `claude-mem:mem-search` for cross-session learning
-- **implement-agent**: Uses `context7` for API docs, `feature-dev:code-explorer` for codebase analysis, `superpowers:systematic-debugging` for error recovery
+- **research-agent**: Uses `context7` for framework API docs, `claude-mem:mem-search` for cross-session learning, `alphaxiv` MCP for academic paper search/analysis (6 tools: embedding search, full-text search, agentic retrieval, paper content, PDF Q&A, GitHub repo reader)
+- **implement-agent**: Uses `context7` for API docs, `feature-dev:code-explorer` for codebase analysis, `superpowers:systematic-debugging` for error recovery, `alphaxiv` MCP for reference repo exploration (`read_files_from_github_repository`) and paper clarification (`answer_pdf_queries`)
 - **orchestrator**: Uses `claude-mem:mem-search` in Phase 1 for cross-session recall, `feature-dev:code-reviewer` in Phase 6 for post-implementation quality review
 
 ### Python Scripts (`scripts/`)
@@ -182,12 +192,13 @@ The orchestrator can be stopped and resumed. On restart it reads `pipeline-state
 - **Research skill modes**: The research skill accepts `source` (`"web"` | `"knowledge"` | `"both"`), `scope_level` (`"training"` | `"architecture"` | `"full"`), and `output_path` parameters. Knowledge mode skips web search and uses LLM training knowledge only.
 - **Autonomous mode auto-skip**: When `budget_mode == "autonomous"`, all user checkpoints after Phase 0 are auto-resolved (Phase 1 plan → auto-approve, Phase 2 partial prereqs → proceed, Phase 4 direction → method proposals, Phase 5 proposal selection → all proposals, Phase 6 dependencies → auto-install, license warnings → auto-accept, Phase 7 mid-loop scope/proposals → use stored scope + accept all, RL polarity → auto-infer, Phase 9 self-review → auto-run). Only unrecoverable errors (Phase 2 failed) still block. Phase 3 unknown errors exit with partial results in autonomous mode. Decisions are logged to dev_notes and error tracker for post-session review. The implement skill auto-stashes dirty working trees, and the prerequisites skill auto-resolves format/env mismatches.
 - **Speculative hp-tune**: In Phase 7, the orchestrator starts a background hp-tune call in parallel with analyze. If analyze says "continue" and proposals pass validation (no pruned branches, within budget, no duplicates), the proposals are used immediately — eliminating 30-60s of GPU idle time per batch. If analyze says stop/pivot, speculative proposals are discarded.
-- **Parallel research**: All WebSearch calls in the research skill are issued simultaneously in a single tool-call message. WebFetch follow-ups for different URLs are also parallelized. Domain-specific query sets (NLP, CV, RL, time-series) are issued alongside generic queries.
+- **Parallel research**: All WebSearch calls in the research skill are issued simultaneously in a single tool-call message, alongside 3 alphaxiv search calls (embedding similarity, full-text keyword, agentic retrieval). WebFetch follow-ups for different URLs are also parallelized. Domain-specific query sets (NLP, CV, RL, time-series) are issued alongside generic queries. If alphaxiv MCP is unavailable, WebSearch provides full coverage as fallback.
 - **Parallel implementation**: When using git branch strategy with multiple proposals, each proposal is implemented in a separate git worktree via parallel Agent dispatches. File-backup strategy remains sequential.
 - **Async mid-pipeline review**: In autonomous mode, mid-pipeline review runs in the background while the next experiment batch starts. Suggestions are applied one batch late — acceptable trade-off vs blocking the pipeline.
 - **Configurable divergence thresholds**: `detect_divergence.py` supports per-model-category threshold overrides via `MODEL_CATEGORY_DEFAULTS` dict and `--model-category` CLI flag. RL models use `explosion_threshold=20.0, plateau_patience=50` (prevents false positives on reward spikes). Generative models use `explosion_threshold=10.0, plateau_patience=40` (accommodates slow convergence). Individual thresholds can also be overridden via `--explosion-threshold` and `--plateau-patience` CLI flags.
 - **Experiment timeout**: Each experiment has a hard timeout of `baseline_training_time * 3` (fallback: 6 hours). Timed-out experiments are killed and marked `status: "timeout"`.
-- **Research failure recovery**: If web search fails, the orchestrator retries with `source: "knowledge"` (LLM-only). If that also fails, it continues with HP-only optimization. Each fallback is logged.
+- **Research failure recovery**: If web search fails (both WebSearch and alphaxiv), the orchestrator retries with `source: "knowledge"` (LLM-only). If that also fails, it continues with HP-only optimization. Each fallback is logged. Within a search, alphaxiv failure alone does not trigger the knowledge fallback — WebSearch results are sufficient to proceed.
+- **alphaxiv MCP integration**: The research agent uses all 6 alphaxiv MCP tools for academic paper discovery (3 search tools run in parallel), paper content extraction (`get_paper_content`, `answer_pdf_queries`), and reference repo exploration (`read_files_from_github_repository`). The implement agent uses 2 alphaxiv tools (`read_files_from_github_repository` for pre-clone repo assessment, `answer_pdf_queries` for clarifying ambiguous implementation steps from source papers). All alphaxiv searches run in parallel with WebSearch. alphaxiv is optional — if the MCP server is unavailable, all workflows fall back to WebSearch/WebFetch transparently.
 - **OOM feedback loop**: When experiments OOM, the batch size is recorded in the error tracker. On the next hp-tune invocation, `max_batch_size` is passed to prevent re-proposing configs that will OOM.
 - **All-diverge recovery**: If all experiments in a batch diverge, a recovery batch with halved learning rates is attempted before stopping.
 - **HP-only research routing**: Research proposals with `type: "hp_only"` skip the implement skill and are routed directly to hp-tune as search space modifications.
@@ -200,6 +211,7 @@ The orchestrator can be stopped and resumed. On restart it reads `pipeline-state
 - **Dead-end catalog**: `error_tracker.py` maintains `dead-ends.json` tracking techniques conclusively shown to be unpromising. The research and hp-tune skills consult this catalog before proposing new techniques, preventing wasted budget on proven dead ends. Fuzzy matching (case-insensitive, substring containment, hyphen/underscore normalization) prevents near-duplicate re-proposals. The analyze skill logs dead ends when branches are pruned or all experiments fail.
 - **Concurrent-safe error logging**: `error_tracker.py` uses `fcntl.flock()` file locking around the read-modify-write in `log_event()` to prevent concurrent agents from losing events.
 - **Result file filtering**: `result_analyzer.py` only loads `exp-*.json` and `baseline.json` files, preventing non-experiment files from inflating counts.
+- **alphaxiv query format differences**: `embedding_similarity_search` expects 2-3 descriptive sentences, `full_text_papers_search` expects 3-4 short keywords (no quotes), and `agentic_paper_retrieval` expects a natural language question. Using the wrong format degrades result quality. All 3 must be called in parallel per alphaxiv documentation.
 - **HuggingFace Trainer log format**: `parse_logs.py` detects and parses HuggingFace Trainer's single-quote Python dict format (`{'loss': 0.5, 'epoch': 1.0}`).
 - **Baseline eval auto-fallback**: In autonomous mode, if no eval command is found, baseline uses training output metrics instead of blocking on user input.
 - **Pre-flight file validation**: The implement skill validates all `files_to_modify` exist before creating branches or starting implementation. Missing-file proposals are marked `preflight_failed`.

@@ -8,7 +8,7 @@ The ml-optimizer plugin understands your ML model, establishes baselines, resear
 
 **Key design decisions:**
 - LLM-driven hyperparameter tuning (Claude reasons about results — no Optuna/grid search)
-- Research via web search + user-provided papers
+- Research via web search + alphaxiv academic paper search + user-provided papers
 - Log file polling for divergence monitoring
 - Structured `experiments/` directory in your project
 - User checkpoints after baseline and research; experiment loop is autonomous
@@ -47,13 +47,25 @@ pip install pyyaml              # YAML config parsing (has fallback if missing)
 
 The plugin's orchestration scripts (`scripts/`) use **only the Python standard library**, so they work regardless of your ML framework.
 
+### MCP Servers (Recommended)
+
+These MCP servers enhance the plugin's capabilities. The plugin works without them but benefits significantly from their presence:
+
+| MCP Server | What it enables | Used by |
+|------------|-----------------|---------|
+| **alphaxiv** (`api.alphaxiv.org/mcp/v1`) | Academic paper search (2.5M+ arXiv papers), paper content extraction, PDF Q&A, GitHub repo exploration | research-agent (6 tools), implement-agent (2 tools) |
+| **claude-mem** | Cross-session memory — recalls past optimization sessions, avoids re-proposing failed techniques | research-agent, orchestrator |
+
+To connect alphaxiv: Use `/mcp` in Claude Code and add the alphaxiv SSE endpoint with OAuth authentication.
+To connect claude-mem: Install the claude-mem plugin which provides the MCP server automatically.
+
 ### Optional
 
 | Dependency | What it enables |
 |------------|-----------------|
 | NVIDIA GPU + drivers | GPU profiling via `nvidia-smi`, parallel experiments |
 | `pytest` | Running the plugin's test suite (`pip install pytest`) |
-| Web search access | Research skill fetches recent papers and techniques |
+| Web search access | Research skill fetches recent papers and techniques (fallback when alphaxiv unavailable) |
 
 ### Environment Variables
 
@@ -98,7 +110,7 @@ Only `orchestrate` is directly invocable. All other skills have `disable-model-i
 2. Prerequisites (validate dataset, prepare data, install deps)
 3. Establish baseline
 4. User checkpoint: review baseline, choose direction
-5. Research (web search + LLM knowledge for techniques)
+5. Research (alphaxiv + web search + LLM knowledge for techniques)
 6. Implement proposals (creates git branches, applies + validates code changes)
 7. Experiment loop (autonomous, branch-aware):
    a. hp-tune proposes configs (or uses speculative proposals from prior batch)
@@ -175,8 +187,8 @@ Ten subagent types in `agents/`. The orchestrate skill dispatches agents directl
 
 | Agent | Tools | Model | Preloaded Skill |
 |-------|-------|-------|-----------------|
-| `research-agent` | WebSearch, WebFetch, Read, Write, Bash, Glob, Grep, Skill | opus (ultrathink) | `ml-optimizer:research` |
-| `implement-agent` | Bash, Read, Write, Edit, Glob, Grep, Skill, WebSearch, WebFetch | opus (ultrathink) | `ml-optimizer:implement` |
+| `research-agent` | WebSearch, WebFetch, Read, Write, Bash, Glob, Grep, Skill + alphaxiv MCP (6) | opus (ultrathink) | `ml-optimizer:research` |
+| `implement-agent` | Bash, Read, Write, Edit, Glob, Grep, Skill, WebSearch, WebFetch + alphaxiv MCP (2) | opus (ultrathink) | `ml-optimizer:implement` |
 | `tuning-agent` | Read, Write, Bash, Glob, Grep, Skill, WebSearch, WebFetch | opus (ultrathink) | `ml-optimizer:hp-tune` |
 | `analysis-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | opus (ultrathink) | `ml-optimizer:analyze` |
 | `report-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | opus | `ml-optimizer:report` |

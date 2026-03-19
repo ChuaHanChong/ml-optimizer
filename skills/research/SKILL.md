@@ -39,10 +39,17 @@ From the orchestrator:
 
 If the user provided papers or URLs:
 
-1. For each URL, use WebFetch to retrieve the content:
-   ```
-   WebFetch(url: "<paper_url>")
-   ```
+1. For each URL, retrieve the content using the most appropriate tool:
+   - **arXiv/alphaXiv URLs** (contains `arxiv.org` or `alphaxiv.org`): Use `mcp__alphaxiv__get_paper_content` for a structured summary:
+     ```
+     mcp__alphaxiv__get_paper_content(url: "<paper_url>")
+     ```
+     If the summary lacks implementation details, follow up with `fullText: true` or use `mcp__alphaxiv__answer_pdf_queries` with targeted questions.
+   - **Other URLs** (blog posts, conference pages, non-arXiv PDFs): Use WebFetch:
+     ```
+     WebFetch(url: "<paper_url>")
+     ```
+   - **If alphaxiv tool fails on an arXiv URL:** Fall back to `WebFetch(url: "<paper_url>")`.
 
 2. For local files, use Read to read them
 
@@ -108,6 +115,56 @@ Construct targeted searches based on the model type and task:
    ```
 
 Issue all applicable searches simultaneously in a single message. After all parallel searches return, process results from each. For each promising result, use WebFetch to get more details — WebFetch calls for different URLs can also be issued in parallel.
+
+### alphaxiv academic paper searches (run IN PARALLEL with WebSearch queries above)
+
+**Additionally, issue the following 3 alphaxiv searches in the SAME parallel batch as the WebSearch calls above.** These provide academic paper coverage complementary to WebSearch's blog/tutorial/GitHub coverage.
+
+**a. Semantic search** (2-3 sentence descriptive query):
+```
+mcp__alphaxiv__embedding_similarity_search(query: "Research on improving <task> performance for <model_type> models. Papers covering <relevant_techniques>, <training_strategies>, and optimization methods for <domain>. Include recent work on <specific_improvement_areas> and efficiency improvements.")
+```
+
+**b. Keyword search** (3-4 short terms, no quotes):
+```
+mcp__alphaxiv__full_text_papers_search(query: "<model_type> <task> optimization improvement")
+```
+
+**c. Agentic retrieval** (natural language question, high recall — MUST run in parallel with a and b, never alone):
+```
+mcp__alphaxiv__agentic_paper_retrieval(query: "What are the most effective recent techniques for improving <task> performance in <model_type> models, including <relevant_categories>?")
+```
+
+**Fallback:** If ALL alphaxiv searches fail (MCP unavailable), proceed with WebSearch results only. Log the failure:
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"research_failure","severity":"warning","source":"research","message":"alphaxiv MCP unavailable — proceeding with WebSearch only","phase":5,"context":{"tool":"alphaxiv"}}'
+```
+
+**Deduplication across sources:** After all parallel searches return, merge results. Remove duplicates by matching paper titles (case-insensitive, strip leading "a/an/the"). Prefer alphaxiv results when the same paper appears in both (alphaxiv provides structured content access). Retain unique WebSearch results (blog posts, tutorials, GitHub repos that alphaxiv wouldn't find).
+
+### alphaxiv Use Case Workflows
+
+Apply the appropriate workflow based on the research context:
+
+**1. Comprehensive Paper Search (default):** The parallel search pattern above. Each tool covers different blind spots — embedding search for conceptual/semantic matches, full-text search for exact keyword hits, agentic retrieval for autonomous cross-angle exploration. This is the default for all `source: "web"` or `"both"` invocations.
+
+**2. Deep Research** — when initial results are thin (fewer than 3 actionable papers):
+- After the initial parallel search, re-run `mcp__alphaxiv__embedding_similarity_search` and `mcp__alphaxiv__full_text_papers_search` with **different query angles** (broader terms, related techniques, adjacent domains, different terminology)
+- Use `mcp__alphaxiv__get_paper_content` to deep-read the most promising papers found
+- Use `mcp__alphaxiv__read_files_from_github_repository` to verify implementations exist and are viable
+- This ensures holistic coverage even for niche or emerging topics
+
+**3. Literature Review** — when the task needs broad coverage across multiple related techniques:
+- Run the initial parallel search
+- Re-run `embedding_similarity_search` and `full_text_papers_search` with varied/refined queries to fill gaps (e.g., search for each technique category separately)
+- Use `mcp__alphaxiv__answer_pdf_queries` to batch-extract key information from all found papers in a single call (more efficient than reading each paper separately)
+- Synthesize findings across papers to identify common patterns, contradictions, and consensus
+
+**4. Code Analysis** — when evaluating `from_reference` proposals (see also Step 3 sub-step 4):
+- Locate the paper via search tools
+- Extract the GitHub URL from search results or paper content
+- Use `mcp__alphaxiv__read_files_from_github_repository(githubUrl, path: "/")` to explore repo structure
+- Drill into implementation directories to identify core files and assess code quality
 
 ### Tabular ML search queries (for scikit-learn, XGBoost, LightGBM)
 
@@ -225,7 +282,23 @@ Run Steps 1-3 (web search) first, then supplement with knowledge-based proposals
 
 For each relevant paper or technique found:
 
-1. Read the abstract and key results
+1. **Get paper content:**
+   - **If the paper has an arXiv URL** (from alphaxiv search results or WebSearch): Use `mcp__alphaxiv__get_paper_content` for the structured summary first. If you need deeper implementation details, use `mcp__alphaxiv__answer_pdf_queries` with targeted questions:
+     ```
+     mcp__alphaxiv__answer_pdf_queries(
+       urls: ["https://arxiv.org/abs/XXXX.XXXXX"],
+       queries: [
+         "What specific model changes does this paper propose?",
+         "What are the key hyperparameters and their recommended values?",
+         "What improvement was reported, on which benchmark, and what was the baseline?",
+         "What are the computational costs compared to the baseline?"
+       ]
+     )
+     ```
+   - **For batch analysis** of multiple papers: Pass multiple URLs to a single `mcp__alphaxiv__answer_pdf_queries` call for efficiency.
+   - **If paper has no arXiv URL** (blog post, conference page): Use `WebFetch` as before.
+   - **If alphaxiv tool fails:** Fall back to `WebFetch(url: "<paper_url>")`.
+
 2. Apply the extraction framework:
    - What is the technique?
    - What specifically needs to change in the code?
@@ -241,10 +314,23 @@ For each relevant paper or technique found:
 4. Search for reference implementations:
    - Check if the paper links to a code repository
    - Search: `WebSearch(query: "<paper_title> github implementation")`
-   - If a repo is found, use WebFetch on the README to verify relevance and quality
-   - Identify which source files contain the core implementation
-   - Check the license (prefer permissive: MIT, Apache, BSD)
-   - Decide strategy: `from_reference` if a quality repo exists (>10 stars or official, updated within 2 years, permissive license), otherwise `from_scratch`
+   - If a GitHub repo is found:
+     a. **Explore with alphaxiv first** (structured, efficient):
+        ```
+        mcp__alphaxiv__read_files_from_github_repository(githubUrl: "https://github.com/org/repo", path: "/")
+        ```
+        This returns the full file tree AND top-level file contents (README, LICENSE, setup.py) in one call. Use it to:
+        - Read the README for relevance and quality indicators
+        - Check the LICENSE file directly (prefer permissive: MIT, Apache, BSD)
+        - Identify which source directories contain the core implementation
+     b. **Drill into relevant directories:**
+        ```
+        mcp__alphaxiv__read_files_from_github_repository(githubUrl: "https://github.com/org/repo", path: "src/models/")
+        ```
+        Read the directory containing the core implementation — fetches all files in the directory in parallel.
+     c. **Fallback:** If `read_files_from_github_repository` fails, fall back to `WebFetch` on the repo's README URL.
+   - Apply the repo quality gate: >10 stars or official, updated within 2 years, permissive license
+   - Decide strategy: `from_reference` if quality gate passes, otherwise `from_scratch`
 
 ## Step 4: Rank Proposals
 
@@ -280,9 +366,12 @@ Write to the path specified by `output_path` (default: `experiments/reports/rese
 [Baseline metrics]
 
 ## Sources Consulted
-- [Paper/URL 1]: [Key takeaway]
-- [Paper/URL 2]: [Key takeaway]
+- [Paper/URL 1]: [Key takeaway] *(alphaxiv)*
+- [Paper/URL 2]: [Key takeaway] *(WebSearch)*
+- [Paper/URL 3]: [Key takeaway] *(user)*
 - ...
+
+Note: Mark each source with its discovery channel — `(alphaxiv)` for papers found via alphaxiv tools, `(WebSearch)` for papers found via web search, `(user)` for user-provided papers.
 
 ## Proposals (Ranked by Priority)
 
@@ -361,6 +450,11 @@ Return:
 - **Paper behind paywall:** Note the limitation, extract what's available from abstract
 - **No relevant results:** Broaden search terms, try related tasks/model types
 - **Contradictory findings:** Note both perspectives, let the user decide
+- **alphaxiv MCP unavailable:** Proceed with WebSearch/WebFetch only. Log to error tracker with severity "warning". This is expected when the alphaxiv MCP server is not installed or not running.
+- **alphaxiv search returns no results:** Rely on WebSearch results for that query. Do NOT retry the same query with alphaxiv — move on.
+- **`get_paper_content` fails on a valid arXiv URL:** Fall back to `WebFetch(url: "<arxiv_url>")`.
+- **`read_files_from_github_repository` fails:** Fall back to `WebFetch` on the repo's README URL.
+- **`answer_pdf_queries` times out:** Fall back to `get_paper_content(fullText: true)` and extract answers manually from the full text.
 
 ## Error Tracking
 
@@ -384,4 +478,9 @@ python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '
 ### When a paper is behind a paywall (info only):
 ```bash
 python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"research_failure","severity":"info","source":"research","message":"Paper behind paywall, only abstract available: <title>","phase":5,"context":{"paper_title":"<title>"}}'
+```
+
+### When alphaxiv MCP tools are unavailable (all alphaxiv searches fail):
+```bash
+python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"research_failure","severity":"warning","source":"research","message":"alphaxiv MCP tools unavailable — using WebSearch/WebFetch only","phase":5,"context":{"tool":"alphaxiv","fallback":"websearch"}}'
 ```

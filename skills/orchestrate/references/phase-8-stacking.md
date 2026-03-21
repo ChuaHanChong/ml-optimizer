@@ -4,7 +4,7 @@
 
 **Trigger:** When the experiment loop ends (analyze recommends `stop` or budget exhausted) AND `methods_with_improvement >= 5`.
 
-Count `methods_with_improvement` by calling `rank_methods_for_stacking()` from `result_analyzer.py`:
+Count `methods_with_improvement` by calling `rank_methods_for_stacking()` from `scripts/result_analyzer.py`:
 ```bash
 python3 scripts/result_analyzer.py <results_dir> <metric> [baseline_id] [lower_is_better]
 ```

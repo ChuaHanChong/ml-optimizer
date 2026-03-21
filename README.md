@@ -27,6 +27,30 @@ Inspired by [karpathy/autoresearch](https://github.com/karpathy/autoresearch), [
 | **Immutable Baseline** | SHA-256 checksum of baseline metrics verified before each batch — halts if metrics are modified |
 | **Auto-Repair Loop** | Intra-agent retry (3 attempts) for retryable errors. OOM/SyntaxError not retried |
 | **Fixed Time Budget** | Optional fixed wall-clock duration per experiment for deterministic comparability |
+| **Goal Anchoring** | `optimization-goals.json` written at Phase 0; all agents read it before acting. Post-dispatch validation catches frozen param changes, scope breaches, dead-end re-proposals |
+| **Behavioral Memory** | `learned-behaviors.json` accumulates HP constraints, method outcomes, divergence patterns per project. All agents have `memory: local` for persistent role-specific learning |
+
+## Installation
+
+First, add the marketplace:
+
+```bash
+claude plugin marketplace add ChuaHanChong/ml-optimizer
+```
+
+Then install the plugin:
+
+```bash
+# Recommended: local (project-scoped, not checked into version control)
+claude plugin install ml-optimizer --scope local
+
+# Alternative: project (project-scoped, checked into version control)
+claude plugin install ml-optimizer --scope project
+```
+
+After installation, run `/reload-plugin` or restart Claude Code. The `/optimize` command and all 10 agents will be available automatically.
+
+> **Why local/project?** Agent memory (`memory: local`) stores learnings in `.claude/agent-memory-local/` within the project. Local or project-based installation keeps plugin code, agent memory, and experiment data together — scoped to your ML project, not polluting other workspaces.
 
 ## Prerequisites
 
@@ -140,6 +164,8 @@ The plugin creates this structure in your project:
   results/<exp-id>.json                 # Per-experiment results
   results/proposed-configs/             # HP config proposals from hp-tune
   results/implementation-manifest.json  # Validated proposal branches
+  optimization-goals.json               # Goal anchor (Phase 0, read by all agents)
+  learned-behaviors.json                # Accumulated behavioral memory (HP constraints, outcomes)
   reports/                              # Markdown reports (analysis, research, final)
   reports/error-log.json                # Structured error event log
   reports/suggestion-history.json       # Suggestion feedback loop
@@ -155,25 +181,26 @@ All scripts in `scripts/` use only the standard library and work as both importa
 
 | Script | CLI Usage |
 |--------|-----------|
-| `gpu_check.py` | `python3 scripts/gpu_check.py` |
-| `parse_logs.py` | `python3 scripts/parse_logs.py <logfile>` — parses kv/JSON/CSV/XGBoost/HuggingFace Trainer logs |
-| `detect_divergence.py` | `python3 scripts/detect_divergence.py '<json_values>' [--higher-is-better] [--model-category rl\|generative\|supervised]` |
-| `result_analyzer.py` | `python3 scripts/result_analyzer.py <results_dir> <metric> [baseline_id] [lower_is_better]` |
-| `experiment_setup.py` | `python3 scripts/experiment_setup.py <project_root> <train_command> [gpu_id] [config_json]` |
-| `implement_utils.py` | `python3 scripts/implement_utils.py <findings.md> '<indices_json>'` — also: `clone <url> <dest>`, `analyze <path>` |
-| `pipeline_state.py` | `python3 scripts/pipeline_state.py <exp_root> validate\|save\|load\|cleanup` |
-| `schema_validator.py` | `python3 scripts/schema_validator.py <filepath> result\|baseline\|manifest\|prerequisites` |
-| `plot_results.py` | `python3 scripts/plot_results.py <results_dir> <metric> comparison\|timeline\|sensitivity <hp>\|progress [--higher-is-better]` |
-| `prerequisites_check.py` | `python3 scripts/prerequisites_check.py scan-imports\|check-packages\|detect-env\|detect-format\|detect-format-project\|validate-data\|bulk-install-cmd\|gpu-install-cmd` |
-| `error_tracker.py` | `python3 scripts/error_tracker.py <exp_root> log\|show\|patterns\|summary\|sync\|success\|proposals\|rank\|cleanup\|log-suggestion\|suggestion-history\|dead-end <add\|list\|check>\|agenda <init\|update\|list\|add>` |
-| `dashboard.py` | `python3 scripts/dashboard.py <exp_root> [--live] [--serve --port 8080]` — self-contained HTML dashboard with auto-refresh |
-| `excalidraw_gen.py` | `python3 scripts/excalidraw_gen.py <exp_root> pipeline\|comparison\|hp-landscape\|architecture <args>` — Excalidraw JSON diagrams |
+| `scripts/gpu_check.py` | `python3 scripts/gpu_check.py` |
+| `scripts/parse_logs.py` | `python3 scripts/parse_logs.py <logfile>` — parses kv/JSON/CSV/XGBoost/HuggingFace Trainer logs |
+| `scripts/detect_divergence.py` | `python3 scripts/detect_divergence.py '<json_values>' [--higher-is-better] [--model-category rl\|generative\|supervised]` |
+| `scripts/result_analyzer.py` | `python3 scripts/result_analyzer.py <results_dir> <metric> [baseline_id] [lower_is_better]` |
+| `scripts/experiment_setup.py` | `python3 scripts/experiment_setup.py <project_root> <train_command> [gpu_id] [config_json]` |
+| `scripts/implement_utils.py` | `python3 scripts/implement_utils.py <findings.md> '<indices_json>'` — also: `clone <url> <dest>`, `analyze <path>` |
+| `scripts/pipeline_state.py` | `python3 scripts/pipeline_state.py <exp_root> validate\|save\|load\|cleanup` |
+| `scripts/schema_validator.py` | `python3 scripts/schema_validator.py <filepath> result\|baseline\|manifest\|prerequisites` |
+| `scripts/plot_results.py` | `python3 scripts/plot_results.py <results_dir> <metric> comparison\|timeline\|sensitivity <hp>\|progress [--higher-is-better]` |
+| `scripts/prerequisites_check.py` | `python3 scripts/prerequisites_check.py scan-imports\|check-packages\|detect-env\|detect-format\|detect-format-project\|validate-data\|bulk-install-cmd\|gpu-install-cmd` |
+| `scripts/error_tracker.py` | `python3 scripts/error_tracker.py <exp_root> log\|show\|patterns\|summary\|sync\|success\|proposals\|rank\|cleanup\|log-suggestion\|suggestion-history\|dead-end <add\|list\|check>\|agenda <init\|update\|list\|add>` |
+| `scripts/dashboard.py` | `python3 scripts/dashboard.py <exp_root> [--live] [--serve --port 8080]` — self-contained HTML dashboard with auto-refresh |
+| `scripts/excalidraw_gen.py` | `python3 scripts/excalidraw_gen.py <exp_root> pipeline\|comparison\|hp-landscape\|architecture <args>` — Excalidraw JSON diagrams |
+| `scripts/goal_memory.py` | `python3 scripts/goal_memory.py <exp_root> init-goals\|read-goals\|log-behavior\|query-behaviors\|validate-output\|summary\|sync-from-errors` — goal anchoring, behavioral memory, agent output validation |
 
 ## Running Tests
 
 ```bash
-cd ~/.claude/plugins/ml-optimizer
-python -m pytest tests/ -v                          # all tests
+cd <plugin-directory>
+python -m pytest tests/ -v                           # all tests
 python -m pytest tests/test_parse_logs.py -v         # single file
 python -m pytest tests/ -m "not slow" -v             # skip real training tests
 python -m pytest tests/test_e2e_pipeline.py -m slow  # real training E2E only
@@ -228,15 +255,17 @@ Exit code `2` = block action. Exit code `0` = allow. Configured in `hooks/hooks.
 - **Pipeline resumption**: `pipeline-state.json` persists phase, user choices, and stop count. On restart, stale experiments are cleaned up and phase gates prevent cascading failures.
 - **Three-tier result tracking**: Experiments carry `method_tier` (baseline / method_default_hp / method_tuned_hp) and `proposal_source` (paper / llm_knowledge) for attribution analysis.
 - **Method stacking**: After independent method testing, top methods are sequentially merged. Clean merges proceed; conflicts are LLM-resolved. Degrading combinations are skipped.
+- **Goal anchoring & behavioral memory**: `scripts/goal_memory.py` maintains `optimization-goals.json` (goal anchor) and `learned-behaviors.json` (accumulated learnings). The orchestrator validates agent outputs post-dispatch. All 10 agents have `memory: local` for persistent role-specific memory at `.claude/agent-memory-local/<agent-name>/` in the target project.
 
 ## Gotchas
 
-- `detect_divergence.py` CLI takes a **JSON string**, not a file path: `'[0.5, 0.4, 100.0]'`
-- `implement_utils.py` has **three CLI modes**: default (parse proposals), `clone <url> <dest>`, and `analyze <path>`
+- `scripts/detect_divergence.py` CLI takes a **JSON string**, not a file path: `'[0.5, 0.4, 100.0]'`
+- `scripts/implement_utils.py` has **three CLI modes**: default (parse proposals), `clone <url> <dest>`, and `analyze <path>`
 - **Metric routing is split**: monitor uses loss, analyze uses primary_metric. Mixing these up causes silent wrong behavior.
 - **Branch experiments are independent**: results on `ml-opt/branch-a` don't predict what works on `ml-opt/branch-b`.
 - **Tabular ML frameworks** (sklearn, XGBoost, LightGBM) skip divergence monitoring entirely.
 - **Multiple research findings files**: `research-findings.md` (Phase 5), `research-findings-method-proposals.md` (pre-loop), `research-findings-method-proposals-iter<N>.md` (mid-loop). Deduplication checks all of them.
+- **`scripts/goal_memory.py validate-output` returns exit code 2** for violations (0=valid, 1=script error, 2=violations). Imports `scripts/error_tracker.py` lazily for dead-end checks — both must be in `scripts/`.
 
 ## License
 

@@ -11,11 +11,7 @@ After the experiment loop exits:
    )
    ```
 2. It generates a comprehensive final report
-3. Sync errors to cross-project memory:
-   ```bash
-   python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> sync ~/.claude/plugins/ml-optimizer
-   ```
-4. **Self-improvement review:**
+3. **Self-improvement review:**
    **Autonomous mode auto-skip:** If `budget_mode == "autonomous"`, auto-run review with `scope: "session"`. Skip AskUserQuestion. Log to dev_notes: "Auto-running self-improvement review (autonomous mode)." Dispatch the review agent:
    ```
    Agent(
@@ -38,12 +34,12 @@ After the experiment loop exits:
      subagent_type: "ml-optimizer:review-agent"
    )
    ```
-5. Generate the progress dashboard:
+4. Generate the progress dashboard:
    ```bash
-   python3 ~/.claude/plugins/ml-optimizer/scripts/dashboard.py <exp_root>
+   python3 scripts/dashboard.py <exp_root>
    ```
 
-6. Present the summary to the user:
+5. Present the summary to the user:
 
 ```
 Optimization complete!

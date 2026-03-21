@@ -37,6 +37,8 @@ From the orchestrator:
 
 ## Step 1: Analyze User-Provided Papers (if any)
 
+> **Goal check:** Respect scope_level constraints and dead-end techniques from the optimization goals. Do NOT propose architecture changes when scope is "training" or re-propose dead-end techniques.
+
 If the user provided papers or URLs:
 
 1. For each URL, retrieve the content using the most appropriate tool:
@@ -67,7 +69,7 @@ Before searching, check for existing findings and dead ends:
 2. Check `experiments/reports/research-findings-method-proposals*.md` (Phase 7 method proposals)
 3. **Check dead-end catalog** — techniques conclusively shown to be unpromising:
    ```bash
-   python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> dead-end list
+   python3 scripts/error_tracker.py <exp_root> dead-end list
    ```
 4. If any exist, read them and extract all previously proposed technique names AND dead-end technique names
 5. When generating new proposals, exclude techniques that were already proposed OR are in the dead-end catalog
@@ -137,7 +139,7 @@ mcp__alphaxiv__agentic_paper_retrieval(query: "What are the most effective recen
 
 **Fallback:** If ALL alphaxiv searches fail (MCP unavailable), proceed with WebSearch results only. Log the failure:
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"research_failure","severity":"warning","source":"research","message":"alphaxiv MCP unavailable — proceeding with WebSearch only","phase":5,"context":{"tool":"alphaxiv"}}'
+python3 scripts/error_tracker.py <exp_root> log '{"category":"research_failure","severity":"warning","source":"research","message":"alphaxiv MCP unavailable — proceeding with WebSearch only","phase":5,"context":{"tool":"alphaxiv"}}'
 ```
 
 **Deduplication across sources:** After all parallel searches return, merge results. Remove duplicates by matching paper titles (case-insensitive, strip leading "a/an/the"). Prefer alphaxiv results when the same paper appears in both (alphaxiv provides structured content access). Retain unique WebSearch results (blog posts, tutorials, GitHub repos that alphaxiv wouldn't find).
@@ -411,7 +413,7 @@ Note: Mark each source with its discovery channel — `(alphaxiv)` for papers fo
 After writing the research findings, initialize the research agenda from the proposals. This creates a living document that the analyze skill updates after each batch.
 
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> agenda init '<ideas_json>'
+python3 scripts/error_tracker.py <exp_root> agenda init '<ideas_json>'
 ```
 
 Where `<ideas_json>` is a JSON array of ideas derived from the proposals:
@@ -462,25 +464,25 @@ At the following points, log an error event using the error tracker:
 
 ### When WebSearch returns no useful results for a query:
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"research_failure","severity":"warning","source":"research","message":"No relevant results for query: <query>","phase":5,"context":{"query":"<query>","search_type":"web"}}'
+python3 scripts/error_tracker.py <exp_root> log '{"category":"research_failure","severity":"warning","source":"research","message":"No relevant results for query: <query>","phase":5,"context":{"query":"<query>","search_type":"web"}}'
 ```
 
 ### When all searches fail to produce any actionable proposals:
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"research_failure","severity":"critical","source":"research","message":"No actionable proposals found after <N> searches","phase":5,"context":{"searches_attempted":<N>}}'
+python3 scripts/error_tracker.py <exp_root> log '{"category":"research_failure","severity":"critical","source":"research","message":"No actionable proposals found after <N> searches","phase":5,"context":{"searches_attempted":<N>}}'
 ```
 
 ### When a reference repo URL is unreachable or fails quality checks:
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"research_failure","severity":"warning","source":"research","message":"Reference repo unavailable: <url>","phase":5,"context":{"url":"<url>","proposal_name":"<name>"}}'
+python3 scripts/error_tracker.py <exp_root> log '{"category":"research_failure","severity":"warning","source":"research","message":"Reference repo unavailable: <url>","phase":5,"context":{"url":"<url>","proposal_name":"<name>"}}'
 ```
 
 ### When a paper is behind a paywall (info only):
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"research_failure","severity":"info","source":"research","message":"Paper behind paywall, only abstract available: <title>","phase":5,"context":{"paper_title":"<title>"}}'
+python3 scripts/error_tracker.py <exp_root> log '{"category":"research_failure","severity":"info","source":"research","message":"Paper behind paywall, only abstract available: <title>","phase":5,"context":{"paper_title":"<title>"}}'
 ```
 
 ### When alphaxiv MCP tools are unavailable (all alphaxiv searches fail):
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"research_failure","severity":"warning","source":"research","message":"alphaxiv MCP tools unavailable — using WebSearch/WebFetch only","phase":5,"context":{"tool":"alphaxiv","fallback":"websearch"}}'
+python3 scripts/error_tracker.py <exp_root> log '{"category":"research_failure","severity":"warning","source":"research","message":"alphaxiv MCP tools unavailable — using WebSearch/WebFetch only","phase":5,"context":{"tool":"alphaxiv","fallback":"websearch"}}'
 ```

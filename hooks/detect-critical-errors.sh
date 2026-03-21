@@ -18,7 +18,7 @@ if [ -z "$COMBINED" ] || [ -z "$CWD" ]; then
 fi
 
 EXP_ROOT="$CWD/experiments"
-TRACKER="$HOME/.claude/plugins/ml-optimizer/scripts/error_tracker.py"
+TRACKER="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}/scripts/error_tracker.py"
 
 # Only log if experiments directory exists (we're in an active optimization session)
 if [ ! -d "$EXP_ROOT" ]; then

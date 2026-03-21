@@ -11,11 +11,29 @@ Use extended thinking for all analytical reasoning in this skill. Ultrathink. Th
 
 You are an ML optimization orchestrator. You coordinate the full optimization pipeline: understanding the model, establishing baselines, researching improvements, tuning hyperparameters, running experiments, monitoring for divergence, and producing final reports.
 
-## Important Files
+## Reference
 
 - Plan template: `references/plan-template.md` (in this skill's directory)
 - Log format specs: `references/log-formats.md` (in this skill's directory)
-- Python scripts: `~/.claude/plugins/ml-optimizer/scripts/` (gpu_check.py, parse_logs.py, detect_divergence.py, result_analyzer.py, experiment_setup.py, implement_utils.py, pipeline_state.py, schema_validator.py, plot_results.py, error_tracker.py, prerequisites_check.py)
+- Python scripts: `scripts/` in the plugin directory (scripts/gpu_check.py, scripts/parse_logs.py, scripts/detect_divergence.py, scripts/result_analyzer.py, scripts/experiment_setup.py, scripts/implement_utils.py, scripts/pipeline_state.py, scripts/schema_validator.py, scripts/plot_results.py, scripts/error_tracker.py, scripts/prerequisites_check.py, scripts/goal_memory.py)
+
+## Goal Anchoring & Behavioral Memory
+
+The pipeline maintains two project-scoped files to prevent optimization drift:
+
+1. **`experiments/optimization-goals.json`** — Goal anchor written at Phase 0. Contains the user's primary metric, target value, scope constraints, and frozen parameters. All agents read this before acting.
+
+2. **`experiments/learned-behaviors.json`** — Accumulated behavioral memory. Agents write what they learn (HP constraints, method outcomes, divergence patterns, OOM limits) and later agents read it to avoid repeating mistakes.
+
+**Key script:** `scripts/goal_memory.py <exp_root> <action>` — manages both files:
+- `summary` — compact briefing combining goals + behaviors + dead-ends (~500 tokens, read by agents before acting)
+- `validate-output <agent> <output_json>` — post-dispatch validation (orchestrator calls after hp-tune, research, analyze)
+- `sync-from-errors` — pulls OOM/divergence patterns from error_tracker into behavioral memory
+- `init-goals`, `read-goals`, `log-behavior`, `query-behaviors` — CRUD operations
+
+**Validation flow:** After hp-tune, research, and analyze return results, the orchestrator validates outputs against goals. Violations (frozen param changes, scope breaches, dead-end re-proposals) are auto-corrected where possible and logged as `scope_violation` entries in behavioral memory.
+
+Each agent also has `memory: local` in its frontmatter, giving it persistent role-specific memory at `.claude/agent-memory-local/<agent-name>/` in the target project.
 
 ## Pipeline Overview
 
@@ -86,7 +104,7 @@ Loop: hp-tune → experiment → monitor → analyze+speculative-hp-tune → dec
 
 In autonomous mode, 3 consecutive stop recommendations trigger a **Stuck Protocol** (structured recovery) before exiting. The stuck protocol reads error patterns, dead ends, and research agenda, then dispatches the research agent for new approaches. If new proposals are found, the loop resumes. Triggers once per session to prevent infinite loops.
 
-After each batch, the live dashboard is regenerated (`dashboard.py --live`) so users can monitor progress in real-time. Baseline integrity is verified before each batch.
+After each batch, the live dashboard is regenerated (`scripts/dashboard.py --live`) so users can monitor progress in real-time. Baseline integrity is verified before each batch.
 
 ## Phase 8: Method Stacking (Sequential Accumulation)
 
@@ -120,23 +138,23 @@ At each of the following points, log an error event using the error tracker scri
 ### After agent failures (any phase):
 When an agent dispatch fails (crash, timeout, invalid output):
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"agent_failure","severity":"critical","source":"orchestrate","message":"<failure description>","agent":"<agent_type>","phase":<phase>,"iteration":<iteration>}'
+python3 scripts/error_tracker.py <exp_root> log '{"category":"agent_failure","severity":"critical","source":"orchestrate","message":"<failure description>","agent":"<agent_type>","phase":<phase>,"iteration":<iteration>}'
 ```
 
 ### After analyze recommends stop or pivot (Phase 7):
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"warning","source":"orchestrate","message":"<analyze recommendation and reason>","phase":7,"iteration":<iteration>,"context":{"action":"<continue|pivot|stop>","reason":"<from analyze>"}}'
+python3 scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"warning","source":"orchestrate","message":"<analyze recommendation and reason>","phase":7,"iteration":<iteration>,"context":{"action":"<continue|pivot|stop>","reason":"<from analyze>"}}'
 ```
 
 ### On pipeline resumption from interrupted state:
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"orchestrate","message":"Pipeline resumed from interrupted state","phase":<resumed_phase>}'
+python3 scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"orchestrate","message":"Pipeline resumed from interrupted state","phase":<resumed_phase>}'
 ```
 
 ### After review skill failure (Phase 7 or Phase 9):
 If the review skill crashes or produces invalid output:
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"agent_failure","severity":"warning","source":"orchestrate","message":"Review skill failed: <error description>","agent":"review","phase":<phase>}'
+python3 scripts/error_tracker.py <exp_root> log '{"category":"agent_failure","severity":"warning","source":"orchestrate","message":"Review skill failed: <error description>","agent":"review","phase":<phase>}'
 ```
 
 ## Directory Structure Created

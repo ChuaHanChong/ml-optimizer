@@ -40,6 +40,7 @@ from error_tracker import (
     compute_success_metrics, rank_suggestions,
 )
 from prerequisites_check import scan_imports, detect_dataset_format_project, detect_env_manager
+from goal_memory import init_goals, load_goals, generate_summary, validate_agent_output
 RESNET_FIXTURE = FIXTURES / "tiny_resnet_cifar10"
 
 
@@ -456,6 +457,14 @@ class TestFullPipelineIntegration:
         assert state["phase"] == 2
         assert state["iteration"] == 0
 
+        # Goal memory: init goals at Phase 0
+        init_goals(exp_root, {
+            "objective": {"primary_metric": "accuracy", "lower_is_better": False, "target_value": 90.0},
+            "constraints": {"scope_level": "training", "frozen_parameters": ["batch_size"]},
+            "divergence": {"metric": "loss", "lower_is_better": True},
+        })
+        assert load_goals(exp_root) is not None
+
         # Phase 3: baseline
         baseline_output = tmp_path / "baseline_output"
         rc, stdout, stderr = run_training(
@@ -543,6 +552,16 @@ class TestFullPipelineIntegration:
         assert len(analysis["ranking"]) >= 3
         assert len(analysis["deltas"]) >= 2
 
+        # Direct rank_by_metric and compute_deltas verification
+        results = load_results(str(results_dir))
+        ranked = rank_by_metric(results, "loss", lower_is_better=True)
+        assert len(ranked) >= 3
+        assert ranked[0]["value"] <= ranked[-1]["value"]  # sorted ascending
+        deltas = compute_deltas(results, "baseline", "loss")
+        assert len(deltas) >= 2
+        for d in deltas:
+            assert "exp_id" in d and "delta" in d
+
         # Verify directory structure matches SKILL.md spec
         assert (Path(exp_root) / "logs").exists()
         assert (Path(exp_root) / "results").exists()
@@ -558,6 +577,17 @@ class TestFullPipelineIntegration:
             schema = "baseline" if rf.stem == "baseline" else "result"
             vr = validate_file(str(rf), schema)
             assert vr["valid"], f"{rf.name} failed validation: {vr['errors']}"
+
+        # Goal memory: validate hp-tune output respects frozen params
+        result = validate_agent_output(exp_root, "hp-tune", {
+            "configs": [{"lr": 0.001}]
+        })
+        assert result["valid"] is True
+
+        # Goal memory: summary generates correctly
+        summary = generate_summary(exp_root)
+        assert "OPTIMIZATION GOALS" in summary
+        assert "accuracy" in summary
 
 
 # ---------------------------------------------------------------------------

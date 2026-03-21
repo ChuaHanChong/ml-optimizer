@@ -31,7 +31,7 @@
 
 4. **Check GPU availability:**
    ```bash
-   python3 ~/.claude/plugins/ml-optimizer/scripts/gpu_check.py
+   python3 scripts/gpu_check.py
    ```
 
 5. **Synthesize understanding:**

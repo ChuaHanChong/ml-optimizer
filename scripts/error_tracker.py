@@ -2,7 +2,7 @@
 """Error tracking and self-improvement for the ML optimizer plugin.
 
 Captures, persists, and analyzes errors from skills and agents.
-Supports per-project error logs and cross-project pattern memory.
+Supports per-project error logs.
 
 Dependency-free — uses only the Python standard library.
 """
@@ -261,8 +261,9 @@ def detect_patterns(events: list[dict]) -> list[dict]:
     oom_events = [
         e for e in events
         if e.get("category") == "training_failure"
-        and ("oom" in e.get("message", "").lower() or
-             (isinstance(e.get("context"), dict) and e["context"].get("error_type") == "oom"))
+        and ("oom" in e.get("message", "").lower()
+             or "out of memory" in e.get("message", "").lower()
+             or (isinstance(e.get("context"), dict) and e["context"].get("error_type") == "oom"))
     ]
     if len(oom_events) >= 2:
         batch_sizes: Counter = Counter()
@@ -412,108 +413,6 @@ def detect_patterns(events: list[dict]) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Cross-project storage
-# ---------------------------------------------------------------------------
-
-def _cross_project_path(plugin_root: str) -> Path:
-    """Return the path to the cross-project memory file."""
-    return Path(plugin_root) / "memory" / "cross-project-errors.json"
-
-
-def update_cross_project(
-    plugin_root: str, project_path: str, exp_root: str,
-) -> str:
-    """Sync per-project error log into cross-project memory. Returns memory path."""
-    mem_path = _cross_project_path(plugin_root)
-
-    # Load or create cross-project memory
-    memory = load_cross_project(plugin_root)
-    if memory is None:
-        memory = {
-            "version": 1,
-            "last_updated": None,
-            "projects": {},
-            "cross_project_patterns": [],
-        }
-
-    # Load per-project data
-    log_data = load_error_log(exp_root)
-    if log_data is None:
-        log_data = {"events": [], "session_start": datetime.now(timezone.utc).isoformat()}
-
-    proj_id = _project_id(project_path)
-    events = log_data.get("events", [])
-    detected = detect_patterns(events)
-    pattern_ids = [p["pattern_id"] for p in detected]
-
-    session_entry = {
-        "session_start": log_data.get("session_start", datetime.now(timezone.utc).isoformat()),
-        "event_count": len(events),
-        "categories": _compute_summary(events)["by_category"],
-        "patterns_detected": pattern_ids,
-    }
-
-    if proj_id not in memory["projects"]:
-        memory["projects"][proj_id] = {
-            "project_path": project_path,
-            "sessions": [],
-        }
-    sessions = memory["projects"][proj_id]["sessions"]
-    if sessions and sessions[-1].get("session_start") == session_entry["session_start"]:
-        sessions[-1] = session_entry  # update existing session
-    else:
-        sessions.append(session_entry)
-
-    # Recompute cross-project patterns
-    memory["cross_project_patterns"] = detect_cross_project_patterns(memory)
-    memory["last_updated"] = datetime.now(timezone.utc).isoformat()
-
-    # Ensure memory dir exists
-    mem_path.parent.mkdir(parents=True, exist_ok=True)
-    _atomic_write_json(mem_path, memory)
-    return str(mem_path)
-
-
-def load_cross_project(plugin_root: str) -> dict | None:
-    """Load cross-project error memory. Returns None if not found or corrupt."""
-    path = _cross_project_path(plugin_root)
-    if not path.is_file():
-        return None
-    try:
-        return json.loads(path.read_text())
-    except (json.JSONDecodeError, OSError):
-        return None
-
-
-def detect_cross_project_patterns(memory: dict) -> list[dict]:
-    """Detect patterns spanning multiple projects."""
-    projects = memory.get("projects", {})
-    if not projects:
-        return []
-
-    # Count how many projects have each pattern
-    pattern_projects: dict[str, set] = {}
-    for proj_id, proj_data in projects.items():
-        for session in proj_data.get("sessions", []):
-            for pat_id in session.get("patterns_detected", []):
-                if pat_id not in pattern_projects:
-                    pattern_projects[pat_id] = set()
-                pattern_projects[pat_id].add(proj_id)
-
-    patterns = []
-    for pat_id, proj_ids in pattern_projects.items():
-        if len(proj_ids) >= 2:
-            patterns.append({
-                "pattern_id": pat_id,
-                "projects_affected": len(proj_ids),
-                "description": f"Pattern '{pat_id}' observed across {len(proj_ids)} projects",
-                "suggested_action": f"Persistent issue — consider updating plugin defaults",
-            })
-
-    return patterns
-
-
-# ---------------------------------------------------------------------------
 # Suggestion ranking
 # ---------------------------------------------------------------------------
 
@@ -533,12 +432,11 @@ _PATTERN_WEIGHTS: dict[str, int] = {
 
 def rank_suggestions(
     patterns: list[dict],
-    cross_project_patterns: list[dict] | None = None,
     total_experiments: int | None = None,
 ) -> list[dict]:
     """Rank detected patterns by impact score.
 
-    Score = severity_weight × occurrences × cross_project_boost.
+    Score = severity_weight × occurrences.
     Returns patterns sorted by score descending, with ``score`` added.
     When *total_experiments* is provided, each entry also gets a
     ``significance`` field (occurrences / total_experiments).
@@ -546,17 +444,12 @@ def rank_suggestions(
     if not patterns:
         return []
 
-    cross_ids = set()
-    if cross_project_patterns:
-        cross_ids = {p["pattern_id"] for p in cross_project_patterns}
-
     ranked = []
     for p in patterns:
         pid = p["pattern_id"]
         weight = _PATTERN_WEIGHTS.get(pid, 1)
-        boost = 1.5 if pid in cross_ids else 1.0
         occ = p.get("occurrences", 1)
-        score = weight * occ * boost
+        score = weight * occ
         entry = {**p, "score": score}
         if total_experiments is not None and total_experiments > 0:
             entry["significance"] = round(occ / total_experiments, 3)
@@ -848,45 +741,6 @@ def compute_proposal_outcomes(
         "hp_proposals": hp_proposals,
         "implementation_stats": impl_stats,
     }
-
-
-# ---------------------------------------------------------------------------
-# Cross-project memory cleanup
-# ---------------------------------------------------------------------------
-
-
-def cleanup_memory(
-    plugin_root: str, max_sessions_per_project: int = 10,
-) -> dict:
-    """Remove old sessions from cross-project memory.
-
-    Keeps the last *max_sessions_per_project* sessions per project,
-    removes projects with zero sessions, and recomputes cross-project
-    patterns.  Returns ``{"cleaned": N, "projects_remaining": M}``.
-    """
-    memory = load_cross_project(plugin_root)
-    if memory is None:
-        return {"cleaned": 0, "projects_remaining": 0}
-
-    cleaned = 0
-    for proj_data in memory["projects"].values():
-        sessions = proj_data.get("sessions", [])
-        if len(sessions) > max_sessions_per_project:
-            excess = len(sessions) - max_sessions_per_project
-            proj_data["sessions"] = sessions[-max_sessions_per_project:]
-            cleaned += excess
-
-    # Remove empty projects
-    empty = [pid for pid, pd in memory["projects"].items() if not pd.get("sessions")]
-    for pid in empty:
-        del memory["projects"][pid]
-
-    if cleaned or empty:
-        memory["cross_project_patterns"] = detect_cross_project_patterns(memory)
-        mem_path = _cross_project_path(plugin_root)
-        _atomic_write_json(mem_path, memory)
-
-    return {"cleaned": cleaned, "projects_remaining": len(memory["projects"])}
 
 
 # ---------------------------------------------------------------------------
@@ -1227,7 +1081,7 @@ def _cli_main() -> None:
     """CLI entry point."""
     if len(sys.argv) < 3:
         print("Usage: error_tracker.py <exp_root> <action> [args...]", file=sys.stderr)
-        print("Actions: log <event_json>, show [category], patterns, summary, sync <plugin_root>, success <metric> <lower>, proposals <metric> <lower>, rank [total], cleanup <plugin_root> [max_sessions], log-suggestion <pattern_id> [scope], suggestion-history, dead-end <add|list|check> [args], agenda <init|update|list|add> [args]", file=sys.stderr)
+        print("Actions: log <event_json>, show [category], patterns, summary, success <metric> <lower>, proposals <metric> <lower>, rank [total], log-suggestion <pattern_id> [scope], suggestion-history, dead-end <add|list|check> [args], agenda <init|update|list|add> [args]", file=sys.stderr)
         sys.exit(1)
 
     exp_root = sys.argv[1]
@@ -1283,16 +1137,6 @@ def _cli_main() -> None:
         summary = summarize_session(exp_root)
         print(json.dumps(summary, indent=2))
 
-    elif action == "sync":
-        if len(sys.argv) < 4:
-            print("Usage: error_tracker.py <exp_root> sync <plugin_root>", file=sys.stderr)
-            sys.exit(1)
-        plugin_root = sys.argv[3]
-        # Derive project_path from exp_root (go up from experiments/)
-        project_path = str(Path(exp_root).parent) if Path(exp_root).name == "experiments" else exp_root
-        path = update_cross_project(plugin_root, project_path, exp_root)
-        print(json.dumps({"synced": True, "path": path}))
-
     elif action == "success":
         if len(sys.argv) < 5:
             print("Usage: error_tracker.py <exp_root> success <metric> <lower_is_better>", file=sys.stderr)
@@ -1315,22 +1159,8 @@ def _cli_main() -> None:
         events = get_events(exp_root)
         pats = detect_patterns(events)
         total = int(sys.argv[3]) if len(sys.argv) > 3 else None
-        cross = None
-        if len(sys.argv) > 4:
-            memory = load_cross_project(sys.argv[4])
-            if memory:
-                cross = memory.get("cross_project_patterns", [])
-        ranked = rank_suggestions(pats, total_experiments=total, cross_project_patterns=cross)
+        ranked = rank_suggestions(pats, total_experiments=total)
         print(json.dumps(ranked, indent=2))
-
-    elif action == "cleanup":
-        if len(sys.argv) < 4:
-            print("Usage: error_tracker.py <exp_root> cleanup <plugin_root> [max_sessions]", file=sys.stderr)
-            sys.exit(1)
-        plugin_root = sys.argv[3]
-        max_sessions = int(sys.argv[4]) if len(sys.argv) > 4 else 10
-        result = cleanup_memory(plugin_root, max_sessions)
-        print(json.dumps(result))
 
     elif action == "log-suggestion":
         if len(sys.argv) < 4:

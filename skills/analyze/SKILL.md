@@ -23,9 +23,11 @@ From the orchestrator:
 
 ## Step 1: Load and Compare Results
 
+> **Goal check:** Verify that the `primary_metric` and `lower_is_better` you use match the optimization goals. If they don't match, flag as a critical error.
+
 Run the result analyzer:
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/result_analyzer.py \
+python3 scripts/result_analyzer.py \
   <project_root>/experiments/results \
   <primary_metric> \
   baseline \
@@ -178,17 +180,17 @@ After each analysis, log notable inefficiencies to the error tracker:
 
 ### If all experiments in batch diverged or failed:
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"warning","source":"analyze","message":"All <N> experiments in batch <batch> diverged/failed — wasted budget","phase":7,"iteration":<batch_number>,"context":{"experiments_wasted":<N>}}'
+python3 scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"warning","source":"analyze","message":"All <N> experiments in batch <batch> diverged/failed — wasted budget","phase":7,"iteration":<batch_number>,"context":{"experiments_wasted":<N>}}'
 ```
 
 ### If recommending stop due to diminishing returns:
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"analyze","message":"Diminishing returns: last <N> batches showed <X%> improvement","phase":7,"context":{"total_experiments":<N>}}'
+python3 scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"analyze","message":"Diminishing returns: last <N> batches showed <X%> improvement","phase":7,"context":{"total_experiments":<N>}}'
 ```
 
 ### If a code branch consistently underperforms baseline:
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"analyze","message":"Branch <branch> underperforms baseline across all HP configs","code_branch":"<branch>","context":{"experiments_on_branch":<N>,"best_vs_baseline":"<delta%>"}}'
+python3 scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"analyze","message":"Branch <branch> underperforms baseline across all HP configs","code_branch":"<branch>","context":{"experiments_on_branch":<N>,"best_vs_baseline":"<delta%>"}}'
 ```
 
 ## Step 3.2: Log Dead Ends
@@ -201,7 +203,7 @@ When a technique is conclusively unpromising, log it to the dead-end catalog so 
 - Analyze recommends stop and a specific method showed no improvement after tuning
 
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> dead-end add '{"technique":"<technique_name>","reason":"<why it failed>","branch":"<ml-opt/branch or null>","experiments_tried":<N>,"best_result":{"metric":"<primary_metric>","value":<best_value>,"baseline":<baseline_value>},"source":"analyze"}'
+python3 scripts/error_tracker.py <exp_root> dead-end add '{"technique":"<technique_name>","reason":"<why it failed>","branch":"<ml-opt/branch or null>","experiments_tried":<N>,"best_result":{"metric":"<primary_metric>","value":<best_value>,"baseline":<baseline_value>},"source":"analyze"}'
 ```
 
 Do not log dead ends for techniques that showed mixed results (some improvement, some regression) — only for those conclusively worse.
@@ -248,13 +250,13 @@ If a research agenda exists (`experiments/reports/research-agenda.json`), update
 
 ```bash
 # Check if agenda exists
-python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> agenda list
+python3 scripts/error_tracker.py <exp_root> agenda list
 ```
 
 For each code branch tested in this batch, find the corresponding agenda item and update it:
 
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> agenda update '<idea_id>' '{"status":"<tried|improved|dead-end>","priority":<new_priority>,"evidence":{"batch":<N>,"result":"<summary of results vs baseline>"},"lessons":"<what was learned>"}'
+python3 scripts/error_tracker.py <exp_root> agenda update '<idea_id>' '{"status":"<tried|improved|dead-end>","priority":<new_priority>,"evidence":{"batch":<N>,"result":"<summary of results vs baseline>"},"lessons":"<what was learned>"}'
 ```
 
 **Priority adjustment rules:**
@@ -264,7 +266,7 @@ python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> agend
 
 **Add evidence-suggested ideas:** If the analysis reveals new optimization directions (e.g., LR sensitivity is very high → try cyclical LR), add them:
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> agenda add '{"id":"evidence-<N>","name":"<new idea>","priority":<score>,"source":"experimental_evidence","scope":"training"}'
+python3 scripts/error_tracker.py <exp_root> agenda add '{"id":"evidence-<N>","name":"<new idea>","priority":<score>,"source":"experimental_evidence","scope":"training"}'
 ```
 
 Skip this step if no agenda file exists (e.g., HP-only optimization without research phase).
@@ -303,5 +305,5 @@ Return to the orchestrator:
 
 Include in the analysis output:
 - `methods_with_improvement`: Count of unique code_branches whose best result beats baseline.
-  Compute using `rank_methods_for_stacking()` from `result_analyzer.py`.
+  Compute using `rank_methods_for_stacking()` from `scripts/result_analyzer.py`.
 - `stacking_candidates`: List of method names (code_proposal values) that improved, ranked by improvement magnitude.

@@ -73,9 +73,9 @@
       {
         "hooks": [
           {
-            "type": "prompt",
-            "prompt": "Check if this ml-optimizer session produced its required outputs. If experiments/results/ contains experiment results but experiments/reports/final-report.md does not exist, respond with BLOCK and the reason 'Final report not generated. Run the report skill before stopping.' If no experiments were run at all (empty session or planning only), allow the stop. If a stop_hook_active flag is set in pipeline-state.json, allow the stop to avoid infinite loops.",
-            "model": "haiku"
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/stop-check.sh",
+            "timeout": 5
           }
         ]
       }

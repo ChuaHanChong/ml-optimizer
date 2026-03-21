@@ -30,11 +30,13 @@ From the orchestrator:
 
 ## Step 1: Load Past Results
 
+> **Goal check:** Respect frozen parameters, OOM limits, and dead-end constraints from the optimization goals. Never propose configs that violate these.
+
 Read all experiment results:
 ```bash
 python3 -c "
 import json, sys
-sys.path.insert(0, '$HOME/.claude/plugins/ml-optimizer/scripts')
+# sys.path: add the plugin's scripts/ directory
 from result_analyzer import load_results, rank_by_metric
 results = load_results('<project_root>/experiments/results')
 print(json.dumps({k: v for k, v in results.items()}, indent=2))
@@ -49,7 +51,7 @@ Also load the baseline:
 
 Use the result analyzer:
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/result_analyzer.py \
+python3 scripts/result_analyzer.py \
   <project_root>/experiments/results \
   <primary_metric> \
   baseline \
@@ -60,13 +62,13 @@ python3 ~/.claude/plugins/ml-optimizer/scripts/result_analyzer.py \
 
 **Check dead-end catalog:** Read techniques that were conclusively shown to be unpromising:
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> dead-end list
+python3 scripts/error_tracker.py <exp_root> dead-end list
 ```
 Avoid proposing HP configs for branches/methods listed as dead ends. Focus HP exploration on branches that still show potential.
 
 **Check research agenda:** Read the living research agenda for context on which untried techniques are high-priority:
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> agenda list
+python3 scripts/error_tracker.py <exp_root> agenda list
 ```
 If high-priority untried ideas exist, consider whether HP exploration should focus on branches related to those ideas (to maximize their potential) or on the current best branch.
 
@@ -95,7 +97,7 @@ If this is the first tuning iteration (only baseline exists):
 
 **If budget forces branch dropping:** When `remaining_budget < len(code_branches) + 1`, some branches must be skipped. Prioritize by research proposal ranking (higher `impact × confidence` first). Log a warning to error_tracker:
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"warning","source":"hp-tune","message":"Budget insufficient to test all branches. Testing <N> of <M> branches (dropped: <list>). Prioritized by proposal ranking.","phase":7,"iteration":<iteration>}'
+python3 scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"warning","source":"hp-tune","message":"Budget insufficient to test all branches. Testing <N> of <M> branches (dropped: <list>). Prioritized by proposal ranking.","phase":7,"iteration":<iteration>}'
 ```
 
 **If `code_branches` is empty (HP-only):**
@@ -158,12 +160,12 @@ Before finalizing, check each proposed config:
 
 ### If proposals duplicate previously tried configs (caught in step 4.3):
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"hp-tune","message":"Regenerated <N> proposals due to duplication with past configs","phase":7,"iteration":<iteration>}'
+python3 scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"hp-tune","message":"Regenerated <N> proposals due to duplication with past configs","phase":7,"iteration":<iteration>}'
 ```
 
 ### If remaining_budget <= 0:
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"warning","source":"hp-tune","message":"Budget exhausted with <N> experiments completed","phase":7,"iteration":<iteration>,"context":{"total_experiments":<N>}}'
+python3 scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"warning","source":"hp-tune","message":"Budget exhausted with <N> experiments completed","phase":7,"iteration":<iteration>,"context":{"total_experiments":<N>}}'
 ```
 
 ## Step 5: Write Proposed Configs
@@ -215,11 +217,11 @@ For each proposed config, write a JSON file:
 - `"llm_knowledge"`: Proposal originated from LLM knowledge (Phase 7 method proposals)
 - `null`: For baseline experiments (no code change)
 
-Use `experiment_setup.py` to generate proper experiment IDs:
+Use `scripts/experiment_setup.py` to generate proper experiment IDs:
 ```bash
 python3 -c "
 import sys
-sys.path.insert(0, '$HOME/.claude/plugins/ml-optimizer/scripts')
+# sys.path: add the plugin's scripts/ directory
 from experiment_setup import next_experiment_id
 print(next_experiment_id('<project_root>/experiments/results'))
 "

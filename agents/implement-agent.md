@@ -7,6 +7,7 @@ color: "#EC4899"
 skills:
   - ml-optimizer:implement
   - superpowers:systematic-debugging
+memory: local
 ---
 
 # Implement Agent
@@ -76,12 +77,12 @@ Use when the proposal's implementation steps are unclear and the source paper UR
 
 ### Fallback:
 If alphaxiv tools are unavailable, fall back to:
-- `implement_utils.py clone` + `implement_utils.py analyze` for repo exploration
+- `scripts/implement_utils.py clone` + `scripts/implement_utils.py analyze` for repo exploration
 - `WebFetch` on the paper URL for implementation clarification
 
 ## Your Workflow
 
-1. **Parse proposals** — Read research-findings.md, extract selected proposals using implement_utils.py
+1. **Parse proposals** — Read research-findings.md, extract selected proposals using scripts/implement_utils.py
 2. **Detect framework** — Before reading implementation patterns, determine the project's ML framework:
    ```bash
    grep -rl "import torch\|from torch\|import tensorflow\|from keras\|import jax\|from flax\|import lightning\|import pytorch_lightning\|from transformers" <project_root> --include="*.py" | head -5
@@ -92,8 +93,8 @@ If alphaxiv tools are unavailable, fall back to:
    a. Create branch or backup files
    b. Check `implementation_strategy` field in the proposal
    c. **If `from_reference`:**
-      - Clone reference repo using `implement_utils.py clone <url> <dest>`
-      - Analyze structure using `implement_utils.py analyze <dest>`
+      - Clone reference repo using `scripts/implement_utils.py clone <url> <dest>`
+      - Analyze structure using `scripts/implement_utils.py analyze <dest>`
       - Read the reference files specified in the proposal
       - Understand internal dependencies and external packages
       - Adapt relevant code into the target project (extract, translate, adjust imports)
@@ -173,12 +174,12 @@ Write `experiments/results/implementation-manifest.json` using this exact schema
 
 **After writing the manifest, validate it:**
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/schema_validator.py \
+python3 scripts/schema_validator.py \
   experiments/results/implementation-manifest.json manifest
 ```
 If validation fails, fix and re-validate before proceeding.
 
-> **Canonical format reference:** `~/.claude/plugins/ml-optimizer/skills/orchestrate/references/log-formats.md`
+> **Canonical format reference:** See `log-formats.md` in the orchestrate skill's references directory.
 
 ## Conflict Resolution
 
@@ -217,3 +218,16 @@ When implementation fails validation (syntax errors, import errors, model instan
 - **Unresolvable internal dependencies:** If reference code imports >5 repo-specific modules that cannot be extracted, mark as `implementation_error`.
 - **Paper URL unreachable:** If WebFetch fails on the paper URL, proceed with available implementation steps. Only flag `implementation_error` if steps are truly insufficient.
 - **License concerns:** If no LICENSE file found or license is restrictive (GPL, proprietary), set `license_warning` in the proposal's manifest entry and continue implementation. The orchestrator will surface this to the user.
+
+## Agent Memory
+
+As you implement proposals and modify code, update your agent memory with code patterns, merge strategies, and pitfalls you encounter. This builds up institutional knowledge across conversations. Write concise notes about what you found and where.
+
+Key things to capture:
+- Code patterns and file structure for this codebase
+- Merge strategies that worked (or caused conflicts)
+- Common implementation pitfalls and their solutions
+- Which files are safe to modify vs fragile
+- User preferences for code change scope and testing expectations
+
+Before implementing, run `scripts/goal_memory.py <exp_root> read-goals` to check scope constraints. Do not modify model architecture files when scope is 'training'.

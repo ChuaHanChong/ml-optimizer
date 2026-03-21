@@ -48,7 +48,7 @@ tail -100 experiments/logs/<exp_id>/train.log
 
 Parse the log content for the watched metric:
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/parse_logs.py experiments/logs/<exp_id>/train.log
+python3 scripts/parse_logs.py experiments/logs/<exp_id>/train.log
 ```
 
 Extract the metric trajectory (all values of the watched metric over time).
@@ -69,7 +69,7 @@ Run divergence detection on the extracted trajectory, passing `lower_is_better` 
 ```bash
 python3 -c "
 import json, sys
-sys.path.insert(0, '$HOME/.claude/plugins/ml-optimizer/scripts')
+# sys.path: add the plugin's scripts/ directory
 from detect_divergence import check_divergence, get_thresholds_for_category
 from parse_logs import parse_log, extract_metric_trajectory
 
@@ -84,7 +84,7 @@ print(json.dumps(result))
 
 Alternatively, use the CLI with the `--model-category` flag:
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/detect_divergence.py '<json_values>' --model-category <model_category>
+python3 scripts/detect_divergence.py '<json_values>' --model-category <model_category>
 ```
 
 This applies category-specific thresholds automatically (e.g., RL uses `explosion_threshold=20.0` to avoid false positives on reward spikes).
@@ -133,8 +133,16 @@ If divergence is detected:
 
 4. **Log to error tracker:**
    ```bash
-   python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"divergence","severity":"warning","source":"monitor","message":"<divergence reason>","exp_id":"<exp_id>","context":{"divergence_type":"<nan|explosion|plateau|drift>","step":<step>,"metric_to_watch":"<metric>"}}'
+   python3 scripts/error_tracker.py <exp_root> log '{"category":"divergence","severity":"warning","source":"monitor","message":"<divergence reason>","exp_id":"<exp_id>","context":{"divergence_type":"<nan|explosion|plateau|drift>","step":<step>,"metric_to_watch":"<metric>"}}'
    ```
+
+5. **Log divergence pattern to behavioral memory:**
+
+   When an experiment is killed due to divergence, also log the pattern to behavioral memory:
+   ```bash
+   python3 scripts/goal_memory.py <exp_root> log-behavior divergence_pattern '{"description":"<metric> diverged at step <N> with config <config>","affected_branches":["<branch>"],"threshold":{"parameter":"<hp>","value":<val>},"source":"monitor"}'
+   ```
+   This helps future hp-tune iterations avoid configs that trigger divergence.
 
 ### 2e: Report Status
 

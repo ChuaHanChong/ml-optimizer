@@ -114,7 +114,7 @@ Use `mcp__alphaxiv__read_files_from_github_repository` to explore paper codebase
 2. Drill into the implementation directory (e.g., `path: "models/"` or `path: "src/"`)
 3. Read specific implementation files for core technique code
 
-This replaces the need to clone repos locally for initial assessment. Reserve cloning (via `implement_utils.py clone`) for the implement phase when actual code adaptation happens.
+This replaces the need to clone repos locally for initial assessment. Reserve cloning (via `scripts/implement_utils.py clone`) for the implement phase when actual code adaptation happens.
 
 ### Fallback:
 If alphaxiv tools are unavailable, use `WebFetch(url)` for paper content and `WebFetch` on GitHub README URLs for repo assessment.

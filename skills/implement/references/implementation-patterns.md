@@ -345,8 +345,8 @@ When a research proposal has `implementation_strategy: from_reference`, clone th
 
 1. **Clone and analyze:**
    ```bash
-   python3 ~/.claude/plugins/ml-optimizer/scripts/implement_utils.py clone <repo_url> <dest_dir>
-   python3 ~/.claude/plugins/ml-optimizer/scripts/implement_utils.py analyze <dest_dir>
+   python3 scripts/implement_utils.py clone <repo_url> <dest_dir>
+   python3 scripts/implement_utils.py analyze <dest_dir>
    ```
    Review the analysis output: framework, relevant files, dependencies.
 
@@ -375,7 +375,7 @@ When a research proposal has `implementation_strategy: from_reference`, clone th
 6. **Cleanup:** Remove the cloned repo after extraction:
    ```bash
    python3 -c "
-   import sys; sys.path.insert(0, '$HOME/.claude/plugins/ml-optimizer/scripts')
+   import sys; # sys.path: add the plugin's scripts/ directory
    from implement_utils import cleanup_reference_repo
    cleanup_reference_repo('<dest_dir>')
    "

@@ -22,6 +22,7 @@ EXPERIMENT_RESULT_OPTIONAL = [
     "method_tier", "proposal_source", "iteration",
     "code_branches", "stacking_order", "stack_base_exp",
     "artifacts_dir", "time_budget_seconds",
+    "checkpoint_source", "warm_started",
 ]
 VALID_METHOD_TIERS = ["baseline", "method_default_hp", "method_tuned_hp", "stacked_default_hp", "stacked_tuned_hp"]
 VALID_STATUSES = ["completed", "failed", "diverged", "running", "pending", "timeout"]
@@ -124,6 +125,20 @@ def validate_result(data: dict) -> dict:
     if "stack_base_exp" in data:
         if not isinstance(data["stack_base_exp"], str):
             errors.append("'stack_base_exp' must be a string")
+
+    if "checkpoint_source" in data:
+        cs = data["checkpoint_source"]
+        if cs is not None:
+            if not isinstance(cs, dict):
+                errors.append("'checkpoint_source' must be a dict or null")
+            elif "exp_id" not in cs or "checkpoint_path" not in cs:
+                errors.append("'checkpoint_source' must have 'exp_id' and 'checkpoint_path' keys")
+
+    if "warm_started" in data:
+        if not isinstance(data["warm_started"], bool):
+            errors.append("'warm_started' must be a boolean")
+        elif data["warm_started"] and not isinstance(data.get("checkpoint_source"), dict):
+            errors.append("'warm_started' is true but 'checkpoint_source' is missing or null")
 
     return {"valid": len(errors) == 0, "errors": errors, "warnings": []}
 

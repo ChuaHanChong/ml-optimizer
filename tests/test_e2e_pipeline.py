@@ -10,6 +10,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -19,14 +20,15 @@ import torch
 import yaml
 
 from parse_logs import parse_log, extract_metric_trajectory
-from detect_divergence import check_divergence
-from experiment_setup import create_experiment_dirs, next_experiment_id, setup
+from detect_divergence import check_divergence, check_overfitting
+from experiment_setup import create_experiment_dirs, generate_train_script, next_experiment_id, setup
 from result_analyzer import (
     analyze, load_results, rank_by_metric, compute_deltas,
     rank_methods_for_stacking, group_by_method_tier,
+    detect_hp_interactions, compute_branch_scores,
 )
 from pipeline_state import save_state, load_state, validate_phase_requirements, cleanup_stale
-from schema_validator import validate_result, validate_baseline, validate_manifest, validate_file
+from schema_validator import validate_result, validate_baseline, validate_manifest, validate_file, validate_prerequisites
 import plot_results
 from plot_results import plot_metric_comparison, plot_improvement_timeline, plot_hp_sensitivity, plot_progress_chart
 from conftest import FIXTURES, _write_result
@@ -41,6 +43,8 @@ from error_tracker import (
 )
 from prerequisites_check import scan_imports, detect_dataset_format_project, detect_env_manager
 from goal_memory import init_goals, load_goals, generate_summary, validate_agent_output
+
+
 RESNET_FIXTURE = FIXTURES / "tiny_resnet_cifar10"
 
 
@@ -561,6 +565,61 @@ class TestFullPipelineIntegration:
         assert len(deltas) >= 2
         for d in deltas:
             assert "exp_id" in d and "delta" in d
+
+        # Overfitting detection: same values = no overfitting
+        train_losses = extract_metric_trajectory(records, "loss")
+        if len(train_losses) >= 3:
+            overfit = check_overfitting(train_losses, train_losses)
+            assert overfit["overfitting"] is False
+
+        # Overfitting detection: diverging trajectories = overfitting
+        overfit_pos = check_overfitting(
+            [0.5, 0.4, 0.3, 0.2, 0.15, 0.1],
+            [0.5, 0.55, 0.6, 0.65, 0.7, 0.75],
+            patience=5,
+        )
+        assert overfit_pos["overfitting"] is True
+        assert overfit_pos["severity"] in ("mild", "moderate", "severe")
+
+        # HP interaction detection: included in analyze() output
+        assert "interactions" in analysis
+        assert isinstance(analysis["interactions"], dict)
+        assert "interactions" in analysis["interactions"]
+
+        # HP interaction detection: direct call with synthetic data
+        synth_results = {"baseline": {"metrics": {"loss": 1.0}, "config": {}, "status": "completed"}}
+        for i, (lr, bs, loss) in enumerate([
+            (0.01, 16, 0.3), (0.01, 64, 1.5), (0.001, 16, 0.5),
+            (0.001, 64, 0.4), (0.01, 16, 0.35), (0.001, 64, 0.45),
+        ]):
+            synth_results[f"exp-syn-{i}"] = {
+                "status": "completed", "config": {"lr": lr, "batch_size": bs},
+                "metrics": {"loss": loss},
+            }
+        hp_out = detect_hp_interactions(synth_results, "loss", lower_is_better=True, min_experiments=5)
+        assert "interactions" in hp_out
+        assert isinstance(hp_out["interactions"], list)
+
+        # Branch scores: compute on real results (may be empty if no code_branch)
+        scores = compute_branch_scores(results, "loss", lower_is_better=True)
+        assert isinstance(scores, dict)
+
+        # Checkpoint warm-starting: generate script with checkpoint path
+        with tempfile.TemporaryDirectory() as td:
+            script_path = generate_train_script(td, "test-ckpt", "python train.py",
+                                                 checkpoint_path="/tmp/fake_ckpt.pt")
+            content = Path(script_path).read_text()
+            assert "CHECKPOINT_PATH" in content
+            assert "fake_ckpt.pt" in content
+
+        # Schema: checkpoint fields accepted in result validation
+        ckpt_result = {
+            "exp_id": "exp-ckpt", "status": "completed",
+            "config": {"lr": 0.001}, "metrics": {"loss": 0.5},
+            "checkpoint_source": {"exp_id": "exp-001", "checkpoint_path": "/tmp/ckpt.pt"},
+            "warm_started": True,
+        }
+        assert validate_result(ckpt_result)["valid"] is True
 
         # Verify directory structure matches SKILL.md spec
         assert (Path(exp_root) / "logs").exists()
@@ -1582,7 +1641,6 @@ class TestFullWorkflowE2E:
             },
             "ready_for_baseline": True,
         }
-        from schema_validator import validate_prerequisites
         vr = validate_prerequisites(prereq_data)
         assert vr["valid"], f"Prerequisites validation failed: {vr['errors']}"
 

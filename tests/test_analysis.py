@@ -6,12 +6,14 @@ import math
 import pytest
 
 import plot_results
-from conftest import _write_results
+from conftest import _write_result, _write_results
 
 from result_analyzer import (
     analyze,
     build_experiment_description,
+    compute_branch_scores,
     compute_deltas,
+    detect_hp_interactions,
     group_by_method_tier,
     identify_correlations,
     load_results,
@@ -320,6 +322,20 @@ class TestSchemaValidator:
         ({"exp_id": "exp-001", "status": "completed", "config": {"lr": 0.001},
           "metrics": {"loss": float("nan")}},
          False),
+        # valid with checkpoint fields
+        ({"exp_id": "exp-ckpt", "status": "completed", "config": {"lr": 0.001},
+          "metrics": {"loss": 0.5},
+          "checkpoint_source": {"exp_id": "exp-001", "checkpoint_path": "/tmp/ckpt.pt"},
+          "warm_started": True},
+         True),
+        # invalid: checkpoint_source as string (not dict)
+        ({"exp_id": "exp-bad", "status": "completed", "config": {"lr": 0.001},
+          "metrics": {"loss": 0.5}, "checkpoint_source": "/tmp/ckpt.pt"},
+         False),
+        # invalid: warm_started=true without checkpoint_source
+        ({"exp_id": "exp-bad2", "status": "completed", "config": {"lr": 0.001},
+          "metrics": {"loss": 0.5}, "warm_started": True},
+         False),
     ])
     def test_validate_result(self, data, expect_valid):
         assert validate_result(data)["valid"] is expect_valid
@@ -559,3 +575,150 @@ class TestPlotResults:
     def test_cli_no_args(self, run_main):
         r = run_main("plot_results.py")
         assert r.returncode == 1 and "Usage" in r.stdout
+
+
+# ======================================================================
+# TestHPInteractions
+# ======================================================================
+
+
+class TestHPInteractions:
+    """Tests for detect_hp_interactions()."""
+
+    def test_clear_interaction(self, tmp_path):
+        results_dir = tmp_path / "results"
+        results_dir.mkdir()
+        # Create experiments where lr*batch_size interaction matters
+        configs = [
+            (0.01, 16, 0.3),   # high lr + small batch = good
+            (0.01, 64, 1.5),   # high lr + large batch = bad
+            (0.001, 16, 0.5),  # low lr + small batch = ok
+            (0.001, 64, 0.4),  # low lr + large batch = ok
+            (0.01, 16, 0.35),  # repeat high lr + small batch = good
+            (0.001, 64, 0.45), # repeat low lr + large batch = ok
+        ]
+        _write_result(results_dir, "baseline", "completed", {"lr": 0.01}, {"loss": 1.0})
+        for i, (lr, bs, loss) in enumerate(configs):
+            _write_result(results_dir, f"exp-{i+1}", "completed",
+                         {"lr": lr, "batch_size": bs}, {"loss": loss})
+        results = load_results(str(results_dir))
+        out = detect_hp_interactions(results, "loss", lower_is_better=True, min_experiments=5)
+        # May or may not detect interaction depending on correlation strength
+        assert "interactions" in out
+
+    def test_insufficient_data(self, tmp_path):
+        results_dir = tmp_path / "results"
+        results_dir.mkdir()
+        _write_result(results_dir, "baseline", "completed", {"lr": 0.01}, {"loss": 1.0})
+        _write_result(results_dir, "exp-1", "completed", {"lr": 0.001}, {"loss": 0.8})
+        results = load_results(str(results_dir))
+        out = detect_hp_interactions(results, "loss", min_experiments=5)
+        assert out["interactions"] == []
+        assert "Need at least" in out["note"]
+
+    def test_categorical_excluded(self, tmp_path):
+        results_dir = tmp_path / "results"
+        results_dir.mkdir()
+        _write_result(results_dir, "baseline", "completed", {"lr": 0.01}, {"loss": 1.0})
+        for i in range(6):
+            _write_result(results_dir, f"exp-{i}", "completed",
+                         {"lr": 0.001 * (i+1), "optimizer": "adam"}, {"loss": 0.5 + i*0.1})
+        results = load_results(str(results_dir))
+        out = detect_hp_interactions(results, "loss")
+        # Only 1 numeric HP (lr) — need 2+ for interactions
+        assert out["interactions"] == []
+
+    def test_analyze_includes_interactions(self, tmp_path):
+        results_dir = tmp_path / "results"
+        results_dir.mkdir()
+        _write_result(results_dir, "baseline", "completed", {"lr": 0.01}, {"loss": 1.0})
+        for i in range(6):
+            _write_result(results_dir, f"exp-{i}", "completed",
+                         {"lr": 0.001*(i+1), "batch_size": 16*(i+1)}, {"loss": 0.5+i*0.05})
+        result = analyze(str(results_dir), "loss")
+        assert "interactions" in result
+        assert "branch_scores" in result
+        assert isinstance(result["branch_scores"], dict)
+
+
+# ======================================================================
+# TestBranchScores
+# ======================================================================
+
+
+class TestBranchScores:
+    """Tests for compute_branch_scores()."""
+
+    def test_basic_scoring(self, tmp_path):
+        results_dir = tmp_path / "results"
+        results_dir.mkdir()
+        _write_result(results_dir, "baseline", "completed", {"lr": 0.01}, {"loss": 1.0})
+        _write_result(results_dir, "exp-1", "completed", {"lr": 0.001}, {"loss": 0.7},
+                     code_branch="ml-opt/method-a")
+        _write_result(results_dir, "exp-2", "completed", {"lr": 0.001}, {"loss": 0.6},
+                     code_branch="ml-opt/method-a")
+        _write_result(results_dir, "exp-3", "completed", {"lr": 0.001}, {"loss": 0.9},
+                     code_branch="ml-opt/method-b")
+        scores = compute_branch_scores(load_results(str(results_dir)), "loss")
+        assert scores["ml-opt/method-a"]["score"] > scores["ml-opt/method-b"]["score"]
+        assert scores["ml-opt/method-a"]["sample_count"] == 2
+
+    def test_null_branch(self, tmp_path):
+        results_dir = tmp_path / "results"
+        results_dir.mkdir()
+        _write_result(results_dir, "baseline", "completed", {"lr": 0.01}, {"loss": 1.0})
+        _write_result(results_dir, "exp-1", "completed", {"lr": 0.001}, {"loss": 0.85})
+        scores = compute_branch_scores(load_results(str(results_dir)), "loss")
+        assert "__baseline__" in scores
+
+    def test_all_worse(self, tmp_path):
+        results_dir = tmp_path / "results"
+        results_dir.mkdir()
+        _write_result(results_dir, "baseline", "completed", {"lr": 0.01}, {"loss": 1.0})
+        _write_result(results_dir, "exp-1", "completed", {"lr": 0.001}, {"loss": 1.2},
+                     code_branch="ml-opt/a")
+        scores = compute_branch_scores(load_results(str(results_dir)), "loss")
+        assert scores["ml-opt/a"]["score"] == 0.0  # worse than baseline gets zero
+
+    def test_excludes_failed(self, tmp_path):
+        results_dir = tmp_path / "results"
+        results_dir.mkdir()
+        _write_result(results_dir, "baseline", "completed", {"lr": 0.01}, {"loss": 1.0})
+        _write_result(results_dir, "exp-1", "diverged", {"lr": 0.001}, {"loss": 0.5},
+                     code_branch="ml-opt/a")
+        _write_result(results_dir, "exp-2", "completed", {"lr": 0.001}, {"loss": 0.8},
+                     code_branch="ml-opt/a")
+        scores = compute_branch_scores(load_results(str(results_dir)), "loss")
+        assert scores["ml-opt/a"]["sample_count"] == 1
+
+    def test_higher_is_better(self, tmp_path):
+        results_dir = tmp_path / "results"
+        results_dir.mkdir()
+        _write_result(results_dir, "baseline", "completed", {"lr": 0.01}, {"accuracy": 70.0})
+        _write_result(results_dir, "exp-1", "completed", {"lr": 0.001}, {"accuracy": 80.0},
+                     code_branch="ml-opt/a")
+        scores = compute_branch_scores(load_results(str(results_dir)), "accuracy", lower_is_better=False)
+        assert scores["ml-opt/a"]["improvement_pct"] > 0
+
+    def test_stacking_excluded(self, tmp_path):
+        """Stacking experiments (method_tier=stacked_*) don't pollute branch scores."""
+        results_dir = tmp_path / "results"
+        results_dir.mkdir()
+        _write_result(results_dir, "baseline", "completed", {"lr": 0.01}, {"loss": 1.0})
+        _write_result(results_dir, "exp-1", "completed", {"lr": 0.001}, {"loss": 0.7},
+                     code_branch="ml-opt/a")
+        # Stacking experiment — should NOT appear in branch scores
+        stack = {"exp_id": "exp-stack", "status": "completed", "config": {"lr": 0.001},
+                 "metrics": {"loss": 0.5}, "method_tier": "stacked_default_hp",
+                 "code_branches": ["ml-opt/a", "ml-opt/b"]}
+        (results_dir / "exp-stack.json").write_text(json.dumps(stack))
+        scores = compute_branch_scores(load_results(str(results_dir)), "loss")
+        assert "exp-stack" not in str(scores)
+        assert scores.get("__baseline__") is None  # no phantom baseline group
+
+    def test_empty_results(self, tmp_path):
+        results_dir = tmp_path / "results"
+        results_dir.mkdir()
+        _write_result(results_dir, "baseline", "completed", {"lr": 0.01}, {"loss": 1.0})
+        scores = compute_branch_scores(load_results(str(results_dir)), "loss")
+        assert scores == {}

@@ -962,12 +962,12 @@ Run these checks and report pass/fail for each:
 EXP=/tmp/ml-opt-diagnostic/experiments
 SCRIPTS=$PLUGIN_ROOT/scripts
 
-echo "=== Feature Verification (13 items) ==="
+echo "=== Feature Verification (17 items) ==="
 
 # 1. Immutable baseline
 python3 $SCRIPTS/pipeline_state.py $EXP verify-baseline 2>/dev/null \
-  && echo "✓ [1/13] Immutable baseline: checksum valid" \
-  || echo "✗ [1/13] Immutable baseline: FAILED"
+  && echo "✓ [1/17] Immutable baseline: checksum valid" \
+  || echo "✗ [1/17] Immutable baseline: FAILED"
 
 # 2. Research agenda
 python3 -c "
@@ -976,35 +976,35 @@ if os.path.exists('$EXP/reports/research-agenda.json'):
     agenda = json.loads(open('$EXP/reports/research-agenda.json').read()).get('ideas', [])
     tried = sum(1 for i in agenda if i.get('status') == 'tried')
     untried = sum(1 for i in agenda if i.get('status') == 'untried')
-    print(f'✓ [2/13] Research agenda: {len(agenda)} ideas ({tried} tried, {untried} untried)')
+    print(f'✓ [2/17] Research agenda: {len(agenda)} ideas ({tried} tried, {untried} untried)')
 else:
-    print('✗ [2/13] Research agenda: file missing')
+    print('✗ [2/17] Research agenda: file missing')
 "
 
 # 3. Dead-end catalog
 python3 -c "
 from pathlib import Path
 p = Path('$EXP/reports/dead-ends.json')
-print('✓ [3/13] Dead-end catalog: exists') if p.exists() else print('— [3/13] Dead-end catalog: not triggered (OK)')
+print('✓ [3/17] Dead-end catalog: exists') if p.exists() else print('— [3/17] Dead-end catalog: not triggered (OK)')
 "
 
 # 4. Dashboard (structural check)
 python3 -c "
 html = open('$EXP/reports/dashboard.html').read()
 ok = '<table' in html and '<tr' in html
-print('✓ [4/13] Dashboard: structural check passed') if ok else print('✗ [4/13] Dashboard: missing structural elements')
+print('✓ [4/17] Dashboard: structural check passed') if ok else print('✗ [4/17] Dashboard: missing structural elements')
 "
 
 # 5. Excalidraw
 test -f $EXP/artifacts/pipeline-overview.excalidraw \
-  && echo "✓ [5/13] Excalidraw: pipeline diagram exists" \
-  || echo "✗ [5/13] Excalidraw: missing"
+  && echo "✓ [5/17] Excalidraw: pipeline diagram exists" \
+  || echo "✗ [5/17] Excalidraw: missing"
 
 # 6. Baseline checksum in state
 python3 -c "
 import json
 state = json.loads(open('$EXP/pipeline-state.json').read())
-print('✓ [6/13] Baseline checksum: stored') if 'baseline_checksum' in state else print('✗ [6/13] Baseline checksum: missing')
+print('✓ [6/17] Baseline checksum: stored') if 'baseline_checksum' in state else print('✗ [6/17] Baseline checksum: missing')
 "
 
 # 7. Error tracking
@@ -1014,9 +1014,9 @@ r = subprocess.run(['python3', '$SCRIPTS/error_tracker.py', '$EXP', 'summary'], 
 if r.returncode == 0:
     data = json.loads(r.stdout)
     n = data.get('total_events', 0)
-    print(f'✓ [7/13] Error tracking: {n} events logged')
+    print(f'✓ [7/17] Error tracking: {n} events logged')
 else:
-    print('✗ [7/13] Error tracking: summary command failed')
+    print('✗ [7/17] Error tracking: summary command failed')
 "
 
 # 8. Schema validation (all output types)
@@ -1031,7 +1031,7 @@ for f in $EXP/results/exp-*.json; do
   [ -f "$f" ] && python3 $SCRIPTS/schema_validator.py "$f" result 2>/dev/null \
     && echo "  ✓ $(basename $f) valid" || echo "  ✗ $(basename $f) invalid"
 done
-echo "✓ [8/13] Schema validation: complete"
+echo "✓ [8/17] Schema validation: complete"
 
 # 9. Result metadata (placeholder verification)
 python3 -c "
@@ -1047,9 +1047,9 @@ for f in results:
         if field not in data:
             issues.append(f'{eid}: missing {field}')
 if issues:
-    print('✗ [9/13] Result metadata: ' + '; '.join(issues))
+    print('✗ [9/17] Result metadata: ' + '; '.join(issues))
 else:
-    print(f'✓ [9/13] Result metadata: all {len(results)} results complete')
+    print(f'✓ [9/17] Result metadata: all {len(results)} results complete')
 "
 
 # 10. Pipeline state
@@ -1060,7 +1060,7 @@ has_phase = 'phase' in state
 has_iter = 'iteration' in state
 has_choices = 'user_choices' in state
 ok = has_phase and has_iter and has_choices
-print(f'✓ [10/13] Pipeline state: phase={state.get(\"phase\")}, iteration={state.get(\"iteration\")}') if ok else print('✗ [10/13] Pipeline state: missing fields')
+print(f'✓ [10/17] Pipeline state: phase={state.get(\"phase\")}, iteration={state.get(\"iteration\")}') if ok else print('✗ [10/17] Pipeline state: missing fields')
 "
 
 # 11. Error tracker CLI subcommands
@@ -1072,16 +1072,16 @@ python3 $SCRIPTS/error_tracker.py $EXP proposals loss true > /dev/null 2>&1 && e
 python3 $SCRIPTS/error_tracker.py $EXP dead-end list > /dev/null 2>&1 && echo "  ✓ dead-end list" || echo "  ✗ dead-end list"
 python3 $SCRIPTS/error_tracker.py $EXP suggestion-history > /dev/null 2>&1 && echo "  ✓ suggestion-history" || echo "  ✗ suggestion-history"
 python3 $SCRIPTS/error_tracker.py $EXP agenda list > /dev/null 2>&1 && echo "  ✓ agenda list" || echo "  ✗ agenda list"
-echo "✓ [11/13] Error tracker CLI: subcommands verified"
+echo "✓ [11/17] Error tracker CLI: subcommands verified"
 
 # 12. Worktree cleanup
 python3 -c "
 from pathlib import Path
 wt = Path('$EXP/worktrees')
 if wt.exists() and list(wt.iterdir()):
-    print('✗ [12/13] Worktree cleanup: leftover worktrees found')
+    print('✗ [12/17] Worktree cleanup: leftover worktrees found')
 else:
-    print('✓ [12/13] Worktree cleanup: no leftover worktrees')
+    print('✓ [12/17] Worktree cleanup: no leftover worktrees')
 "
 
 # 13. Goal memory
@@ -1091,12 +1091,58 @@ import subprocess
 goals = Path('$EXP/optimization-goals.json')
 r = subprocess.run(['python3', '$SCRIPTS/goal_memory.py', '$EXP', 'summary'], capture_output=True, text=True)
 if goals.exists() and r.returncode == 0 and 'OPTIMIZATION GOALS' in r.stdout:
-    print('✓ [13/13] Goal memory: goals created, summary works')
+    print('✓ [13/17] Goal memory: goals created, summary works')
 else:
     missing = []
     if not goals.exists(): missing.append('goals missing')
     if r.returncode != 0: missing.append('summary failed')
-    print('✗ [13/13] Goal memory: ' + ', '.join(missing))
+    print('✗ [13/17] Goal memory: ' + ', '.join(missing))
+"
+
+# 14. Overfitting detection
+python3 -c "
+import sys, os
+sys.path.insert(0, '$SCRIPTS')
+from detect_divergence import check_overfitting
+train = [0.5, 0.4, 0.3, 0.2, 0.15, 0.1]
+val = [0.5, 0.55, 0.6, 0.65, 0.7, 0.75]
+r = check_overfitting(train, val, patience=5)
+if r['overfitting']:
+    print('✓ [14/17] Overfitting detection: works (severity=' + r['severity'] + ')')
+else:
+    print('✗ [14/17] Overfitting detection: FAILED to detect')
+"
+
+# 15. HP interaction detection
+python3 -c "
+import sys, os
+sys.path.insert(0, '$SCRIPTS')
+from result_analyzer import detect_hp_interactions, load_results
+results = load_results('$EXP/results')
+out = detect_hp_interactions(results, 'loss', lower_is_better=True)
+print(f'✓ [15/17] HP interactions: {len(out.get(\"interactions\", []))} detected') if 'interactions' in out else print('✗ [15/17] HP interactions: FAILED')
+"
+
+# 16. Branch scores
+python3 -c "
+import sys, os
+sys.path.insert(0, '$SCRIPTS')
+from result_analyzer import compute_branch_scores, load_results
+results = load_results('$EXP/results')
+scores = compute_branch_scores(results, 'loss', lower_is_better=True)
+print(f'✓ [16/17] Branch scores: {len(scores)} branches scored') if isinstance(scores, dict) else print('✗ [16/17] Branch scores: FAILED')
+"
+
+# 17. Checkpoint warm-starting
+python3 -c "
+import sys, os, tempfile
+sys.path.insert(0, '$SCRIPTS')
+from experiment_setup import generate_train_script
+from pathlib import Path
+with tempfile.TemporaryDirectory() as td:
+    p = generate_train_script(td, 'ckpt-test', 'python train.py', checkpoint_path='/tmp/ckpt.pt')
+    ok = 'CHECKPOINT_PATH' in Path(p).read_text()
+    print('✓ [17/17] Checkpoint warm-start: script includes CHECKPOINT_PATH') if ok else print('✗ [17/17] Checkpoint warm-start: FAILED')
 "
 
 echo "=== Feature Verification Done ==="
@@ -1144,7 +1190,7 @@ Phase 7 Advanced Features (in-pipeline):
   Stuck protocol trigger:     [✓/✗] — consecutive_stop_count=3, data readable
   Method stacking ranking:    [✓/✗] — 5+ methods ranked for stacking
 
-Feature Verification (13 items):
+Feature Verification (17 items):
    1. Immutable baseline:     [✓/✗]
    2. Research agenda:        [✓/✗] — N ideas tracked
    3. Dead-end catalog:       [✓/—] — triggered if branches pruned
@@ -1158,6 +1204,10 @@ Feature Verification (13 items):
   11. Error tracker CLI:      [✓/✗] — 12 subcommands verified
   12. Worktree cleanup:       [✓/✗] — no leftover worktrees
   13. Goal memory:            [✓/✗] — goals created, summary works
+  14. Overfitting detection:  [✓/✗] — check_overfitting() works
+  15. HP interactions:        [✓/✗] — detect_hp_interactions() runs
+  16. Branch scores:           [✓/✗] — compute_branch_scores() runs
+  17. Checkpoint warm-start:  [✓/✗] — CHECKPOINT_PATH in generated script
 
 Skipped phases (by design):
   Phase 0 Discovery:    Interactive (requires user Q&A) — goals simulated via scripts/goal_memory.py init-goals

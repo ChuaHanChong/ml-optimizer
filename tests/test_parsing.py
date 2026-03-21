@@ -16,6 +16,7 @@ from conftest import FIXTURES
 from detect_divergence import (
     MODEL_CATEGORY_DEFAULTS,
     check_divergence,
+    check_overfitting,
     detect_explosion,
     detect_gradual_drift,
     detect_nan_inf,
@@ -557,3 +558,134 @@ class TestCLI:
         for args in [("not-json",), (), ("--higher-is-better",)]:
             r = run_main("detect_divergence.py", *args)
             assert r.returncode == 1
+
+
+# ---------------------------------------------------------------------------
+# TestOverfittingDetection — train vs val metric divergence
+# ---------------------------------------------------------------------------
+
+
+class TestOverfittingDetection:
+    """Tests for check_overfitting()."""
+
+    def test_classic_overfitting(self):
+        train = [0.5, 0.4, 0.3, 0.2, 0.15, 0.1, 0.08, 0.06]
+        val = [0.5, 0.42, 0.38, 0.40, 0.45, 0.50, 0.55, 0.60]
+        result = check_overfitting(train, val, patience=5)
+        assert result["overfitting"] is True
+        assert result["severity"] in ("mild", "moderate", "severe")
+
+    def test_both_improving(self):
+        train = [0.5, 0.4, 0.3, 0.2, 0.15, 0.1]
+        val = [0.6, 0.5, 0.4, 0.35, 0.3, 0.25]
+        result = check_overfitting(train, val, patience=3)
+        assert result["overfitting"] is False
+
+    def test_below_patience(self):
+        train = [0.5, 0.4, 0.3, 0.2]
+        val = [0.5, 0.55, 0.6, 0.65]
+        result = check_overfitting(train, val, patience=5)
+        assert result["overfitting"] is False
+
+    def test_exactly_at_patience(self):
+        train = [0.5, 0.4, 0.3, 0.2, 0.15, 0.1]
+        val = [0.5, 0.55, 0.6, 0.65, 0.7, 0.75]
+        result = check_overfitting(train, val, patience=5)
+        assert result["overfitting"] is True
+
+    def test_interrupted_pattern(self):
+        train = [0.5, 0.4, 0.3, 0.35, 0.3, 0.2, 0.15]
+        val = [0.5, 0.55, 0.6, 0.55, 0.6, 0.65, 0.7]
+        result = check_overfitting(train, val, patience=5)
+        assert result["overfitting"] is False  # pattern interrupted at step 3
+
+    def test_higher_is_better(self):
+        train = [50, 60, 70, 80, 85, 90, 92]
+        val = [48, 55, 60, 58, 55, 52, 50]
+        result = check_overfitting(train, val, patience=4, lower_is_better=False)
+        assert result["overfitting"] is True
+
+    def test_empty_sequences(self):
+        result = check_overfitting([], [], patience=3)
+        assert result["overfitting"] is False
+        assert "Insufficient" in result["reason"]
+
+    def test_short_sequences(self):
+        result = check_overfitting([0.5, 0.4], [0.5, 0.6], patience=5)
+        assert result["overfitting"] is False
+
+    def test_nan_filtering(self):
+        train = [0.5, float('nan'), 0.3, 0.2, 0.15, 0.1, 0.08, 0.06]
+        val = [0.5, float('nan'), 0.38, 0.40, 0.45, 0.50, 0.55, 0.60]
+        result = check_overfitting(train, val, patience=4)
+        assert result["overfitting"] is True  # NaN pairs filtered, enough remain
+
+    def test_mismatched_lengths(self):
+        train = [0.5, 0.4, 0.3, 0.2, 0.15, 0.1, 0.08, 0.06, 0.05, 0.04]
+        val = [0.5, 0.55, 0.6, 0.65, 0.7, 0.75]  # shorter
+        result = check_overfitting(train, val, patience=5)
+        assert result["overfitting"] is True
+
+    def test_severity_mild(self):
+        # Val worsens less than 2x train improvement
+        train = [0.5, 0.45, 0.4, 0.35, 0.3, 0.25]
+        val = [0.5, 0.52, 0.54, 0.56, 0.58, 0.60]
+        result = check_overfitting(train, val, patience=5)
+        assert result["overfitting"] is True
+        assert result["severity"] == "mild"
+
+    def test_min_gap_filter(self):
+        # Tiny val worsening (0.001 per step) doesn't trigger with min_gap=0.01
+        train = [0.5, 0.45, 0.4, 0.35, 0.3, 0.25]
+        val = [0.5, 0.501, 0.502, 0.503, 0.504, 0.505]
+        result = check_overfitting(train, val, patience=5, min_gap=0.01)
+        assert result["overfitting"] is False
+
+    def test_cli_overfitting(self, run_main):
+        r = run_main("detect_divergence.py", "--check-overfitting",
+                     "[0.5,0.4,0.3,0.2,0.15,0.1]", "[0.5,0.55,0.6,0.65,0.7,0.75]")
+        assert r.returncode == 0
+        data = json.loads(r.stdout)
+        assert data["overfitting"] is True
+
+    def test_cli_overfitting_healthy(self, run_main):
+        r = run_main("detect_divergence.py", "--check-overfitting",
+                     "[0.5,0.4,0.3,0.2]", "[0.5,0.4,0.3,0.2]")
+        assert r.returncode == 0
+        data = json.loads(r.stdout)
+        assert data["overfitting"] is False
+
+    def test_cli_overfitting_patience_flag(self, run_main):
+        """--patience N changes detection threshold."""
+        # With patience=3, should detect overfitting (5 worsening steps > 3)
+        r = run_main("detect_divergence.py", "--check-overfitting",
+                     "[0.5,0.4,0.3,0.2,0.15,0.1]", "[0.5,0.55,0.6,0.65,0.7,0.75]",
+                     "--patience", "3")
+        assert r.returncode == 0
+        assert json.loads(r.stdout)["overfitting"] is True
+
+        # With patience=10, same data should NOT trigger (only 5 worsening steps)
+        r2 = run_main("detect_divergence.py", "--check-overfitting",
+                      "[0.5,0.4,0.3,0.2,0.15,0.1]", "[0.5,0.55,0.6,0.65,0.7,0.75]",
+                      "--patience", "10")
+        assert r2.returncode == 0
+        assert json.loads(r2.stdout)["overfitting"] is False
+
+    def test_cli_overfitting_model_category_rl(self, run_main):
+        """--model-category rl uses patience=10 (not default 5)."""
+        # 6 worsening steps: triggers with default patience=5, NOT with RL patience=10
+        r = run_main("detect_divergence.py", "--check-overfitting",
+                     "[0.5,0.4,0.3,0.2,0.15,0.1]", "[0.5,0.55,0.6,0.65,0.7,0.75]",
+                     "--model-category", "rl")
+        assert r.returncode == 0
+        data = json.loads(r.stdout)
+        assert data["overfitting"] is False  # RL patience=10 > 5 worsening steps
+
+    def test_cli_overfitting_min_gap_flag(self, run_main):
+        """--min-gap F filters out tiny val worsening."""
+        # Tiny worsening (0.001 per step) with min_gap=0.01 should not trigger
+        r = run_main("detect_divergence.py", "--check-overfitting",
+                     "[0.5,0.45,0.4,0.35,0.3,0.25]", "[0.5,0.501,0.502,0.503,0.504,0.505]",
+                     "--min-gap", "0.01")
+        assert r.returncode == 0
+        assert json.loads(r.stdout)["overfitting"] is False

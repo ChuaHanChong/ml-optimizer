@@ -21,6 +21,7 @@ From the orchestrator:
 - `explosion_threshold`: Threshold multiplier for explosion detection (default: 5.0). Override based on model type.
 - `plateau_patience`: Steps without improvement before plateau alarm (default: 20). Override based on model type.
 - `model_category` (optional): From user_choices — `"rl"`, `"generative"`, or null. Controls RL-specific monitoring adjustments (see RL Model Monitoring section).
+- `overfitting_check` (optional): When provided, also check for overfitting by comparing train vs val metrics. Dict with `train_metric` and `val_metric` names. Example: `{"train_metric": "train_loss", "val_metric": "val_loss"}`. Requires both metrics to be available in the training logs.
 
 ## Step 1: Validate Inputs
 
@@ -89,7 +90,25 @@ python3 scripts/detect_divergence.py '<json_values>' --model-category <model_cat
 
 This applies category-specific thresholds automatically (e.g., RL uses `explosion_threshold=20.0` to avoid false positives on reward spikes).
 
-### 2d: Take Action on Divergence
+### 2d: Overfitting Check (if `overfitting_check` provided)
+
+If `overfitting_check` was provided in the inputs:
+
+1. Extract both metric trajectories from the log:
+   - Train metric: `extract_metric_trajectory(records, overfitting_check["train_metric"])`
+   - Val metric: `extract_metric_trajectory(records, overfitting_check["val_metric"])`
+
+2. Run overfitting detection:
+   ```bash
+   python3 scripts/detect_divergence.py --check-overfitting '<train_json>' '<val_json>' [--model-category <category>]
+   ```
+
+3. If overfitting detected:
+   - Report status `"overfitting_warning"` (do NOT kill the process — overfitting is a warning, not a hard failure)
+   - Log to error tracker: `category: "overfitting", severity: "warning"`
+   - Log to behavioral memory: `scripts/goal_memory.py <exp_root> log-behavior training_insight '{"insight":"Overfitting detected: <severity> at step <step>","source":"monitor"}'`
+
+### 2e: Take Action on Divergence
 
 If divergence is detected:
 
@@ -144,7 +163,7 @@ If divergence is detected:
    ```
    This helps future hp-tune iterations avoid configs that trigger divergence.
 
-### 2e: Report Status
+### 2f: Report Status
 
 For healthy experiments, report status:
 ```

@@ -71,8 +71,9 @@ For each hyperparameter that was varied, use **relative** (percentage) threshold
 - **Unknown:** Not enough variation to determine
 
 ### Interaction Effects
-- Did changing two HPs together produce unexpected results?
-- e.g., High LR + large batch diverged, but high LR + small batch worked
+- Check the `"interactions"` array in the result analyzer output
+- If interactions are detected, note them in the batch report — they indicate which HP pairs should be explored together, not independently
+- Use interaction data to inform HP tuning recommendations: "If LR × batch_size interaction is strong, suggest testing specific LR+batch combos"
 
 ## Step 2.1: Tier-Aware Analysis (if method proposals were used)
 
@@ -300,6 +301,12 @@ Return to the orchestrator:
 - Improvement over baseline
 - Key findings summary
 - Path to the analysis report
+
+### Branch Allocation Data (for hp-tune)
+
+When multiple code branches are being tested, include in the analysis output:
+- `branch_scores`: Per-branch allocation scores from `scripts/result_analyzer.py` (run with `branch-scores` subcommand or use `compute_branch_scores()`)
+- This data is passed to hp-tune for adaptive budget allocation in the next iteration
 
 ### Stacking Readiness
 

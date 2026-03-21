@@ -183,7 +183,7 @@ All scripts in `scripts/` use only the standard library and work as both importa
 |--------|-----------|
 | `scripts/gpu_check.py` | `python3 scripts/gpu_check.py` |
 | `scripts/parse_logs.py` | `python3 scripts/parse_logs.py <logfile>` — parses kv/JSON/CSV/XGBoost/HuggingFace Trainer logs |
-| `scripts/detect_divergence.py` | `python3 scripts/detect_divergence.py '<json_values>' [--higher-is-better] [--model-category rl\|generative\|supervised]` |
+| `scripts/detect_divergence.py` | `python3 scripts/detect_divergence.py '<json_values>' [--higher-is-better] [--model-category rl\|generative\|supervised]` — also: `--check-overfitting '<train_json>' '<val_json>' [--patience N] [--min-gap F]` |
 | `scripts/result_analyzer.py` | `python3 scripts/result_analyzer.py <results_dir> <metric> [baseline_id] [lower_is_better]` |
 | `scripts/experiment_setup.py` | `python3 scripts/experiment_setup.py <project_root> <train_command> [gpu_id] [config_json]` |
 | `scripts/implement_utils.py` | `python3 scripts/implement_utils.py <findings.md> '<indices_json>'` — also: `clone <url> <dest>`, `analyze <path>` |
@@ -256,6 +256,10 @@ Exit code `2` = block action. Exit code `0` = allow. Configured in `hooks/hooks.
 - **Three-tier result tracking**: Experiments carry `method_tier` (baseline / method_default_hp / method_tuned_hp) and `proposal_source` (paper / llm_knowledge) for attribution analysis.
 - **Method stacking**: After independent method testing, top methods are sequentially merged. Clean merges proceed; conflicts are LLM-resolved. Degrading combinations are skipped.
 - **Goal anchoring & behavioral memory**: `scripts/goal_memory.py` maintains `optimization-goals.json` (goal anchor) and `learned-behaviors.json` (accumulated learnings). The orchestrator validates agent outputs post-dispatch. All 10 agents have `memory: local` for persistent role-specific memory at `.claude/agent-memory-local/<agent-name>/` in the target project.
+- **Overfitting detection**: Monitor compares train vs val metrics to detect overfitting (val worsens while train improves). Reports severity and triggers regularization prioritization.
+- **HP interaction detection**: `detect_hp_interactions()` identifies 2-way HP interaction effects (e.g., "high LR only works with small batch size"). Integrated into analysis output.
+- **Adaptive branch budget**: HP-tune allocates more experiments to promising branches and fewer to struggling ones. Scores by improvement × confidence factor.
+- **Checkpoint warm-starting**: Experiments can resume from prior checkpoints (lower LR, fewer epochs). Saves 50-80% compute in later iterations.
 
 ## Gotchas
 

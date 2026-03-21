@@ -29,7 +29,7 @@ ENTRY POINT
 ================================================================================
 
   All agents have memory: local (persistent at .claude/agent-memory-local/)
-  All agents read scripts/goal_memory.py summary before acting (Phase 7+)
+  All agents read goal_memory.py summary before acting (Phase 7+)
 
   PROCEDURAL AGENTS (model: sonnet — lower cost/latency, no ultrathink)
   ---------------------------------------------------------------------
@@ -123,7 +123,7 @@ ENTRY POINT
   +---------------------------------------------------------------------+
 
   Saves: pipeline-state.json (user_choices), user-choices-backup.json
-         optimization-goals.json (goal anchor — via scripts/goal_memory.py init-goals)
+         optimization-goals.json (goal anchor — via goal_memory.py init-goals)
 
                     |
                     v
@@ -134,7 +134,7 @@ ENTRY POINT
   External: claude-mem:mem-search (recall past projects)
 
     - Read model files, config files
-    - python3 scripts/gpu_check.py  -->  GPU count, VRAM
+    - python3 gpu_check.py  -->  GPU count, VRAM
     - Detect framework (PyTorch/TF/JAX/sklearn/XGBoost/LightGBM)
     - Determine model_category if not set
 
@@ -172,8 +172,8 @@ ENTRY POINT
 
     +--------------------------------------------------------------+
     |  1. Run training with default HPs                            |
-    |  2. Parse logs: python3 scripts/parse_logs.py <logfile>      |
-    |  3. Check divergence: python3 scripts/detect_divergence.py   |
+    |  2. Parse logs: python3 parse_logs.py <logfile>              |
+    |  3. Check divergence: python3 detect_divergence.py           |
     |  4. Profile GPU memory usage (skip for tabular ML)           |
     |  5. Estimate throughput (steps/sec, time/epoch)              |
     |  6. Write baseline.json                                      |
@@ -296,12 +296,18 @@ ENTRY POINT
   |  |  Inputs: past results (grouped by code_branch), remaining_budget   |  |
   |  |  Iter 1: one config per branch + one baseline HP config            |  |
   |  |  Iter 2+: prune underperforming branches, focus configs            |  |
+  |  |    - Adaptive branch budget: allocate slots proportionally to      |  |
+  |  |      branch scores (improvement_pct × confidence). Score=0 for     |  |
+  |  |      branches worse than baseline (no allocation).                 |  |
+  |  |    - Checkpoint warm-starting (when enabled): propose configs      |  |
+  |  |      that resume from prior checkpoints (lower LR, fewer epochs,   |  |
+  |  |      same-branch only). CHECKPOINT_PATH exported in train script.  |  |
   |  |  Cap: min(max(num_gpus, 1), remaining_budget) proposals            |  |
   |  |                                                                    |  |
   |  |  WARNING: If branches dropped due to budget, log to                |  |
   |  |  error_tracker with priority order (impact × confidence)           |  |
   |  |                                                                    |  |
-  |  |  POST-DISPATCH: scripts/goal_memory.py validate-output hp-tune             |  |
+  |  |  POST-DISPATCH: goal_memory.py validate-output hp-tune             |  |
   |  |    → Remove configs with frozen params, OOM violations, dead ends  |  |
   |  +--------------------------------------------------------------------+  |
   |                    |                                                     |
@@ -324,8 +330,16 @@ ENTRY POINT
   |  |  (skipped for tabular ML: sklearn, XGBoost, LightGBM)              |  |
   |  |                                                                    |  |
   |  |  - Watch divergence_metric (default: "loss")                       |  |
-  |  |  - python3 scripts/detect_divergence.py '<values>'                 |  |
+  |  |  - python3 detect_divergence.py '<values>'                         |  |
   |  |  - Returns: healthy | diverged | unmonitored                       |  |
+  |  |                                                                    |  |
+  |  |  Overfitting detection (if train + val metrics available):         |  |
+  |  |  - python3 detect_divergence.py --check-overfitting                |  |
+  |  |    '<train_json>' '<val_json>' [--model-category rl|generative]    |  |
+  |  |  - Detects val worsening while train improves (patience steps)     |  |
+  |  |  - Severity: mild/moderate/severe                                  |  |
+  |  |  - Model-category defaults: RL=10, generative=8, supervised=5      |  |
+  |  |  - Overfitting = warning (not a kill signal)                       |  |
   |  |                                                                    |  |
   |  |  "unmonitored": metric not found after fallbacks                   |  |
   |  |    → warn user, rely on hard timeout as safety net                 |  |
@@ -348,13 +362,17 @@ ENTRY POINT
   |  |    - If analyze says stop/pivot → discard speculative proposals    |  |
   |  |                                                                    |  |
   |  |  Post-analyze actions:                                             |  |
-  |  |    - scripts/goal_memory.py validate-output analyze (metric alignment)     |  |
-  |  |    - scripts/goal_memory.py log-behavior method_outcome (per branch)       |  |
+  |  |    - HP interaction detection: detect_hp_interactions() finds      |  |
+  |  |      2-way HP pairs with synergistic effects on the metric         |  |
+  |  |    - Branch scores: compute_branch_scores() for adaptive budget    |  |
+  |  |      allocation in next hp-tune iteration                          |  |
+  |  |    - goal_memory.py validate-output analyze (metric check)         |  |
+  |  |    - goal_memory.py log-behavior method_outcome (per branch)       |  |
   |  |    - Update research agenda (agenda update <idea_id> ...)          |  |
   |  |    - Log dead ends if branches pruned (dead-end add ...)           |  |
-  |  |    - Verify baseline integrity (scripts/pipeline_state.py verify-baseline) |  |
-  |  |    - scripts/goal_memory.py sync-from-errors (keep behaviors current)      |  |
-  |  |    - Regenerate live dashboard (scripts/dashboard.py --live)               |  |
+  |  |    - Verify baseline integrity (pipeline_state.py verify-baseline) |  |
+  |  |    - goal_memory.py sync-from-errors (keep behaviors current)      |  |
+  |  |    - Regenerate live dashboard (dashboard.py --live)               |  |
   |  |                                                                    |  |
   |  |  Decision tree:                                                    |  |
   |  |    "continue"         → next HP iteration                          |  |
@@ -409,10 +427,10 @@ ENTRY POINT
   |  |  Triggers: 3 consecutive "stop" recommendations                    |  |
   |  |  (one-shot — stuck_protocol_triggered prevents infinite loops)     |  |
   |  |                                                                    |  |
-  |  |  1. Read error patterns (scripts/error_tracker.py patterns)                |  |
-  |  |  2. Read success metrics (scripts/error_tracker.py success ...)            |  |
-  |  |  3. Read dead-end catalog (scripts/error_tracker.py dead-end list)         |  |
-  |  |  4. Read research agenda (scripts/error_tracker.py agenda list)            |  |
+  |  |  1. Read error patterns (error_tracker.py patterns)                |  |
+  |  |  2. Read success metrics (error_tracker.py success ...)            |  |
+  |  |  3. Read dead-end catalog (error_tracker.py dead-end list)         |  |
+  |  |  4. Read research agenda (error_tracker.py agenda list)            |  |
   |  |  5. Dispatch research-agent with full failure context              |  |
   |  |     (constraint: do NOT re-propose dead-end techniques)            |  |
   |  |  6. If new proposals found → implement → reset counter → loop      |  |
@@ -437,7 +455,7 @@ ENTRY POINT
 
     +--------------------------------------------------------------+
     |  1. Rank methods by improvement (descending) using           |
-    |     rank_methods_for_stacking() from scripts/result_analyzer.py      |
+    |     rank_methods_for_stacking() from result_analyzer.py      |
     |                                                              |
     |  2. Initialize: best method branch -> ml-opt/stack-1         |
     |                                                              |
@@ -471,7 +489,7 @@ ENTRY POINT
     |    - ASCII charts (comparison, timeline, sensitivity)        |
     |    - Matplotlib progress chart                               |
     |    - Excalidraw diagrams (pipeline, architecture)            |
-    |    - HTML dashboard (scripts/dashboard.py)                           |
+    |    - HTML dashboard (dashboard.py)                           |
     |    - Error pattern summary                                   |
     |    - Research agenda summary                                 |
     |    - Dead-end catalog summary                                |

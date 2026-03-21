@@ -183,7 +183,7 @@ When the implementation manifest contains multiple code branches:
      ```
      Agent(
        description: "HP tuning iteration {iteration}",
-       prompt: "Ultrathink. Propose HP configurations. Parameters: project_root: {project_root}, num_gpus: {num_gpus}, search_space: {search_space}, iteration: {iteration}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, remaining_budget: {remaining_budget}, code_branches: {code_branches}, max_batch_size: {max_batch_size or omit}.",
+       prompt: "Ultrathink. Propose HP configurations. Parameters: project_root: {project_root}, num_gpus: {num_gpus}, search_space: {search_space}, iteration: {iteration}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, remaining_budget: {remaining_budget}, code_branches: {code_branches}, max_batch_size: {max_batch_size or omit}, warm_start_enabled: {warm_start_enabled or false}, available_checkpoints: {available_checkpoints_json or {}}, branch_scores: {branch_scores_json or {}}.",
        subagent_type: "ml-optimizer:tuning-agent"
      )
      ```
@@ -281,7 +281,7 @@ When the implementation manifest contains multiple code branches:
      ```
      Agent(
        description: "Speculative hp-tune for next batch",
-       prompt: "Ultrathink. This is a SPECULATIVE proposal — the orchestrator may discard these results if analyze recommends stop or pivot. Parameters: project_root: {project_root}, num_gpus: {num_gpus}, search_space: {search_space}, iteration: {iteration + 1}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, remaining_budget: {remaining_budget - current_batch_size}, code_branches: {code_branches}.",
+       prompt: "Ultrathink. This is a SPECULATIVE proposal — the orchestrator may discard these results if analyze recommends stop or pivot. Parameters: project_root: {project_root}, num_gpus: {num_gpus}, search_space: {search_space}, iteration: {iteration + 1}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, remaining_budget: {remaining_budget - current_batch_size}, code_branches: {code_branches}, warm_start_enabled: {warm_start_enabled or false}, available_checkpoints: {available_checkpoints_json or {}}, branch_scores: {branch_scores_json or {}}.",
        subagent_type: "ml-optimizer:tuning-agent",
        run_in_background: true
      )
@@ -539,7 +539,7 @@ When dispatching experiments across multiple GPUs, use the Agent tool with `suba
 For each config in proposed_configs:
   Agent(
     description: "Run experiment {exp_id}",
-    prompt: "Run experiment {exp_id} with config: {config_json}. GPU: {gpu_id}. Project root: {project_root}. Train command: {train_command}. Eval command: {eval_command or null}. Code branch: {code_branch or null}. Code proposal: {code_proposal or null}. Proposal source: {proposal_source or null}. Method tier: {method_tier or null}. Iteration: {iteration}. Prepared train path: {prepared_train_path or null}. Prepared val path: {prepared_val_path or null}.",
+    prompt: "Run experiment {exp_id} with config: {config_json}. GPU: {gpu_id}. Project root: {project_root}. Train command: {train_command}. Eval command: {eval_command or null}. Code branch: {code_branch or null}. Code proposal: {code_proposal or null}. Proposal source: {proposal_source or null}. Method tier: {method_tier or null}. Iteration: {iteration}. Prepared train path: {prepared_train_path or null}. Prepared val path: {prepared_val_path or null}. Checkpoint source: {checkpoint_source_json or null}.",
     subagent_type: "ml-optimizer:experiment-agent",
     run_in_background: true
   )

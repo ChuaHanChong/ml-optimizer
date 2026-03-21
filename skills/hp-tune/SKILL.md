@@ -27,6 +27,9 @@ From the orchestrator:
 - `lower_is_better`: Whether lower metric values are better (True for loss, False for accuracy)
 - `remaining_budget`: Maximum number of experiments that can still be run. Calculated by orchestrator as `max_experiments - total_experiments_so_far` (where `max_experiments` is set by adaptive difficulty assessment: easy=×8, moderate=×15, hard=×25, or user override). Cap proposals at `min(max(num_gpus, 1), remaining_budget)`. If remaining_budget ≤ 0, recommend stopping.
 - `code_branches`: List of validated code branches from the implementation manifest (e.g., `["ml-opt/perceptual-loss"]`), or `[]` for HP-only. In iteration 1, generate one config per branch (with baseline HPs) plus one for the original code, instead of spanning the search space.
+- `warm_start_enabled`: Whether checkpoint warm-starting is enabled (boolean, default false). When true and iteration >= 2, propose warm-starting from the best completed experiment on the same branch.
+- `available_checkpoints`: Dict mapping exp_id to checkpoint info (optional). Only provided when `warm_start_enabled` is true. Example: `{"exp-005": {"checkpoint_path": "experiments/artifacts/exp-005/best.pt", "code_branch": "ml-opt/method-a"}}`.
+- `branch_scores`: Per-branch allocation scores from analyze (optional). Dict mapping branch name to `{"improvement_pct": X, "sample_count": N, "score": Y}`.
 
 ## Step 1: Load Past Results
 
@@ -136,6 +139,33 @@ Reasoning:
 - Expected outcome: [what we hope to learn]
 - Risk: [what could go wrong]
 ```
+
+### Warm-Start Proposals (Iteration 2+, when `warm_start_enabled`)
+
+When warm-starting is enabled and `available_checkpoints` is non-empty:
+1. For each branch being tuned, find the best checkpoint on that same branch
+2. Propose warm-started configs with lower LR (0.3-0.5x) and fewer epochs (0.3-0.5x)
+3. Mix: at most 2/3 warm-started, at least 1/3 from-scratch (maintains exploration)
+4. Only warm-start from same `code_branch` — cross-branch is unsafe
+5. Never warm-start from diverged/failed experiments
+6. Set `checkpoint_source` in the proposed config: `{"exp_id": "<source>", "checkpoint_path": "<path>"}`
+
+### Adaptive Branch Budget Allocation (Iteration 2+, multiple branches)
+
+When `branch_scores` is provided and `code_branches` has 2+ entries:
+1. Allocate experiment slots proportionally to branch scores: `slots = round(total * score / sum_scores)`
+2. Every surviving branch gets minimum 1 slot
+3. High-score branches get more exploitation configs; low-score get more exploration
+4. If all branches are within 1% of each other, fall back to equal allocation
+5. Log allocation breakdown to dev_notes
+
+**Formula:** `score = max(improvement_pct × confidence, 0.0)` where `confidence = 1 - 1/√(sample_count + 1)`. Branches worse than baseline get score 0 and receive no allocation.
+
+### Interaction-Aware Proposals
+
+When the analyze output includes HP interactions:
+- If a strong interaction is detected (e.g., LR × batch_size), propose configs that explore the interacting pair TOGETHER, not independently
+- The interaction rho sign indicates which combinations to prefer
 
 ### Categorical Hyperparameters
 

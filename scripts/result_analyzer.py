@@ -345,6 +345,220 @@ def group_by_method_tier(results: dict[str, dict]) -> dict[str, list[dict]]:
     return {k: v for k, v in groups.items() if v}
 
 
+def detect_hp_interactions(
+    results: dict[str, dict],
+    metric: str,
+    lower_is_better: bool = True,
+    min_experiments: int = 5,
+    min_interaction_rho: float = 0.5,
+) -> dict:
+    """Detect 2-way HP interaction effects using product of centered ranks.
+
+    For each pair of numeric HPs, computes the interaction term (product
+    of centered ranks) and correlates it with the metric. Reports
+    interactions stronger than either individual HP correlation.
+    """
+    # Filter to completed experiments with metric and config
+    exps = []
+    for eid, data in results.items():
+        if eid == "baseline":
+            continue
+        if data.get("status") != "completed":
+            continue
+        m = data.get("metrics", {})
+        cfg = data.get("config", {})
+        if not isinstance(m, dict) or not isinstance(cfg, dict):
+            continue
+        val = m.get(metric)
+        if val is None:
+            continue
+        try:
+            val = float(val)
+        except (ValueError, TypeError):
+            continue
+        if not math.isfinite(val):
+            continue
+        exps.append({"metric_val": val, "config": cfg})
+
+    if len(exps) < min_experiments:
+        return {"interactions": [], "note": f"Need at least {min_experiments} experiments for interaction detection"}
+
+    # Identify numeric HP keys
+    all_keys: set[str] = set()
+    for e in exps:
+        all_keys.update(e["config"].keys())
+
+    numeric_keys = []
+    for key in sorted(all_keys):
+        vals = []
+        for e in exps:
+            v = e["config"].get(key)
+            if v is not None:
+                try:
+                    vals.append(float(v))
+                except (ValueError, TypeError):
+                    break
+        else:
+            if len(set(vals)) > 1:  # skip constant HPs
+                numeric_keys.append(key)
+
+    if len(numeric_keys) < 2:
+        return {"interactions": [], "note": "Need at least 2 varying numeric HPs for interaction detection"}
+
+    def _rank(values):
+        n = len(values)
+        indexed = sorted(range(n), key=lambda i: values[i])
+        ranks = [0.0] * n
+        i = 0
+        while i < n:
+            j = i
+            while j < n - 1 and values[indexed[j]] == values[indexed[j + 1]]:
+                j += 1
+            avg_rank = (i + j) / 2.0 + 1
+            for k in range(i, j + 1):
+                ranks[indexed[k]] = avg_rank
+            i = j + 1
+        return ranks
+
+    interactions = []
+    for a_idx in range(len(numeric_keys)):
+        for b_idx in range(a_idx + 1, len(numeric_keys)):
+            key_a, key_b = numeric_keys[a_idx], numeric_keys[b_idx]
+
+            # Collect experiments that have both HPs
+            subset = []
+            for e in exps:
+                va = e["config"].get(key_a)
+                vb = e["config"].get(key_b)
+                if va is not None and vb is not None:
+                    try:
+                        subset.append((float(va), float(vb), e["metric_val"]))
+                    except (ValueError, TypeError):
+                        continue
+
+            if len(subset) < min_experiments:
+                continue
+
+            vals_a = [s[0] for s in subset]
+            vals_b = [s[1] for s in subset]
+            vals_metric = [s[2] for s in subset]
+
+            # Individual correlations
+            rho_a = spearman_correlation(vals_a, vals_metric)
+            rho_b = spearman_correlation(vals_b, vals_metric)
+
+            # Centered ranks
+            ranks_a = _rank(vals_a)
+            ranks_b = _rank(vals_b)
+            mean_a = sum(ranks_a) / len(ranks_a)
+            mean_b = sum(ranks_b) / len(ranks_b)
+            centered_a = [r - mean_a for r in ranks_a]
+            centered_b = [r - mean_b for r in ranks_b]
+
+            # Interaction term = product of centered ranks
+            interaction_term = [centered_a[i] * centered_b[i] for i in range(len(subset))]
+
+            # Correlate interaction term with metric
+            rho_interaction = spearman_correlation(interaction_term, vals_metric)
+
+            # Filter: must be strong AND stronger than either individual
+            if abs(rho_interaction) >= min_interaction_rho and abs(rho_interaction) > max(abs(rho_a), abs(rho_b)):
+                # Generate description
+                if rho_interaction < 0 and lower_is_better:
+                    desc = f"Combined high {key_a} + high {key_b} correlates with better (lower) {metric}"
+                elif rho_interaction > 0 and lower_is_better:
+                    desc = f"Combined high {key_a} + high {key_b} correlates with worse (higher) {metric}"
+                elif rho_interaction < 0 and not lower_is_better:
+                    desc = f"Combined high {key_a} + high {key_b} correlates with worse (lower) {metric}"
+                else:
+                    desc = f"Combined high {key_a} + high {key_b} correlates with better (higher) {metric}"
+
+                interactions.append({
+                    "param_a": key_a,
+                    "param_b": key_b,
+                    "interaction_rho": round(rho_interaction, 4),
+                    "individual_rho_a": round(rho_a, 4),
+                    "individual_rho_b": round(rho_b, 4),
+                    "description": desc,
+                    "n_experiments": len(subset),
+                })
+
+    interactions.sort(key=lambda x: abs(x["interaction_rho"]), reverse=True)
+    return {"interactions": interactions, "note": None}
+
+
+def compute_branch_scores(
+    results: dict[str, dict],
+    metric: str,
+    lower_is_better: bool = True,
+) -> dict[str, dict]:
+    """Compute per-branch allocation scores for adaptive budget allocation.
+
+    For each code_branch (null branch keyed as ``__baseline__``), computes
+    improvement_pct over baseline, sample_count, and a composite score.
+    """
+    # Find baseline metric value
+    baseline = results.get("baseline", {})
+    baseline_metrics = baseline.get("metrics", {})
+    baseline_val = baseline_metrics.get(metric)
+    if baseline_val is None:
+        return {}
+    try:
+        baseline_val = float(baseline_val)
+    except (ValueError, TypeError):
+        return {}
+
+    # Group completed experiments by code_branch
+    groups: dict[str, list[dict]] = {}
+    for eid, data in results.items():
+        if eid == "baseline":
+            continue
+        if data.get("status") != "completed":
+            continue
+        if data.get("method_tier", "").startswith("stacked_"):
+            continue
+        m = data.get("metrics", {})
+        val = m.get(metric)
+        if val is None:
+            continue
+        try:
+            val = float(val)
+        except (ValueError, TypeError):
+            continue
+        branch = data.get("code_branch") or "__baseline__"
+        groups.setdefault(branch, []).append({"exp_id": eid, "metric_val": val})
+
+    scores = {}
+    for branch, exps in groups.items():
+        if lower_is_better:
+            best = min(exps, key=lambda e: e["metric_val"])
+        else:
+            best = max(exps, key=lambda e: e["metric_val"])
+
+        best_val = best["metric_val"]
+        if abs(baseline_val) > 1e-12:
+            if lower_is_better:
+                improvement_pct = (baseline_val - best_val) / abs(baseline_val) * 100
+            else:
+                improvement_pct = (best_val - baseline_val) / abs(baseline_val) * 100
+        else:
+            improvement_pct = 0.0
+
+        sample_count = len(exps)
+        confidence = 1 - 1 / math.sqrt(sample_count + 1)
+        score = max(improvement_pct * confidence, 0.0)
+
+        scores[branch] = {
+            "best_metric": best_val,
+            "best_exp_id": best["exp_id"],
+            "improvement_pct": round(improvement_pct, 2),
+            "sample_count": sample_count,
+            "score": round(score, 2),
+        }
+
+    return scores
+
+
 def analyze(results_dir: str, metric: str, baseline_id: str = "baseline", lower_is_better: bool = True) -> dict:
     """Full analysis: load, rank, compute deltas, find correlations."""
     results = load_results(results_dir)
@@ -356,6 +570,8 @@ def analyze(results_dir: str, metric: str, baseline_id: str = "baseline", lower_
         "ranking": rank_by_metric(results, metric, lower_is_better),
         "deltas": compute_deltas(results, baseline_id, metric),
         "correlations": identify_correlations(results, metric, lower_is_better),
+        "interactions": detect_hp_interactions(results, metric, lower_is_better),
+        "branch_scores": compute_branch_scores(results, metric, lower_is_better),
     }
     if baseline_id not in results:
         result["warning"] = f"Baseline '{baseline_id}' not found; deltas not computed"

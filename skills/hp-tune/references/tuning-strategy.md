@@ -67,6 +67,13 @@ When experiments run on different code branches (from the implement skill), resu
 - **Don't cross-compare HPs:** A config that works well on branch A is not evidence that it will work on branch B. Only compare experiments within the same branch.
 - **Branch performance ranking:** After sufficient experiments per branch, compare the *best result from each branch* to identify which code changes are most promising. Focus future HP tuning budget on the best-performing branches.
 
+### Adaptive Budget Allocation
+
+In iteration 2+, when multiple branches survive pruning, allocate experiment slots proportionally rather than equally:
+- **Scoring:** `score = improvement_pct * (1 - 1/sqrt(n+1))` where n = experiments on that branch
+- **Minimum:** Every branch gets at least 1 experiment slot
+- **Rebalance each iteration:** Scores change as new data arrives
+
 ## Batch Sizing Strategy
 
 When proposing N experiments (one per GPU):

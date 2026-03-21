@@ -73,6 +73,7 @@ def generate_train_script(
     log_file: str | None = None,
     env_vars: dict | None = None,
     time_budget: int | None = None,
+    checkpoint_path: str | None = None,
 ) -> str:
     """Generate a bash training script from parameters.
 
@@ -80,6 +81,9 @@ def generate_train_script(
     with ``timeout --signal=SIGTERM`` so all experiments train for the same
     wall-clock duration.  Exit code 124 (budget reached) is treated as
     success, not failure.
+
+    When *checkpoint_path* is provided, it is exported as the ``CHECKPOINT_PATH``
+    environment variable for the training script to load for warm-starting.
     """
     if log_file is None:
         log_file = f"experiments/logs/{exp_id}/train.log"
@@ -91,6 +95,9 @@ def generate_train_script(
     if env_vars:
         for key, value in env_vars.items():
             lines.append(f"export {key}={shlex.quote(str(value))}")
+    if checkpoint_path:
+        lines.append(f"export CHECKPOINT_PATH={shlex.quote(str(checkpoint_path))}")
+        lines.append(f"echo {shlex.quote(f'Warm-starting from checkpoint: {checkpoint_path}')}")
     lines.append("")
 
     # Create log directory and record PID
@@ -124,7 +131,7 @@ def generate_train_script(
     return str(script_path)
 
 
-def setup(project_root: str, train_command: str, gpu_id: int = 0, config: dict | None = None) -> dict:
+def setup(project_root: str, train_command: str, gpu_id: int = 0, config: dict | None = None, checkpoint_path: str | None = None) -> dict:
     """Full setup: create dirs, generate ID, write config and script.
 
     Uses atomic file creation to prevent race conditions when multiple
@@ -156,6 +163,7 @@ def setup(project_root: str, train_command: str, gpu_id: int = 0, config: dict |
         train_command,
         gpu_id,
         log_file,
+        checkpoint_path=checkpoint_path,
     )
 
     return {

@@ -29,6 +29,8 @@
   "method_tier": "baseline|method_default_hp|method_tuned_hp|null",
   "proposal_source": "paper|llm_knowledge|null",
   "iteration": 1,
+  "checkpoint_source": {"exp_id": "exp-005", "checkpoint_path": "experiments/artifacts/exp-005/best.pt"} | null,
+  "warm_started": true | false,
   "notes": "Optional notes about this experiment"
 }
 ```

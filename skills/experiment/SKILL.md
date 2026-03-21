@@ -32,6 +32,7 @@ From the orchestrator or hp-tune skill:
 - `code_branches`: List of method branches combined in this stacking experiment (optional, from orchestrator Phase 8)
 - `stacking_order`: Position in the stacking chain — 1 = best method alone, 2 = best + second, etc. (optional, integer)
 - `stack_base_exp`: Experiment ID of the previous stack step this builds on (optional)
+- `checkpoint_source`: Checkpoint warm-start info (optional). Dict with `exp_id` (source experiment) and `checkpoint_path` (path to checkpoint file). When provided, the experiment warm-starts from this checkpoint.
 
 ## Step 1: Set Up Code Environment
 
@@ -72,6 +73,13 @@ Before building the training command, verify:
      - If neither available: `timeout_seconds = 14400` (4 hours default)
    - Cap at 86400 (24 hours maximum)
    - Store `timeout_seconds` for use in Step 3 script generation
+
+### Step 1.2: Checkpoint Validation (if `checkpoint_source` provided)
+
+1. Verify the checkpoint file exists at `checkpoint_source.checkpoint_path`
+2. If missing, log warning to error tracker and fall back to from-scratch training
+3. Read the training script to determine the checkpoint-loading flag (e.g., `--resume`, `--checkpoint`, `--init_checkpoint`)
+4. If no loading mechanism found, set `CHECKPOINT_PATH` environment variable and proceed (the generated script already exports it)
 
 ## Step 2: Build Training Command
 
@@ -282,6 +290,8 @@ Write experiment results to `experiments/results/<exp_id>.json`:
   "proposal_source": "<paper|llm_knowledge|null>",
   "method_tier": "<baseline|method_default_hp|method_tuned_hp|stacked_default_hp|stacked_tuned_hp>",
   "iteration": <tuning_iteration>,
+  "checkpoint_source": {"exp_id": "<source_exp>", "checkpoint_path": "<path>"} | null,
+  "warm_started": true | false,
   "code_branches": ["<branch1>", "<branch2>"],
   "stacking_order": <integer>,
   "stack_base_exp": "<exp_id of previous stack step>",

@@ -552,6 +552,16 @@ class TestFullPipelineIntegration:
         assert len(analysis["ranking"]) >= 3
         assert len(analysis["deltas"]) >= 2
 
+        # Direct rank_by_metric and compute_deltas verification
+        results = load_results(str(results_dir))
+        ranked = rank_by_metric(results, "loss", lower_is_better=True)
+        assert len(ranked) >= 3
+        assert ranked[0]["value"] <= ranked[-1]["value"]  # sorted ascending
+        deltas = compute_deltas(results, "baseline", "loss")
+        assert len(deltas) >= 2
+        for d in deltas:
+            assert "exp_id" in d and "delta" in d
+
         # Verify directory structure matches SKILL.md spec
         assert (Path(exp_root) / "logs").exists()
         assert (Path(exp_root) / "results").exists()

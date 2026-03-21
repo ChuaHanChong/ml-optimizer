@@ -162,6 +162,22 @@ class TestBehaviorLogging:
         Path(exp).mkdir()
         assert get_behaviors(exp) == []
 
+    def test_load_corrupt_behaviors(self, tmp_path):
+        """Corrupt learned-behaviors.json returns empty structure."""
+        exp = tmp_path / "experiments"
+        exp.mkdir()
+        (exp / "learned-behaviors.json").write_text("{bad json")
+        items = get_behaviors(str(exp))
+        assert items == []
+
+    def test_load_non_dict_behaviors(self, tmp_path):
+        """Non-dict learned-behaviors.json returns empty structure."""
+        exp = tmp_path / "experiments"
+        exp.mkdir()
+        (exp / "learned-behaviors.json").write_text('"just a string"')
+        items = get_behaviors(str(exp))
+        assert items == []
+
 
 # ---------------------------------------------------------------------------
 # TestValidation
@@ -315,6 +331,83 @@ class TestValidation:
         assert result["valid"] is False
         assert any("OOM limit" in v for v in result["violations"])
 
+    def test_hp_tune_flat_config(self, tmp_path):
+        """Flat dict with 'lr' key is treated as a single config."""
+        exp = _setup_goals(tmp_path)
+        result = validate_agent_output(exp, "hp-tune", {"lr": 0.001})
+        assert result["valid"] is True
+
+    def test_hp_tune_non_dict_in_list(self, tmp_path):
+        """Non-dict items in configs list are skipped, not crashed."""
+        exp = _setup_goals(tmp_path)
+        result = validate_agent_output(exp, "hp-tune", {
+            "configs": ["not_a_dict", {"lr": 0.001}]
+        })
+        assert result["valid"] is True
+
+    def test_hp_tune_bad_batch_size_type(self, tmp_path):
+        """String batch_size doesn't crash OOM check."""
+        exp = str(tmp_path / "experiments")
+        Path(exp).mkdir()
+        init_goals(exp, _minimal_goals())  # no frozen params
+        log_behavior(exp, "resource_constraint", {"max_batch_size": 128})
+        result = validate_agent_output(exp, "hp-tune", {
+            "configs": [{"lr": 0.001, "batch_size": "not_a_number"}]
+        })
+        assert result["valid"] is True  # bad type is skipped, not violation
+
+    def test_implement_full_scope(self, tmp_path):
+        """Full scope returns no warnings even for model files."""
+        exp = str(tmp_path / "experiments")
+        Path(exp).mkdir()
+        init_goals(exp, _minimal_goals(constraints={"scope_level": "full"}))
+        result = validate_agent_output(exp, "implement", {
+            "files_modified": ["model.py", "backbone.py"]
+        })
+        assert result["valid"] is True
+        assert result["warnings"] == []
+
+    def test_experiment_non_dict_config(self, tmp_path):
+        """Non-dict config returns early, no crash."""
+        exp = _setup_goals(tmp_path)
+        result = validate_agent_output(exp, "experiment", {
+            "config": "not_a_dict"
+        })
+        assert result["valid"] is True
+
+    def test_research_non_list_proposals(self, tmp_path):
+        """Non-list proposals returns early, no crash."""
+        exp = str(tmp_path / "experiments")
+        Path(exp).mkdir()
+        init_goals(exp, _minimal_goals())
+        result = validate_agent_output(exp, "research", {
+            "proposals": "not_a_list"
+        })
+        assert result["valid"] is True
+
+    def test_implement_non_list_changes(self, tmp_path):
+        """Non-list files_modified returns early, no crash."""
+        exp = str(tmp_path / "experiments")
+        Path(exp).mkdir()
+        init_goals(exp, _minimal_goals())
+        result = validate_agent_output(exp, "implement", {
+            "files_modified": "not_a_list"
+        })
+        assert result["valid"] is True
+
+    def test_hp_tune_bad_lr_bound_type(self, tmp_path):
+        """Non-numeric lr value doesn't crash HP bound check."""
+        exp = str(tmp_path / "experiments")
+        Path(exp).mkdir()
+        init_goals(exp, _minimal_goals())
+        log_behavior(exp, "hp_constraint", {
+            "parameter": "lr", "constraint_type": "upper_bound", "value": 0.01
+        })
+        result = validate_agent_output(exp, "hp-tune", {
+            "configs": [{"lr": "bad_value"}]
+        })
+        assert result["valid"] is True  # bad type skipped
+
     def test_no_goals_file(self, tmp_path):
         exp = str(tmp_path / "experiments")
         Path(exp).mkdir()
@@ -387,6 +480,51 @@ class TestSyncFromErrors:
         items = get_behaviors(str(exp), category="method_outcome")
         assert any(mo.get("method") == "mixup" for mo in items)
 
+    def test_sync_oom_already_exists(self, tmp_path):
+        """OOM sync skips batch_size already in behaviors."""
+        exp = tmp_path / "experiments"
+        exp.mkdir()
+        reports = exp / "reports"
+        reports.mkdir()
+        # Pre-populate a resource constraint
+        log_behavior(str(exp), "resource_constraint", {
+            "max_batch_size": 256, "source": "manual"
+        })
+        # Log OOM with same batch_size
+        (reports / "error-log.json").write_text(json.dumps({
+            "events": [{
+                "event_id": "e1", "timestamp": "2026-01-01T00:00:00Z",
+                "category": "training_failure", "severity": "critical",
+                "source": "experiment", "message": "CUDA out of memory (OOM)",
+                "config": {"batch_size": 256},
+            }],
+            "summary": {},
+        }))
+        result = sync_from_errors(str(exp))
+        assert result["skipped"] >= 1
+
+    def test_sync_divergence_already_exists(self, tmp_path):
+        """Divergence sync skips LR bound already in behaviors."""
+        exp = tmp_path / "experiments"
+        exp.mkdir()
+        reports = exp / "reports"
+        reports.mkdir()
+        # Pre-populate hp constraint
+        log_behavior(str(exp), "hp_constraint", {
+            "parameter": "lr", "value": 0.05, "source": "sync_from_errors"
+        })
+        (reports / "error-log.json").write_text(json.dumps({
+            "events": [
+                {"event_id": "e1", "timestamp": "2026-01-01T00:00:00Z",
+                 "category": "divergence", "severity": "warning",
+                 "source": "monitor", "message": "NaN",
+                 "config": {"lr": 0.05}},
+            ],
+            "summary": {},
+        }))
+        result = sync_from_errors(str(exp))
+        assert result["skipped"] >= 1
+
     def test_sync_idempotent(self, tmp_path):
         exp = tmp_path / "experiments"
         exp.mkdir()
@@ -427,6 +565,42 @@ class TestSummary:
         assert "LEARNED CONSTRAINTS" in summary
         assert "WHAT WORKS" in summary
         assert "perceptual-loss" in summary
+
+    def test_summary_all_sections(self, tmp_path):
+        """Summary with all behavior categories populated."""
+        exp = _setup_goals(tmp_path)
+        log_behavior(exp, "hp_constraint", {
+            "parameter": "lr", "constraint_type": "upper_bound",
+            "value": 0.01, "evidence_count": 4, "reason": "diverged above this"
+        })
+        log_behavior(exp, "resource_constraint", {
+            "max_batch_size": 128, "notes": "OOM at 256"
+        })
+        log_behavior(exp, "method_outcome", {
+            "method": "perceptual-loss", "outcome": "improved",
+            "improvement_pct": 12.14, "hp_sensitivity": "best at lr=0.0005"
+        })
+        log_behavior(exp, "method_outcome", {
+            "method": "focal-loss", "outcome": "dead_end",
+            "reason": "5% worse than baseline"
+        })
+        log_behavior(exp, "divergence_pattern", {
+            "description": "LR > 0.01 causes NaN within 50 steps"
+        })
+        log_behavior(exp, "training_insight", {
+            "insight": "warmup=500 helps convergence"
+        })
+        summary = generate_summary(exp)
+        assert "LEARNED CONSTRAINTS" in summary
+        assert "diverged above this" in summary
+        assert "OOM" in summary
+        assert "DEAD ENDS" in summary
+        assert "focal-loss" in summary
+        assert "WHAT WORKS" in summary
+        assert "perceptual-loss" in summary
+        assert "DIVERGENCE PATTERNS" in summary
+        assert "NaN" in summary
+        assert "warmup" in summary
 
     def test_no_goals(self, tmp_path):
         exp = str(tmp_path / "experiments")
@@ -473,6 +647,13 @@ class TestCLI:
 
     def test_cli_no_args(self):
         assert _run_cli() == 1
+
+    def test_cli_missing_args(self, tmp_path):
+        exp = str(tmp_path / "experiments")
+        Path(exp).mkdir()
+        assert _run_cli(exp, "init-goals") == 1
+        assert _run_cli(exp, "log-behavior") == 1
+        assert _run_cli(exp, "validate-output") == 1
 
     def test_cli_invalid_json(self, tmp_path):
         exp = str(tmp_path / "experiments")

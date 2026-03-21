@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "last_updated": "2026-03-19T14:30:00Z",
+  "hp_constraints": [
+    {
+      "parameter": "lr",
+      "constraint_type": "upper_bound",
+      "value": 0.01,
+      "reason": "All LRs > 0.01 diverged within 100 steps",
+      "evidence_count": 4,
+      "source": "analyze",
+      "timestamp": "2026-03-19T13:00:00Z"
+    }
+  ],
+  "method_outcomes": [
+    {
+      "method": "perceptual-loss",
+      "branch": "ml-opt/perceptual-loss",
+      "outcome": "improved",
+      "best_metric_value": 78.5,
+      "baseline_value": 70.0,
+      "improvement_pct": 12.14,
+      "hp_sensitivity": "High LR sensitivity — best at lr=0.0005",
+      "source": "analyze",
+      "timestamp": "2026-03-19T13:45:00Z"
+    },
+    {
+      "method": "focal-loss",
+      "outcome": "dead_end",
+      "reason": "5% worse than baseline across all configs",
+      "source": "analyze",
+      "timestamp": "2026-03-19T14:00:00Z"
+    }
+  ],
+  "divergence_patterns": [
+    {
+      "pattern": "high_lr_explosion",
+      "description": "LR > 0.01 causes NaN within 50 steps on all branches",
+      "affected_branches": ["baseline", "ml-opt/perceptual-loss"],
+      "threshold": {"parameter": "lr", "value": 0.01},
+      "source": "monitor",
+      "timestamp": "2026-03-19T13:20:00Z"
+    }
+  ],
+  "resource_constraints": [
+    {
+      "resource": "gpu_memory",
+      "max_batch_size": 128,
+      "notes": "OOM at bs=256 with perceptual-loss branch",
+      "source": "experiment",
+      "timestamp": "2026-03-19T13:30:00Z"
+    }
+  ],
+  "training_insights": [
+    {
+      "insight": "Model converges faster with warmup_steps=500",
+      "evidence": "exp-005 and exp-007 both showed 3% improvement with warmup",
+      "source": "analyze",
+      "timestamp": "2026-03-19T14:00:00Z"
+    }
+  ],
+  "scope_violations": []
+}

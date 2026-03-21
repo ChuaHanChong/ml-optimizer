@@ -44,6 +44,34 @@
    - Store the user's answers — they will guide every subsequent phase
    - If the user is unsure about some answers, note those as areas to investigate in Phase 1
 
+3.5. **Write optimization goals:**
+   After recording user responses, create the goal anchor file:
+   ```bash
+   python3 scripts/goal_memory.py <exp_root> init-goals '<goals_json>'
+   ```
+   Where `<goals_json>` is constructed from the user's answers:
+   ```json
+   {
+     "objective": {
+       "primary_metric": "<from Q1>",
+       "lower_is_better": "<inferred from metric name>",
+       "target_value": "<from Q3, or null>",
+       "problem_description": "<synthesized from user context>"
+     },
+     "constraints": {
+       "scope_level": "<from Q6: 'training' if HP-only, 'architecture' if HP+research, 'full' if let-me-decide>",
+       "budget_mode": "<from budget selection>",
+       "model_category": "<from Q8 or auto-detected>",
+       "frozen_parameters": ["<from Q4: parameters user does NOT want changed>"]
+     },
+     "divergence": {
+       "metric": "<from Q7>",
+       "lower_is_better": "<from Q7a>"
+     }
+   }
+   ```
+   This file persists in `experiments/optimization-goals.json` and is read by all agents before acting.
+
 4. **Exit plan mode:**
    - Use `ExitPlanMode` once you have enough information to proceed
    - Summarize your understanding back to the user before moving on

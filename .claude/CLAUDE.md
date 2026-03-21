@@ -22,7 +22,7 @@ python -m pytest tests/test_parse_logs.py -v   # single file
 python -m pytest tests/test_parse_logs.py::test_name -v  # single test
 ```
 
-No build step. No linter configured. Python 3.10+ required. The `scripts/` directory uses only the Python standard library (except `plot_results.py` which requires matplotlib for chart generation).
+No build step. No linter configured. Python 3.10+ required. The `scripts/` directory uses only the Python standard library (except `scripts/plot_results.py` which requires matplotlib for chart generation).
 
 ## MCP Server Dependencies (Recommended)
 
@@ -44,7 +44,6 @@ commands/optimize.md        — /optimize slash command (entry point)
 skills/                     — Skill definitions (SKILL.md files)
 agents/                     — 10 subagent definitions
 scripts/                    — Python utilities (stdlib only)
-memory/                     — Placeholder for future cross-project patterns
 tests/                      — pytest test suite
 ```
 
@@ -86,7 +85,7 @@ The implement skill creates `ml-opt/<slug>` branches per research proposal. The 
 
 ### Agent Definitions (`agents/`)
 
-Ten subagent types, each with a preloaded skill and specified tool access. The orchestrate skill dispatches agents directly via `Agent(subagent_type="ml-optimizer:<name>-agent")`. Skills are instruction documents only — they have `disable-model-invocation: true` and `user-invocable: false`, and are not directly invocable.
+Ten subagent types, each with a preloaded skill and specified tool access. The orchestrate skill dispatches agents directly via `Agent(subagent_type="ml-optimizer:<name>-agent")`. Skills are instruction documents only — they have `disable-model-invocation: true` and `user-invocable: false`, and are not directly invocable. All agents have `memory: local` for persistent role-specific memory at `.claude/agent-memory-local/<agent-name>/` in the target project.
 
 **Procedural agents** (`model: sonnet` — lower cost/latency, no ultrathink):
 - **baseline-agent**: Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:baseline]`
@@ -113,19 +112,20 @@ All scripts work as both importable modules and CLI tools:
 
 | Script | CLI Usage |
 |--------|-----------|
-| `gpu_check.py` | `python3 scripts/gpu_check.py` — parse nvidia-smi |
-| `parse_logs.py` | `python3 scripts/parse_logs.py <logfile>` — parse kv/JSON/CSV/XGBoost/HuggingFace Trainer logs |
-| `detect_divergence.py` | `python3 scripts/detect_divergence.py '<json_values>' [--higher-is-better] [--model-category rl\|generative\|supervised] [--explosion-threshold N] [--plateau-patience N]` — detect NaN/explosion/plateau with configurable thresholds |
-| `result_analyzer.py` | `python3 scripts/result_analyzer.py <results_dir> <metric> [baseline_id] [lower_is_better]` |
-| `experiment_setup.py` | Generates experiment IDs and directory structure |
-| `implement_utils.py` | `python3 scripts/implement_utils.py <findings.md> '<indices_json>'` — parse proposals; also `clone <url> <dest>`, `analyze <path>`, and `diff <project_root> <branch>` subcommands |
-| `pipeline_state.py` | `python3 scripts/pipeline_state.py <exp_root> validate|save|load|cleanup|verify-baseline` |
-| `schema_validator.py` | `python3 scripts/schema_validator.py <filepath> result\|baseline\|manifest\|prerequisites` — validates JSON against expected schemas |
-| `plot_results.py` | `python3 scripts/plot_results.py <results_dir> <metric> comparison\|timeline\|sensitivity <hp>\|progress [--higher-is-better]` — ASCII charts + matplotlib progress chart |
-| `prerequisites_check.py` | `python3 scripts/prerequisites_check.py scan-imports\|check-packages\|detect-env\|detect-format\|detect-format-project\|validate-data\|bulk-install-cmd\|gpu-install-cmd` — dataset, environment, and GPU-aware install validation |
-| `dashboard.py` | `python3 scripts/dashboard.py <exp_root> [--live] [--serve --port 8080]` — generate self-contained HTML dashboard with progress timeline, results table, HP sensitivity, research agenda, error summary, method explanations. `--live` enables 30s auto-refresh. |
-| `excalidraw_gen.py` | `python3 scripts/excalidraw_gen.py <exp_root> pipeline\|comparison\|hp-landscape\|architecture <args>` — generate Excalidraw JSON diagrams (pipeline overview, experiment comparison, HP landscape, architecture changes) |
-| `error_tracker.py` | `python3 scripts/error_tracker.py <exp_root> log\|show\|patterns\|summary\|sync\|success\|proposals\|rank\|cleanup\|log-suggestion\|suggestion-history\|dead-end <add\|list\|check>\|agenda <init\|update\|list\|add>` — error tracking, pattern detection, success metrics, proposal outcomes, suggestion ranking, suggestion history, dead-end catalog, research agenda |
+| `scripts/gpu_check.py` | `python3 scripts/gpu_check.py` — parse nvidia-smi |
+| `scripts/parse_logs.py` | `python3 scripts/parse_logs.py <logfile>` — parse kv/JSON/CSV/XGBoost/HuggingFace Trainer logs |
+| `scripts/detect_divergence.py` | `python3 scripts/detect_divergence.py '<json_values>' [--higher-is-better] [--model-category rl\|generative\|supervised] [--explosion-threshold N] [--plateau-patience N]` — detect NaN/explosion/plateau with configurable thresholds |
+| `scripts/result_analyzer.py` | `python3 scripts/result_analyzer.py <results_dir> <metric> [baseline_id] [lower_is_better]` |
+| `scripts/experiment_setup.py` | Generates experiment IDs and directory structure |
+| `scripts/implement_utils.py` | `python3 scripts/implement_utils.py <findings.md> '<indices_json>'` — parse proposals; also `clone <url> <dest>`, `analyze <path>`, and `diff <project_root> <branch>` subcommands |
+| `scripts/pipeline_state.py` | `python3 scripts/pipeline_state.py <exp_root> validate|save|load|cleanup|verify-baseline` |
+| `scripts/schema_validator.py` | `python3 scripts/schema_validator.py <filepath> result\|baseline\|manifest\|prerequisites` — validates JSON against expected schemas |
+| `scripts/plot_results.py` | `python3 scripts/plot_results.py <results_dir> <metric> comparison\|timeline\|sensitivity <hp>\|progress [--higher-is-better]` — ASCII charts + matplotlib progress chart |
+| `scripts/prerequisites_check.py` | `python3 scripts/prerequisites_check.py scan-imports\|check-packages\|detect-env\|detect-format\|detect-format-project\|validate-data\|bulk-install-cmd\|gpu-install-cmd` — dataset, environment, and GPU-aware install validation |
+| `scripts/dashboard.py` | `python3 scripts/dashboard.py <exp_root> [--live] [--serve --port 8080]` — generate self-contained HTML dashboard with progress timeline, results table, HP sensitivity, research agenda, error summary, method explanations. `--live` enables 30s auto-refresh. |
+| `scripts/excalidraw_gen.py` | `python3 scripts/excalidraw_gen.py <exp_root> pipeline\|comparison\|hp-landscape\|architecture <args>` — generate Excalidraw JSON diagrams (pipeline overview, experiment comparison, HP landscape, architecture changes) |
+| `scripts/error_tracker.py` | `python3 scripts/error_tracker.py <exp_root> log\|show\|patterns\|summary\|success\|proposals\|rank\|log-suggestion\|suggestion-history\|dead-end <add\|list\|check>\|agenda <init\|update\|list\|add>` — error tracking, pattern detection, success metrics, proposal outcomes, suggestion ranking, suggestion history, dead-end catalog, research agenda |
+| `scripts/goal_memory.py` | `python3 scripts/goal_memory.py <exp_root> init-goals\|read-goals\|log-behavior <category> <json>\|query-behaviors [category]\|validate-output <agent> <json>\|summary\|sync-from-errors` — goal anchoring, behavioral memory, agent output validation, compact briefings |
 
 ### State & Output (in target project)
 
@@ -138,6 +138,8 @@ experiments/
   results/implementation-manifest.json — Validated proposal branches
   results/proposed-configs/          — HP config proposals
   prepared-data/                     — Prepared dataset (if preprocessing needed)
+  optimization-goals.json            — Goal anchor (written at Phase 0, read by all agents)
+  learned-behaviors.json             — Accumulated behavioral memory (HP constraints, method outcomes, divergence patterns)
   pipeline-state.json                — Resumable pipeline state
   logs/<exp-id>/train.log            — Raw training logs
   reports/                           — Analysis reports, research findings (web + method proposals)
@@ -187,7 +189,7 @@ The orchestrator can be stopped and resumed. On restart it reads `pipeline-state
 - **Non-git fallback**: If the target project isn't a git repo, the implement skill uses file backups instead of branches. Each proposal is validated against a clean baseline backup (restore-before-apply pattern) to prevent cross-proposal code leakage. This forces sequential (not parallel) experiment execution.
 - **Experiment budget**: Two modes: `"auto"` (default: agent judges difficulty — easy=×8, moderate=×15, hard=×25 multiplied by `max(num_gpus, 1)`) and `"autonomous"` (unlimited — runs until interrupted or 3 consecutive stop recommendations). Users can also specify a custom budget. The orchestrator passes `remaining_budget` to both hp-tune and analyze. HP-tune caps proposals at `min(max(num_gpus, 1), remaining_budget)` to prevent overshoot. The analyze skill uses `remaining_budget` in its pivot decision tree to gate research pivots (requires `>= 3` for method proposals, `>= 5` for full research). In autonomous mode, stop recommendations are logged but not enforced until 3 consecutive. **Continuous research**: In autonomous mode with `method_proposal_scope` set, the orchestrator auto-triggers a research → implement cycle every `hp_batches_per_round` batches (default 3) without user confirmation. If research yields no new proposals, the cadence doubles (exponential backoff).
 - **Proposal priority scoring**: `(impact * confidence) / (11 - min(feasibility, 10))` — feasibility clamped to [1,10] to prevent division by zero.
-- **Spearman correlation**: `result_analyzer.py` uses rank correlation with average-rank tie-breaking to identify HP-metric relationships (no scipy dependency).
+- **Spearman correlation**: `scripts/result_analyzer.py` uses rank correlation with average-rank tie-breaking to identify HP-metric relationships (no scipy dependency).
 - **Dual implementation strategy**: Research proposals include an `implementation_strategy` field (`from_scratch` or `from_reference`). The implement agent dispatches accordingly — either implementing from paper descriptions (Section 8) or cloning and adapting reference repos (Section 9). Strategy is decided by the research agent based on repo availability and quality.
 - **Research skill modes**: The research skill accepts `source` (`"web"` | `"knowledge"` | `"both"`), `scope_level` (`"training"` | `"architecture"` | `"full"`), and `output_path` parameters. Knowledge mode skips web search and uses LLM training knowledge only.
 - **Autonomous mode auto-skip**: When `budget_mode == "autonomous"`, all user checkpoints after Phase 0 are auto-resolved (Phase 1 plan → auto-approve, Phase 2 partial prereqs → proceed, Phase 4 direction → method proposals, Phase 5 proposal selection → all proposals, Phase 6 dependencies → auto-install, license warnings → auto-accept, Phase 7 mid-loop scope/proposals → use stored scope + accept all, RL polarity → auto-infer, Phase 9 self-review → auto-run). Only unrecoverable errors (Phase 2 failed) still block. Phase 3 unknown errors exit with partial results in autonomous mode. Decisions are logged to dev_notes and error tracker for post-session review. The implement skill auto-stashes dirty working trees, and the prerequisites skill auto-resolves format/env mismatches.
@@ -195,7 +197,7 @@ The orchestrator can be stopped and resumed. On restart it reads `pipeline-state
 - **Parallel research**: All WebSearch calls in the research skill are issued simultaneously in a single tool-call message, alongside 3 alphaxiv search calls (embedding similarity, full-text keyword, agentic retrieval). WebFetch follow-ups for different URLs are also parallelized. Domain-specific query sets (NLP, CV, RL, time-series) are issued alongside generic queries. If alphaxiv MCP is unavailable, WebSearch provides full coverage as fallback.
 - **Parallel implementation**: When using git branch strategy with multiple proposals, each proposal is implemented in a separate git worktree via parallel Agent dispatches. File-backup strategy remains sequential.
 - **Async mid-pipeline review**: In autonomous mode, mid-pipeline review runs in the background while the next experiment batch starts. Suggestions are applied one batch late — acceptable trade-off vs blocking the pipeline.
-- **Configurable divergence thresholds**: `detect_divergence.py` supports per-model-category threshold overrides via `MODEL_CATEGORY_DEFAULTS` dict and `--model-category` CLI flag. RL models use `explosion_threshold=20.0, plateau_patience=50` (prevents false positives on reward spikes). Generative models use `explosion_threshold=10.0, plateau_patience=40` (accommodates slow convergence). Individual thresholds can also be overridden via `--explosion-threshold` and `--plateau-patience` CLI flags.
+- **Configurable divergence thresholds**: `scripts/detect_divergence.py` supports per-model-category threshold overrides via `MODEL_CATEGORY_DEFAULTS` dict and `--model-category` CLI flag. RL models use `explosion_threshold=20.0, plateau_patience=50` (prevents false positives on reward spikes). Generative models use `explosion_threshold=10.0, plateau_patience=40` (accommodates slow convergence). Individual thresholds can also be overridden via `--explosion-threshold` and `--plateau-patience` CLI flags.
 - **Experiment timeout**: Each experiment has a hard timeout of `baseline_training_time * 3` (fallback: 6 hours). Timed-out experiments are killed and marked `status: "timeout"`.
 - **Research failure recovery**: If web search fails (both WebSearch and alphaxiv), the orchestrator retries with `source: "knowledge"` (LLM-only). If that also fails, it continues with HP-only optimization. Each fallback is logged. Within a search, alphaxiv failure alone does not trigger the knowledge fallback — WebSearch results are sufficient to proceed.
 - **alphaxiv MCP integration**: The research agent uses all 6 alphaxiv MCP tools for academic paper discovery (3 search tools run in parallel), paper content extraction (`get_paper_content`, `answer_pdf_queries`), and reference repo exploration (`read_files_from_github_repository`). The implement agent uses 2 alphaxiv tools (`read_files_from_github_repository` for pre-clone repo assessment, `answer_pdf_queries` for clarifying ambiguous implementation steps from source papers). All alphaxiv searches run in parallel with WebSearch. alphaxiv is optional — if the MCP server is unavailable, all workflows fall back to WebSearch/WebFetch transparently.
@@ -205,14 +207,15 @@ The orchestrator can be stopped and resumed. On restart it reads `pipeline-state
 - **Tabular ML HP strategy**: For tree-based models (sklearn/XGBoost/LightGBM), iteration 1 explores `max_depth`/`n_estimators` first instead of learning rate.
 - **Fixed time budget**: Optional `fixed_time_budget` (seconds) in Phase 0 user_choices. When set, every experiment trains for exactly N wall-clock seconds using the `timeout` command wrapper. Framework-native time limits (Lightning `--max_time`, HuggingFace `timeout` in TrainingArguments) are preferred when available. Results include `time_budget_seconds` for downstream analysis. HP-tune adjusts proposals for the budget (shorter convergence schedules, appropriate LR scaling). Makes experiment metrics directly comparable without duration normalization.
 - **Auto-repair loop**: When training or evaluation commands fail during baseline establishment or experiment execution, the agent captures stderr, diagnoses the error, applies a fix (install package, adjust path, reduce batch size), and retries up to 3 times. OOM errors are not retried (deterministic). SyntaxErrors are not retried (code bugs). Identical errors on consecutive attempts skip further retries (loop detection). Each retry is logged to the error tracker. This is intra-agent retry, separate from the orchestrator's Phase 3 retry logic.
+- **Goal anchoring & behavioral memory**: `scripts/goal_memory.py` maintains two project-scoped files: `optimization-goals.json` (goal anchor, written once at Phase 0) and `learned-behaviors.json` (accumulated behavioral memory). The orchestrator calls `validate-output` after hp-tune, research, and analyze dispatches to catch drift (frozen param changes, scope breaches, dead-end re-proposals, metric mismatches). Each agent also reads a compact `summary` combining goals + constraints + dead-ends before acting. All 10 agents have `memory: local` for persistent role-specific memory at `.claude/agent-memory-local/<agent-name>/` in the target project.
 - **Immutable baseline**: After baseline is established (Phase 3), a SHA-256 checksum of the baseline metrics dict is stored in `pipeline-state.json`. Before each experiment batch (Phase 7) and on pipeline resumption, the checksum is verified against `baseline.json`. If the metrics have changed (accidental modification, file corruption, or tampering), the pipeline halts with a critical error. Prevents invalid experiment comparisons during long autonomous runs.
 - **Stuck protocol**: In autonomous mode, when 3 consecutive stop recommendations occur, the orchestrator triggers a structured recovery instead of exiting. It reads error patterns, success metrics, dead ends, and the research agenda, then dispatches the research agent with full failure context. If new proposals are found, the loop resumes with `consecutive_stop_count` reset. Triggers once per session (`stuck_protocol_triggered` in pipeline state) to prevent infinite loops. If the protocol finds no new approaches, the loop exits normally.
-- **Research agenda as living document**: `error_tracker.py` maintains `research-agenda.json` — a prioritized list of optimization ideas that evolves over the session. The research skill initializes it from proposals (Phase 5). The analyze skill updates it after each batch: marking ideas as tried/improved/dead-end, adjusting priorities based on evidence, and adding new ideas suggested by experimental results. The hp-tune skill reads it to understand which untried techniques are high-priority. The report skill includes a summary in the final report.
-- **Dead-end catalog**: `error_tracker.py` maintains `dead-ends.json` tracking techniques conclusively shown to be unpromising. The research and hp-tune skills consult this catalog before proposing new techniques, preventing wasted budget on proven dead ends. Fuzzy matching (case-insensitive, substring containment, hyphen/underscore normalization) prevents near-duplicate re-proposals. The analyze skill logs dead ends when branches are pruned or all experiments fail.
-- **Concurrent-safe error logging**: `error_tracker.py` uses `fcntl.flock()` file locking around the read-modify-write in `log_event()` to prevent concurrent agents from losing events.
-- **Result file filtering**: `result_analyzer.py` only loads `exp-*.json` and `baseline.json` files, preventing non-experiment files from inflating counts.
+- **Research agenda as living document**: `scripts/error_tracker.py` maintains `research-agenda.json` — a prioritized list of optimization ideas that evolves over the session. The research skill initializes it from proposals (Phase 5). The analyze skill updates it after each batch: marking ideas as tried/improved/dead-end, adjusting priorities based on evidence, and adding new ideas suggested by experimental results. The hp-tune skill reads it to understand which untried techniques are high-priority. The report skill includes a summary in the final report.
+- **Dead-end catalog**: `scripts/error_tracker.py` maintains `dead-ends.json` tracking techniques conclusively shown to be unpromising. The research and hp-tune skills consult this catalog before proposing new techniques, preventing wasted budget on proven dead ends. Fuzzy matching (case-insensitive, substring containment, hyphen/underscore normalization) prevents near-duplicate re-proposals. The analyze skill logs dead ends when branches are pruned or all experiments fail.
+- **Concurrent-safe error logging**: `scripts/error_tracker.py` uses `fcntl.flock()` file locking around the read-modify-write in `log_event()` to prevent concurrent agents from losing events.
+- **Result file filtering**: `scripts/result_analyzer.py` only loads `exp-*.json` and `baseline.json` files, preventing non-experiment files from inflating counts.
 - **alphaxiv query format differences**: `embedding_similarity_search` expects 2-3 descriptive sentences, `full_text_papers_search` expects 3-4 short keywords (no quotes), and `agentic_paper_retrieval` expects a natural language question. Using the wrong format degrades result quality. All 3 must be called in parallel per alphaxiv documentation.
-- **HuggingFace Trainer log format**: `parse_logs.py` detects and parses HuggingFace Trainer's single-quote Python dict format (`{'loss': 0.5, 'epoch': 1.0}`).
+- **HuggingFace Trainer log format**: `scripts/parse_logs.py` detects and parses HuggingFace Trainer's single-quote Python dict format (`{'loss': 0.5, 'epoch': 1.0}`).
 - **Baseline eval auto-fallback**: In autonomous mode, if no eval command is found, baseline uses training output metrics instead of blocking on user input.
 - **Pre-flight file validation**: The implement skill validates all `files_to_modify` exist before creating branches or starting implementation. Missing-file proposals are marked `preflight_failed`.
 - **Early batch abort**: If >= 2 experiments diverge within 60 seconds of start, remaining experiments in the batch are cancelled to save compute.
@@ -225,8 +228,10 @@ The orchestrator can be stopped and resumed. On restart it reads `pipeline-state
 
 ## Gotchas
 
-- **`detect_divergence.py` CLI takes a JSON string, not a file path**: `python3 scripts/detect_divergence.py '[0.5, 0.4, 100.0]'` — the quotes are required. Pass `--higher-is-better` for reward-like metrics. Pass `--model-category rl` for RL-appropriate thresholds.
-- **`implement_utils.py` has three CLI modes**: default (parse proposals), `clone <url> <dest>`, and `analyze <path>`. Each has different argument patterns.
+- **`scripts/goal_memory.py validate-output` returns exit code 2 for violations**: Exit code 0 = valid, 1 = script error, 2 = validation violations found. The orchestrator should check the exit code and parse the JSON output for the `violations` array.
+- **`scripts/goal_memory.py` imports from `scripts/error_tracker.py`**: For dead-end checks, it lazily imports `is_dead_end` and `get_dead_ends`. Both scripts must be in the same `scripts/` directory.
+- **`scripts/detect_divergence.py` CLI takes a JSON string, not a file path**: `python3 scripts/detect_divergence.py '[0.5, 0.4, 100.0]'` — the quotes are required. Pass `--higher-is-better` for reward-like metrics. Pass `--model-category rl` for RL-appropriate thresholds.
+- **`scripts/implement_utils.py` has three CLI modes**: default (parse proposals), `clone <url> <dest>`, and `analyze <path>`. Each has different argument patterns.
 - **Metric routing is split**: Monitor/divergence always uses loss (lower-is-better). Analyze/hp-tune use the user's `primary_metric`. Mixing these up causes silent wrong behavior.
 - **Branch experiments are independent**: Results on `ml-opt/branch-a` tell you nothing about what HPs will work on `ml-opt/branch-b`. The tuning agent must group by `code_branch` before analyzing trends.
 - **Mid-pipeline review auto-triggers**: In Phase 7, the orchestrator checks error patterns after each batch. If `wasted_budget` pattern reaches ≥ 3 occurrences OR the last 2 consecutive batches had zero successful experiments, it dispatches the review agent with `scope: "session"` to suggest course corrections. It can also be invoked manually at end of session.

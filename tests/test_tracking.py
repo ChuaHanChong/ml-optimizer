@@ -17,11 +17,9 @@ from error_tracker import (
     _load_results,
     _normalize_technique,
     add_agenda_idea,
-    cleanup_memory,
     compute_proposal_outcomes,
     compute_success_metrics,
     create_event,
-    detect_cross_project_patterns,
     detect_patterns,
     get_agenda,
     get_dead_ends,
@@ -29,7 +27,6 @@ from error_tracker import (
     get_suggestion_history,
     init_agenda,
     is_dead_end,
-    load_cross_project,
     load_error_log,
     log_dead_end,
     log_event,
@@ -37,7 +34,6 @@ from error_tracker import (
     rank_suggestions,
     summarize_session,
     update_agenda_item,
-    update_cross_project,
     validate_event,
 )
 
@@ -445,136 +441,6 @@ class TestPatternDetection:
 
 
 # ===========================================================================
-# TestCrossProject
-# ===========================================================================
-
-
-class TestCrossProject:
-    """Tests for cross-project storage and pattern detection."""
-
-    def test_update_and_load(self, tmp_path):
-        """First sync creates file; load returns data; load missing returns None."""
-        exp_root = tmp_path / "project" / "experiments"
-        exp_root.mkdir(parents=True)
-        plugin_root = tmp_path / "plugin"
-        plugin_root.mkdir()
-        (plugin_root / "memory").mkdir()
-        ev = create_event("training_failure", "critical", "experiment", "crash")
-        log_event(str(exp_root), ev)
-        path = update_cross_project(str(plugin_root), str(tmp_path / "project"), str(exp_root))
-        assert Path(path).exists()
-        data = load_cross_project(str(plugin_root))
-        assert data is not None and len(data["projects"]) == 1
-
-        assert load_cross_project(str(tmp_path / "nonexistent")) is None
-
-    def test_load_corrupt(self, tmp_path):
-        mem = tmp_path / "memory"
-        mem.mkdir()
-        (mem / "cross-project-errors.json").write_text("not json{")
-        assert load_cross_project(str(tmp_path)) is None
-
-    def test_update_creates_memory_dir_and_handles_no_log(self, tmp_path):
-        """update_cross_project creates memory/ dir; handles missing error-log.json."""
-        exp_root = tmp_path / "project" / "experiments"
-        exp_root.mkdir(parents=True)
-        plugin_root = tmp_path / "plugin"
-        plugin_root.mkdir()
-        log_event(str(exp_root), create_event("config_error", "info", "experiment", "x"))
-        path = update_cross_project(str(plugin_root), str(tmp_path / "project"), str(exp_root))
-        assert (plugin_root / "memory").is_dir()
-
-        # No error log case
-        plugin2 = tmp_path / "plugin2"
-        exp2 = tmp_path / "project2" / "experiments"
-        exp2.mkdir(parents=True)
-        update_cross_project(str(plugin2), str(tmp_path / "project2"), str(exp2))
-        assert (Path(plugin2) / "memory" / "cross-project-errors.json").exists()
-
-    def test_sync_dedup_and_update(self, tmp_path):
-        """Same session deduplicates; more events update count; different projects kept."""
-        plugin_root = tmp_path / "plugin"
-        exp_root = tmp_path / "project"
-        exp_root.mkdir()
-        log_event(str(exp_root), create_event("training_failure", "warning", "experiment", "fail"))
-        update_cross_project(str(plugin_root), str(exp_root), str(exp_root))
-        update_cross_project(str(plugin_root), str(exp_root), str(exp_root))
-        memory = load_cross_project(str(plugin_root))
-        for proj_data in memory["projects"].values():
-            assert len(proj_data["sessions"]) == 1
-
-        log_event(str(exp_root), create_event("divergence", "warning", "monitor", "NaN"))
-        update_cross_project(str(plugin_root), str(exp_root), str(exp_root))
-        memory = load_cross_project(str(plugin_root))
-        for proj_data in memory["projects"].values():
-            assert proj_data["sessions"][0]["event_count"] == 2
-
-    def test_detect_patterns(self):
-        """No projects => empty; shared pattern across 2+ projects detected."""
-        assert detect_cross_project_patterns(
-            {"version": 1, "projects": {}, "cross_project_patterns": []}) == []
-
-        memory = {
-            "version": 1,
-            "projects": {
-                "p1": {"project_path": "/a",
-                       "sessions": [{"patterns_detected": ["high_lr_divergence", "oom_batch_size"]}]},
-                "p2": {"project_path": "/b",
-                       "sessions": [{"patterns_detected": ["high_lr_divergence"]}]},
-            },
-            "cross_project_patterns": [],
-        }
-        ids = [p["pattern_id"] for p in detect_cross_project_patterns(memory)]
-        assert "high_lr_divergence" in ids
-        assert "oom_batch_size" not in ids
-
-    def test_cross_project_integration(self, tmp_path):
-        """Two projects synced detect shared patterns."""
-        plugin_root = tmp_path / "plugin"
-        (plugin_root / "memory").mkdir(parents=True)
-        for proj_name, lrs in [("project_a", [0.1, 0.2, 0.05]),
-                                ("project_b", [0.3, 0.15, 0.08])]:
-            exp = tmp_path / proj_name / "experiments"
-            exp.mkdir(parents=True)
-            for lr in lrs:
-                log_event(str(exp), create_event(
-                    "divergence", "warning", "monitor", "NaN",
-                    config={"lr": lr, "batch_size": 32}))
-            update_cross_project(str(plugin_root), str(tmp_path / proj_name), str(exp))
-        ids = [p["pattern_id"]
-               for p in detect_cross_project_patterns(load_cross_project(str(plugin_root)))]
-        assert "high_lr_divergence" in ids
-
-    def test_cleanup(self, tmp_path):
-        """cleanup_memory: trims sessions, removes empty projects, no-op under limit, missing file."""
-        plugin_root = tmp_path / "plugin"
-        mem_dir = plugin_root / "memory"
-        mem_dir.mkdir(parents=True)
-        sessions = [
-            {"session_start": f"2026-01-{i+1:02d}T00:00:00Z", "event_count": i,
-             "categories": {}, "patterns_detected": []}
-            for i in range(15)
-        ]
-        memory = {
-            "version": 1, "last_updated": "2026-03-07T00:00:00Z",
-            "projects": {
-                "proj1": {"project_path": "/tmp/proj", "sessions": sessions},
-                "empty": {"project_path": "/a", "sessions": []},
-            },
-            "cross_project_patterns": [],
-        }
-        (mem_dir / "cross-project-errors.json").write_text(json.dumps(memory))
-        result = cleanup_memory(str(plugin_root), max_sessions_per_project=10)
-        assert result["cleaned"] == 5
-        updated = load_cross_project(str(plugin_root))
-        assert len(updated["projects"]["proj1"]["sessions"]) == 10
-        assert "empty" not in updated["projects"]
-
-        # No file
-        assert cleanup_memory(str(tmp_path / "missing")) == {"cleaned": 0, "projects_remaining": 0}
-
-
-# ===========================================================================
 # TestSuccessMetrics
 # ===========================================================================
 
@@ -786,7 +652,7 @@ class TestSuggestions:
         assert get_suggestion_history(str(tmp_path / "corrupt")) == []
 
     def test_rank_suggestions(self):
-        """Ranking order, cross-project boost, empty input, significance."""
+        """Ranking order, empty input, significance."""
         patterns = [
             {"pattern_id": "redundant_configs", "description": "dup",
              "occurrences": 5, "suggested_action": "widen"},
@@ -796,16 +662,6 @@ class TestSuggestions:
         ranked = rank_suggestions(patterns)
         assert ranked[0]["pattern_id"] == "oom_batch_size"
         assert "score" in ranked[0]
-
-        # Cross-project boost
-        cross = [{"pattern_id": "wasted_budget", "projects_affected": 3}]
-        boosted_patterns = [
-            {"pattern_id": "wasted_budget", "description": "waste",
-             "occurrences": 2, "suggested_action": "tighten"},
-        ]
-        ranked_no = rank_suggestions(boosted_patterns)
-        ranked_yes = rank_suggestions(boosted_patterns, cross_project_patterns=cross)
-        assert ranked_yes[0]["score"] == ranked_no[0]["score"] * 1.5
 
         # Empty
         assert rank_suggestions([]) == []
@@ -1048,15 +904,6 @@ class TestCLI:
         r = run_main("error_tracker.py", str(tmp_path), "summary")
         assert r.returncode == 0 and json.loads(r.stdout)["total_events"] == 3
 
-    def test_sync(self, run_main, tmp_path):
-        exp_root = tmp_path / "project" / "experiments"
-        exp_root.mkdir(parents=True)
-        plugin_root = tmp_path / "plugin"
-        (plugin_root / "memory").mkdir(parents=True)
-        log_event(str(exp_root), create_event("divergence", "warning", "monitor", "x"))
-        r = run_main("error_tracker.py", str(exp_root), "sync", str(plugin_root))
-        assert r.returncode == 0
-
     def test_success_and_proposals(self, run_main, tmp_path):
         results = tmp_path / "results"
         results.mkdir()
@@ -1078,39 +925,6 @@ class TestCLI:
 
         r = run_main("error_tracker.py", str(tmp_path), "rank", "50")
         assert "significance" in json.loads(r.stdout)[0]
-
-    def test_rank_with_cross_project(self, run_main, tmp_path):
-        plugin_root = tmp_path / "plugin"
-        plugin_root.mkdir()
-        for proj_name in ["proj_a", "proj_b"]:
-            proj = tmp_path / proj_name
-            proj.mkdir()
-            for lr in [0.1, 0.2, 0.05]:
-                log_event(str(proj), create_event(
-                    "divergence", "warning", "monitor", "NaN",
-                    config={"lr": lr, "batch_size": 32}))
-            update_cross_project(str(plugin_root), str(proj), str(proj))
-        r_boosted = run_main("error_tracker.py", str(tmp_path / "proj_a"), "rank", "50", str(plugin_root))
-        r_plain = run_main("error_tracker.py", str(tmp_path / "proj_a"), "rank", "50")
-        assert json.loads(r_boosted.stdout)[0]["score"] > json.loads(r_plain.stdout)[0]["score"]
-
-    def test_cleanup_cli(self, run_main, tmp_path):
-        plugin_root = tmp_path / "plugin"
-        mem_dir = plugin_root / "memory"
-        mem_dir.mkdir(parents=True)
-        sessions = [
-            {"session_start": f"2026-01-{i+1:02d}T00:00:00Z", "event_count": i,
-             "categories": {}, "patterns_detected": []}
-            for i in range(5)
-        ]
-        memory = {
-            "version": 1, "last_updated": "2026-03-07T00:00:00Z",
-            "projects": {"proj1": {"project_path": "/tmp/p", "sessions": sessions}},
-            "cross_project_patterns": [],
-        }
-        (mem_dir / "cross-project-errors.json").write_text(json.dumps(memory))
-        r = run_main("error_tracker.py", str(tmp_path), "cleanup", str(plugin_root), "3")
-        assert r.returncode == 0 and json.loads(r.stdout)["cleaned"] == 2
 
     def test_suggestion_cli(self, run_main, tmp_path):
         """log-suggestion and suggestion-history CLI actions."""
@@ -1156,12 +970,11 @@ class TestCLI:
         ("log", ["not valid json{"]),
         ("nonexistent", []),
         ("log", []),
-        ("sync", []),
         ("dead-end", ["add", "NOT_JSON"]),
         ("agenda", ["init"]),
     ], ids=[
         "log_invalid_json", "unknown_action", "log_missing_arg",
-        "sync_missing_arg", "dead_end_add_invalid_json", "agenda_init_missing_json",
+        "dead_end_add_invalid_json", "agenda_init_missing_json",
     ])
     def test_cli_error_handling(self, run_main, tmp_path, action, extra_args):
         r = run_main("error_tracker.py", str(tmp_path), action, *extra_args)

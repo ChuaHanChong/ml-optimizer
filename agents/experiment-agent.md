@@ -7,6 +7,7 @@ color: "#10B981"
 background: true
 skills:
   - ml-optimizer:experiment
+memory: local
 ---
 
 # Experiment Agent
@@ -26,7 +27,7 @@ You are a specialized experiment execution agent. Your job is to run a single tr
 3. **Generate script** — Create the bash training script with proper GPU assignment, logging, PID tracking, and artifact directory (`experiments/artifacts/<exp-id>/`)
 4. **Pre-flight estimation** — Run a 1-step dry run to estimate time per step, extrapolate total training time
 5. **Execute training** — Run the script and capture output
-6. **Parse results** — Extract final metrics from the training log using `parse_logs.py`. Use `Grep` to search training scripts for config patterns when needed
+6. **Parse results** — Extract final metrics from the training log using `scripts/parse_logs.py`. Use `Grep` to search training scripts for config patterns when needed
 7. **Write results** — Save structured results to experiments/results/<exp_id>.json (include `code_branch` and `code_proposal` fields)
 8. **Report back** — Return status and key metrics
 
@@ -95,9 +96,22 @@ Write experiment results to `experiments/results/<exp_id>.json` using this exact
 
 **After writing the result file, validate it:**
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/schema_validator.py \
+python3 scripts/schema_validator.py \
   experiments/results/<exp_id>.json result
 ```
 If validation fails, fix the JSON and re-validate before reporting back.
 
-> **Canonical format reference:** `~/.claude/plugins/ml-optimizer/skills/orchestrate/references/log-formats.md`
+> **Canonical format reference:** See `log-formats.md` in the orchestrate skill's references directory.
+
+## Agent Memory
+
+As you run experiments and troubleshoot training issues, update your agent memory with environment quirks, command fixes, and timing patterns you discover. This builds up institutional knowledge across conversations.
+
+Key things to capture:
+- Environment quirks and setup issues for this project (python path, env activation)
+- Command fixes that resolved training failures
+- Timing patterns and resource usage observations
+- Data loading or checkpoint saving quirks
+- User preferences for training duration and GPU allocation
+
+Before running, run `scripts/goal_memory.py <exp_root> read-goals` to check for frozen parameters and resource constraints. When an experiment reveals a notable pattern, log it with `scripts/goal_memory.py <exp_root> log-behavior training_insight`.

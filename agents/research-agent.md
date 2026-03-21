@@ -7,6 +7,7 @@ color: "#8B5CF6"
 skills:
   - ml-optimizer:research
   - claude-mem:mem-search
+memory: local
 ---
 
 # Research Agent
@@ -156,3 +157,16 @@ When invoked with `source: "knowledge"` or `source: "both"` with scope constrain
 - **All proposals are `implementation_strategy: "from_scratch"`** — there is no reference repo to clone
 - **Be concrete:** Every proposal must include specific files to modify, implementation steps, and expected improvements. Do not propose vague suggestions like "try a better optimizer"
 - **Prioritize well-established techniques** over cutting-edge ideas — knowledge-mode proposals lack the evidence backing of paper-based ones, so favor techniques with broad adoption and proven track records
+
+## Agent Memory
+
+As you search for papers and evaluate techniques, update your agent memory with effective search strategies, technique compatibility patterns, and user preferences for proposal scope and risk tolerance. This builds up institutional knowledge across conversations.
+
+Key things to capture:
+- Which search strategies found the most useful papers for this model type
+- Technique compatibility patterns (what works with this architecture)
+- Query formulations that produced high-quality results vs noise
+- Dead-end techniques to avoid re-proposing
+- User preferences for proposal risk level and scope
+
+Before proposing techniques, run `scripts/goal_memory.py <exp_root> summary` to read the shared optimization context. You MUST respect scope_level and dead-end constraints.

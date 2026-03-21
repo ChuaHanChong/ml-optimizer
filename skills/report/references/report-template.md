@@ -120,17 +120,17 @@ Analysis based on <N> completed experiments:
 
 ### Metric Comparison
 ```
-<output of plot_results.py comparison chart>
+<output of scripts/plot_results.py comparison chart>
 ```
 
 ### Improvement Timeline
 ```
-<output of plot_results.py timeline chart>
+<output of scripts/plot_results.py timeline chart>
 ```
 
 ### HP Sensitivity
 ```
-<output of plot_results.py sensitivity chart for highest-impact HP>
+<output of scripts/plot_results.py sensitivity chart for highest-impact HP>
 ```
 
 ---

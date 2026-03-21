@@ -25,9 +25,11 @@ From the orchestrator:
 
 ## Step 1: Gather All Data
 
+> **Goal check:** Read optimization goals to compare best result against target_value and include a Goal Achievement section.
+
 ### Load experiment results
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/result_analyzer.py \
+python3 scripts/result_analyzer.py \
   <project_root>/experiments/results \
   <primary_metric> \
   baseline \
@@ -50,14 +52,14 @@ If any exist, read them for method proposals that were tried.
 ### Read research agenda (if applicable)
 Check if `experiments/reports/research-agenda.json` exists:
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> agenda list
+python3 scripts/error_tracker.py <exp_root> agenda list
 ```
 If ideas exist, include a "Research Agenda Summary" section in the report showing: successful techniques, tried-but-neutral, dead ends, and remaining untried ideas.
 
 ### Read dead-end catalog (if applicable)
 Check if `experiments/reports/dead-ends.json` exists:
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> dead-end list
+python3 scripts/error_tracker.py <exp_root> dead-end list
 ```
 If entries exist, include a "Dead Ends" section listing techniques that were tried and conclusively failed.
 
@@ -79,7 +81,7 @@ Create a comprehensive comparison table with ALL experiments:
 
 ## Step 2.1: Compile HP Sensitivity Analysis
 
-The `result_analyzer.py` `identify_correlations()` output includes per-HP
+The `scripts/result_analyzer.py` `identify_correlations()` output includes per-HP
 correlation data. Format this into the "Hyperparameter Sensitivity" table:
 - Only include if ≥4 experiments completed (otherwise note "insufficient data")
 - Show direction (lower/higher correlates with better metric)
@@ -90,10 +92,10 @@ correlation data. Format this into the "Hyperparameter Sensitivity" table:
 If any experiments have `method_tier` fields (from research or method proposals), compile a three-tier comparison:
 
 ```python
-# Use result_analyzer.py's group_by_method_tier() to separate experiments
+# Use scripts/result_analyzer.py's group_by_method_tier() to separate experiments
 python3 -c "
 import json, sys
-sys.path.insert(0, '$HOME/.claude/plugins/ml-optimizer/scripts')
+# sys.path: add the plugin's scripts/ directory
 from result_analyzer import load_results, group_by_method_tier
 results = load_results('<project_root>/experiments/results')
 groups = group_by_method_tier(results)
@@ -179,10 +181,10 @@ From the analysis reports and results, identify:
 
 ## Step 5.1: Generate Visualizations
 
-Use the plot_results.py script to generate ASCII charts:
+Use the scripts/plot_results.py script to generate ASCII charts:
 
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/plot_results.py \
+python3 scripts/plot_results.py \
   <project_root>/experiments/results <primary_metric> comparison
 ```
 
@@ -198,7 +200,7 @@ Include the ASCII chart output in the report (in code blocks).
 After the ASCII charts, attempt to generate a matplotlib progress chart:
 
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/plot_results.py \
+python3 scripts/plot_results.py \
   <project_root>/experiments/results <primary_metric> progress
 ```
 
@@ -221,17 +223,29 @@ Generate Excalidraw diagrams for interactive exploration:
 
 ```bash
 # Pipeline overview
-python3 ~/.claude/plugins/ml-optimizer/scripts/excalidraw_gen.py \
+python3 scripts/excalidraw_gen.py \
   <project_root>/experiments pipeline <primary_metric>
 ```
 
 If the best result used a code branch (method proposal), also generate an architecture diagram:
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/excalidraw_gen.py \
+python3 scripts/excalidraw_gen.py \
   <project_root>/experiments architecture <best_proposal_name>
 ```
 
 Reference the generated `.excalidraw` files in the report: users can open them at excalidraw.com for interactive exploration.
+
+## Step 5.2: Goal Achievement Section
+
+Include in the final report:
+```bash
+python3 scripts/goal_memory.py <project_root>/experiments summary
+```
+
+Use this summary to add:
+1. **Goal vs Achievement:** Compare the best result against the `target_value` from optimization-goals.json
+2. **Learned Behaviors:** Summarize key HP constraints, method outcomes, and divergence patterns discovered during optimization
+3. **Scope Compliance:** Note any scope violations that were caught and corrected during the session
 
 ## Step 6: Write the Report
 
@@ -247,7 +261,7 @@ Fill in all sections:
 - Full experiments table (with code branch, duration, GPU columns)
 - Best configuration details
 - HP sensitivity analysis
-- Visualizations (ASCII charts from plot_results.py)
+- Visualizations (ASCII charts from scripts/plot_results.py)
 - Key findings
 - What worked / what didn't
 - Reproduction command

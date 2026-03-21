@@ -8,7 +8,7 @@ Before starting the experiment loop, validate all prerequisites:
 
 ```bash
 python3 -c "
-import sys; sys.path.insert(0, '$HOME/.claude/plugins/ml-optimizer/scripts')
+import sys; # sys.path: add the plugin's scripts/ directory
 from pipeline_state import validate_phase_requirements
 import json; print(json.dumps(validate_phase_requirements(6, '<exp_root>')))
 "
@@ -24,16 +24,24 @@ If validation fails, stop and report the missing prerequisites to the user.
 
 Verify the baseline metrics haven't been modified since Phase 3:
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/pipeline_state.py <exp_root> verify-baseline
+python3 scripts/pipeline_state.py <exp_root> verify-baseline
 ```
 
 If exit code is non-zero (baseline checksum mismatch): **HALT the pipeline immediately.** Log to error tracker:
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"config_error","severity":"critical","source":"orchestrate","message":"Baseline integrity check FAILED — metrics may have been modified. Pipeline halted.","phase":7}'
+python3 scripts/error_tracker.py <exp_root> log '{"category":"config_error","severity":"critical","source":"orchestrate","message":"Baseline integrity check FAILED — metrics may have been modified. Pipeline halted.","phase":7}'
 ```
 Report the error to the user. Do NOT continue — all experiment comparisons would be invalid.
 
 If the verification returns a warning (legacy pipeline without checksum): log to dev_notes and continue normally.
+
+## Pre-Loop: Sync Behavioral Memory
+
+Before starting experiments, sync behavioral patterns from the error tracker:
+```bash
+python3 scripts/goal_memory.py <exp_root> sync-from-errors
+```
+This populates `experiments/learned-behaviors.json` with OOM limits, divergence patterns, and dead-end outcomes from the error tracker. All agents will read this via the `summary` command.
 
 ## Pre-Loop: Load Implementation Manifest
 
@@ -112,7 +120,7 @@ Save Phase 0 user choices into pipeline state so they persist across interruptio
 
 ```bash
 python3 -c "
-import sys, json; sys.path.insert(0, '$HOME/.claude/plugins/ml-optimizer/scripts')
+import sys, json; # sys.path: add the plugin's scripts/ directory
 from pipeline_state import save_state
 save_state(6, 0, [], '<exp_root>', user_choices={
     'primary_metric': '<primary_metric>',
@@ -199,6 +207,16 @@ When the implementation manifest contains multiple code branches:
 
    Log each fallback step to error tracker with `category: "agent_failure"`, `source: "orchestrate"`.
 
+   **Goal validation (post-dispatch):** After hp-tune returns proposed configs:
+   ```bash
+   python3 scripts/goal_memory.py <exp_root> validate-output hp-tune '<proposed_configs_json>'
+   ```
+   If `valid` is false: remove violating configs from the batch. Log each violation:
+   ```bash
+   python3 scripts/goal_memory.py <exp_root> log-behavior scope_violation '{"agent":"hp-tune","violation_type":"<type>","detail":"<detail>"}'
+   ```
+   If ALL configs are removed, re-dispatch hp-tune with the violations as context ("Your previous proposals violated: [violations]. Please propose alternatives.").
+
 2. **Run experiments:**
    - For each proposed config, invoke `ml-optimizer:experiment` skill
    - Pass `code_branch` and `code_proposal` from the manifest (or null for HP-only)
@@ -272,8 +290,13 @@ When the implementation manifest contains multiple code branches:
    - Analyze completes first (it's synchronous). Speculative hp-tune may still be running.
    - **Live dashboard update:** After analyze completes, regenerate the dashboard so users can monitor progress in real-time:
      ```bash
-     python3 ~/.claude/plugins/ml-optimizer/scripts/dashboard.py <exp_root> --live
+     python3 scripts/dashboard.py <exp_root> --live
      ```
+   - **Goal validation (post-dispatch):** After analyze returns:
+     ```bash
+     python3 scripts/goal_memory.py <exp_root> validate-output analyze '<analyze_output_json>'
+     ```
+     If metric mismatch detected: log a critical error to the error tracker. Do NOT trust the analysis — the metric confusion could cause wrong ranking of experiments.
    - **Wait policy:** If analyze says "continue" and speculative hp-tune has not completed, wait up to 120 seconds. If it completes in time, validate and use. If it doesn't, discard and invoke hp-tune synchronously. Log timeout to error tracker with `category: "agent_failure", severity: "info"`.
    - If analyze says "pivot" or "stop", discard speculative hp-tune immediately — do not wait.
 
@@ -299,10 +322,10 @@ When the implementation manifest contains multiple code branches:
        - **On 3 consecutive stops → Stuck Protocol** (instead of immediate exit):
          If `consecutive_stop_count >= 3` AND `stuck_protocol_triggered` is false:
          1. Set `stuck_protocol_triggered = true` in pipeline state
-         2. Read error patterns: `python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> patterns`
-         3. Read success metrics: `python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> success <primary_metric> <lower_is_better>`
-         4. Read dead-end catalog: `python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> dead-end list`
-         5. Read research agenda: `python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> agenda list`
+         2. Read error patterns: `python3 scripts/error_tracker.py <exp_root> patterns`
+         3. Read success metrics: `python3 scripts/error_tracker.py <exp_root> success <primary_metric> <lower_is_better>`
+         4. Read dead-end catalog: `python3 scripts/error_tracker.py <exp_root> dead-end list`
+         5. Read research agenda: `python3 scripts/error_tracker.py <exp_root> agenda list`
          6. Dispatch the research agent with all failure context:
             ```
             Agent(
@@ -331,7 +354,7 @@ When the implementation manifest contains multiple code branches:
 
    a. **Budget gate:** If `remaining_budget < 3`, skip method proposals and recommend stop with current best result. Log:
       ```bash
-      python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"orchestrate","message":"Method proposals skipped: remaining_budget (<N>) < 3","phase":7,"iteration":<iteration>}'
+      python3 scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"orchestrate","message":"Method proposals skipped: remaining_budget (<N>) < 3","phase":7,"iteration":<iteration>}'
       ```
 
    b. **Scope confirmation:**
@@ -359,6 +382,12 @@ When the implementation manifest contains multiple code branches:
         subagent_type: "ml-optimizer:research-agent"
       )
       ```
+
+   **Goal validation (post-dispatch):** After research returns proposals:
+   ```bash
+   python3 scripts/goal_memory.py <exp_root> validate-output research '<proposals_json>'
+   ```
+   If `valid` is false: remove scope-violating and dead-end proposals before passing to implement. Log violations to behavioral memory.
 
    d. **Present proposals:**
       **Autonomous mode auto-skip:** If `budget_mode == "autonomous"`, accept all proposals automatically. Log to dev_notes: "Autonomous mode: auto-accepted all N mid-loop method proposals". Skip AskUserQuestion.
@@ -397,7 +426,7 @@ When the implementation manifest contains multiple code branches:
 
    a. **Log the trigger:**
       ```bash
-      python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"orchestrate","message":"Autonomous research round triggered after <N> HP batches","phase":7,"iteration":<iteration>,"context":{"batches_since_last_research":<N>,"method_proposal_iterations":<M>}}'
+      python3 scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"orchestrate","message":"Autonomous research round triggered after <N> HP batches","phase":7,"iteration":<iteration>,"context":{"batches_since_last_research":<N>,"method_proposal_iterations":<M>}}'
       ```
 
    b. **Generate proposals:** Dispatch the research agent:
@@ -413,7 +442,7 @@ When the implementation manifest contains multiple code branches:
       - If research returns new proposals (not all filtered by deduplication): proceed to implement
       - If research returns **no new proposals** (all deduplicated): skip implement, double `hp_batches_per_round` (exponential backoff), log:
         ```bash
-        python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"orchestrate","message":"Research round yielded no new proposals — increasing cadence to <new_value> batches","phase":7,"iteration":<iteration>}'
+        python3 scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"orchestrate","message":"Research round yielded no new proposals — increasing cadence to <new_value> batches","phase":7,"iteration":<iteration>}'
         ```
 
    d. **Implement proposals (no user confirmation):** In autonomous mode, ALL returned proposals are implemented automatically (the user opted into autonomous operation). Dispatch the implement agent with the research findings. This creates new `ml-opt/<slug>` branches.
@@ -437,7 +466,7 @@ When the implementation manifest contains multiple code branches:
 9. **Mid-pipeline review check** (after step 6/7/8, before looping):
    Run pattern detection:
    ```bash
-   python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> patterns
+   python3 scripts/error_tracker.py <exp_root> patterns
    ```
    If `wasted_budget` pattern has occurrences ≥ 3, OR if the last 2 consecutive batches both had zero successful experiments:
 
@@ -475,10 +504,17 @@ When the implementation manifest contains multiple code branches:
      - If review suggests stopping: follow the stop recommendation
    - Log the mid-pipeline review:
      ```bash
-     python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"orchestrate","message":"Mid-pipeline review triggered after consecutive failures","phase":7,"iteration":<iteration>,"context":{"trigger":"consecutive_failures"}}'
+     python3 scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"orchestrate","message":"Mid-pipeline review triggered after consecutive failures","phase":7,"iteration":<iteration>,"context":{"trigger":"consecutive_failures"}}'
      ```
 
-10. **Loop back:** After steps 6/7/8/9, increment `batches_since_last_research` and return to step 1 (Get HP configs). The loop continues until the Decision step (6) or budget exhaustion forces an exit.
+10. **Loop back:**
+
+    **End-of-iteration sync:** Keep behavioral memory current with the latest error events:
+    ```bash
+    python3 scripts/goal_memory.py <exp_root> sync-from-errors
+    ```
+
+    After steps 6/7/8/9, increment `batches_since_last_research` and return to step 1 (Get HP configs). The loop continues until the Decision step (6) or budget exhaustion forces an exit.
 
 ## Speculative Proposal Validation
 

@@ -218,6 +218,9 @@ class TestAgentFiles:
         else:
             assert "background" not in fm or fm.get("background") is not True
 
+        # memory
+        assert fm.get("memory") == "local", f"{agent_name}: should have memory: local"
+
 
 # ---------------------------------------------------------------------------
 # Skill file validation
@@ -321,7 +324,7 @@ EXPECTED_SCRIPTS = [
     "result_analyzer.py", "experiment_setup.py", "implement_utils.py",
     "pipeline_state.py", "schema_validator.py", "plot_results.py",
     "error_tracker.py", "prerequisites_check.py", "dashboard.py",
-    "excalidraw_gen.py",
+    "excalidraw_gen.py", "goal_memory.py",
 ]
 
 

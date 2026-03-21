@@ -30,7 +30,7 @@ Search the project for evaluation scripts:
 2. Read the training script to find validation/evaluation logic:
    - Look for functions named `evaluate`, `validate`, `test`, `infer`
    - Look for metric computation (PSNR, SSIM, loss, accuracy, F1, etc.)
-   - **Lightning projects:** Look for `validation_step()` / `test_step()` methods and `self.log()` calls. Metrics may be in TensorBoard logs (`lightning_logs/`) — parse with `parse_logs.py`
+   - **Lightning projects:** Look for `validation_step()` / `test_step()` methods and `self.log()` calls. Metrics may be in TensorBoard logs (`lightning_logs/`) — parse with `scripts/parse_logs.py`
    - **HuggingFace Trainer:** Look for `compute_metrics` function passed to `Trainer`. Metrics are logged to `runs/` or `output_dir`. Use `trainer.evaluate()` as eval command
    - **TF/Keras:** Look for `model.evaluate()` or custom callbacks. Metrics may be in `CSVLogger` output or TensorBoard
 
@@ -38,7 +38,7 @@ Search the project for evaluation scripts:
 
    **Autonomous mode auto-skip:** If `budget_mode == "autonomous"`, skip the user question. Instead:
    - Set `eval_command = null`
-   - Use training output as the evaluation source — run training for the profiling duration and extract final metrics via `parse_logs.py`
+   - Use training output as the evaluation source — run training for the profiling duration and extract final metrics via `scripts/parse_logs.py`
    - If metrics containing the `primary_metric` keyword are found in training output: use those as baseline metrics
    - If no recognizable metrics found: look for checkpoint/log files (TensorBoard events, CSV logs, JSON summaries) and parse those
    - Log to dev_notes: "No eval command found — using training output metrics as baseline (autonomous mode)"
@@ -66,7 +66,7 @@ If no prepared paths were provided, use the original commands as-is.
 
 Run the experiment setup script:
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/experiment_setup.py <project_root> "<train_command>"
+python3 scripts/experiment_setup.py <project_root> "<train_command>"
 ```
 
 This creates:
@@ -114,7 +114,7 @@ When executing evaluation or training commands (Steps 3 and 4), apply this retry
 2. Capture all output
 3. Parse output for metrics using the log parser:
    ```bash
-   python3 ~/.claude/plugins/ml-optimizer/scripts/parse_logs.py <output_file>
+   python3 scripts/parse_logs.py <output_file>
    ```
 4. **Validate parse results:** Check that `parse_logs` returned non-empty records. If empty, the log format may be unrecognized — try forcing different formats (`--format kv`, `--format json`, `--format logging`, `--format tqdm`)
 5. If metrics aren't parseable automatically, read the output and extract them manually
@@ -128,7 +128,7 @@ When executing evaluation or training commands (Steps 3 and 4), apply this retry
 - Instead, measure total `fit()` wall-clock time and record as `profiling.fit_duration_seconds` in baseline.json.
 - **Estimate experiment timeout from fit duration:** Read the model's configured iteration count (e.g., `n_estimators`, `max_iter`, `num_boost_round`) and the profiling iteration count. Compute: `estimated_timeout_seconds = fit_duration_seconds * (max_iterations_configured / profiling_iterations) * 2`. The `× 2` safety margin accounts for slower HP configs. If iteration counts cannot be determined, fall back to `fit_duration_seconds * 10`. Cap at 14400 (4 hours). Record as `profiling.estimated_timeout_seconds` in baseline.json.
 - Set `profiling.throughput_samples_per_sec` and `profiling.estimated_max_batch_size` to `null`.
-- If the framework supports GPU (XGBoost `tree_method="gpu_hist"`, LightGBM `device="gpu"`), still run `gpu_check.py`.
+- If the framework supports GPU (XGBoost `tree_method="gpu_hist"`, LightGBM `device="gpu"`), still run `scripts/gpu_check.py`.
 
 **For iterative frameworks (PyTorch, TensorFlow, JAX, Lightning, HuggingFace Trainer):**
 - Proceed with the profiling steps below.
@@ -139,7 +139,7 @@ Run a short training session to measure GPU resource usage:
    ```bash
    # Start a short training run (1-2 epochs or ~100 steps)
    # Then check GPU memory:
-   python3 ~/.claude/plugins/ml-optimizer/scripts/gpu_check.py
+   python3 scripts/gpu_check.py
    ```
 
 2. **Estimate throughput:**
@@ -188,7 +188,7 @@ Use the Write tool to create this file.
 ## Step 5.1: Validate Output
 
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/schema_validator.py \
+python3 scripts/schema_validator.py \
   experiments/results/baseline.json baseline
 ```
 
@@ -246,15 +246,15 @@ At the following points, log an error event using the error tracker:
 
 ### When evaluation command fails:
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"training_failure","severity":"critical","source":"baseline","message":"Baseline eval command failed: <error>","phase":3,"context":{"command":"<eval_command>","exit_code":<code>}}'
+python3 scripts/error_tracker.py <exp_root> log '{"category":"training_failure","severity":"critical","source":"baseline","message":"Baseline eval command failed: <error>","phase":3,"context":{"command":"<eval_command>","exit_code":<code>}}'
 ```
 
 ### When metrics are not parseable from output:
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"config_error","severity":"warning","source":"baseline","message":"Could not parse metrics from baseline output","phase":3,"context":{"output_preview":"<first 200 chars>"}}'
+python3 scripts/error_tracker.py <exp_root> log '{"category":"config_error","severity":"warning","source":"baseline","message":"Could not parse metrics from baseline output","phase":3,"context":{"output_preview":"<first 200 chars>"}}'
 ```
 
 ### When GPU profiling fails:
 ```bash
-python3 ~/.claude/plugins/ml-optimizer/scripts/error_tracker.py <exp_root> log '{"category":"resource_error","severity":"info","source":"baseline","message":"GPU profiling failed — no GPU detected or nvidia-smi error","phase":3}'
+python3 scripts/error_tracker.py <exp_root> log '{"category":"resource_error","severity":"info","source":"baseline","message":"GPU profiling failed — no GPU detected or nvidia-smi error","phase":3}'
 ```

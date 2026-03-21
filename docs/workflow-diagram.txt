@@ -28,6 +28,9 @@ ENTRY POINT
                           AGENT ROSTER (10 types)
 ================================================================================
 
+  All agents have memory: local (persistent at .claude/agent-memory-local/)
+  All agents read scripts/goal_memory.py summary before acting (Phase 7+)
+
   PROCEDURAL AGENTS (model: sonnet — lower cost/latency, no ultrathink)
   ---------------------------------------------------------------------
 
@@ -120,6 +123,7 @@ ENTRY POINT
   +---------------------------------------------------------------------+
 
   Saves: pipeline-state.json (user_choices), user-choices-backup.json
+         optimization-goals.json (goal anchor — via scripts/goal_memory.py init-goals)
 
                     |
                     v
@@ -296,6 +300,9 @@ ENTRY POINT
   |  |                                                                    |  |
   |  |  WARNING: If branches dropped due to budget, log to                |  |
   |  |  error_tracker with priority order (impact × confidence)           |  |
+  |  |                                                                    |  |
+  |  |  POST-DISPATCH: scripts/goal_memory.py validate-output hp-tune             |  |
+  |  |    → Remove configs with frozen params, OOM violations, dead ends  |  |
   |  +--------------------------------------------------------------------+  |
   |                    |                                                     |
   |                    v                                                     |
@@ -341,10 +348,13 @@ ENTRY POINT
   |  |    - If analyze says stop/pivot → discard speculative proposals    |  |
   |  |                                                                    |  |
   |  |  Post-analyze actions:                                             |  |
+  |  |    - scripts/goal_memory.py validate-output analyze (metric alignment)     |  |
+  |  |    - scripts/goal_memory.py log-behavior method_outcome (per branch)       |  |
   |  |    - Update research agenda (agenda update <idea_id> ...)          |  |
   |  |    - Log dead ends if branches pruned (dead-end add ...)           |  |
-  |  |    - Verify baseline integrity (pipeline_state.py verify-baseline) |  |
-  |  |    - Regenerate live dashboard (dashboard.py --live)               |  |
+  |  |    - Verify baseline integrity (scripts/pipeline_state.py verify-baseline) |  |
+  |  |    - scripts/goal_memory.py sync-from-errors (keep behaviors current)      |  |
+  |  |    - Regenerate live dashboard (scripts/dashboard.py --live)               |  |
   |  |                                                                    |  |
   |  |  Decision tree:                                                    |  |
   |  |    "continue"         → next HP iteration                          |  |
@@ -399,10 +409,10 @@ ENTRY POINT
   |  |  Triggers: 3 consecutive "stop" recommendations                    |  |
   |  |  (one-shot — stuck_protocol_triggered prevents infinite loops)     |  |
   |  |                                                                    |  |
-  |  |  1. Read error patterns (error_tracker.py patterns)                |  |
-  |  |  2. Read success metrics (error_tracker.py success ...)            |  |
-  |  |  3. Read dead-end catalog (error_tracker.py dead-end list)         |  |
-  |  |  4. Read research agenda (error_tracker.py agenda list)            |  |
+  |  |  1. Read error patterns (scripts/error_tracker.py patterns)                |  |
+  |  |  2. Read success metrics (scripts/error_tracker.py success ...)            |  |
+  |  |  3. Read dead-end catalog (scripts/error_tracker.py dead-end list)         |  |
+  |  |  4. Read research agenda (scripts/error_tracker.py agenda list)            |  |
   |  |  5. Dispatch research-agent with full failure context              |  |
   |  |     (constraint: do NOT re-propose dead-end techniques)            |  |
   |  |  6. If new proposals found → implement → reset counter → loop      |  |
@@ -427,7 +437,7 @@ ENTRY POINT
 
     +--------------------------------------------------------------+
     |  1. Rank methods by improvement (descending) using           |
-    |     rank_methods_for_stacking() from result_analyzer.py      |
+    |     rank_methods_for_stacking() from scripts/result_analyzer.py      |
     |                                                              |
     |  2. Initialize: best method branch -> ml-opt/stack-1         |
     |                                                              |
@@ -461,7 +471,7 @@ ENTRY POINT
     |    - ASCII charts (comparison, timeline, sensitivity)        |
     |    - Matplotlib progress chart                               |
     |    - Excalidraw diagrams (pipeline, architecture)            |
-    |    - HTML dashboard (dashboard.py)                           |
+    |    - HTML dashboard (scripts/dashboard.py)                           |
     |    - Error pattern summary                                   |
     |    - Research agenda summary                                 |
     |    - Dead-end catalog summary                                |
@@ -507,6 +517,7 @@ ENTRY POINT
   -------|--------------------------------|-----------------------------
   0      | (user input)                   | pipeline-state.json
          |                                | user-choices-backup.json
+         |                                | optimization-goals.json
   1      | model files, config            | dev_notes.md
   2      | user_choices                   | results/prerequisites.json
          |                                | prepared-data/
@@ -524,9 +535,10 @@ ENTRY POINT
          |                                | logs/<exp-id>/train.log
          |                                | scripts/<exp-id>.sh
   7.3    | logs/<exp-id>/train.log        | (status: healthy/diverged/unmonitored)
-  7.4    | results/, remaining_budget     | reports/batch-N-analysis.md
-         |                                | reports/research-agenda.json (updated)
+  7.4    | results/, remaining_budget,    | reports/batch-N-analysis.md
+         | optimization-goals.json        | reports/research-agenda.json (updated)
          |                                | reports/dead-ends.json (if pruned)
+         |                                | learned-behaviors.json (method outcomes, divergence)
          |                                | reports/dashboard.html (--live)
   7.5    | research-findings*.md,         | research-findings-method-proposals-iterN.md
          | dead-ends.json                 |
@@ -537,7 +549,9 @@ ENTRY POINT
          | implementation-manifest.json   | Git branches: ml-opt/stack-<N>
   9      | results/, error-log.json,      | reports/final-report.md
          | research-agenda.json,          | reports/dashboard.html
-         | dead-ends.json                 | reports/progress_chart.png
+         | dead-ends.json,                | reports/progress_chart.png
+         | optimization-goals.json,       |
+         | learned-behaviors.json         |
          |                                | artifacts/pipeline-overview.excalidraw
          |                                | artifacts/architecture-*.excalidraw
 
@@ -556,6 +570,9 @@ ENTRY POINT
 
   Analytical agents (ultrathink): Extended reasoning, model: opus
   Procedural agents (sonnet): Direct execution, lower cost/latency
+  Agent memory: All agents have memory: local → .claude/agent-memory-local/<name>/
+  Goal anchor: optimization-goals.json (Phase 0, read by all agents)
+  Behavioral memory: learned-behaviors.json (accumulated, project-scoped)
 
   Three-tier + stacking fields in exp-*.json:
     "method_tier":     "baseline" | "method_default_hp" | "method_tuned_hp"

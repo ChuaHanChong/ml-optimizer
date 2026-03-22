@@ -326,7 +326,7 @@ Confirm output shows `"valid": true`.
 ```bash
 python3 $SCRIPTS/goal_memory.py \
   /tmp/ml-opt-diagnostic/experiments init-goals \
-  '{"objective":{"primary_metric":"accuracy","lower_is_better":false,"target_value":90.0,"problem_description":"Diagnostic test"},"constraints":{"scope_level":"training","model_category":"supervised","frozen_parameters":[]},"divergence":{"metric":"loss","lower_is_better":true}}'
+  '{"objective":{"primary_metric":"accuracy","lower_is_better":false,"target_value":90.0,"problem_description":"Diagnostic test"},"constraints":{"scope_level":"training","model_category":"supervised","frozen_parameters":[],"fixed_time_budget":30,"fixed_epoch_budget":null},"divergence":{"metric":"loss","lower_is_better":true}}'
 ```
 
 **Verify:** `experiments/optimization-goals.json` exists.
@@ -365,7 +365,7 @@ baseline = json.loads(open('/tmp/ml-opt-diagnostic/experiments/results/baseline.
 checksum = _compute_baseline_checksum(baseline['metrics'])
 save_state(3, 0, [], '/tmp/ml-opt-diagnostic/experiments', baseline_checksum=checksum, user_choices={
   'primary_metric': 'loss', 'lower_is_better': True, 'budget_mode': 'auto',
-  'difficulty': 'easy', 'difficulty_multiplier': 8, 'fixed_time_budget': 30
+  'difficulty': 'easy', 'difficulty_multiplier': 8, 'fixed_time_budget': 30, 'fixed_epoch_budget': None
 })
 print(f'Baseline checksum stored: {checksum[:16]}...')
 "

@@ -26,7 +26,7 @@ Inspired by [karpathy/autoresearch](https://github.com/karpathy/autoresearch), [
 | **Excalidraw Diagrams** | Pipeline overview, experiment comparison, HP landscape, and architecture change diagrams in Excalidraw JSON format |
 | **Immutable Baseline** | SHA-256 checksum of baseline metrics verified before each batch — halts if metrics are modified |
 | **Auto-Repair Loop** | Intra-agent retry (3 attempts) for retryable errors. OOM/SyntaxError not retried |
-| **Fixed Time Budget** | Optional fixed wall-clock duration per experiment for deterministic comparability |
+| **Training Budget** | Optional fixed wall-clock duration or fixed epoch count per experiment for fair comparison |
 | **Goal Anchoring** | `optimization-goals.json` written at Phase 0; all agents read it before acting. Post-dispatch validation catches frozen param changes, scope breaches, dead-end re-proposals |
 | **Behavioral Memory** | `learned-behaviors.json` accumulates HP constraints, method outcomes, divergence patterns per project. All agents have `memory: local` for persistent role-specific learning |
 
@@ -261,6 +261,7 @@ Exit code `2` = block action. Exit code `0` = allow. Configured in `hooks/hooks.
 - **HP interaction detection**: `detect_hp_interactions()` identifies 2-way HP interaction effects (e.g., "high LR only works with small batch size"). Integrated into analysis output.
 - **Adaptive branch budget**: HP-tune allocates more experiments to promising branches and fewer to struggling ones. Scores by improvement × confidence factor.
 - **Checkpoint warm-starting**: Experiments can resume from prior checkpoints (lower LR, fewer epochs). Saves 50-80% compute in later iterations.
+- **Small dataset awareness**: Research agent shifts search toward low-data techniques (transfer learning, few-shot learning, adapters, prompt tuning, semi-supervised methods) when dataset has fewer than 5K samples.
 
 ## Gotchas
 

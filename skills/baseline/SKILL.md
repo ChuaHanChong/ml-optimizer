@@ -108,6 +108,24 @@ When executing evaluation or training commands (Steps 3 and 4), apply this retry
 
 **Loop detection:** If attempt 2 produces the same error message (first 200 chars) as attempt 1, skip attempt 3.
 
+## Step 2.2: Apply Training Budget to Baseline
+
+The baseline must use the same training budget as experiments to ensure fair comparisons. Read `experiments/pipeline-state.json` and check `user_choices` for either budget type:
+
+**If `fixed_time_budget` is set** (seconds):
+1. Wrap the training command with `timeout`:
+   ```bash
+   timeout --signal=SIGTERM --kill-after=60 <fixed_time_budget> <train_command>
+   ```
+2. Set epochs high enough that timeout is the binding constraint (e.g., `--epochs 200`)
+3. Exit code 124 (timeout reached) is treated as **success** — training completed its time budget normally
+
+**If `fixed_epoch_budget` is set** (integer):
+1. Override the epoch count in the training command (e.g., replace `--epochs 2` with `--epochs <fixed_epoch_budget>`)
+2. If the training command doesn't have an epochs flag, add one appropriate to the framework
+
+**If neither is set:** Run training with the original epoch count as specified in `train_command`.
+
 ## Step 3: Run Baseline Evaluation
 
 1. Execute the evaluation command via Bash (within the auto-repair loop above)

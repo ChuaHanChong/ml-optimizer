@@ -32,7 +32,11 @@
        - If the metric name doesn't match either list, ask: "Is a lower value of [metric] better (like loss) or is a higher value better (like reward)?"
        Store as `divergence_lower_is_better` in user_choices.
    8. **Optimization type:** Are you optimizing training performance or inference performance? (This plugin focuses on **training** optimization — inference optimization like quantization, pruning, or ONNX conversion is out of scope.)
-   9. **Fixed time budget** (optional): Should all experiments train for the same wall-clock duration? (e.g., "60 seconds each" for rapid comparison, or leave blank for default timeout behavior). This makes results directly comparable but may not allow full convergence.
+   9. **Training budget per experiment** (optional):
+      - **Fixed time**: all experiments train for the same wall-clock duration (e.g., "60 seconds each") — makes metrics directly comparable by time
+      - **Fixed epochs**: all experiments train for the same number of epochs (e.g., "10 epochs each") — deterministic and reproducible
+      - **Default** (leave blank): experiments run until their configured epochs complete, with a safety timeout
+      Store as `fixed_time_budget` (seconds) or `fixed_epoch_budget` (integer) in user_choices.
    10. **Anything else** I should know about this model or training setup?
    11. **Dataset location:** Where are your training and validation datasets?
        - Directory path(s), or "embedded in code" if the training script downloads/generates data
@@ -62,7 +66,9 @@
        "scope_level": "<from Q6: 'training' if HP-only, 'architecture' if HP+research, 'full' if let-me-decide>",
        "budget_mode": "<from budget selection>",
        "model_category": "<from Q8 or auto-detected>",
-       "frozen_parameters": ["<from Q4: parameters user does NOT want changed>"]
+       "frozen_parameters": ["<from Q4: parameters user does NOT want changed>"],
+       "fixed_time_budget": "<from Q9: seconds, or null>",
+       "fixed_epoch_budget": "<from Q9: integer, or null>"
      },
      "divergence": {
        "metric": "<from Q7>",

@@ -3,7 +3,7 @@ name: review-agent
 description: "Subagent for session review. Analyzes experiment outcomes, error patterns, and proposal effectiveness to generate insights and recommendations for future optimization runs."
 tools: "Read, Write, Bash, Glob, Grep, Skill, WebSearch, WebFetch"
 model: opus
-color: "#EF4444"
+color: yellow
 background: true
 skills:
   - ml-optimizer:review

@@ -3,7 +3,7 @@ name: monitor-agent
 description: "Subagent for monitoring running ML experiments for divergence. Polls log files, detects NaN/explosion/plateau, and kills diverging processes."
 tools: "Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch"
 model: sonnet
-color: "#F59E0B"
+color: yellow
 background: true
 skills:
   - ml-optimizer:monitor

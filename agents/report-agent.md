@@ -3,7 +3,7 @@ name: report-agent
 description: "Subagent for generating comprehensive final reports. Compiles all experiment results, creates comparison tables, highlights best configuration, and summarizes the optimization journey."
 tools: "Read, Write, Bash, Glob, Grep, Skill, WebSearch, WebFetch"
 model: opus
-color: "#6366F1"
+color: blue
 skills:
   - ml-optimizer:report
 memory: local

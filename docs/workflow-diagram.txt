@@ -344,12 +344,18 @@ ENTRY POINT
   |  |  "unmonitored": metric not found after fallbacks                   |  |
   |  |    → warn user, rely on hard timeout as safety net                 |  |
   |  |  "diverged": kill training, mark experiment as diverged            |  |
+  |  |    → validate result: schema_validator.py <exp>.json result        |  |
   |  |                                                                    |  |
   |  |  Recovery mechanisms:                                              |  |
   |  |    - Early batch abort: ≥2 diverge within 60s → cancel rest        |  |
   |  |    - All-diverge recovery: all diverge → retry halved LR           |  |
   |  |    - OOM feedback: record max_batch_size for next hp-tune          |  |
   |  +--------------------------------------------------------------------+  |
+  |                    |                                                     |
+  |                    v                                                     |
+  |  Post-batch validation: schema_validator.py <exp>.json result --strict   |
+  |  Enforces completeness (metrics, iteration, method_tier, duration).      |
+  |  Incomplete → mark failed, log error.                                    |
   |                    |                                                     |
   |                    v                                                     |
   |  +--------------------------------------------------------------------+  |
@@ -373,6 +379,7 @@ ENTRY POINT
   |  |    - Verify baseline integrity (pipeline_state.py verify-baseline) |  |
   |  |    - goal_memory.py sync-from-errors (keep behaviors current)      |  |
   |  |    - Regenerate live dashboard (dashboard.py --live)               |  |
+  |  |    - Generate results-table.md (dashboard.py --table)              |  |
   |  |                                                                    |  |
   |  |  Decision tree:                                                    |  |
   |  |    "continue"         → next HP iteration                          |  |
@@ -489,7 +496,8 @@ ENTRY POINT
     |    - ASCII charts (comparison, timeline, sensitivity)        |
     |    - Matplotlib progress chart                               |
     |    - Excalidraw diagrams (pipeline, architecture)            |
-    |    - HTML dashboard (dashboard.py)                           |
+    |    - HTML dashboard (dashboard.py --live)                    |
+    |    - Markdown results table (dashboard.py --table)           |
     |    - Error pattern summary                                   |
     |    - Research agenda summary                                 |
     |    - Dead-end catalog summary                                |
@@ -509,6 +517,7 @@ ENTRY POINT
          research-agenda.json, dead-ends.json
   Writes: experiments/reports/final-report.md
           experiments/reports/dashboard.html
+          experiments/results-table.md
           experiments/reports/progress_chart.png
           experiments/artifacts/pipeline-overview.excalidraw
           experiments/artifacts/architecture-*.excalidraw
@@ -558,6 +567,7 @@ ENTRY POINT
          |                                | reports/dead-ends.json (if pruned)
          |                                | learned-behaviors.json (method outcomes, divergence)
          |                                | reports/dashboard.html (--live)
+         |                                | results-table.md (--table)
   7.5    | research-findings*.md,         | research-findings-method-proposals-iterN.md
          | dead-ends.json                 |
   7.7    | reports/error-log.json         | reports/session-review.md
@@ -567,6 +577,7 @@ ENTRY POINT
          | implementation-manifest.json   | Git branches: ml-opt/stack-<N>
   9      | results/, error-log.json,      | reports/final-report.md
          | research-agenda.json,          | reports/dashboard.html
+         |                                | results-table.md
          | dead-ends.json,                | reports/progress_chart.png
          | optimization-goals.json,       |
          | learned-behaviors.json         |

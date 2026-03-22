@@ -7,7 +7,7 @@ from unittest import mock
 
 import pytest
 
-from dashboard import generate_dashboard, _load_dashboard_data, _format_value, _cli_main as dashboard_cli
+from dashboard import generate_dashboard, generate_results_table, _load_dashboard_data, _format_value, _cli_main as dashboard_cli
 from excalidraw_gen import (
     _rect,
     _text,
@@ -511,3 +511,64 @@ class TestExcalidraw:
             with pytest.raises(SystemExit) as exc_info:
                 excalidraw_cli()
             assert exc_info.value.code == 1
+
+
+# ======================================================================
+# TestResultsTable
+# ======================================================================
+
+
+class TestResultsTable:
+    """Tests for generate_results_table() — Markdown results table."""
+
+    def test_basic_table(self, tmp_path):
+        exp_root = tmp_path / "experiments"
+        _create_experiments(exp_root, num=3)
+        path = generate_results_table(str(exp_root))
+        assert Path(path).exists()
+        content = Path(path).read_text()
+        assert "# ML Optimization Results" in content
+        assert "exp-001" in content
+        assert "exp-002" in content
+        assert "## Results" in content
+        assert "| #" in content
+
+    def test_includes_summary(self, tmp_path):
+        exp_root = tmp_path / "experiments"
+        _create_experiments(exp_root, num=3)
+        path = generate_results_table(str(exp_root))
+        content = Path(path).read_text()
+        assert "## Summary" in content
+        assert "Completed:" in content
+        assert "Best result:" in content
+
+    def test_delta_vs_baseline(self, tmp_path):
+        exp_root = tmp_path / "experiments"
+        _create_experiments(exp_root, num=2)
+        path = generate_results_table(str(exp_root))
+        content = Path(path).read_text()
+        assert "%" in content
+
+    def test_empty_results(self, tmp_path):
+        exp_root = tmp_path / "experiments"
+        exp_root.mkdir(parents=True)
+        (exp_root / "results").mkdir()
+        path = generate_results_table(str(exp_root))
+        content = Path(path).read_text()
+        assert "# ML Optimization Results" in content
+        assert "Total experiments: 0" in content
+
+    def test_reads_pipeline_state(self, tmp_path):
+        exp_root = tmp_path / "experiments"
+        _create_experiments(exp_root, num=2)
+        path = generate_results_table(str(exp_root))
+        content = Path(path).read_text()
+        assert "Phase:** 7" in content
+        assert "Iteration:** 3" in content
+
+    def test_cli_table_flag(self, tmp_path):
+        exp_root = tmp_path / "experiments"
+        _create_experiments(exp_root, num=2)
+        with mock.patch.object(sys, "argv", ["d", str(exp_root), "--table"]):
+            dashboard_cli()
+        assert (exp_root / "results-table.md").exists()

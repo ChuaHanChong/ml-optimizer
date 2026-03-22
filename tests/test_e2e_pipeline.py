@@ -26,9 +26,10 @@ from result_analyzer import (
     analyze, load_results, rank_by_metric, compute_deltas,
     rank_methods_for_stacking, group_by_method_tier,
     detect_hp_interactions, compute_branch_scores,
+    compare_experiments,
 )
 from pipeline_state import save_state, load_state, validate_phase_requirements, cleanup_stale
-from schema_validator import validate_result, validate_baseline, validate_manifest, validate_file, validate_prerequisites
+from schema_validator import validate_result, validate_result_strict, validate_baseline, validate_manifest, validate_file, validate_prerequisites
 import plot_results
 from plot_results import plot_metric_comparison, plot_improvement_timeline, plot_hp_sensitivity, plot_progress_chart
 from conftest import FIXTURES, _write_result
@@ -43,6 +44,7 @@ from error_tracker import (
 )
 from prerequisites_check import scan_imports, detect_dataset_format_project, detect_env_manager
 from goal_memory import init_goals, load_goals, generate_summary, validate_agent_output
+from dashboard import generate_results_table
 
 
 RESNET_FIXTURE = FIXTURES / "tiny_resnet_cifar10"
@@ -620,6 +622,32 @@ class TestFullPipelineIntegration:
             "warm_started": True,
         }
         assert validate_result(ckpt_result)["valid"] is True
+
+        # Experiment comparison: compare two real experiments
+        exp_ids = [r.stem for r in results_dir.glob("exp-*.json")]
+        if len(exp_ids) >= 2:
+            cmp = compare_experiments(str(results_dir), exp_ids[:2], "loss")
+            assert "config_diff" in cmp
+            assert "metrics_comparison" in cmp
+            assert "winner" in cmp
+            assert cmp["experiments"] == exp_ids[:2]
+
+        # Results table: generate Markdown results table
+        tpath = generate_results_table(exp_root)
+        assert Path(tpath).exists()
+        table_content = Path(tpath).read_text()
+        assert "# ML Optimization Results" in table_content
+        assert "## Results" in table_content
+        assert "baseline" in table_content
+
+        # Completeness enforcement: strict validation on completed results
+        for rf in results_dir.glob("exp-*.json"):
+            data = json.loads(rf.read_text())
+            r = validate_result(data)
+            assert r["valid"] is True, f"{rf.name} structurally invalid: {r['errors']}"
+            if data.get("status") == "completed":
+                # Warnings flag missing optional fields
+                assert isinstance(r["warnings"], list)
 
         # Verify directory structure matches SKILL.md spec
         assert (Path(exp_root) / "logs").exists()
@@ -2013,3 +2041,59 @@ class TestHookDetectCriticalErrors:
         )
         rc = _run_hook("detect-critical-errors.sh", stdin)
         assert rc == 0
+
+
+class TestStatusLine:
+    """Test hooks/statusline.sh outputs status when pipeline state exists."""
+
+    def test_with_pipeline_state(self, tmp_path):
+        """Statusline shows phase/iteration/experiments when state exists."""
+        exp = tmp_path / "experiments"
+        exp.mkdir()
+        (exp / "results").mkdir()
+        (exp / "pipeline-state.json").write_text(json.dumps({
+            "phase": 7, "iteration": 3,
+            "user_choices": {"primary_metric": "loss", "lower_is_better": True,
+                             "budget_mode": "auto", "difficulty_multiplier": 8},
+        }))
+        (exp / "results" / "baseline.json").write_text(json.dumps({
+            "exp_id": "baseline", "status": "completed",
+            "config": {"lr": 0.01}, "metrics": {"loss": 1.0},
+        }))
+        (exp / "results" / "exp-001.json").write_text(json.dumps({
+            "exp_id": "exp-001", "status": "completed",
+            "config": {"lr": 0.001}, "metrics": {"loss": 0.7},
+        }))
+        stdin = json.dumps({"cwd": str(tmp_path)})
+        hook_path = HOOKS_DIR / "statusline.sh"
+        result = subprocess.run(
+            ["bash", str(hook_path)], input=stdin,
+            capture_output=True, text=True, timeout=10,
+        )
+        assert result.returncode == 0
+        output = result.stdout.strip()
+        assert "[ml-opt]" in output
+        assert "P7" in output
+        assert "I3" in output
+
+    def test_without_pipeline_state(self, tmp_path):
+        """Statusline exits silently when no pipeline state exists."""
+        stdin = json.dumps({"cwd": str(tmp_path)})
+        hook_path = HOOKS_DIR / "statusline.sh"
+        result = subprocess.run(
+            ["bash", str(hook_path)], input=stdin,
+            capture_output=True, text=True, timeout=10,
+        )
+        assert result.returncode == 0
+        assert result.stdout.strip() == ""
+
+    def test_empty_cwd(self):
+        """Statusline exits silently when cwd is missing."""
+        stdin = json.dumps({})
+        hook_path = HOOKS_DIR / "statusline.sh"
+        result = subprocess.run(
+            ["bash", str(hook_path)], input=stdin,
+            capture_output=True, text=True, timeout=10,
+        )
+        assert result.returncode == 0
+        assert result.stdout.strip() == ""

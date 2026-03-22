@@ -20,6 +20,8 @@ from result_analyzer import (
     rank_by_metric,
     rank_methods_for_stacking,
     spearman_correlation,
+    compare_experiments,
+    format_comparison_table,
 )
 from schema_validator import (
     validate_baseline,
@@ -27,6 +29,7 @@ from schema_validator import (
     validate_manifest,
     validate_prerequisites,
     validate_result,
+    validate_result_strict,
 )
 from plot_results import (
     ascii_bar_chart,
@@ -722,3 +725,137 @@ class TestBranchScores:
         _write_result(results_dir, "baseline", "completed", {"lr": 0.01}, {"loss": 1.0})
         scores = compute_branch_scores(load_results(str(results_dir)), "loss")
         assert scores == {}
+
+
+# ======================================================================
+# TestExperimentComparison
+# ======================================================================
+
+
+class TestExperimentComparison:
+    """Tests for compare_experiments() and format_comparison_table()."""
+
+    def test_basic_comparison(self, tmp_path):
+        results_dir = tmp_path / "results"
+        results_dir.mkdir()
+        _write_result(results_dir, "baseline", "completed", {"lr": 0.01}, {"loss": 1.0})
+        _write_result(results_dir, "exp-1", "completed",
+                     {"lr": 0.001, "batch_size": 32}, {"loss": 0.5, "accuracy": 80.0})
+        _write_result(results_dir, "exp-2", "completed",
+                     {"lr": 0.005, "batch_size": 64}, {"loss": 0.4, "accuracy": 85.0})
+        result = compare_experiments(str(results_dir), ["exp-1", "exp-2"], "loss")
+        assert result["experiments"] == ["exp-1", "exp-2"]
+        assert result["config_diff"]["lr"]["differs"] is True
+        assert result["config_diff"]["batch_size"]["differs"] is True
+        assert result["metrics_comparison"]["loss"]["delta"] < 0  # exp-2 lower
+        assert result["winner"]["exp_id"] == "exp-2"  # lower loss wins
+
+    def test_higher_is_better(self, tmp_path):
+        results_dir = tmp_path / "results"
+        results_dir.mkdir()
+        _write_result(results_dir, "exp-1", "completed", {"lr": 0.001}, {"accuracy": 80.0})
+        _write_result(results_dir, "exp-2", "completed", {"lr": 0.005}, {"accuracy": 85.0})
+        result = compare_experiments(str(results_dir), ["exp-1", "exp-2"], "accuracy",
+                                    lower_is_better=False)
+        assert result["winner"]["exp_id"] == "exp-2"
+
+    def test_missing_experiment(self, tmp_path):
+        results_dir = tmp_path / "results"
+        results_dir.mkdir()
+        _write_result(results_dir, "exp-1", "completed", {"lr": 0.001}, {"loss": 0.5})
+        result = compare_experiments(str(results_dir), ["exp-1", "exp-999"], "loss")
+        assert "error" in result
+
+    def test_same_config_no_diff(self, tmp_path):
+        results_dir = tmp_path / "results"
+        results_dir.mkdir()
+        _write_result(results_dir, "exp-1", "completed", {"lr": 0.001}, {"loss": 0.5})
+        _write_result(results_dir, "exp-2", "completed", {"lr": 0.001}, {"loss": 0.4})
+        result = compare_experiments(str(results_dir), ["exp-1", "exp-2"], "loss")
+        assert result["config_diff"]["lr"]["differs"] is False
+
+    def test_format_table(self, tmp_path):
+        results_dir = tmp_path / "results"
+        results_dir.mkdir()
+        _write_result(results_dir, "exp-1", "completed",
+                     {"lr": 0.001}, {"loss": 0.5})
+        _write_result(results_dir, "exp-2", "completed",
+                     {"lr": 0.005}, {"loss": 0.4})
+        result = compare_experiments(str(results_dir), ["exp-1", "exp-2"], "loss")
+        table = format_comparison_table(result)
+        assert "EXPERIMENT COMPARISON" in table
+        assert "exp-1" in table
+        assert "exp-2" in table
+        assert "Winner" in table
+
+    def test_format_table_error(self):
+        table = format_comparison_table({"error": "Not found"})
+        assert table == "Not found"
+
+
+# ======================================================================
+# TestCompletenessWarnings
+# ======================================================================
+
+
+class TestCompletenessWarnings:
+    """Tests for status-aware completeness checks in validate_result()."""
+
+    def test_completed_with_all_fields(self):
+        data = {"exp_id": "exp-1", "status": "completed",
+                "config": {"lr": 0.001}, "metrics": {"loss": 0.5},
+                "iteration": 1, "method_tier": "baseline", "duration_seconds": 60}
+        r = validate_result(data)
+        assert r["valid"] is True
+        assert r["warnings"] == []
+
+    def test_completed_empty_metrics_warns(self):
+        data = {"exp_id": "exp-1", "status": "completed",
+                "config": {"lr": 0.001}, "metrics": {}}
+        r = validate_result(data)
+        assert r["valid"] is True  # structurally valid
+        assert any("empty metrics" in w for w in r["warnings"])
+
+    def test_completed_missing_iteration_warns(self):
+        data = {"exp_id": "exp-1", "status": "completed",
+                "config": {"lr": 0.001}, "metrics": {"loss": 0.5}}
+        r = validate_result(data)
+        assert r["valid"] is True
+        assert any("iteration" in w for w in r["warnings"])
+        assert any("method_tier" in w for w in r["warnings"])
+
+    def test_failed_missing_notes_warns(self):
+        data = {"exp_id": "exp-1", "status": "failed",
+                "config": {"lr": 0.001}, "metrics": {}}
+        r = validate_result(data)
+        assert r["valid"] is True
+        assert any("notes" in w for w in r["warnings"])
+
+    def test_diverged_missing_notes_warns(self):
+        data = {"exp_id": "exp-1", "status": "diverged",
+                "config": {"lr": 0.001}, "metrics": {}}
+        r = validate_result(data)
+        assert any("notes" in w for w in r["warnings"])
+
+    def test_stacked_missing_fields_warns(self):
+        data = {"exp_id": "exp-1", "status": "completed",
+                "config": {"lr": 0.001}, "metrics": {"loss": 0.5},
+                "method_tier": "stacked_default_hp", "iteration": 1,
+                "duration_seconds": 60}
+        r = validate_result(data)
+        assert any("code_branches" in w for w in r["warnings"])
+        assert any("stacking_order" in w for w in r["warnings"])
+
+    def test_strict_mode_fails(self):
+        data = {"exp_id": "exp-1", "status": "completed",
+                "config": {}, "metrics": {}}
+        r = validate_result_strict(data)
+        assert r["valid"] is False
+        assert any("empty metrics" in e for e in r["errors"])
+
+    def test_running_no_warnings(self):
+        data = {"exp_id": "exp-1", "status": "running",
+                "config": {"lr": 0.001}, "metrics": {}}
+        r = validate_result(data)
+        assert r["valid"] is True
+        assert r["warnings"] == []

@@ -3,7 +3,7 @@ name: implement-agent
 description: "Subagent for applying research-proposed code changes to an ML project. Handles branch creation, code editing, progressive validation, and manifest generation."
 tools: "Bash, Read, Write, Edit, Glob, Grep, Skill, WebSearch, WebFetch, mcp__alphaxiv__read_files_from_github_repository, mcp__alphaxiv__answer_pdf_queries"
 model: opus
-color: "#EC4899"
+color: magenta
 skills:
   - ml-optimizer:implement
   - superpowers:systematic-debugging

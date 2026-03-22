@@ -102,54 +102,54 @@ EXPECTED_AGENTS = {
     "prerequisites-agent": {
         "model": "sonnet", "skill": "ml-optimizer:prerequisites",
         "required_tools": {"Bash", "Read", "Write", "Glob", "Grep"},
-        "forbidden_tools": {"Edit"}, "color": "#6B7280", "background": False,
+        "forbidden_tools": {"Edit"}, "color": "cyan", "background": False,
     },
     "baseline-agent": {
         "model": "sonnet", "skill": "ml-optimizer:baseline",
         "required_tools": {"Bash", "Read", "Write", "Glob", "Grep", "Skill"},
-        "forbidden_tools": {"Edit"}, "color": "#3B82F6", "background": False,
+        "forbidden_tools": {"Edit"}, "color": "blue", "background": False,
     },
     "experiment-agent": {
         "model": "sonnet", "skill": "ml-optimizer:experiment",
         "required_tools": {"Bash", "Read", "Write", "Glob", "Grep"},
-        "forbidden_tools": {"Edit"}, "color": "#10B981", "background": True,
+        "forbidden_tools": {"Edit"}, "color": "green", "background": True,
     },
     "monitor-agent": {
         "model": "sonnet", "skill": "ml-optimizer:monitor",
         "required_tools": {"Bash", "Read", "Write", "Glob", "Grep", "Skill"},
-        "forbidden_tools": {"Edit"}, "color": "#F59E0B", "background": True,
+        "forbidden_tools": {"Edit"}, "color": "yellow", "background": True,
     },
     "research-agent": {
         "model": "opus", "skill": "ml-optimizer:research",
         "required_tools": {"Bash", "Read", "Write", "Glob", "Grep", "WebSearch", "WebFetch"},
-        "forbidden_tools": {"Edit"}, "color": "#8B5CF6", "background": False,
+        "forbidden_tools": {"Edit"}, "color": "magenta", "background": False,
         "external_skills": ["claude-mem:mem-search"],
     },
     "implement-agent": {
         "model": "opus", "skill": "ml-optimizer:implement",
         "required_tools": {"Bash", "Read", "Write", "Edit", "Glob", "Grep"},
-        "forbidden_tools": set(), "color": "#EC4899", "background": False,
+        "forbidden_tools": set(), "color": "magenta", "background": False,
         "external_skills": ["superpowers:systematic-debugging"],
     },
     "tuning-agent": {
         "model": "opus", "skill": "ml-optimizer:hp-tune",
         "required_tools": {"Read", "Write", "Bash", "Glob", "Grep"},
-        "forbidden_tools": {"Edit"}, "color": "#F97316", "background": False,
+        "forbidden_tools": {"Edit"}, "color": "red", "background": False,
     },
     "analysis-agent": {
         "model": "opus", "skill": "ml-optimizer:analyze",
         "required_tools": {"Read", "Write", "Bash", "Glob", "Grep", "Skill"},
-        "forbidden_tools": {"Edit"}, "color": "#06B6D4", "background": False,
+        "forbidden_tools": {"Edit"}, "color": "cyan", "background": False,
     },
     "report-agent": {
         "model": "opus", "skill": "ml-optimizer:report",
         "required_tools": {"Read", "Write", "Bash", "Glob", "Grep", "Skill"},
-        "forbidden_tools": {"Edit"}, "color": "#6366F1", "background": False,
+        "forbidden_tools": {"Edit"}, "color": "blue", "background": False,
     },
     "review-agent": {
         "model": "opus", "skill": "ml-optimizer:review",
         "required_tools": {"Read", "Write", "Bash", "Glob", "Grep", "Skill"},
-        "forbidden_tools": {"Edit"}, "color": "#EF4444", "background": True,
+        "forbidden_tools": {"Edit"}, "color": "yellow", "background": True,
     },
 }
 
@@ -196,7 +196,8 @@ class TestAgentFiles:
         # color
         assert fm.get("color") == spec["color"], (
             f"{agent_name}: expected color {spec['color']}")
-        assert re.match(r"^#[0-9A-Fa-f]{6}$", fm.get("color", ""))
+        assert fm.get("color", "") in {"blue", "cyan", "green", "yellow", "magenta", "red"}, (
+            f"{agent_name}: color must be a named color, got {fm.get('color')}")
 
         # tools
         missing = spec["required_tools"] - tools

@@ -26,7 +26,7 @@ Inspired by [karpathy/autoresearch](https://github.com/karpathy/autoresearch), [
 | **Excalidraw Diagrams** | Pipeline overview, experiment comparison, HP landscape, and architecture change diagrams in Excalidraw JSON format |
 | **Immutable Baseline** | SHA-256 checksum of baseline metrics verified before each batch — halts if metrics are modified |
 | **Auto-Repair Loop** | Intra-agent retry (3 attempts) for retryable errors. OOM/SyntaxError not retried |
-| **Fixed Time Budget** | Optional fixed wall-clock duration per experiment for deterministic comparability |
+| **Training Budget** | Optional fixed wall-clock duration or fixed epoch count per experiment for fair comparison |
 | **Goal Anchoring** | `optimization-goals.json` written at Phase 0; all agents read it before acting. Post-dispatch validation catches frozen param changes, scope breaches, dead-end re-proposals |
 | **Behavioral Memory** | `learned-behaviors.json` accumulates HP constraints, method outcomes, divergence patterns per project. All agents have `memory: local` for persistent role-specific learning |
 
@@ -170,6 +170,7 @@ The plugin creates this structure in your project:
   reports/error-log.json                # Structured error event log
   reports/suggestion-history.json       # Suggestion feedback loop
   reports/session-review.md             # Self-improvement review
+  results-table.md                      # Auto-generated Markdown results summary
   prepared-data/                        # Prepared dataset (if preprocessing needed)
   pipeline-state.json                   # Resumable pipeline state
   dev_notes.md                          # Running session log
@@ -184,15 +185,15 @@ All scripts in `scripts/` use only the standard library and work as both importa
 | `scripts/gpu_check.py` | `python3 scripts/gpu_check.py` |
 | `scripts/parse_logs.py` | `python3 scripts/parse_logs.py <logfile>` — parses kv/JSON/CSV/XGBoost/HuggingFace Trainer logs |
 | `scripts/detect_divergence.py` | `python3 scripts/detect_divergence.py '<json_values>' [--higher-is-better] [--model-category rl\|generative\|supervised]` — also: `--check-overfitting '<train_json>' '<val_json>' [--patience N] [--min-gap F]` |
-| `scripts/result_analyzer.py` | `python3 scripts/result_analyzer.py <results_dir> <metric> [baseline_id] [lower_is_better]` |
+| `scripts/result_analyzer.py` | `python3 scripts/result_analyzer.py <results_dir> <metric> [baseline_id] [lower_is_better]` — also: `compare <exp_id_1> <exp_id_2> [metric]` |
 | `scripts/experiment_setup.py` | `python3 scripts/experiment_setup.py <project_root> <train_command> [gpu_id] [config_json]` |
 | `scripts/implement_utils.py` | `python3 scripts/implement_utils.py <findings.md> '<indices_json>'` — also: `clone <url> <dest>`, `analyze <path>` |
 | `scripts/pipeline_state.py` | `python3 scripts/pipeline_state.py <exp_root> validate\|save\|load\|cleanup` |
-| `scripts/schema_validator.py` | `python3 scripts/schema_validator.py <filepath> result\|baseline\|manifest\|prerequisites` |
+| `scripts/schema_validator.py` | `python3 scripts/schema_validator.py <filepath> result\|baseline\|manifest\|prerequisites [--strict]` — `--strict` enforces completeness |
 | `scripts/plot_results.py` | `python3 scripts/plot_results.py <results_dir> <metric> comparison\|timeline\|sensitivity <hp>\|progress [--higher-is-better]` |
 | `scripts/prerequisites_check.py` | `python3 scripts/prerequisites_check.py scan-imports\|check-packages\|detect-env\|detect-format\|detect-format-project\|validate-data\|bulk-install-cmd\|gpu-install-cmd` |
 | `scripts/error_tracker.py` | `python3 scripts/error_tracker.py <exp_root> log\|show\|patterns\|summary\|sync\|success\|proposals\|rank\|cleanup\|log-suggestion\|suggestion-history\|dead-end <add\|list\|check>\|agenda <init\|update\|list\|add>` |
-| `scripts/dashboard.py` | `python3 scripts/dashboard.py <exp_root> [--live] [--serve --port 8080]` — self-contained HTML dashboard with auto-refresh |
+| `scripts/dashboard.py` | `python3 scripts/dashboard.py <exp_root> [--live] [--table] [--serve --port 8080]` — HTML dashboard + Markdown results table |
 | `scripts/excalidraw_gen.py` | `python3 scripts/excalidraw_gen.py <exp_root> pipeline\|comparison\|hp-landscape\|architecture <args>` — Excalidraw JSON diagrams |
 | `scripts/goal_memory.py` | `python3 scripts/goal_memory.py <exp_root> init-goals\|read-goals\|log-behavior\|query-behaviors\|validate-output\|summary\|sync-from-errors` — goal anchoring, behavioral memory, agent output validation |
 
@@ -260,6 +261,7 @@ Exit code `2` = block action. Exit code `0` = allow. Configured in `hooks/hooks.
 - **HP interaction detection**: `detect_hp_interactions()` identifies 2-way HP interaction effects (e.g., "high LR only works with small batch size"). Integrated into analysis output.
 - **Adaptive branch budget**: HP-tune allocates more experiments to promising branches and fewer to struggling ones. Scores by improvement × confidence factor.
 - **Checkpoint warm-starting**: Experiments can resume from prior checkpoints (lower LR, fewer epochs). Saves 50-80% compute in later iterations.
+- **Small dataset awareness**: Research agent shifts search toward low-data techniques (transfer learning, few-shot learning, adapters, prompt tuning, semi-supervised methods) when dataset has fewer than 5K samples.
 
 ## Gotchas
 
@@ -270,6 +272,47 @@ Exit code `2` = block action. Exit code `0` = allow. Configured in `hooks/hooks.
 - **Tabular ML frameworks** (sklearn, XGBoost, LightGBM) skip divergence monitoring entirely.
 - **Multiple research findings files**: `research-findings.md` (Phase 5), `research-findings-method-proposals.md` (pre-loop), `research-findings-method-proposals-iter<N>.md` (mid-loop). Deduplication checks all of them.
 - **`scripts/goal_memory.py validate-output` returns exit code 2** for violations (0=valid, 1=script error, 2=violations). Imports `scripts/error_tracker.py` lazily for dead-end checks — both must be in `scripts/`.
+
+## Progress Dashboard
+
+The plugin generates a self-contained HTML dashboard to monitor optimization progress. No external dependencies required.
+
+### Generate a static dashboard
+
+```bash
+python3 scripts/dashboard.py <project>/experiments
+# Output: experiments/reports/dashboard.html
+```
+
+Open `experiments/reports/dashboard.html` in any browser. It shows experiment results, HP sensitivity, timeline, error summary, and method explanations.
+
+### Live auto-refresh (during active optimization)
+
+```bash
+python3 scripts/dashboard.py <project>/experiments --live
+```
+
+Adds a 30-second auto-refresh to the HTML — the browser reloads itself to pick up new results. The orchestrator runs this automatically after each experiment batch in Phase 7.
+
+### Serve via HTTP (remote machines)
+
+```bash
+python3 scripts/dashboard.py <project>/experiments --serve --port 8080
+```
+
+Starts a local HTTP server at `http://localhost:8080/dashboard.html`. Useful when SSH'd into a remote machine — port-forward and view in your local browser. Can be combined with `--live` for auto-refreshing served dashboard.
+
+### Markdown results table
+
+```bash
+python3 scripts/dashboard.py <project>/experiments --table
+```
+
+Generates `experiments/results-table.md` — a git-trackable Markdown summary with ranked results, improvement percentages, and HP correlations. Can be combined with other flags:
+
+```bash
+python3 scripts/dashboard.py <project>/experiments --live --table  # Both HTML + Markdown
+```
 
 ## License
 

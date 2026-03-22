@@ -139,6 +139,11 @@ If divergence is detected:
      }
      ```
    - Write the updated result using the Write tool
+   - **Validate the written file:**
+     ```bash
+     python3 schema_validator.py experiments/results/<exp_id>.json result
+     ```
+     If validation fails, fix the JSON before continuing.
 
 3. **Log the event:**
    Append to `experiments/dev_notes.md`:

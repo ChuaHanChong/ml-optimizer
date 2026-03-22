@@ -67,6 +67,7 @@ Before building the training command, verify:
 
 2. **Timeout enforcement:**
    - **If `fixed_time_budget` is set** (from Phase 0 user_choices): use it directly as `timeout_seconds`. All experiments train for exactly this many seconds. When the budget expires (exit code 124 from `timeout`), this is NOT an error — set `status: "completed"`. Include `"time_budget_seconds": <value>` in the result JSON.
+   - **If `fixed_epoch_budget` is set** (from Phase 0 user_choices): override the epoch count in the training command (e.g., `--epochs <fixed_epoch_budget>`). All experiments train for exactly this many epochs. Include `"epoch_budget": <value>` in the result JSON. Still apply the safety timeout from below.
    - **Otherwise:** If the orchestrator passes a `timeout_seconds` value, use it directly (it computes `baseline_training_time * 3`). Otherwise, compute a timeout:
      - If `baseline.json` has `profiling.estimated_timeout_seconds` (tabular ML): `timeout_seconds = profiling.estimated_timeout_seconds`
      - Else if `baseline.json` has `profiling.throughput_samples_per_sec` (iterative DL): `timeout_seconds = int(1.5 × (dataset_size × epochs) / throughput)`

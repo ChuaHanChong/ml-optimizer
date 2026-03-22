@@ -266,6 +266,21 @@ When the implementation manifest contains multiple code branches:
      4. Continue with the remaining experiments in the batch
    - Save pipeline state after each batch completes
 
+   ### Post-Batch Completeness Validation
+
+   Before proceeding to analysis, validate all experiment results from this batch with `--strict` (enforces completeness — completed experiments must have non-empty metrics, iteration, method_tier, duration_seconds):
+
+   ```bash
+   for exp_id in <batch_exp_ids>:
+       python3 schema_validator.py experiments/results/${exp_id}.json result --strict
+   ```
+
+   If any validation fails:
+   1. Log to error tracker: `category: "config_error", severity: "warning", source: "orchestrate", message: "Experiment <exp_id> result incomplete: <errors>"`
+   2. If the experiment agent is still reachable, ask it to fill missing fields
+   3. Otherwise set `status: "failed"` in the result file with `notes: "Completeness validation failed: <errors>"`
+   4. Continue — analyze will skip failed experiments
+
 5. **Analyze results + speculative hp-tune (parallel):**
    - **Start analyze synchronously:**
      ```

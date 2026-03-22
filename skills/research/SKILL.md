@@ -347,6 +347,10 @@ Note: Clamp feasibility to [1, 10] range to prevent division by zero when feasib
 
 Sort proposals by priority score, highest first.
 
+### Small Dataset Awareness
+
+Check the dataset size from `prerequisites.json` or the training script. If the dataset has fewer than 5,000 training samples, adapt your search strategy: heavy augmentation and regularization often underperform on small data. Instead, search for techniques designed for low-data regimes — transfer learning, pre-trained model fine-tuning, few-shot learning, adapters (LoRA, prefix tuning), prompt tuning, synthetic data generation, semi-supervised methods, self-training, and meta-learning approaches.
+
 ### User Paper Priority Bonus
 
 If a proposal originated from a user-provided paper (`user_papers` input):

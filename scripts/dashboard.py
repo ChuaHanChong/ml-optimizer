@@ -11,6 +11,7 @@ Usage:
 import html as html_mod
 import json
 import sys
+from datetime import datetime, timezone
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from string import Template
@@ -375,8 +376,8 @@ def generate_dashboard(exp_root: str, *, live: bool = False) -> str:
     if corrs:
         hp_rows = []
         for c in corrs[:8]:
-            hp = c.get("hp", "?")
-            rho = c.get("correlation", 0)
+            hp = c.get("param", "?")
+            rho = c.get("spearman_rho", 0)
             bar_w = abs(rho) * 200
             color = "#2f9e44" if rho > 0 else "#e03131"
             hp_rows.append(
@@ -521,18 +522,178 @@ def generate_dashboard(exp_root: str, *, live: bool = False) -> str:
 
 
 # ---------------------------------------------------------------------------
+# results-table.md generation
+# ---------------------------------------------------------------------------
+
+
+def generate_results_table(exp_root: str, metric: str = "loss", lower_is_better: bool = True) -> str:
+    """Generate experiments/results-table.md with ranked experiment results.
+
+    Returns the output file path.
+    """
+    root = Path(exp_root)
+    results_dir = root / "results"
+    results = load_results(str(results_dir)) if results_dir.is_dir() else {}
+
+    # Read pipeline state for phase/iteration
+    phase, iteration = "?", "?"
+    state_path = root / "pipeline-state.json"
+    if state_path.is_file():
+        try:
+            state = json.loads(state_path.read_text())
+            phase = state.get("phase", "?")
+            iteration = state.get("iteration", "?")
+            uc = state.get("user_choices", {})
+            metric = uc.get("primary_metric", metric)
+            lower_is_better = uc.get("lower_is_better", lower_is_better)
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    direction = "lower is better" if lower_is_better else "higher is better"
+    ranked = rank_by_metric(results, metric, lower_is_better=lower_is_better)
+
+    # Baseline value for delta calculation
+    baseline = results.get("baseline", {})
+    baseline_val = baseline.get("metrics", {}).get(metric)
+    try:
+        baseline_val = float(baseline_val) if baseline_val is not None else None
+    except (ValueError, TypeError):
+        baseline_val = None
+
+    # Count by status
+    statuses = {"completed": 0, "failed": 0, "diverged": 0, "running": 0, "timeout": 0}
+    for eid, data in results.items():
+        if eid == "baseline":
+            continue
+        s = data.get("status", "")
+        if s in statuses:
+            statuses[s] += 1
+
+    total = sum(statuses.values())
+
+    # Best result
+    best_line = "N/A"
+    if ranked:
+        best = ranked[0]
+        best_val = best.get("value")
+        best_id = best.get("exp_id", "?")
+        if best_val is not None and baseline_val is not None and abs(baseline_val) > 1e-12:
+            if lower_is_better:
+                delta_pct = (baseline_val - best_val) / abs(baseline_val) * 100
+            else:
+                delta_pct = (best_val - baseline_val) / abs(baseline_val) * 100
+            sign = "+" if delta_pct >= 0 else ""
+            best_line = f"{best_id} ({metric}={best_val:.4f}, {sign}{delta_pct:.1f}% vs baseline)"
+        elif best_val is not None:
+            best_line = f"{best_id} ({metric}={best_val:.4f})"
+
+    lines = [
+        "# ML Optimization Results",
+        "",
+        f"**Metric:** {metric} ({direction}) | **Phase:** {phase} | **Iteration:** {iteration}",
+        "",
+        "## Summary",
+        f"- Total experiments: {total}",
+        f"- Completed: {statuses['completed']} | Failed: {statuses['failed']} | "
+        f"Diverged: {statuses['diverged']} | Running: {statuses['running']}",
+        f"- Best result: {best_line}",
+        "",
+    ]
+
+    # Results table
+    if ranked:
+        lines.append("## Results")
+        lines.append("")
+        lines.append(f"| # | Exp ID | Status | {metric.capitalize()} | vs Baseline | Branch | Tier | Iter |")
+        lines.append("|---|--------|--------|" + "-" * max(len(metric), 6) + "--|-------------|--------|------|------|")
+        for i, r in enumerate(ranked, 1):
+            eid = r.get("exp_id", "?")
+            status = results.get(eid, {}).get("status", "?")
+            val = r.get("value")
+            val_str = f"{val:.4f}" if isinstance(val, (int, float)) else "—"
+            delta_str = "—"
+            if val is not None and baseline_val is not None and abs(baseline_val) > 1e-12:
+                if lower_is_better:
+                    dp = (baseline_val - val) / abs(baseline_val) * 100
+                else:
+                    dp = (val - baseline_val) / abs(baseline_val) * 100
+                sign = "+" if dp >= 0 else ""
+                delta_str = f"{sign}{dp:.1f}%"
+            branch_raw = results.get(eid, {}).get("code_branch")
+            branch = f"`{branch_raw}`" if branch_raw else "—"
+            tier = results.get(eid, {}).get("method_tier") or "—"
+            it = results.get(eid, {}).get("iteration", "—")
+            lines.append(f"| {i} | {eid} | {status} | {val_str} | {delta_str} | {branch} | {tier} | {it} |")
+        lines.append("")
+
+    # Code changes per branch
+    branches = sorted({
+        d.get("code_branch") for d in results.values()
+        if d.get("code_branch") and d.get("status") == "completed"
+    })
+    if branches:
+        lines.append("## Code Changes")
+        lines.append("")
+        lines.append("View the code diff for each method branch:")
+        lines.append("")
+        for b in branches:
+            lines.append(f"- **`{b}`**: `git diff main...{b}`")
+        lines.append("")
+
+    # HP correlations
+    try:
+        corr_data = identify_correlations(results, metric, lower_is_better=lower_is_better)
+        corrs = corr_data.get("correlations", [])
+        if corrs:
+            lines.append("## Top HP Correlations")
+            lines.append("")
+            lines.append("| Parameter | Spearman rho | Direction |")
+            lines.append("|-----------|-------------|-----------|")
+            for c in corrs[:5]:
+                rho = c.get("spearman_rho", 0)
+                param = c.get("param", "?")
+                if lower_is_better:
+                    direction_str = "lower is better" if rho > 0 else "higher is better"
+                else:
+                    direction_str = "higher is better" if rho > 0 else "lower is better"
+                lines.append(f"| {param} | {rho:+.3f} | {direction_str} |")
+            lines.append("")
+    except Exception:
+        pass
+
+    lines.append(f"*Last updated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}*")
+    lines.append("")
+
+    out_path = root / "results-table.md"
+    out_path.write_text("\n".join(lines))
+    return str(out_path)
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
 def _cli_main() -> None:
     if len(sys.argv) < 2:
-        print("Usage: dashboard.py <exp_root> [--serve --port PORT]", file=sys.stderr)
+        print("Usage: dashboard.py <exp_root> [--live] [--table] [--serve --port PORT]", file=sys.stderr)
         sys.exit(1)
 
     exp_root = sys.argv[1]
     live = "--live" in sys.argv
+    table = "--table" in sys.argv
+
+    if table and not any(f in sys.argv for f in ("--live", "--serve")):
+        # Table-only mode: generate just results-table.md
+        tpath = generate_results_table(exp_root)
+        print(json.dumps({"generated": True, "path": tpath, "type": "table"}))
+        return
+
     path = generate_dashboard(exp_root, live=live)
     print(json.dumps({"generated": True, "path": path, "live": live}))
+
+    if table:
+        tpath = generate_results_table(exp_root)
+        print(json.dumps({"generated": True, "path": tpath, "type": "table"}))
 
     if "--serve" in sys.argv:
         port = 8080

@@ -75,11 +75,18 @@ python3 scripts/error_tracker.py <exp_root> agenda list
 ```
 If high-priority untried ideas exist, consider whether HP exploration should focus on branches related to those ideas (to maximize their potential) or on the current best branch.
 
-**Time-budget-aware proposals:** If `fixed_time_budget` is set (all experiments train for the same wall-clock duration):
+**Training-budget-aware proposals:**
+
+If `fixed_time_budget` is set (all experiments train for the same wall-clock duration):
 - Estimate steps fitting in budget: `estimated_steps = fixed_time_budget × baseline_throughput_steps_per_sec`
 - Propose LR schedules appropriate for that step count (e.g., 1-cycle over estimated_steps)
 - Avoid proposing epoch counts — the time budget controls duration
 - For short budgets (< 120s), avoid slow-convergence schedules (cosine annealing over 100+ epochs)
+
+If `fixed_epoch_budget` is set (all experiments train for the same number of epochs):
+- Do NOT vary epoch count in proposals — all experiments use the fixed epoch count
+- Focus HP variation on LR, batch size, weight decay, and other non-epoch parameters
+- Propose LR schedules appropriate for the fixed epoch count
 
 From this analysis, understand:
 - **Best result so far:** Which config AND branch gave the best metric value?

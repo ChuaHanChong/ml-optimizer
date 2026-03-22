@@ -578,12 +578,160 @@ def analyze(results_dir: str, metric: str, baseline_id: str = "baseline", lower_
     return result
 
 
+def compare_experiments(
+    results_dir: str,
+    exp_ids: list[str],
+    metric: str,
+    lower_is_better: bool = True,
+) -> dict:
+    """Pairwise comparison of experiments: config diff, metric delta, winner.
+
+    Returns a structured dict with ``config_diff``, ``metrics_comparison``,
+    ``metadata``, and ``winner`` fields.
+    """
+    results = load_results(results_dir)
+    if len(exp_ids) != 2:
+        return {"error": "Exactly 2 experiment IDs required"}
+    loaded = {}
+    for eid in exp_ids:
+        if eid not in results:
+            return {"error": f"Experiment '{eid}' not found in {results_dir}"}
+        loaded[eid] = results[eid]
+
+    # Config diff
+    all_keys: set[str] = set()
+    for data in loaded.values():
+        all_keys.update(data.get("config", {}).keys())
+    config_diff = {}
+    for key in sorted(all_keys):
+        vals = {eid: data.get("config", {}).get(key) for eid, data in loaded.items()}
+        unique = set(str(v) for v in vals.values())
+        config_diff[key] = {**vals, "differs": len(unique) > 1}
+
+    # Metrics comparison
+    all_metrics: set[str] = set()
+    for data in loaded.values():
+        all_metrics.update(data.get("metrics", {}).keys())
+    metrics_comparison = {}
+    for mk in sorted(all_metrics):
+        entry: dict = {}
+        vals = []
+        for eid, data in loaded.items():
+            v = data.get("metrics", {}).get(mk)
+            entry[eid] = v
+            if v is not None:
+                try:
+                    vals.append((eid, float(v)))
+                except (ValueError, TypeError):
+                    pass
+        if len(vals) == 2:
+            delta = vals[1][1] - vals[0][1]
+            base = abs(vals[0][1])
+            entry["delta"] = round(delta, 6)
+            entry["delta_pct"] = round(delta / base * 100, 2) if base > 1e-12 else 0.0
+        metrics_comparison[mk] = entry
+
+    # Metadata
+    metadata = {}
+    for eid, data in loaded.items():
+        metadata[eid] = {
+            "status": data.get("status"),
+            "duration_seconds": data.get("duration_seconds"),
+            "code_branch": data.get("code_branch"),
+            "iteration": data.get("iteration"),
+            "method_tier": data.get("method_tier"),
+        }
+
+    # Winner
+    winner = {}
+    mc = metrics_comparison.get(metric)
+    if mc and "delta" in mc:
+        id_a, id_b = exp_ids[0], exp_ids[1]
+        va, vb = mc.get(id_a), mc.get(id_b)
+        if va is not None and vb is not None:
+            try:
+                fa, fb = float(va), float(vb)
+                if lower_is_better:
+                    w = id_a if fa <= fb else id_b
+                else:
+                    w = id_a if fa >= fb else id_b
+                imp = abs(mc["delta_pct"])
+                winner = {"metric": metric, "exp_id": w, "improvement_pct": imp}
+            except (ValueError, TypeError):
+                pass
+
+    return {
+        "experiments": exp_ids,
+        "config_diff": config_diff,
+        "metrics_comparison": metrics_comparison,
+        "metadata": metadata,
+        "winner": winner,
+    }
+
+
+def format_comparison_table(comparison: dict) -> str:
+    """Format a comparison dict as a human-readable ASCII table."""
+    if "error" in comparison:
+        return comparison["error"]
+    ids = comparison["experiments"]
+    lines = [f"EXPERIMENT COMPARISON: {ids[0]} vs {ids[1]}", "=" * 50]
+
+    # Metadata
+    meta = comparison.get("metadata", {})
+    for field in ("status", "code_branch", "iteration", "method_tier"):
+        vals = [str(meta.get(eid, {}).get(field, "—")) for eid in ids]
+        lines.append(f"  {field:<20s} {vals[0]:<16s} {vals[1]:<16s}")
+    lines.append("")
+
+    # Config diff
+    lines.append("Config:")
+    for key, info in comparison.get("config_diff", {}).items():
+        vals = [str(info.get(eid, "—")) for eid in ids]
+        marker = " *" if info.get("differs") else ""
+        lines.append(f"  {key:<20s} {vals[0]:<16s} {vals[1]:<16s}{marker}")
+    lines.append("")
+
+    # Metrics
+    lines.append("Metrics:")
+    for mk, info in comparison.get("metrics_comparison", {}).items():
+        vals = []
+        for eid in ids:
+            v = info.get(eid)
+            vals.append(f"{v:.4f}" if isinstance(v, (int, float)) else str(v))
+        delta_str = ""
+        if "delta_pct" in info and info["delta_pct"] is not None:
+            sign = "+" if info["delta_pct"] >= 0 else ""
+            delta_str = f"  {sign}{info['delta_pct']:.1f}%"
+        lines.append(f"  {mk:<20s} {vals[0]:<16s} {vals[1]:<16s}{delta_str}")
+
+    # Winner
+    w = comparison.get("winner", {})
+    if w:
+        lines.append("")
+        lines.append(f"Winner: {w.get('exp_id')} ({w.get('metric')} {w.get('improvement_pct', 0):.1f}% better)")
+
+    return "\n".join(lines)
+
+
 if __name__ == "__main__":
     if len(sys.argv) < 3:
         print("Usage: result_analyzer.py <results_dir> <metric> [baseline_id] [lower_is_better]")
+        print("       result_analyzer.py <results_dir> compare <exp_id_1> <exp_id_2> [metric] [lower_is_better]")
         sys.exit(1)
     results_dir = sys.argv[1]
-    metric = sys.argv[2]
-    baseline_id = sys.argv[3] if len(sys.argv) > 3 else "baseline"
-    lower = sys.argv[4].lower() not in ("false", "0", "no") if len(sys.argv) > 4 else True
-    print(json.dumps(analyze(results_dir, metric, baseline_id, lower), indent=2))
+    if sys.argv[2] == "compare":
+        if len(sys.argv) < 5:
+            print("Usage: result_analyzer.py <results_dir> compare <exp_id_1> <exp_id_2> [metric] [lower_is_better]")
+            sys.exit(1)
+        ids = [sys.argv[3], sys.argv[4]]
+        metric = sys.argv[5] if len(sys.argv) > 5 else "loss"
+        lower = sys.argv[6].lower() not in ("false", "0", "no") if len(sys.argv) > 6 else True
+        result = compare_experiments(results_dir, ids, metric, lower)
+        print(format_comparison_table(result))
+        print()
+        print(json.dumps(result, indent=2))
+    else:
+        metric = sys.argv[2]
+        baseline_id = sys.argv[3] if len(sys.argv) > 3 else "baseline"
+        lower = sys.argv[4].lower() not in ("false", "0", "no") if len(sys.argv) > 4 else True
+        print(json.dumps(analyze(results_dir, metric, baseline_id, lower), indent=2))

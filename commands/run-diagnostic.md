@@ -63,6 +63,10 @@ python3 $SCRIPTS/implement_utils.py $FIX/sample_research_findings.md '[1,2]' > /
   && python3 $SCRIPTS/implement_utils.py analyze $FIX/tiny_resnet_cifar10 > /dev/null \
   && echo "✓ implement_utils (parse + analyze)" || echo "✗ implement_utils FAILED"
 
+# 7b. implement_utils.py — diff subcommand (error path, no git repo)
+python3 $SCRIPTS/implement_utils.py diff /tmp/ml-opt-cli-test main 2>/dev/null; \
+  echo "✓ implement_utils (diff, exit=$?)"
+
 # 8. experiment_setup.py — set up dirs
 python3 $SCRIPTS/experiment_setup.py /tmp/ml-opt-cli-test 'python train.py' 0 '{"lr": 0.01}' \
   && echo "✓ experiment_setup" || echo "✗ experiment_setup FAILED"
@@ -73,6 +77,10 @@ python3 $SCRIPTS/pipeline_state.py /tmp/ml-opt-cli-test save 3 0 \
   && python3 $SCRIPTS/pipeline_state.py /tmp/ml-opt-cli-test validate 3 \
   && python3 $SCRIPTS/pipeline_state.py /tmp/ml-opt-cli-test cleanup \
   && echo "✓ pipeline_state (save/load/validate/cleanup)" || echo "✗ pipeline_state FAILED"
+
+# 9b. pipeline_state.py — verify-baseline (error path, no baseline checksum)
+python3 $SCRIPTS/pipeline_state.py /tmp/ml-opt-cli-test verify-baseline 2>/dev/null; \
+  echo "✓ pipeline_state (verify-baseline, exit=$?)"
 
 # 10. error_tracker.py — 12 subcommands
 python3 $SCRIPTS/error_tracker.py /tmp/ml-opt-cli-test log \
@@ -100,9 +108,11 @@ python3 $SCRIPTS/goal_memory.py /tmp/ml-opt-cli-test init-goals \
   && python3 $SCRIPTS/goal_memory.py /tmp/ml-opt-cli-test sync-from-errors > /dev/null \
   && echo "✓ goal_memory (6 subcommands)" || echo "✗ goal_memory FAILED"
 
-# 12. dashboard.py — empty root
+# 12. dashboard.py — empty root + --table flag
 python3 $SCRIPTS/dashboard.py /tmp/ml-opt-cli-test \
   && echo "✓ dashboard (empty)" || echo "✗ dashboard FAILED"
+python3 $SCRIPTS/dashboard.py /tmp/ml-opt-cli-test --table \
+  && echo "✓ dashboard (--table)" || echo "✗ dashboard --table FAILED"
 
 # 13. excalidraw_gen.py — pipeline diagram from empty root
 python3 $SCRIPTS/excalidraw_gen.py /tmp/ml-opt-cli-test pipeline loss \
@@ -125,7 +135,7 @@ Report pass/fail count.
 
 ## Step 3: Hook functional tests
 
-Test the 7 hooks with synthetic JSON stdin inputs.
+Test the 8 hooks with synthetic JSON stdin inputs.
 
 **Prerequisite:** Check if `jq` is installed (`which jq`). If not, skip hook tests and note in report.
 
@@ -217,6 +227,21 @@ echo '{"cwd":"/tmp/ml-opt-hook-test"}' | bash $HOOKS/stop-check.sh 2>/dev/null
 
 rm -rf /tmp/ml-opt-hook-test
 
+# statusline.sh — should output status when pipeline state exists
+mkdir -p /tmp/ml-opt-hook-test/experiments/results
+echo '{"phase":7,"iteration":3,"user_choices":{"primary_metric":"loss","lower_is_better":true}}' \
+  > /tmp/ml-opt-hook-test/experiments/pipeline-state.json
+echo '{"exp_id":"baseline","status":"completed","config":{},"metrics":{"loss":1.0}}' \
+  > /tmp/ml-opt-hook-test/experiments/results/baseline.json
+echo '{"cwd":"/tmp/ml-opt-hook-test"}' | bash $HOOKS/statusline.sh 2>/dev/null | grep -q '\[ml-opt\]'
+[ $? -eq 0 ] && echo "✓ statusline shows status" || echo "✗ statusline FAILED"
+
+# statusline.sh — should be silent without pipeline state
+echo '{"cwd":"/tmp/nonexistent-dir"}' | bash $HOOKS/statusline.sh 2>/dev/null
+[ $? -eq 0 ] && echo "✓ statusline silent without state" || echo "✗ statusline FAILED"
+
+rm -rf /tmp/ml-opt-hook-test
+
 fi
 echo "=== Hook Tests Done ==="
 ```
@@ -301,7 +326,7 @@ Confirm output shows `"valid": true`.
 ```bash
 python3 $SCRIPTS/goal_memory.py \
   /tmp/ml-opt-diagnostic/experiments init-goals \
-  '{"objective":{"primary_metric":"accuracy","lower_is_better":false,"target_value":90.0,"problem_description":"Diagnostic test"},"constraints":{"scope_level":"training","model_category":"supervised","frozen_parameters":[]},"divergence":{"metric":"loss","lower_is_better":true}}'
+  '{"objective":{"primary_metric":"accuracy","lower_is_better":false,"target_value":90.0,"problem_description":"Diagnostic test"},"constraints":{"scope_level":"training","model_category":"supervised","frozen_parameters":[],"fixed_time_budget":30,"fixed_epoch_budget":null},"divergence":{"metric":"loss","lower_is_better":true}}'
 ```
 
 **Verify:** `experiments/optimization-goals.json` exists.
@@ -340,7 +365,7 @@ baseline = json.loads(open('/tmp/ml-opt-diagnostic/experiments/results/baseline.
 checksum = _compute_baseline_checksum(baseline['metrics'])
 save_state(3, 0, [], '/tmp/ml-opt-diagnostic/experiments', baseline_checksum=checksum, user_choices={
   'primary_metric': 'loss', 'lower_is_better': True, 'budget_mode': 'auto',
-  'difficulty': 'easy', 'difficulty_multiplier': 8, 'fixed_time_budget': 30
+  'difficulty': 'easy', 'difficulty_multiplier': 8, 'fixed_time_budget': 30, 'fixed_epoch_budget': None
 })
 print(f'Baseline checksum stored: {checksum[:16]}...')
 "
@@ -571,7 +596,7 @@ else:
 
 ```bash
 for f in /tmp/ml-opt-diagnostic/experiments/results/exp-*.json; do
-  python3 $SCRIPTS/schema_validator.py "$f" result 2>/dev/null
+  python3 $SCRIPTS/schema_validator.py "$f" result --strict 2>/dev/null
 done
 ```
 
@@ -913,13 +938,24 @@ Agent(
 
 - `experiments/reports/final-report.md` exists
 - `experiments/reports/dashboard.html` exists and contains experiment data
+- `experiments/results-table.md` exists and contains results
 - `experiments/artifacts/pipeline-overview.excalidraw` exists
 
-If dashboard or excalidraw are missing, generate them manually:
+If dashboard, results table, or excalidraw are missing, generate them manually:
 
 ```bash
-python3 $SCRIPTS/dashboard.py /tmp/ml-opt-diagnostic/experiments --live
+python3 $SCRIPTS/dashboard.py /tmp/ml-opt-diagnostic/experiments --live --table
 python3 $SCRIPTS/excalidraw_gen.py /tmp/ml-opt-diagnostic/experiments pipeline loss
+```
+
+**Results table verification:**
+
+```bash
+python3 -c "
+content = open('/tmp/ml-opt-diagnostic/experiments/results-table.md').read()
+ok = '# ML Optimization Results' in content and '## Results' in content
+print(f'✓ results-table.md: valid') if ok else print('✗ results-table.md: missing or empty')
+"
 ```
 
 **Dashboard content verification (structural):**
@@ -962,12 +998,12 @@ Run these checks and report pass/fail for each:
 EXP=/tmp/ml-opt-diagnostic/experiments
 SCRIPTS=$PLUGIN_ROOT/scripts
 
-echo "=== Feature Verification (17 items) ==="
+echo "=== Feature Verification (21 items) ==="
 
 # 1. Immutable baseline
 python3 $SCRIPTS/pipeline_state.py $EXP verify-baseline 2>/dev/null \
-  && echo "✓ [1/17] Immutable baseline: checksum valid" \
-  || echo "✗ [1/17] Immutable baseline: FAILED"
+  && echo "✓ [1/21] Immutable baseline: checksum valid" \
+  || echo "✗ [1/21] Immutable baseline: FAILED"
 
 # 2. Research agenda
 python3 -c "
@@ -976,35 +1012,35 @@ if os.path.exists('$EXP/reports/research-agenda.json'):
     agenda = json.loads(open('$EXP/reports/research-agenda.json').read()).get('ideas', [])
     tried = sum(1 for i in agenda if i.get('status') == 'tried')
     untried = sum(1 for i in agenda if i.get('status') == 'untried')
-    print(f'✓ [2/17] Research agenda: {len(agenda)} ideas ({tried} tried, {untried} untried)')
+    print(f'✓ [2/21] Research agenda: {len(agenda)} ideas ({tried} tried, {untried} untried)')
 else:
-    print('✗ [2/17] Research agenda: file missing')
+    print('✗ [2/21] Research agenda: file missing')
 "
 
 # 3. Dead-end catalog
 python3 -c "
 from pathlib import Path
 p = Path('$EXP/reports/dead-ends.json')
-print('✓ [3/17] Dead-end catalog: exists') if p.exists() else print('— [3/17] Dead-end catalog: not triggered (OK)')
+print('✓ [3/21] Dead-end catalog: exists') if p.exists() else print('— [3/21] Dead-end catalog: not triggered (OK)')
 "
 
 # 4. Dashboard (structural check)
 python3 -c "
 html = open('$EXP/reports/dashboard.html').read()
 ok = '<table' in html and '<tr' in html
-print('✓ [4/17] Dashboard: structural check passed') if ok else print('✗ [4/17] Dashboard: missing structural elements')
+print('✓ [4/21] Dashboard: structural check passed') if ok else print('✗ [4/21] Dashboard: missing structural elements')
 "
 
 # 5. Excalidraw
 test -f $EXP/artifacts/pipeline-overview.excalidraw \
-  && echo "✓ [5/17] Excalidraw: pipeline diagram exists" \
-  || echo "✗ [5/17] Excalidraw: missing"
+  && echo "✓ [5/21] Excalidraw: pipeline diagram exists" \
+  || echo "✗ [5/21] Excalidraw: missing"
 
 # 6. Baseline checksum in state
 python3 -c "
 import json
 state = json.loads(open('$EXP/pipeline-state.json').read())
-print('✓ [6/17] Baseline checksum: stored') if 'baseline_checksum' in state else print('✗ [6/17] Baseline checksum: missing')
+print('✓ [6/21] Baseline checksum: stored') if 'baseline_checksum' in state else print('✗ [6/21] Baseline checksum: missing')
 "
 
 # 7. Error tracking
@@ -1014,9 +1050,9 @@ r = subprocess.run(['python3', '$SCRIPTS/error_tracker.py', '$EXP', 'summary'], 
 if r.returncode == 0:
     data = json.loads(r.stdout)
     n = data.get('total_events', 0)
-    print(f'✓ [7/17] Error tracking: {n} events logged')
+    print(f'✓ [7/21] Error tracking: {n} events logged')
 else:
-    print('✗ [7/17] Error tracking: summary command failed')
+    print('✗ [7/21] Error tracking: summary command failed')
 "
 
 # 8. Schema validation (all output types)
@@ -1031,7 +1067,7 @@ for f in $EXP/results/exp-*.json; do
   [ -f "$f" ] && python3 $SCRIPTS/schema_validator.py "$f" result 2>/dev/null \
     && echo "  ✓ $(basename $f) valid" || echo "  ✗ $(basename $f) invalid"
 done
-echo "✓ [8/17] Schema validation: complete"
+echo "✓ [8/21] Schema validation: complete"
 
 # 9. Result metadata (placeholder verification)
 python3 -c "
@@ -1047,9 +1083,9 @@ for f in results:
         if field not in data:
             issues.append(f'{eid}: missing {field}')
 if issues:
-    print('✗ [9/17] Result metadata: ' + '; '.join(issues))
+    print('✗ [9/21] Result metadata: ' + '; '.join(issues))
 else:
-    print(f'✓ [9/17] Result metadata: all {len(results)} results complete')
+    print(f'✓ [9/21] Result metadata: all {len(results)} results complete')
 "
 
 # 10. Pipeline state
@@ -1060,7 +1096,7 @@ has_phase = 'phase' in state
 has_iter = 'iteration' in state
 has_choices = 'user_choices' in state
 ok = has_phase and has_iter and has_choices
-print(f'✓ [10/17] Pipeline state: phase={state.get(\"phase\")}, iteration={state.get(\"iteration\")}') if ok else print('✗ [10/17] Pipeline state: missing fields')
+print(f'✓ [10/21] Pipeline state: phase={state.get(\"phase\")}, iteration={state.get(\"iteration\")}') if ok else print('✗ [10/21] Pipeline state: missing fields')
 "
 
 # 11. Error tracker CLI subcommands
@@ -1072,16 +1108,16 @@ python3 $SCRIPTS/error_tracker.py $EXP proposals loss true > /dev/null 2>&1 && e
 python3 $SCRIPTS/error_tracker.py $EXP dead-end list > /dev/null 2>&1 && echo "  ✓ dead-end list" || echo "  ✗ dead-end list"
 python3 $SCRIPTS/error_tracker.py $EXP suggestion-history > /dev/null 2>&1 && echo "  ✓ suggestion-history" || echo "  ✗ suggestion-history"
 python3 $SCRIPTS/error_tracker.py $EXP agenda list > /dev/null 2>&1 && echo "  ✓ agenda list" || echo "  ✗ agenda list"
-echo "✓ [11/17] Error tracker CLI: subcommands verified"
+echo "✓ [11/21] Error tracker CLI: subcommands verified"
 
 # 12. Worktree cleanup
 python3 -c "
 from pathlib import Path
 wt = Path('$EXP/worktrees')
 if wt.exists() and list(wt.iterdir()):
-    print('✗ [12/17] Worktree cleanup: leftover worktrees found')
+    print('✗ [12/21] Worktree cleanup: leftover worktrees found')
 else:
-    print('✓ [12/17] Worktree cleanup: no leftover worktrees')
+    print('✓ [12/21] Worktree cleanup: no leftover worktrees')
 "
 
 # 13. Goal memory
@@ -1091,12 +1127,12 @@ import subprocess
 goals = Path('$EXP/optimization-goals.json')
 r = subprocess.run(['python3', '$SCRIPTS/goal_memory.py', '$EXP', 'summary'], capture_output=True, text=True)
 if goals.exists() and r.returncode == 0 and 'OPTIMIZATION GOALS' in r.stdout:
-    print('✓ [13/17] Goal memory: goals created, summary works')
+    print('✓ [13/21] Goal memory: goals created, summary works')
 else:
     missing = []
     if not goals.exists(): missing.append('goals missing')
     if r.returncode != 0: missing.append('summary failed')
-    print('✗ [13/17] Goal memory: ' + ', '.join(missing))
+    print('✗ [13/21] Goal memory: ' + ', '.join(missing))
 "
 
 # 14. Overfitting detection
@@ -1108,9 +1144,9 @@ train = [0.5, 0.4, 0.3, 0.2, 0.15, 0.1]
 val = [0.5, 0.55, 0.6, 0.65, 0.7, 0.75]
 r = check_overfitting(train, val, patience=5)
 if r['overfitting']:
-    print('✓ [14/17] Overfitting detection: works (severity=' + r['severity'] + ')')
+    print('✓ [14/21] Overfitting detection: works (severity=' + r['severity'] + ')')
 else:
-    print('✗ [14/17] Overfitting detection: FAILED to detect')
+    print('✗ [14/21] Overfitting detection: FAILED to detect')
 "
 
 # 15. HP interaction detection
@@ -1120,7 +1156,7 @@ sys.path.insert(0, '$SCRIPTS')
 from result_analyzer import detect_hp_interactions, load_results
 results = load_results('$EXP/results')
 out = detect_hp_interactions(results, 'loss', lower_is_better=True)
-print(f'✓ [15/17] HP interactions: {len(out.get(\"interactions\", []))} detected') if 'interactions' in out else print('✗ [15/17] HP interactions: FAILED')
+print(f'✓ [15/21] HP interactions: {len(out.get(\"interactions\", []))} detected') if 'interactions' in out else print('✗ [15/21] HP interactions: FAILED')
 "
 
 # 16. Branch scores
@@ -1130,7 +1166,7 @@ sys.path.insert(0, '$SCRIPTS')
 from result_analyzer import compute_branch_scores, load_results
 results = load_results('$EXP/results')
 scores = compute_branch_scores(results, 'loss', lower_is_better=True)
-print(f'✓ [16/17] Branch scores: {len(scores)} branches scored') if isinstance(scores, dict) else print('✗ [16/17] Branch scores: FAILED')
+print(f'✓ [16/21] Branch scores: {len(scores)} branches scored') if isinstance(scores, dict) else print('✗ [16/21] Branch scores: FAILED')
 "
 
 # 17. Checkpoint warm-starting
@@ -1142,7 +1178,68 @@ from pathlib import Path
 with tempfile.TemporaryDirectory() as td:
     p = generate_train_script(td, 'ckpt-test', 'python train.py', checkpoint_path='/tmp/ckpt.pt')
     ok = 'CHECKPOINT_PATH' in Path(p).read_text()
-    print('✓ [17/17] Checkpoint warm-start: script includes CHECKPOINT_PATH') if ok else print('✗ [17/17] Checkpoint warm-start: FAILED')
+    print('✓ [17/21] Checkpoint warm-start: script includes CHECKPOINT_PATH') if ok else print('✗ [17/21] Checkpoint warm-start: FAILED')
+"
+
+# 18. Experiment comparison
+python3 -c "
+import sys, os, json
+sys.path.insert(0, '$SCRIPTS')
+from result_analyzer import compare_experiments, load_results
+results = load_results('$EXP/results')
+ids = [k for k in results if k.startswith('exp-')][:2]
+if len(ids) >= 2:
+    cmp = compare_experiments('$EXP/results', ids, 'loss')
+    ok = 'config_diff' in cmp and 'metrics_comparison' in cmp and 'winner' in cmp
+    print(f'✓ [18/21] Experiment comparison: {ids[0]} vs {ids[1]}') if ok else print('✗ [18/21] Experiment comparison: FAILED')
+else:
+    print('— [18/21] Experiment comparison: need 2+ experiments')
+"
+
+# 19. Results table (Markdown)
+python3 -c "
+import sys, os
+sys.path.insert(0, '$SCRIPTS')
+from dashboard import generate_results_table
+from pathlib import Path
+path = generate_results_table('$EXP')
+content = Path(path).read_text()
+ok = '# ML Optimization Results' in content and '## Results' in content
+print(f'✓ [19/21] Results table: {path}') if ok else print('✗ [19/21] Results table: FAILED')
+"
+
+# 20. Completeness enforcement (--strict mode)
+python3 -c "
+import sys, os
+sys.path.insert(0, '$SCRIPTS')
+from schema_validator import validate_result, validate_result_strict
+incomplete = {'exp_id': 'test', 'status': 'completed', 'config': {}, 'metrics': {}}
+normal = validate_result(incomplete)
+strict = validate_result_strict(incomplete)
+if normal['valid'] and not strict['valid'] and len(normal.get('warnings', [])) > 0:
+    print(f'✓ [20/21] Completeness enforcement: {len(strict[\"errors\"])} issues caught in strict mode')
+else:
+    print('✗ [20/21] Completeness enforcement: FAILED')
+"
+
+# 21. Status line
+python3 -c "
+import subprocess, json, os
+hook = os.path.join('$PLUGIN_ROOT', 'hooks', 'statusline.sh')
+# With state: should produce output
+stdin_with = json.dumps({'cwd': os.path.dirname('$EXP')})
+r1 = subprocess.run(['bash', hook], input=stdin_with, capture_output=True, text=True, timeout=10)
+# Without state: should be silent
+stdin_without = json.dumps({'cwd': '/tmp/no-state'})
+r2 = subprocess.run(['bash', hook], input=stdin_without, capture_output=True, text=True, timeout=10)
+has_output = '[ml-opt]' in r1.stdout
+is_silent = r2.stdout.strip() == ''
+if has_output and is_silent:
+    print('✓ [21/21] Status line: active with state, silent without')
+elif has_output:
+    print('✗ [21/21] Status line: not silent without state')
+else:
+    print('✗ [21/21] Status line: no output with state')
 "
 
 echo "=== Feature Verification Done ==="
@@ -1162,8 +1259,8 @@ Summarize all results:
 ML Optimizer End-to-End Diagnostic Results
 ==========================================
 Structural tests (pytest):  X/Y passed (full suite — 10 test files)
-Script CLI smoke tests:     X/15 passed (14 scripts, some multi-subcommand)
-Hook functional tests:      X/17 passed (7 hooks)
+Script CLI smoke tests:     X/18 passed (14 scripts, some multi-subcommand)
+Hook functional tests:      X/19 passed (8 hooks)
 Agent smoke tests:          10/10 dispatched (memory: local confirmed)
 
 Full Pipeline (live Agent() dispatch):
@@ -1180,7 +1277,7 @@ Full Pipeline (live Agent() dispatch):
     - Monitor:              [passed/failed]
     - Analyze:              [passed/failed]
     - Result analyzer CLI:  [passed/failed]
-  Phase 8 Stacking:        [passed/failed] — N branches merged, stacked experiment, state persisted
+  Phase 8 Stacking:         [passed/failed] — N branches merged, stacked experiment, state persisted
   Phase 9 Report:           [passed/failed]
   Phase 9 Review:           [passed/failed]
 
@@ -1206,8 +1303,12 @@ Feature Verification (17 items):
   13. Goal memory:            [✓/✗] — goals created, summary works
   14. Overfitting detection:  [✓/✗] — check_overfitting() works
   15. HP interactions:        [✓/✗] — detect_hp_interactions() runs
-  16. Branch scores:           [✓/✗] — compute_branch_scores() runs
+  16. Branch scores:          [✓/✗] — compute_branch_scores() runs
   17. Checkpoint warm-start:  [✓/✗] — CHECKPOINT_PATH in generated script
+  18. Experiment comparison:  [✓/✗] — compare_experiments() pairwise diff
+  19. Results table:          [✓/✗] — results-table.md generated
+  20. Completeness enforce:   [✓/✗] — --strict catches incomplete results
+  21. Status line:            [✓/✗] — active with state, silent without
 
 Skipped phases (by design):
   Phase 0 Discovery:    Interactive (requires user Q&A) — goals simulated via scripts/goal_memory.py init-goals

@@ -140,7 +140,8 @@ def validate_result(data: dict) -> dict:
         elif data["warm_started"] and not isinstance(data.get("checkpoint_source"), dict):
             errors.append("'warm_started' is true but 'checkpoint_source' is missing or null")
 
-    return {"valid": len(errors) == 0, "errors": errors, "warnings": []}
+    warnings = _check_completeness(data) if not errors else []
+    return {"valid": len(errors) == 0, "errors": errors, "warnings": warnings}
 
 
 def validate_baseline(data: dict) -> dict:
@@ -335,15 +336,79 @@ def validate_file(filepath: str, schema_type: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Completeness checks (status-aware)
+# ---------------------------------------------------------------------------
+
+def _check_completeness(data: dict) -> list[str]:
+    """Return warnings for missing fields that should be present given the status.
+
+    These are not structural errors — the result is valid but incomplete.
+    In ``--strict`` mode, these become blocking errors.
+    """
+    warnings: list[str] = []
+    status = data.get("status")
+
+    if status == "completed":
+        metrics = data.get("metrics", {})
+        config = data.get("config", {})
+        if isinstance(metrics, dict) and not metrics:
+            warnings.append("Completed experiment has empty metrics")
+        if isinstance(config, dict) and not config:
+            warnings.append("Completed experiment has empty config")
+        if "iteration" not in data:
+            warnings.append("Completed experiment missing 'iteration'")
+        if "method_tier" not in data:
+            warnings.append("Completed experiment missing 'method_tier'")
+        if "duration_seconds" not in data:
+            warnings.append("Completed experiment missing 'duration_seconds'")
+        # Stacking completeness
+        tier = data.get("method_tier", "")
+        if isinstance(tier, str) and tier.startswith("stacked_"):
+            if "code_branches" not in data:
+                warnings.append("Stacked experiment missing 'code_branches'")
+            if "stacking_order" not in data:
+                warnings.append("Stacked experiment missing 'stacking_order'")
+
+    elif status in ("failed", "diverged"):
+        if "notes" not in data:
+            warnings.append(f"{status.capitalize()} experiment missing 'notes' (explain what went wrong)")
+
+    return warnings
+
+
+def validate_result_strict(data: dict) -> dict:
+    """Validate structure AND completeness. Warnings become errors."""
+    result = validate_result(data)
+    completeness = _check_completeness(data)
+    if completeness:
+        result["errors"].extend(completeness)
+        result["valid"] = False
+    return result
+
+
+# ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
-        print("Usage: schema_validator.py <filepath> <schema_type>")
+        print("Usage: schema_validator.py <filepath> result|baseline|manifest|prerequisites [--strict]")
         sys.exit(1)
     filepath = sys.argv[1]
     schema_type = sys.argv[2]
-    output = validate_file(filepath, schema_type)
+    strict = "--strict" in sys.argv
+
+    if strict and schema_type == "result":
+        try:
+            data = json.loads(Path(filepath).read_text())
+        except (json.JSONDecodeError, OSError) as exc:
+            output = {"filepath": filepath, "valid": False, "errors": [str(exc)]}
+            print(json.dumps(output, indent=2))
+            sys.exit(1)
+        output = validate_result_strict(data)
+        output["filepath"] = filepath
+    else:
+        output = validate_file(filepath, schema_type)
+
     print(json.dumps(output, indent=2))
     sys.exit(0 if output["valid"] else 1)

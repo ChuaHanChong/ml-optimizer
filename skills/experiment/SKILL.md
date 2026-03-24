@@ -209,6 +209,7 @@ Before starting training, write a placeholder result file so the monitor and `cl
   "proposal_source": "<proposal_source or null>",
   "method_tier": "<method_tier or null>",
   "iteration": <iteration>,
+  "reproducibility": null,
   "timestamp": "<ISO 8601 UTC timestamp>",
   "notes": "Training in progress"
 }
@@ -325,6 +326,12 @@ Write experiment results to `experiments/results/<exp_id>.json`:
   "code_branches": ["<branch1>", "<branch2>"],
   "stacking_order": <integer>,
   "stack_base_exp": "<exp_id of previous stack step>",
+  "reproducibility": {
+    "random_seed": "<seed_or_null>",
+    "environment_file": "experiments/logs/<exp_id>/pip_freeze.txt",
+    "git_sha": "<sha>",
+    "framework_version": "<version>"
+  },
   "notes": "<any observations>"
 }
 ```

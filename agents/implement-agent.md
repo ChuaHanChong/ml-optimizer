@@ -6,6 +6,11 @@ model: opus
 color: magenta
 skills:
   - ml-optimizer:implement
+  - ml-optimizer:evolve
+  - shinka-setup
+  - shinka-convert
+  - shinka-run
+  - shinka-inspect
   - superpowers:systematic-debugging
   - feature-dev:code-explorer
   - feature-dev:code-reviewer

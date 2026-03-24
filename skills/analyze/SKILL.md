@@ -158,6 +158,8 @@ Output:
    - Research done but not all proposals implemented AND `remaining_budget >= 3` → "Implement next-priority research proposal"
 3b. **Method proposals (LLM knowledge + web search):**
    - HP tuning plateaued AND `remaining_budget >= 3` AND no method proposals tried yet → pivot_type: `"method_proposal"`, suggestion: "Propose new optimization methods (method proposals)"
+3c. **Code refinement (evolutionary improvement):**
+   - A method branch improved over baseline AND HP tuning shows diminishing returns (all HP correlations |rho| < 0.3) AND `remaining_budget >= 3` → pivot_type: `"code_refinement"`, suggestion: "Evolve the best method branch through targeted code mutations"
 4. **Failure pattern:**
    - >50% of recent experiments diverged → "Narrow search space — constrain LR to [best_lr × 0.5, best_lr × 2.0]"
    - All experiments within 1% of each other → "Try qualitatively different change (different optimizer, scheduler, data augmentation)"
@@ -169,7 +171,7 @@ Output:
 {
   "action": "pivot",
   "reason": "<which condition from the decision tree triggered>",
-  "pivot_type": "<branch_test|hp_expand|research|method_proposal|narrow_space|qualitative_change|regularization>",
+  "pivot_type": "<branch_test|hp_expand|research|method_proposal|narrow_space|qualitative_change|regularization|code_refinement>",
   "suggestion": "<specific actionable next step>",
   "remaining_potential": "<estimated room for improvement>",
   "budget_remaining": "<N>"
@@ -181,6 +183,7 @@ Output:
 - `research`, `method_proposal`, `qualitative_change`: Trigger research → implement cycle (step 7 in orchestrate). Requires `remaining_budget >= 3`.
   - `qualitative_change`: Fundamental approach change within current code (e.g., different optimizer, scheduler, augmentation). No web research trigger — the implement agent applies the change directly.
   - `method_proposal`: New techniques needed that go beyond the current codebase. Triggers research (web + LLM knowledge) → implement cycle.
+- `code_refinement`: Trigger evolution loop — dispatch implement-agent with evolve skill to generate mutations from the best branch. Requires `remaining_budget >= 3`.
 See orchestrate SKILL.md Phase 7 step 6 "Pivot dispatch by type" for details.
 
 ### Stop

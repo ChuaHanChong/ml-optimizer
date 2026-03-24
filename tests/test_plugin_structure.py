@@ -129,7 +129,7 @@ EXPECTED_AGENTS = {
         "model": "opus", "skill": "ml-optimizer:implement",
         "required_tools": {"Bash", "Read", "Write", "Edit", "Glob", "Grep"},
         "forbidden_tools": set(), "color": "magenta", "background": False,
-        "external_skills": ["superpowers:systematic-debugging", "feature-dev:code-explorer", "feature-dev:code-reviewer"],
+        "external_skills": ["superpowers:systematic-debugging", "feature-dev:code-explorer", "feature-dev:code-reviewer", "shinka-setup", "shinka-convert", "shinka-run", "shinka-inspect"],
     },
     "tuning-agent": {
         "model": "opus", "skill": "ml-optimizer:hp-tune",
@@ -156,6 +156,7 @@ EXPECTED_AGENTS = {
 EXPECTED_SKILLS = [
     "orchestrate", "prerequisites", "baseline", "experiment", "monitor",
     "research", "implement", "hp-tune", "analyze", "report", "review",
+    "evolve", "shinka-setup", "shinka-convert", "shinka-run", "shinka-inspect",
 ]
 
 NON_ORCHESTRATE_SKILLS = [s for s in EXPECTED_SKILLS if s != "orchestrate"]
@@ -230,6 +231,10 @@ class TestAgentFiles:
 class TestSkillFiles:
     """Validate all 11 skill definition files."""
 
+    # ShinkaEvolve skills are third-party (symlinked from submodule) —
+    # they have different frontmatter conventions, so only check name + existence
+    _THIRD_PARTY_SKILLS = {"shinka-setup", "shinka-convert", "shinka-run", "shinka-inspect"}
+
     @pytest.mark.parametrize("skill_name", EXPECTED_SKILLS)
     def test_skill_frontmatter(self, skill_name):
         """Each skill exists and has correct name, disable-model-invocation, user-invocable."""
@@ -237,10 +242,11 @@ class TestSkillFiles:
         assert path.exists(), f"Missing skill: {path}"
         fm = _parse_frontmatter(path)
         assert fm.get("name") == skill_name, f"{skill_name}: name mismatch"
-        assert fm.get("disable-model-invocation") is True, (
-            f"{skill_name}: must have disable-model-invocation: true")
-        assert fm.get("user-invocable") is False, (
-            f"{skill_name}: must have user-invocable: false")
+        if skill_name not in self._THIRD_PARTY_SKILLS:
+            assert fm.get("disable-model-invocation") is True, (
+                f"{skill_name}: must have disable-model-invocation: true")
+            assert fm.get("user-invocable") is False, (
+                f"{skill_name}: must have user-invocable: false")
 
     def test_orchestrate_reference_files_exist(self):
         """All 10 phase reference files must exist in orchestrate/references/."""
@@ -835,6 +841,13 @@ def test_monitor_and_analyze_contracts():
     # Pivot narrows search space
     updated = {"lr": [1e-5, 1e-3]}
     assert updated["lr"] == [1e-5, 1e-3]
+
+    # Analyze pivot types include code_refinement
+    valid_pivots = {
+        "branch_test", "hp_expand", "research", "method_proposal",
+        "narrow_space", "qualitative_change", "regularization", "code_refinement",
+    }
+    assert "code_refinement" in valid_pivots
 
     # Review trigger
     def should_trigger(wasted, consecutive):

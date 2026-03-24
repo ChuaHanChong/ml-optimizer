@@ -573,6 +573,35 @@ When the implementation manifest contains multiple code branches:
 
    f. **Merge into experiment loop:** Add the new validated branches to `code_branches`. Reset the iteration counter for these new branches only (they start at iteration 1 = `method_default_hp` tier). Existing branches keep their iteration count.
 
+   **If `pivot_type == "code_refinement"` (evolutionary code improvement):**
+
+   Instead of research → implement, use ShinkaEvolve to evolve the best branch's code:
+
+   a. **Convert to Shinka task:** Dispatch implement-agent with `shinka-convert` skill to create a Shinka task directory from the best method branch (adds `EVOLVE-BLOCK` markers and `evaluate.py`).
+
+   b. **Run evolution:** The orchestrator starts ShinkaEvolve's CLI in the background with `SHINKA_PROVIDER=claude_code`, then polls `experiments/evolve/pending/` for LLM requests. For each request, dispatch an implement-agent with the prompt content. Write responses to `experiments/evolve/completed/`. ShinkaEvolve's evolution loop runs autonomously using the file-based handoff.
+
+      ```bash
+      export SHINKA_PROVIDER=claude_code
+      python3 -m shinka.cli.run --task-dir <task_dir> --results_dir <results_dir> --generations <N> &
+      ```
+
+      Polling loop (concurrent):
+      ```
+      While ShinkaEvolve is running:
+        For each *.json in experiments/evolve/pending/:
+          → Read {system_msg, user_msg}
+          → Agent(subagent_type="ml-optimizer:implement-agent", prompt=system_msg + user_msg)
+          → Write response to experiments/evolve/completed/<id>.json
+        Sleep 2s
+      ```
+
+   c. **Inspect results:** Dispatch implement-agent with `shinka-inspect` skill to load top evolved programs and commit the best as a new `ml-opt/evolved-<slug>` branch.
+
+   d. **Evaluate:** Dispatch experiment-agent on the evolved branch like any other method branch. The evolution result enters the normal HP-tune → experiment → analyze loop.
+
+   e. **Budget:** Each ShinkaEvolve generation consumes ~1 experiment slot worth of compute per mutation. Track via `remaining_budget`.
+
    g. **Update state:**
       - Increment `method_proposal_iterations` in user_choices
       - Deduct expected cost from `remaining_budget`: `expected_cost = len(new_branches) * max(num_gpus, 1)` (accounts for GPU-parallel batch sizing per branch)

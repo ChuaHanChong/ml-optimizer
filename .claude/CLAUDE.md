@@ -42,6 +42,7 @@ The plugin works without any MCP servers but benefits significantly from alphaxi
 .claude-plugin/plugin.json  — Plugin metadata (name, version)
 commands/optimize.md        — /optimize slash command (entry point)
 skills/                     — Skill definitions (SKILL.md files)
+skills/evolve/ShinkaEvolve/ — Git submodule (SakanaAI/ShinkaEvolve) for evolutionary code optimization
 agents/                     — 10 subagent definitions
 scripts/                    — Python utilities (stdlib only)
 tests/                      — pytest test suite
@@ -65,6 +66,7 @@ Phase 7: Experiment loop (autonomous, pipelined):
          monitor → watch for divergence (concurrent with experiments)
          analyze + speculative hp-tune → decide continue/pivot/stop + prepare next batch in parallel
          [method_proposal] → mid-loop research + implement
+         [code_refinement] → evolve best branch via ShinkaEvolve (file-based subagent handoff)
          [research_round] → autonomous cadence-based research
          review → Mid-pipeline review (async in autonomous mode, sync in interactive)
 Phase 8: Method stacking (if 5+ methods improved):
@@ -100,7 +102,7 @@ Ten subagent types, each with a preloaded skill and specified tool access. Skill
 **Analytical agents** (`model: opus`, ultrathink prompting):
 - **research-agent** *(persistent)*: WebSearch, WebFetch, Read, Write, Bash, Glob, Grep, Skill, alphaxiv MCP tools (6) — skills: `[ml-optimizer:research, claude-mem:mem-search]`
 - **tuning-agent** *(persistent)*: Read, Write, Bash, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:hp-tune]`
-- **implement-agent** *(persistent)*: Bash, Read, Write, Edit, Glob, Grep, Skill, WebSearch, WebFetch, alphaxiv MCP tools (2: repo reader, PDF Q&A) — skills: `[ml-optimizer:implement, superpowers:systematic-debugging, feature-dev:code-explorer, feature-dev:code-reviewer]`
+- **implement-agent** *(persistent)*: Bash, Read, Write, Edit, Glob, Grep, Skill, WebSearch, WebFetch, alphaxiv MCP tools (2: repo reader, PDF Q&A) — skills: `[ml-optimizer:implement, ml-optimizer:evolve, shinka-setup, shinka-convert, shinka-run, shinka-inspect, superpowers:systematic-debugging, feature-dev:code-explorer, feature-dev:code-reviewer]`
 - **analysis-agent** *(persistent)*: Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:analyze]`
 - **report-agent** *(ephemeral)*: Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:report]`
 - **review-agent** *(persistent)*: Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:review]`
@@ -130,6 +132,7 @@ All scripts work as both importable modules and CLI tools:
 | `scripts/excalidraw_gen.py` | `python3 scripts/excalidraw_gen.py <exp_root> pipeline\|comparison\|hp-landscape\|architecture <args>` — generate Excalidraw JSON diagrams (pipeline overview, experiment comparison, HP landscape, architecture changes) |
 | `scripts/error_tracker.py` | `python3 scripts/error_tracker.py <exp_root> log\|show\|patterns\|summary\|success\|proposals\|rank\|log-suggestion\|suggestion-history\|dead-end <add\|list\|check>\|agenda <init\|update\|list\|add>` — error tracking, pattern detection, success metrics, proposal outcomes, suggestion ranking, suggestion history, dead-end catalog, research agenda |
 | `scripts/goal_memory.py` | `python3 scripts/goal_memory.py <exp_root> init-goals\|read-goals\|log-behavior <category> <json>\|query-behaviors [category]\|validate-output <agent> <json>\|summary\|sync-from-errors` — goal anchoring, behavioral memory, agent output validation, compact briefings |
+| `scripts/setup_evolve.sh` | `bash scripts/setup_evolve.sh` — initialize ShinkaEvolve submodule and create skill symlinks for auto-discovery |
 
 ### State & Output (in target project)
 
@@ -213,6 +216,7 @@ The orchestrator can be stopped and resumed. On restart it reads `pipeline-state
 - **Tabular ML HP strategy**: For tree-based models (sklearn/XGBoost/LightGBM), iteration 1 explores `max_depth`/`n_estimators` first instead of learning rate.
 - **Training budget options**: Phase 0 offers two budget modes: `fixed_time_budget` (seconds) for wall-clock-normalized comparison, or `fixed_epoch_budget` (integer) for deterministic reproducibility. When set, both baseline AND experiments use the same budget. The baseline skill (Step 2.2) wraps training with `timeout` when `fixed_time_budget` is set, ensuring fair baseline-vs-experiment comparisons. Framework-native time limits (Lightning `--max_time`, HuggingFace `timeout` in TrainingArguments) are preferred when available. Results include `time_budget_seconds` for downstream analysis. HP-tune adjusts proposals for the budget (shorter convergence schedules, appropriate LR scaling). Makes experiment metrics directly comparable without duration normalization.
 - **Small dataset awareness**: The research skill checks dataset size. For datasets under 5K samples, it shifts search toward low-data techniques (transfer learning, fine-tuning, few-shot learning, adapters, prompt tuning, synthetic data, semi-supervised methods) instead of heavy augmentation and regularization which underperform on small data.
+- **Evolutionary code refinement**: When HP tuning shows diminishing returns, the analyze skill can recommend `pivot_type: "code_refinement"`. This triggers the ShinkaEvolve integration via file-based subagent handoff. Setup: run `bash scripts/setup_evolve.sh` to init the submodule and create symlinks (`skills/shinka-*` → `skills/evolve/ShinkaEvolve/skills/shinka-*`). The symlinks are required for Claude Code's skill auto-discovery. ShinkaEvolve's LLM calls are routed through implement-agent subagents via `SHINKA_PROVIDER=claude_code`.
 - **Auto-repair loop**: When training or evaluation commands fail during baseline establishment or experiment execution, the agent captures stderr, diagnoses the error, applies a fix (install package, adjust path, reduce batch size), and retries up to 3 times. OOM errors are not retried (deterministic). SyntaxErrors are not retried (code bugs). Identical errors on consecutive attempts skip further retries (loop detection). Each retry is logged to the error tracker. This is intra-agent retry, separate from the orchestrator's Phase 3 retry logic.
 - **Goal anchoring & behavioral memory**: `scripts/goal_memory.py` maintains two project-scoped files: `optimization-goals.json` (goal anchor, written once at Phase 0) and `learned-behaviors.json` (accumulated behavioral memory). The orchestrator calls `validate-output` after hp-tune, research, and analyze dispatches to catch drift (frozen param changes, scope breaches, dead-end re-proposals, metric mismatches). Each agent also reads a compact `summary` combining goals + constraints + dead-ends before acting. All 10 agents have `memory: local` for persistent role-specific memory at `.claude/agent-memory-local/<agent-name>/` in the target project.
 - **Immutable baseline**: After baseline is established (Phase 3), a SHA-256 checksum of the baseline metrics dict is stored in `pipeline-state.json`. Before each experiment batch (Phase 7) and on pipeline resumption, the checksum is verified against `baseline.json`. If the metrics have changed (accidental modification, file corruption, or tampering), the pipeline halts with a critical error. Prevents invalid experiment comparisons during long autonomous runs.

@@ -413,22 +413,30 @@ ENTRY POINT
   |  |      (requires remaining_budget >= 3)                              |  |
   |  |    "qualitative_change" → trigger full research                    |  |
   |  |      (requires remaining_budget >= 5)                              |  |
+  |  |    "code_refinement" → evolve best branch via ShinkaEvolve         |  |
+  |  |      (requires remaining_budget >= 3)                              |  |
   |  +--------------------------------------------------------------------+  |
   |                   |                                                      |
-  |         +---------+--- ------+----------+                                |
-  |         |         |          |          |                                |
-  |    "continue"  "stop"  "method_   "qualitative_                          |
-  |         |         |    proposal"   change"                               |
-  |         |         |          |          |                                |
-  |         |         v          +----+-----+                                |
-  |         |    Phase 9              |                                      |
-  |         |                         v                                      |
-  |  +------+----------------------------------------------------------+     |
-  |  |  7.5  RESEARCH PIVOT (triggered by analyze)                     |     |
-  |  |  Agent: research-agent --> ml-optimizer:research (source:"both")|     |
-  |  |  Then: implement-agent --> ml-optimizer:implement               |     |
-  |  |  User confirmation required for scope + proposals               |     |
-  |  +-----------------------------------------------------------------+     |
+  |         +---------+------+----------+-----------+                        |
+  |         |         |      |          |           |                        |
+  |    "continue"  "stop"  "method_  "qualit.   "code_                       |
+  |         |         |    proposal"  change"   refinement"                  |
+  |         |         |          |       |          |                        |
+  |         |         v          +---+---+          |                        |
+  |         |    Phase 9             |              |                        |
+  |         |                        v              |                        |
+  |  +------+-------------------------------------------------------------+  |
+  |  |  7.5  RESEARCH PIVOT / CODE REFINEMENT                             |  |
+  |  |                                                                    |  |
+  |  |  If method_proposal/qualitative_change:                            |  |
+  |  |    research-agent → implement-agent                                |  |
+  |  |                                                                    |  |
+  |  |  If code_refinement (ShinkaEvolve):                                |  |
+  |  |    shinka-convert → shinka-run (file handoff)                      |  |
+  |  |    → shinka-inspect → commit best as branch                        |  |
+  |  |    ShinkaEvolve LLM calls routed via file handoff                  |  |
+  |  |    to implement-agent subagents                                    |  |
+  |  +--------------------------------------------------------------------+  |
   |         |                                                                |
   |         v                                                                |
   |  +--------------------------------------------------------------------+  |

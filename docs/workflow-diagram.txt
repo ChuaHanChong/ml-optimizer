@@ -65,10 +65,11 @@ ENTRY POINT
 
   +-------------------+  Tools: Bash, Read, Write, Edit, Glob, Grep,
   | implement-agent   |  Skill, WebSearch, WebFetch + alphaxiv MCP (2 tools)
-  | (ultrathink)      |  Skill: ml-optimizer:implement
-  +-------------------+  External: context7, feature-dev:code-explorer,
-                         superpowers:systematic-debugging,
-                         alphaxiv (repo reader, PDF Q&A)
+  | (ultrathink)      |  Skills: ml-optimizer:implement,
+  +-------------------+    superpowers:systematic-debugging,
+                           feature-dev:code-explorer,
+                           feature-dev:code-reviewer
+                         External: context7, alphaxiv (repo reader, PDF Q&A)
 
   +-------------------+  Tools: Read, Write, Bash, Glob, Grep, Skill,
   | tuning-agent      |  WebSearch, WebFetch
@@ -122,6 +123,7 @@ ENTRY POINT
   |          confirming lower_is_better=False?"                         |
   +---------------------------------------------------------------------+
 
+  Complex optimization: superpowers:brainstorming (multi-objective scenarios)
   Saves: pipeline-state.json (user_choices), user-choices-backup.json
          optimization-goals.json (goal anchor — via goal_memory.py init-goals)
 
@@ -218,7 +220,10 @@ ENTRY POINT
     +--------------------------------------------------------------+
     |  Source modes:                                               |
     |    "web"       — WebSearch + alphaxiv MCP (parallel)         |
-    |    "knowledge" — LLM training knowledge (confidence cap 7/10)|
+    |    "knowledge" — Structured ideation (6 lenses: Problem-First,|
+    |                  Analogical, What Changed, Constraint,        |
+    |                  Inversion, Composition). Diverge→converge→   |
+    |                  refine. Confidence cap 7/10.                 |
     |    "both"      — LLM proposals + web/alphaxiv validation     |
     |                                                              |
     |  Scope levels:                                               |
@@ -248,7 +253,8 @@ ENTRY POINT
   PHASE 6: IMPLEMENT
   ===================
   Agent: implement-agent --> ml-optimizer:implement skill
-  Post-review: feature-dev:code-reviewer (quality check)
+  Code analysis: feature-dev:code-explorer (dependency tracing)
+  Quality gate: feature-dev:code-reviewer (Step 4e.5, advisory)
 
     +---------------------------------------------------------------+
     |  Strategy A — Git Branch (default):                           |
@@ -316,10 +322,12 @@ ENTRY POINT
   |  |  7.2  EXPERIMENT                                                   |  |
   |  |  Agent: experiment-agent --> ml-optimizer:experiment skill         |  |
   |  |                                                                    |  |
+  |  |  - Capture reproducibility metadata (Step 1.3: seed, pip freeze,   |  |
+  |  |    git SHA, framework version)                                     |  |
   |  |  - Generate training scripts per config                            |  |
   |  |  - Run training (parallel across GPUs if available)                |  |
   |  |  - Parse logs, collect metrics                                     |  |
-  |  |  - Write exp-NNN.json results                                      |  |
+  |  |  - Write exp-NNN.json results (includes "reproducibility" key)     |  |
   |  |  - Timeout: baseline_time × 3 (iter 1), × 2 (iter 2+)              |  |
   |  +--------------------------------------------------------------------+  |
   |                    |                                                     |
@@ -368,6 +376,8 @@ ENTRY POINT
   |  |    - If analyze says stop/pivot → discard speculative proposals    |  |
   |  |                                                                    |  |
   |  |  Post-analyze actions:                                             |  |
+  |  |    - Statistical confidence: Cohen's d effect sizes, confidence    |  |
+  |  |      labeling (high/medium/low), method attribution (Step 2.2)    |  |
   |  |    - HP interaction detection: detect_hp_interactions() finds      |  |
   |  |      2-way HP pairs with synergistic effects on the metric         |  |
   |  |    - Branch scores: compute_branch_scores() for adaptive budget    |  |
@@ -502,6 +512,9 @@ ENTRY POINT
     |    - Research agenda summary                                 |
     |    - Dead-end catalog summary                                |
     |    - Proposal outcome tracking                               |
+    |    - Threats to Validity section (conditional caveats)       |
+    |    - Citation verification (Step 5.3: cross-ref claims vs   |
+    |      experiment data, check source URL accessibility)        |
     |                                                              |
     |  Three-tier comparison (when method_tier present):           |
     |    Tier 1: baseline                                          |
@@ -558,8 +571,9 @@ ENTRY POINT
          |                                | Git branches: ml-opt/<slug>
   7.1    | results/exp-*.json,            | results/proposed-configs/*.json
          | dead-ends.json, agenda.json    |
-  7.2    | proposed-configs               | results/exp-NNN.json
+  7.2    | proposed-configs               | results/exp-NNN.json (+ reproducibility)
          |                                | logs/<exp-id>/train.log
+         |                                | logs/<exp-id>/pip_freeze.txt
          |                                | scripts/<exp-id>.sh
   7.3    | logs/<exp-id>/train.log        | (status: healthy/diverged/unmonitored)
   7.4    | results/, remaining_budget,    | reports/batch-N-analysis.md

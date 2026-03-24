@@ -149,6 +149,16 @@ Analysis based on <N> completed experiments:
 
 ---
 
+## Threats to Validity
+
+- **Single seed:** [Include if reproducibility data shows single/null seeds] Results may vary with different random seeds.
+- **Limited search space:** Only X% of the defined HP space was explored in Y experiments.
+- **Dataset specificity:** Results are specific to the training/validation split used.
+- **Training budget constraint:** [Include if fixed_time_budget or fixed_epoch_budget was set] Models may not have fully converged under the budget constraint.
+- **Noise margin:** Improvements < 1% relative may be within random variation.
+
+---
+
 ## Recommendations
 
 ### To reproduce the best result:

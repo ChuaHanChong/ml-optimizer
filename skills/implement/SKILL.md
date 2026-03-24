@@ -300,6 +300,12 @@ Read `references/validation-checklist.md` and run checks progressively:
 
 See `references/validation-checklist.md` for commands. Attempt Level 3 validation when the project structure supports it (e.g., has a clear model factory or config-based instantiation).
 
+### 4e.5. Code Quality Review (optional, for `from_reference` adaptations)
+
+After passing Levels 1-2 validation, invoke `feature-dev:code-reviewer` on the modified files to check for code quality issues (unused imports, dead code, style violations, potential bugs). This is advisory — quality issues are logged to dev_notes but do not block implementation.
+
+Skip this step for simple `from_scratch` changes that modify < 20 lines.
+
 ### 4f. Write Unit Tests
 
 After validation passes (at least Level 1-2), write a focused unit test for the implemented proposal.

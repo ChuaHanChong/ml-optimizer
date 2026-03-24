@@ -47,6 +47,10 @@
 3. **Record user responses:**
    - Store the user's answers — they will guide every subsequent phase
    - If the user is unsure about some answers, note those as areas to investigate in Phase 1
+   - **Complex optimization scenarios:** If the user's problem has multiple potential improvement
+     vectors (e.g., training instability AND poor generalization AND slow convergence) or they're
+     unsure about approach, consider using `superpowers:brainstorming` to systematically explore
+     optimization strategies before committing to a plan.
 
 3.5. **Write optimization goals:**
    After recording user responses, create the goal anchor file:

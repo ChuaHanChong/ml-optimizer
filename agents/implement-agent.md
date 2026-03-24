@@ -7,6 +7,8 @@ color: magenta
 skills:
   - ml-optimizer:implement
   - superpowers:systematic-debugging
+  - feature-dev:code-explorer
+  - feature-dev:code-reviewer
 memory: local
 ---
 

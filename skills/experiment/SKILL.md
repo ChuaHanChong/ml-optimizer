@@ -82,6 +82,35 @@ Before building the training command, verify:
 3. Read the training script to determine the checkpoint-loading flag (e.g., `--resume`, `--checkpoint`, `--init_checkpoint`)
 4. If no loading mechanism found, set `CHECKPOINT_PATH` environment variable and proceed (the generated script already exports it)
 
+## Step 1.3: Capture Reproducibility Metadata
+
+Before running training, capture environment state for experiment reproduction:
+
+1. **Random seed**: If the training script doesn't already set one, generate a seed and set it:
+   ```bash
+   export PYTHONHASHSEED=<seed>
+   ```
+   Record the seed (or null if the training script manages its own seeding).
+
+2. **Environment snapshot**:
+   ```bash
+   pip freeze > experiments/logs/<exp_id>/pip_freeze.txt 2>/dev/null || true
+   ```
+
+3. **Git state**: Record `git rev-parse HEAD` (supplements `code_branch` with exact commit).
+
+4. **Framework version**: Extract from pip freeze (e.g., `torch==2.x`, `tensorflow==2.x`).
+
+Include in the result JSON under a `"reproducibility"` key:
+```json
+"reproducibility": {
+  "random_seed": null,
+  "environment_file": "experiments/logs/<exp_id>/pip_freeze.txt",
+  "git_sha": "<sha>",
+  "framework_version": "<version>"
+}
+```
+
 ## Step 2: Build Training Command
 
 Construct the full training command by overriding the base command with experiment-specific config:

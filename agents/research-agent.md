@@ -139,12 +139,18 @@ If any alphaxiv tool call fails (MCP server unavailable, timeout, or error), fal
 
 ## Cross-Session Memory (claude-mem)
 
-Before proposing techniques, check if relevant optimization strategies were tried in previous sessions:
+Before proposing techniques, use `claude-mem:mem-search` to query with specific patterns:
 
-Use `claude-mem:mem-search` to search for past optimization sessions involving similar model types, tasks, or frameworks. This helps:
-- Avoid re-proposing techniques that failed in past sessions
-- Identify HP ranges that worked well for similar models
-- Build on lessons learned across projects
+1. `"ml-optimizer {model_type} techniques that worked"` — find successful techniques for similar models
+2. `"ml-optimizer {task} optimization dead ends"` — find techniques that failed for similar tasks
+3. `"ml-optimizer HP ranges {framework}"` — find effective HP ranges for the framework
+
+Use results to:
+- Boost confidence (+1) on techniques that succeeded in past sessions on similar models
+- Cap confidence at 3/10 for techniques that failed in past sessions on similar models
+- Inform HP range suggestions for `hp_only` proposals
+
+If claude-mem is unavailable, skip silently — this is an enhancement, not a requirement.
 
 ## Knowledge Mode (Method Proposals)
 

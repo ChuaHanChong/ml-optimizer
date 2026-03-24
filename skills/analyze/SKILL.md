@@ -99,6 +99,31 @@ If no experiments have `method_tier` fields, skip this step entirely.
 
 **Fallback for missing per-branch baseline:** If a `method_default_hp` experiment exists but no per-branch baseline result is available, use the global baseline metric (from `baseline.json`) as the comparison point for computing the isolated method effect.
 
+## Step 2.2: Statistical Confidence Assessment (when >= 5 completed experiments)
+
+### Effect Size Estimation
+For each HP that was varied across 3+ experiments, estimate the effect size:
+- Compute mean metric for top-performing group vs bottom-performing group
+- d = |mean_top - mean_bottom| / pooled_std_dev
+- |d| < 0.2: **negligible** → do not recommend changing this HP
+- 0.2 ≤ |d| < 0.5: **small** → secondary tuning target
+- 0.5 ≤ |d| < 0.8: **medium** → focused exploration recommended
+- |d| ≥ 0.8: **large** → primary driver, prioritize in next batch
+
+### Confidence Labeling
+Rate each finding by evidence strength:
+- **High** (≥ 8 experiments, consistent direction): state as fact with effect size
+- **Medium** (4-7 experiments, mostly consistent): state as trend
+- **Low** (< 4 experiments or mixed results): state as preliminary signal
+
+### Method Attribution (when method_tier data exists)
+When method proposals were tested, explicitly attribute improvements:
+- method_default_hp > baseline BUT method_tuned_hp ≈ method_default_hp → **method drove improvement**, HP tuning added little
+- method_default_hp ≈ baseline BUT method_tuned_hp >> baseline → **requires tuned HPs to work** (interaction effect)
+- Both improved → **compound effect** (method + HP tuning synergize)
+
+Include effect sizes and confidence labels in the batch analysis report (Step 4).
+
 ## Step 3: Decide Next Action
 
 Based on analysis, recommend ONE of:

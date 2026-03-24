@@ -129,7 +129,7 @@ EXPECTED_AGENTS = {
         "model": "opus", "skill": "ml-optimizer:implement",
         "required_tools": {"Bash", "Read", "Write", "Edit", "Glob", "Grep"},
         "forbidden_tools": set(), "color": "magenta", "background": False,
-        "external_skills": ["superpowers:systematic-debugging"],
+        "external_skills": ["superpowers:systematic-debugging", "feature-dev:code-explorer", "feature-dev:code-reviewer"],
     },
     "tuning-agent": {
         "model": "opus", "skill": "ml-optimizer:hp-tune",
@@ -595,6 +595,11 @@ class TestSkillContracts:
         ("hp-tune", "dead-end"), ("hp-tune", "agenda"),
         ("report", "agenda"), ("experiment", "time_budget"),
         ("baseline", "auto-repair"), ("experiment", "non-retryable"),
+        # skill integration: verify new features exist in skills
+        ("implement", "feature-dev:code-reviewer"),
+        ("research", "diverge"), ("research", "converge"),
+        ("analyze", "effect size"), ("experiment", "reproducibility"),
+        ("report", "verify claims"),
     ])
     def test_skill_mentions_feature(self, skill, keyword):
         text = (SKILLS_DIR / skill / "SKILL.md").read_text().lower()

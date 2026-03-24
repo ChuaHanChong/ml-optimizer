@@ -430,7 +430,9 @@ For each agent, verify:
 
 - Agent resolves (no "not found" error)
 - Agent lists its declared tools
-- Agent confirms it can see its preloaded skill
+- Agent confirms it can see its preloaded skill(s)
+- **implement-agent**: Confirm it can see `feature-dev:code-explorer` and `feature-dev:code-reviewer` in addition to `ml-optimizer:implement` and `superpowers:systematic-debugging`
+- **research-agent**: Confirm it can see `claude-mem:mem-search` (or reports it unavailable gracefully)
 
 Report results in a table.
 

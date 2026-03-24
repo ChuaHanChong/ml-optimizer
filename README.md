@@ -220,7 +220,7 @@ Ten subagent types in `agents/`. The orchestrate skill dispatches agents directl
 | Agent | Tools | Model | Preloaded Skill |
 |-------|-------|-------|-----------------|
 | `research-agent` | WebSearch, WebFetch, Read, Write, Bash, Glob, Grep, Skill + alphaxiv MCP (6) | opus (ultrathink) | `ml-optimizer:research` |
-| `implement-agent` | Bash, Read, Write, Edit, Glob, Grep, Skill, WebSearch, WebFetch + alphaxiv MCP (2) | opus (ultrathink) | `ml-optimizer:implement` |
+| `implement-agent` | Bash, Read, Write, Edit, Glob, Grep, Skill, WebSearch, WebFetch + alphaxiv MCP (2) | opus (ultrathink) | `ml-optimizer:implement` + `feature-dev:code-explorer` + `feature-dev:code-reviewer` |
 | `tuning-agent` | Read, Write, Bash, Glob, Grep, Skill, WebSearch, WebFetch | opus (ultrathink) | `ml-optimizer:hp-tune` |
 | `analysis-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | opus (ultrathink) | `ml-optimizer:analyze` |
 | `report-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | opus | `ml-optimizer:report` |
@@ -266,6 +266,10 @@ Exit code `2` = block action. Exit code `0` = allow. Configured in `hooks/hooks.
 - **Adaptive branch budget**: HP-tune allocates more experiments to promising branches and fewer to struggling ones. Scores by improvement × confidence factor.
 - **Checkpoint warm-starting**: Experiments can resume from prior checkpoints (lower LR, fewer epochs). Saves 50-80% compute in later iterations.
 - **Small dataset awareness**: Research agent shifts search toward low-data techniques (transfer learning, few-shot learning, adapters, prompt tuning, semi-supervised methods) when dataset has fewer than 5K samples.
+- **Structured ideation**: Knowledge-mode research proposals use a diverge-converge-refine process with 6 ideation lenses (Problem-First, Analogical Reasoning, What Changed Recently, Constraint Manipulation, Negation/Inversion, Composition/Decomposition) plus a Two-Sentence Test filter.
+- **Statistical confidence assessment**: Analysis computes Cohen's d effect sizes for HP impact and labels findings by evidence strength (high/medium/low). Method attribution distinguishes code-change vs HP-tuning vs compound effects.
+- **Reproducibility metadata**: Each experiment captures random seeds, pip freeze snapshots, git SHA, and framework versions under a `"reproducibility"` key in result JSONs.
+- **Report quality gates**: Final reports include "Threats to Validity" section and citation verification (Step 5.3) that cross-references claims against experiment data and checks source URL accessibility.
 
 ## Gotchas
 

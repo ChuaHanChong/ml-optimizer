@@ -261,13 +261,38 @@ When `source` is `"knowledge"`, **skip Steps 1, 2, and 3 entirely** — do NOT u
 
 1. **Analyze the model context:** Consider the model type, task, framework, current metrics, and problem description.
 
-2. **Generate proposals within scope constraints:** Only propose techniques within the `scope_level`:
+2. **Generate proposals using structured ideation** (diverge → converge → refine):
+
+   **Phase A — Diverge (generate 10-15 candidate ideas):**
+   Apply 3 complementary lenses (choose the most relevant from this list):
+
+   | Lens | Question |
+   |------|----------|
+   | **Problem-First** | What specific training pathology am I seeing (slow convergence, overfitting, gradient instability)? What techniques directly target it? |
+   | **Analogical Reasoning** | What works for similar tasks/architectures in adjacent domains? (e.g., NLP attention tricks for vision, vision augmentation for audio) |
+   | **What Changed Recently** | What new techniques emerged in the last 1-2 years for this model family? (e.g., cosine annealing → warm restarts → one-cycle, BatchNorm → LayerNorm → RMSNorm) |
+   | **Constraint Manipulation** | What assumptions does the current approach make that could be relaxed? (fixed LR → adaptive, uniform sampling → curriculum, single loss → multi-loss) |
+   | **Negation/Inversion** | What if we do the opposite of the current approach? (large batch → small batch + accumulation, heavy augmentation → minimal + regularization) |
+   | **Composition/Decomposition** | Can two simple techniques compound for bigger improvement? Can a complex change decompose into independent testable steps? |
+
+   Only propose techniques within the `scope_level`:
 
    | Scope Level | Allowed Categories |
    |---|---|
    | `training` | Optimizer changes (Adam → AdamW, LAMB, etc.), LR schedulers (cosine, one-cycle, warm restarts), warmup strategies, gradient clipping, gradient accumulation, mixed precision, loss function changes, weight decay tuning, data augmentation, regularization (dropout, label smoothing, stochastic depth), EMA |
    | `architecture` | All of `training` + attention variants (multi-head, efficient attention), normalization changes (BatchNorm → LayerNorm/GroupNorm/RMSNorm), activation functions (ReLU → SiLU/GELU/Swish), block design changes, skip/residual connection modifications, channel/dimension scaling |
    | `full` | All of `architecture` + data pipeline changes, preprocessing, tokenization changes, feature engineering, ensemble approaches, distillation, curriculum learning, different training paradigms |
+
+   **Phase B — Converge (filter to 3-7 proposals):**
+   - Eliminate ideas outside `scope_level` constraints
+   - Eliminate ideas in the dead-end catalog (Step 1.1)
+   - Eliminate ideas that duplicate existing proposals
+   - Apply the **Two-Sentence Test**: if you can't explain the technique AND its expected benefit in two sentences, it's too vague to implement
+   - Rank remaining by priority score
+
+   **Phase C — Refine (add implementation details):**
+   - For each surviving idea, specify `files_to_modify`, `implementation_steps`, `expected_improvement`
+   - Cap confidence at 7/10 (knowledge-mode ceiling)
 
 3. **Apply quality standards:**
    - Each proposal must have concrete implementation steps (not vague suggestions)

@@ -2,6 +2,8 @@
 
 **Autonomous mode auto-skip:** If `budget_mode == "autonomous"`, skip the user question below. Auto-select option 5 (method proposals) with `method_proposal_scope = "architecture"` (balanced default). Log to dev_notes: `"Autonomous mode: auto-selected method proposals (scope: architecture)"`. Then proceed directly to the Pre-Loop method proposal section (within Phase 7).
 
+**Multi-objective scenarios:** When the baseline reveals multiple improvement vectors (e.g., both metric performance and training stability need work), consider using `superpowers:brainstorming` to explore trade-offs before presenting options to the user.
+
 Use AskUserQuestion to show baseline results and ask for direction:
 
 ```

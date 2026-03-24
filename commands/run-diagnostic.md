@@ -6,7 +6,7 @@ allowed-tools: "Bash, Read, Write, Edit, Glob, Grep, Agent, Skill, WebSearch, We
 
 # ML Optimizer End-to-End Diagnostic
 
-You are running a comprehensive diagnostic of the ml-optimizer plugin. This validates plugin structure via pytest, exercises all 14 script CLIs, tests hook security boundaries, confirms all 10 agents dispatch correctly, and runs the full Phase 2→9 pipeline via live Agent() dispatch — the only way to test the multi-agent orchestration end-to-end.
+You are running a comprehensive diagnostic of the ml-optimizer plugin. This validates plugin structure via pytest, exercises all 14 script CLIs, tests hook security boundaries, validates the resumable subagent infrastructure (agent registry, SendMessage patterns, context relay), confirms all 10 agents dispatch correctly, and runs the full Phase 2→9 pipeline via live Agent() dispatch — the only way to test the multi-agent orchestration end-to-end.
 
 ## Step 1: Run full test suite (pytest)
 
@@ -248,9 +248,165 @@ echo "=== Hook Tests Done ==="
 
 Report pass/fail count.
 
-## Step 4: Agent dispatch smoke tests
+## Step 4: Resumable subagent infrastructure validation
+
+Validate that the resumable subagent patterns are correctly implemented across the plugin. This is structural validation — no live agent dispatch needed.
+
+### 4.1: Agent registry in pipeline_state.py
+
+```bash
+cd $PLUGIN_ROOT
+# Verify agent_registry is a parameter of save_state()
+python3 -c "
+from pipeline_state import save_state, load_state
+import tempfile, os
+with tempfile.TemporaryDirectory() as d:
+    # Test save/load roundtrip
+    reg = {'research': 'agent-test-1', 'tuning': 'agent-test-2'}
+    save_state(7, 1, [], d, agent_registry=reg)
+    state = load_state(d)
+    assert state['agent_registry'] == reg, 'Registry roundtrip failed'
+    # Test preserve-on-None
+    save_state(7, 2, [], d)
+    assert load_state(d)['agent_registry'] == reg, 'Registry not preserved'
+    # Test clearing
+    save_state(7, 3, [], d, agent_registry={})
+    assert load_state(d)['agent_registry'] == {}, 'Registry not cleared'
+    # Test coexistence with user_choices
+    save_state(7, 4, [], d, agent_registry={'research': 'x'}, user_choices={'metric': 'loss'})
+    s = load_state(d)
+    assert s['agent_registry'] == {'research': 'x'} and s['user_choices']['metric'] == 'loss'
+print('agent_registry: all 4 checks passed')
+"
+```
+
+### 4.2: Persistent vs ephemeral agent classification
+
+```bash
+# Verify persistent agents have "Resumable Agent" section
+for agent in research implement tuning analysis monitor review; do
+  if grep -q "Resumable Agent" "$PLUGIN_ROOT/agents/${agent}-agent.md"; then
+    echo "PASS: ${agent}-agent has Resumable Agent section"
+  else
+    echo "FAIL: ${agent}-agent MISSING Resumable Agent section"
+  fi
+done
+
+# Verify ephemeral agents do NOT have "Resumable Agent" section
+for agent in prerequisites baseline experiment report; do
+  if grep -q "Resumable Agent" "$PLUGIN_ROOT/agents/${agent}-agent.md"; then
+    echo "FAIL: ${agent}-agent should NOT have Resumable Agent section"
+  else
+    echo "PASS: ${agent}-agent correctly has no Resumable Agent section"
+  fi
+done
+```
+
+### 4.3: Orchestrate skill agent registry documentation
+
+```bash
+ORCH="$PLUGIN_ROOT/skills/orchestrate/SKILL.md"
+checks=0; passed=0
+for pattern in "agent_registry" "Dispatch Protocol" "SendMessage" "Context Relay" "Persistent" "Ephemeral" "pipeline-state.json"; do
+  checks=$((checks + 1))
+  if grep -qi "$pattern" "$ORCH"; then
+    passed=$((passed + 1))
+  else
+    echo "FAIL: Orchestrate SKILL.md missing '$pattern'"
+  fi
+done
+echo "Orchestrate agent registry docs: $passed/$checks checks passed"
+```
+
+### 4.4: Resume patterns in phase reference files
+
+```bash
+REFS="$PLUGIN_ROOT/skills/orchestrate/references"
+echo "=== Phase 5: agent_registry save ==="
+grep -c "agent_registry" "$REFS/phase-5-research.md" | xargs -I{} echo "  agent_registry mentions: {}"
+
+echo "=== Phase 6: agent_registry save ==="
+grep -c "agent_registry" "$REFS/phase-6-implement.md" | xargs -I{} echo "  agent_registry mentions: {}"
+
+echo "=== Phase 7: SendMessage resume patterns ==="
+sm_count=$(grep -c "SendMessage(" "$REFS/phase-7-experiment-loop.md")
+echo "  SendMessage calls: $sm_count (expected >=11)"
+ctx_count=$(grep -c "CONTEXT FROM OTHER AGENTS" "$REFS/phase-7-experiment-loop.md")
+echo "  Context relay sections: $ctx_count (expected >=5)"
+fb_count=$(grep -ci "fall back" "$REFS/phase-7-experiment-loop.md")
+echo "  Fallback instructions: $fb_count (expected >=5)"
+
+# Verify all 6 persistent agents have registry entries in phase-7
+for agent in research implement tuning analysis monitor review; do
+  if grep -q "agent_registry\[\"$agent\"\]" "$REFS/phase-7-experiment-loop.md"; then
+    echo "  PASS: $agent has agent_registry entry"
+  else
+    echo "  FAIL: $agent MISSING agent_registry entry"
+  fi
+done
+
+echo "=== Phase 8: resume patterns ==="
+for agent in implement tuning; do
+  if grep -q "agent_registry\[\"$agent\"\]" "$REFS/phase-8-stacking.md"; then
+    echo "  PASS: $agent has resume pattern"
+  else
+    echo "  FAIL: $agent MISSING resume pattern"
+  fi
+done
+
+echo "=== Phase 9: resume patterns ==="
+if grep -q 'agent_registry\["review"\]' "$REFS/phase-9-report.md"; then
+  echo "  PASS: review has resume pattern"
+else
+  echo "  FAIL: review MISSING resume pattern"
+fi
+
+# Verify ephemeral agents NOT in registry
+for agent in experiment report; do
+  if grep -q "agent_registry\[\"$agent\"\]" "$REFS/phase-7-experiment-loop.md"; then
+    echo "  FAIL: ephemeral $agent should NOT be in agent_registry"
+  else
+    echo "  PASS: ephemeral $agent correctly absent from agent_registry"
+  fi
+done
+```
+
+### 4.5: CLAUDE.md documentation
+
+```bash
+CLAUDE_MD="$PLUGIN_ROOT/.claude/CLAUDE.md"
+checks=0; passed=0
+for pattern in "Resumable subagents" "persistent" "ephemeral" "agent_registry" "Inter-agent communication" "CONTEXT FROM OTHER AGENTS" "session-scoped"; do
+  checks=$((checks + 1))
+  if grep -qi "$pattern" "$CLAUDE_MD"; then
+    passed=$((passed + 1))
+  else
+    echo "FAIL: CLAUDE.md missing '$pattern'"
+  fi
+done
+echo "CLAUDE.md resumable docs: $passed/$checks checks passed"
+```
+
+Report results in a summary table:
+```
+Resumable Subagent Infrastructure:
+  agent_registry pipeline_state:  [✓/✗] — save/load/preserve/clear
+  Persistent agent sections:      [✓/✗] — 6/6 have Resumable Agent
+  Ephemeral agent sections:       [✓/✗] — 4/4 correctly absent
+  Orchestrate registry docs:      [✓/✗] — N/7 patterns found
+  Phase 5/6 ID saves:             [✓/✗]
+  Phase 7 SendMessage calls:      N (expected >=11)
+  Phase 7 context relay:          N (expected >=5)
+  Phase 7 fallback instructions:  N (expected >=5)
+  Phase 8/9 resume patterns:      [✓/✗]
+  CLAUDE.md documentation:        [✓/✗] — N/7 patterns found
+```
+
+## Step 5: Agent dispatch smoke tests
 
 Dispatch each of the 10 agents with a minimal smoke-test prompt. Run them in 2 batches for speed.
+
+**For persistent agents (research, implement, tuning, analysis, monitor, review):** Also verify the agent confirms it understands resumption — it should mention "Resumable Agent" or "SendMessage" or "accumulated knowledge" when asked about its capabilities.
 
 **Batch 1 — Procedural agents (model: sonnet):**
 
@@ -280,13 +436,13 @@ For each agent, verify:
 
 Report results in a table.
 
-## Step 5: Full pipeline via live Agent() dispatch
+## Step 6: Full pipeline via live Agent() dispatch
 
 This is the core diagnostic — you act as the orchestrator, dispatching agents directly with pre-defined parameters. This tests the full optimization flow including all autoresearch-inspired features and goal memory.
 
 **Error handling:** After each phase, verify the expected outputs exist. If a phase fails, log it as FAILED, skip to Step 5.8 (feature checklist) with partial results, and include the failure in the final report.
 
-### 5.1: Set up test project
+### 6.1: Set up test project
 
 ```bash
 rm -rf /tmp/ml-opt-diagnostic
@@ -300,7 +456,7 @@ Use these paths throughout the diagnostic:
 - Project root: `/tmp/ml-opt-diagnostic`
 - Experiment root: `/tmp/ml-opt-diagnostic/experiments`
 
-### 5.2: Phase 2 — Prerequisites
+### 6.2: Phase 2 — Prerequisites
 
 Dispatch the prerequisites agent:
 
@@ -333,7 +489,7 @@ python3 $SCRIPTS/goal_memory.py \
 
 **Verify:** `experiments/optimization-goals.json` exists.
 
-### 5.3: Phase 3 — Baseline
+### 6.3: Phase 3 — Baseline
 
 Dispatch the baseline agent:
 
@@ -381,7 +537,7 @@ python3 $SCRIPTS/pipeline_state.py /tmp/ml-opt-diagnostic/experiments verify-bas
 
 If exit code is non-zero, log Phase 3 as FAILED.
 
-### 5.4: Phase 5 — Research (all 3 source modes)
+### 6.4: Phase 5 — Research (all 3 source modes)
 
 **Before dispatching:** Read `experiments/results/baseline.json` and note the actual baseline loss value. Substitute it into the prompts below.
 
@@ -500,7 +656,7 @@ else:
 
 **Verify:** `python3 $SCRIPTS/error_tracker.py /tmp/ml-opt-diagnostic/experiments agenda list` returns a non-empty list.
 
-### 5.5: Phase 6 — Implement
+### 6.5: Phase 6 — Implement
 
 **Before dispatching:** Read `experiments/reports/research-findings-method-proposals.md` and note the proposal names/indices.
 
@@ -529,7 +685,7 @@ python3 $SCRIPTS/schema_validator.py \
 
 Confirm output shows `"valid": true`.
 
-### 5.6: Phase 7 — Experiment Loop (2 iterations)
+### 6.6: Phase 7 — Experiment Loop (2 iterations)
 
 **Before dispatching:** Read `experiments/results/implementation-manifest.json` and extract the validated branch names (e.g., `ml-opt/label-smoothing`).
 
@@ -795,7 +951,7 @@ else:
 "
 ```
 
-### 5.6b: Phase 8 — Method Stacking (Sequential Merge)
+### 6.6b: Phase 8 — Method Stacking (Sequential Merge)
 
 This tests the full Phase 8 loop: create branches with real code changes, merge them sequentially, run stacked experiments, and verify the compound result.
 
@@ -924,7 +1080,7 @@ else:
 "
 ```
 
-### 5.7: Phase 9 — Report + Review
+### 6.7: Phase 9 — Report + Review
 
 #### Report agent
 
@@ -992,7 +1148,7 @@ Agent(
 )
 ```
 
-### 5.8: Feature verification checklist
+### 6.8: Feature verification checklist
 
 Run these checks and report pass/fail for each:
 
@@ -1247,13 +1403,13 @@ else:
 echo "=== Feature Verification Done ==="
 ```
 
-### 5.9: Cleanup
+### 6.9: Cleanup
 
 ```bash
 rm -rf /tmp/ml-opt-diagnostic
 ```
 
-## Step 6: Report
+## Step 7: Report
 
 Summarize all results:
 
@@ -1263,6 +1419,7 @@ ML Optimizer End-to-End Diagnostic Results
 Structural tests (pytest):  X/Y passed (full suite — 10 test files)
 Script CLI smoke tests:     X/18 passed (14 scripts, some multi-subcommand)
 Hook functional tests:      X/19 passed (8 hooks)
+Resumable subagent infra:   X/Y checks passed (registry, patterns, docs)
 Agent smoke tests:          10/10 dispatched (memory: local confirmed)
 
 Full Pipeline (live Agent() dispatch):
@@ -1311,6 +1468,9 @@ Feature Verification (17 items):
   19. Results table:          [✓/✗] — results-table.md generated
   20. Completeness enforce:   [✓/✗] — --strict catches incomplete results
   21. Status line:            [✓/✗] — active with state, silent without
+  22. Resumable subagents:    [✓/✗] — agent_registry in pipeline state, SendMessage patterns in phase refs
+  23. Inter-agent relay:      [✓/✗] — CONTEXT FROM OTHER AGENTS in phase-7 dispatches
+  24. Persistent/ephemeral:   [✓/✗] — 6 persistent + 4 ephemeral correctly classified
 
 Skipped phases (by design):
   Phase 0 Discovery:    Interactive (requires user Q&A) — goals simulated via scripts/goal_memory.py init-goals

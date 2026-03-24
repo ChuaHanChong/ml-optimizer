@@ -36,9 +36,28 @@ Then count entries in the result. If fewer than 5, skip to Phase 9.
 
    c. **If clean merge** → proceed to validation.
 
-   d. **If merge conflicts** → dispatch implement-agent:
+   d. **If merge conflicts** → dispatch implement-agent (resume-or-dispatch pattern):
+
+      **IF `agent_registry["implement"]` is not null** (agent exists from a previous phase):
+      ```
+      SendMessage(
+        to: agent_registry["implement"],
+        message: "Resolve merge conflicts for stack step {order}.
+          CONTEXT FROM OTHER AGENTS:
+          - EXPERIMENTS: methods ranked by improvement: {ranking}
+          - ANALYZE: recommended stacking order: {order}
+          Merge {method_B} into {current_stack_branch}. Preserve both methods.
+          Conflicting files: {conflicting_files}. Both methods must be preserved: [method-A description] and [method-B description]."
+      )
+      ```
+      → If `SendMessage` fails (agent no longer reachable): fall back to the `Agent()` dispatch below, update `agent_registry["implement"]` with the new agentId.
+
+      **ELSE** (first dispatch — no existing agent):
       - **Prompt:** "Resolve merge conflicts in the following files. Both methods must be preserved: [method-A description] and [method-B description]. The goal is to combine their functionality."
       - **Files:** List of conflicting files from `git diff --name-only --diff-filter=U`
+      → Save returned `agentId` to `agent_registry["implement"]`
+      → Persist registry: `save_state(..., agent_registry=agent_registry)`
+
       - If implement-agent succeeds → `git add .` and `git commit -m "Resolve merge conflicts for stack-<order>"`
       - If implement-agent fails → skip this method:
         - `git merge --abort`
@@ -61,7 +80,21 @@ Then count entries in the result. If fewer than 5, skip to Phase 9.
       - Compare to previous stack step's metric value.
       - **If improved:** Keep this stack step.
         - Update `stack_base_branch = ml-opt/stack-<order>`
-        - **Optional HP-tune:** If the improvement is > 1% AND remaining budget allows, dispatch the tuning agent:
+        - **Optional HP-tune:** If the improvement is > 1% AND remaining budget allows, dispatch the tuning agent (resume-or-dispatch pattern):
+
+          **IF `agent_registry["tuning"]` is not null** (agent exists from a previous iteration or phase):
+          ```
+          SendMessage(
+            to: agent_registry["tuning"],
+            message: "HP-tune stacked method stack-{order}.
+              CONTEXT FROM OTHER AGENTS:
+              - EXPERIMENTS: stacked method improved by {improvement}% over individual
+              Parameters: project_root: {project_root}, num_gpus: {num_gpus}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, code_branches: [ml-opt/stack-{order}], iteration: 1, remaining_budget: {min(2, actual_remaining)}, search_space: {narrowed_search_space}."
+          )
+          ```
+          → If `SendMessage` fails (agent no longer reachable): fall back to the `Agent()` dispatch below, update `agent_registry["tuning"]` with the new agentId.
+
+          **ELSE** (first dispatch — no existing agent):
           ```
           Agent(
             description: "HP-tune stacked method stack-{order}",
@@ -69,6 +102,8 @@ Then count entries in the result. If fewer than 5, skip to Phase 9.
             subagent_type: "ml-optimizer:tuning-agent"
           )
           ```
+          → Save returned `agentId` to `agent_registry["tuning"]`
+          → Persist registry: `save_state(..., agent_registry=agent_registry)`
         - If HP-tune improves further, record as `method_tier: "stacked_tuned_hp"`
       - **If worse or equal:** Skip this method.
         - Delete `ml-opt/stack-<order>` branch

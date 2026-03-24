@@ -388,6 +388,172 @@ class TestOrchestrateDispatch:
 
 
 # ---------------------------------------------------------------------------
+# Resumable subagents validation
+# ---------------------------------------------------------------------------
+
+# Agents that should use SendMessage resume pattern (dispatched multiple times)
+PERSISTENT_AGENTS = {"research", "implement", "tuning", "analysis", "monitor", "review"}
+# Agents that always get fresh Agent() dispatch (single-use or parallel)
+EPHEMERAL_AGENTS = {"prerequisites", "baseline", "experiment", "report"}
+
+
+class TestResumableSubagents:
+    """Verify resumable subagent infrastructure: agent registry, resume patterns, context relay."""
+
+    @staticmethod
+    def _orchestrate_skill_text():
+        return (SKILLS_DIR / "orchestrate" / "SKILL.md").read_text()
+
+    @staticmethod
+    def _phase_text(phase_name):
+        return (SKILLS_DIR / "orchestrate" / "references" / phase_name).read_text()
+
+    @staticmethod
+    def _orchestrate_full_text():
+        orch_dir = SKILLS_DIR / "orchestrate"
+        parts = [(orch_dir / "SKILL.md").read_text()]
+        refs_dir = orch_dir / "references"
+        if refs_dir.exists():
+            for f in sorted(refs_dir.glob("*.md")):
+                parts.append(f.read_text())
+        return "\n".join(parts)
+
+    def test_orchestrate_documents_agent_registry(self):
+        """Orchestrate SKILL.md must document the agent registry and dispatch protocol."""
+        text = self._orchestrate_skill_text()
+        assert "agent_registry" in text
+        assert "Dispatch Protocol" in text
+        assert "SendMessage" in text
+        assert "Fallback" in text.lower() or "fall back" in text.lower()
+
+    def test_orchestrate_classifies_persistent_vs_ephemeral(self):
+        """Orchestrate SKILL.md must list which agents are persistent and which are ephemeral."""
+        text = self._orchestrate_skill_text()
+        assert "Persistent" in text or "persistent" in text
+        assert "Ephemeral" in text or "ephemeral" in text
+        for agent in PERSISTENT_AGENTS:
+            assert agent in text, f"Orchestrate should mention persistent agent '{agent}'"
+
+    def test_orchestrate_documents_context_relay(self):
+        """Orchestrate SKILL.md must document the inter-agent context relay pattern."""
+        text = self._orchestrate_skill_text()
+        assert "CONTEXT FROM OTHER AGENTS" in text
+        assert "relay" in text.lower() or "message bus" in text.lower()
+
+    def test_orchestrate_documents_registry_persistence(self):
+        """Orchestrate SKILL.md must document registry persistence in pipeline-state.json."""
+        text = self._orchestrate_skill_text()
+        assert "pipeline-state.json" in text
+        assert "agent_registry" in text
+        # Must mention clearing on new session
+        assert "clear" in text.lower() or "session" in text.lower()
+
+    def test_phase5_saves_research_agent_id(self):
+        """Phase 5 must save research agent ID to registry after dispatch."""
+        text = self._phase_text("phase-5-research.md")
+        assert "agent_registry" in text
+        assert "research" in text.lower()
+
+    def test_phase6_saves_implement_agent_id(self):
+        """Phase 6 must save implement agent ID to registry after dispatch."""
+        text = self._phase_text("phase-6-implement.md")
+        assert "agent_registry" in text
+        assert "implement" in text.lower()
+
+    @pytest.mark.parametrize("agent", sorted(PERSISTENT_AGENTS))
+    def test_phase7_has_resume_pattern_for_persistent_agent(self, agent):
+        """Phase 7 must have SendMessage resume pattern for each persistent agent."""
+        text = self._phase_text("phase-7-experiment-loop.md")
+        assert f'agent_registry["{agent}"]' in text, (
+            f"Phase 7 should have resume pattern for '{agent}'"
+        )
+
+    def test_phase7_has_sendmessage_calls(self):
+        """Phase 7 must contain multiple SendMessage calls for agent resumption."""
+        text = self._phase_text("phase-7-experiment-loop.md")
+        sendmessage_count = len(re.findall(r"SendMessage\(", text))
+        # At minimum: tuning, monitor, analysis, speculative, research, implement, review
+        assert sendmessage_count >= 7, (
+            f"Phase 7 should have >=7 SendMessage calls, found {sendmessage_count}"
+        )
+
+    def test_phase7_has_context_relay_sections(self):
+        """Phase 7 SendMessage calls must include CONTEXT FROM OTHER AGENTS."""
+        text = self._phase_text("phase-7-experiment-loop.md")
+        relay_count = text.count("CONTEXT FROM OTHER AGENTS")
+        assert relay_count >= 5, (
+            f"Phase 7 should have >=5 context relay sections, found {relay_count}"
+        )
+
+    def test_phase7_has_fallback_instructions(self):
+        """Phase 7 must document fallback to fresh Agent() when SendMessage fails."""
+        text = self._phase_text("phase-7-experiment-loop.md")
+        fallback_count = len(re.findall(r"(?:fall back|fallback)", text, re.IGNORECASE))
+        assert fallback_count >= 5, (
+            f"Phase 7 should have >=5 fallback instructions, found {fallback_count}"
+        )
+
+    def test_phase8_resumes_implement_and_tuning(self):
+        """Phase 8 stacking must use resume pattern for implement and tuning agents."""
+        text = self._phase_text("phase-8-stacking.md")
+        assert "SendMessage" in text
+        assert 'agent_registry["implement"]' in text
+        assert 'agent_registry["tuning"]' in text
+
+    def test_phase9_resumes_review_agent(self):
+        """Phase 9 must use resume pattern for review agent."""
+        text = self._phase_text("phase-9-report.md")
+        assert "SendMessage" in text
+        assert 'agent_registry["review"]' in text
+
+    def test_ephemeral_agents_not_in_resume_pattern(self):
+        """Ephemeral agents (experiment, report) should NOT have agent_registry entries."""
+        text = self._orchestrate_full_text()
+        for agent in ["experiment", "report"]:
+            # These should NOT appear as registry keys
+            assert f'agent_registry["{agent}"]' not in text, (
+                f"Ephemeral agent '{agent}' should not have agent_registry entry"
+            )
+
+    @pytest.mark.parametrize("agent", sorted(PERSISTENT_AGENTS))
+    def test_persistent_agent_has_resumable_section(self, agent):
+        """Each persistent agent definition must have a 'Resumable Agent' section."""
+        text = (AGENTS_DIR / f"{agent}-agent.md").read_text()
+        assert "Resumable Agent" in text, (
+            f"Agent '{agent}-agent.md' should have a 'Resumable Agent' section"
+        )
+
+    @pytest.mark.parametrize("agent", sorted(EPHEMERAL_AGENTS))
+    def test_ephemeral_agent_has_no_resumable_section(self, agent):
+        """Ephemeral agent definitions must NOT have a 'Resumable Agent' section."""
+        text = (AGENTS_DIR / f"{agent}-agent.md").read_text()
+        assert "Resumable Agent" not in text, (
+            f"Ephemeral agent '{agent}-agent.md' should NOT have a 'Resumable Agent' section"
+        )
+
+    def test_claude_md_documents_resumable_subagents(self):
+        """CLAUDE.md must document the resumable subagents pattern."""
+        text = (PLUGIN_ROOT / ".claude" / "CLAUDE.md").read_text()
+        assert "Resumable subagents" in text
+        assert "persistent" in text.lower()
+        assert "ephemeral" in text.lower()
+        assert "agent_registry" in text
+        assert "SendMessage" in text
+
+    def test_claude_md_documents_inter_agent_relay(self):
+        """CLAUDE.md must document the inter-agent communication relay pattern."""
+        text = (PLUGIN_ROOT / ".claude" / "CLAUDE.md").read_text()
+        assert "Inter-agent communication" in text
+        assert "orchestrator relay" in text.lower() or "message bus" in text.lower()
+
+    def test_claude_md_gotcha_session_scoped_registry(self):
+        """CLAUDE.md Gotchas must warn about session-scoped agent_registry."""
+        text = (PLUGIN_ROOT / ".claude" / "CLAUDE.md").read_text()
+        assert "agent_registry" in text
+        assert "session" in text.lower()
+
+
+# ---------------------------------------------------------------------------
 # Documentation consistency (merged)
 # ---------------------------------------------------------------------------
 

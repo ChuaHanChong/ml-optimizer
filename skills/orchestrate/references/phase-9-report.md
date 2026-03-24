@@ -2,6 +2,12 @@
 
 After the experiment loop exits:
 
+**Pre-report state verification:** Before dispatching the report agent, verify critical state files exist:
+- `experiments/results/baseline.json` — must exist
+- `experiments/pipeline-state.json` — must exist
+- `experiments/results/exp-*.json` — at least 1 must exist
+If any are missing, log to error tracker (`category: "config_error"`) and warn the user. Do NOT proceed with reporting if baseline is missing.
+
 1. Dispatch the report agent:
    ```
    Agent(
@@ -11,8 +17,24 @@ After the experiment loop exits:
    )
    ```
 2. It generates a comprehensive final report
-3. **Self-improvement review:**
-   **Autonomous mode auto-skip:** If `budget_mode == "autonomous"`, auto-run review with `scope: "session"`. Skip AskUserQuestion. Log to dev_notes: "Auto-running self-improvement review (autonomous mode)." Dispatch the review agent:
+3. **Self-improvement review** (resume-or-dispatch pattern):
+   **Autonomous mode auto-skip:** If `budget_mode == "autonomous"`, auto-run review with `scope: "session"`. Skip AskUserQuestion. Log to dev_notes: "Auto-running self-improvement review (autonomous mode)."
+
+   **IF `agent_registry["review"]` is not null** (agent exists from mid-pipeline reviews in Phase 7):
+   ```
+   SendMessage(
+     to: agent_registry["review"],
+     message: "End-of-session self-improvement review. You have context from any mid-pipeline reviews.
+       CONTEXT FROM OTHER AGENTS:
+       - ANALYZE: final analysis across all batches
+       - RESEARCH: all proposals attempted, {N_successful}/{N_total} improved
+       - HP-TUNE: {total_iterations} iterations, best config: {best_config}
+       Parameters: project_root: {project_root}, exp_root: {exp_root}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, scope: session."
+   )
+   ```
+   → If `SendMessage` fails (agent no longer reachable): fall back to the `Agent()` dispatch below, update `agent_registry["review"]` with the new agentId.
+
+   **ELSE** (first dispatch — no existing agent):
    ```
    Agent(
      description: "Self-improvement review (autonomous)",
@@ -20,6 +42,8 @@ After the experiment loop exits:
      subagent_type: "ml-optimizer:review-agent"
    )
    ```
+   → Save returned `agentId` to `agent_registry["review"]`
+   → Persist registry: `save_state(..., agent_registry=agent_registry)`
 
    **Otherwise:** Ask the user:
    ```
@@ -27,6 +51,22 @@ After the experiment loop exits:
    Options: ["Yes, run review", "No, skip"]
    ```
    If yes, dispatch the review agent:
+
+   **IF `agent_registry["review"]` is not null** (agent exists from mid-pipeline reviews in Phase 7):
+   ```
+   SendMessage(
+     to: agent_registry["review"],
+     message: "End-of-session self-improvement review. You have context from any mid-pipeline reviews.
+       CONTEXT FROM OTHER AGENTS:
+       - ANALYZE: final analysis across all batches
+       - RESEARCH: all proposals attempted, {N_successful}/{N_total} improved
+       - HP-TUNE: {total_iterations} iterations, best config: {best_config}
+       Parameters: project_root: {project_root}, exp_root: {exp_root}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, scope: both."
+   )
+   ```
+   → If `SendMessage` fails (agent no longer reachable): fall back to the `Agent()` dispatch below, update `agent_registry["review"]` with the new agentId.
+
+   **ELSE** (first dispatch — no existing agent):
    ```
    Agent(
      description: "Self-improvement review",
@@ -34,6 +74,8 @@ After the experiment loop exits:
      subagent_type: "ml-optimizer:review-agent"
    )
    ```
+   → Save returned `agentId` to `agent_registry["review"]`
+   → Persist registry: `save_state(..., agent_registry=agent_registry)`
 4. Generate the progress dashboard:
    ```bash
    python3 scripts/dashboard.py <exp_root>

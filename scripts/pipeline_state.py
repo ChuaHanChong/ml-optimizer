@@ -213,6 +213,7 @@ def save_state(
     consecutive_stop_count: int | None = None,
     stuck_protocol_triggered: bool | None = None,
     baseline_checksum: str | None = None,
+    agent_registry: dict | None = None,
 ) -> str:
     """Write pipeline-state.json to exp_root.
 
@@ -230,6 +231,10 @@ def save_state(
             3-consecutive-stop exit rule. Persisted at root level.
         stuck_protocol_triggered: Whether the stuck protocol has been
             triggered this session. Prevents infinite recovery loops.
+        agent_registry: Optional dict mapping persistent agent roles to
+            their agentIds (e.g. {"research": "abc123", "tuning": "def456"}).
+            Used for resuming agents via SendMessage instead of fresh dispatch.
+            Session-scoped — cleared on new session, preserved within session.
 
     Returns the path to the state file.
     """
@@ -247,7 +252,8 @@ def save_state(
     existing = (
         load_state(exp_root)
         if (user_choices is None or consecutive_stop_count is None
-            or stuck_protocol_triggered is None or baseline_checksum is None)
+            or stuck_protocol_triggered is None or baseline_checksum is None
+            or agent_registry is None)
         else None
     )
 
@@ -274,6 +280,12 @@ def save_state(
         state["baseline_checksum"] = baseline_checksum
     elif existing and "baseline_checksum" in existing:
         state["baseline_checksum"] = existing["baseline_checksum"]
+
+    # Preserve agent_registry (resumable subagent IDs, session-scoped)
+    if agent_registry is not None:
+        state["agent_registry"] = agent_registry
+    elif existing and "agent_registry" in existing:
+        state["agent_registry"] = existing["agent_registry"]
 
     state_path = root / "pipeline-state.json"
     tmp_fd, tmp_path = tempfile.mkstemp(dir=str(root), suffix=".tmp")

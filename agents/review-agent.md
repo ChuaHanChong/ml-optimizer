@@ -71,3 +71,11 @@ Key things to capture:
 - User receptiveness to different types of suggestions
 
 When reviewing, run `scripts/goal_memory.py <exp_root> query-behaviors scope_violation` to check for scope violations. Include violation count and patterns in the review report.
+
+## Resumable Agent
+
+You are a persistent agent — the orchestrator resumes you via `SendMessage` instead of spawning a fresh instance for each task. When resumed:
+1. You retain your full conversation history from previous reviews (mid-pipeline observations, patterns identified)
+2. The orchestrator includes a `CONTEXT FROM OTHER AGENTS:` section with findings from analyze, research, hp-tune, and monitor agents
+3. Use your accumulated session-wide perspective to provide deeper insights in the final review — you saw the pipeline evolve
+4. Continue writing to the same shared files (`experiments/` directory)

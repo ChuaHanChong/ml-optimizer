@@ -191,6 +191,73 @@ The orchestrator can be stopped and resumed:
 
 Before each phase transition, validate prerequisites via `pipeline_state.validate_phase_requirements()`. This prevents cascading failures from missing or corrupted data.
 
+## Agent Registry (Resumable Subagents)
+
+Six agents are **persistent** — dispatched once via `Agent()` and resumed via `SendMessage()` for subsequent tasks. This preserves accumulated context (search results, HP trends, codebase knowledge) across the pipeline. Four agents are **ephemeral** — fresh spawn each time.
+
+**Persistent agents:** research, implement, tuning, analysis, monitor, review
+**Ephemeral agents:** prerequisites, baseline, experiment, report
+
+The orchestrator maintains an in-memory registry of persistent agent IDs:
+
+```
+agent_registry = {
+  "research": null,    # Set after first Phase 5 dispatch
+  "implement": null,   # Set after first Phase 6 dispatch
+  "tuning": null,      # Set after first Phase 7 step 1 dispatch
+  "analysis": null,    # Set after first Phase 7 step 5 dispatch
+  "monitor": null,     # Set after first Phase 7 step 3 dispatch
+  "review": null       # Set after first Phase 7 step 9 or Phase 9 dispatch
+}
+```
+
+### Dispatch Protocol
+
+For persistent agents:
+1. **First dispatch:** Use `Agent(subagent_type=...)` as normal. Save the returned `agentId` to `agent_registry`.
+2. **Subsequent dispatches:** Use `SendMessage(to: agentId, ...)` to resume with new task + cross-agent context. The agent auto-resumes in background; wait for notification of completion.
+3. **Fallback:** If `SendMessage` fails (agent lost due to compaction/restart), fall back to fresh `Agent()` dispatch and update the registry with the new ID.
+
+After updating the registry, persist it via:
+```bash
+python3 scripts/pipeline_state.py <exp_root> save <phase> <iteration>
+```
+(The `save_state()` function preserves `agent_registry` automatically across calls.)
+
+### Inter-Agent Communication (Context Relay)
+
+When resuming a persistent agent, include a `CONTEXT FROM OTHER AGENTS:` section in the message with relevant findings from other agents. This enables indirect inter-agent communication — the orchestrator acts as a message bus.
+
+Pattern:
+```
+SendMessage(
+  to: agent_registry["tuning"],
+  message: "HP tuning iteration {N}.
+    CONTEXT FROM OTHER AGENTS:
+    - ANALYZE (batch {N-1}): {recommendation}, correlations: {correlations}
+    - MONITOR: max_batch_size={max_batch_size} (OOM constraint from divergence)
+    Parameters: project_root: ..., num_gpus: ..., ..."
+)
+```
+
+Key relay routes:
+- **analyze → tuning**: Correlations, branch scores, continue/pivot/stop recommendation
+- **analyze → research**: Pivot reason, dead-end catalog, improvement gaps
+- **monitor → tuning**: OOM batch sizes, divergence patterns
+- **research → implement**: Proposals with findings path, scope level
+- **experiments → analyze**: Batch completion counts, best metric values
+
+### Registry Persistence
+
+Agent IDs are persisted in `pipeline-state.json` under the `agent_registry` key so they survive orchestrator context compaction within the same session. On new session start (pipeline resumption), the registry is cleared — all agents start fresh since subagent transcripts are session-scoped.
+
+On pipeline resumption, after loading state:
+```
+if state.get("agent_registry"):
+    agent_registry = {}  # Clear — agent IDs from previous session are invalid
+    save_state(..., agent_registry={})
+```
+
 ## Unsupported Scenarios
 
 The following are currently out of scope. If the user requests them, explain the limitation clearly:

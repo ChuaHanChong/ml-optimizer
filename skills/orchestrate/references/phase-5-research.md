@@ -8,6 +8,9 @@ Agent(
   subagent_type: "ml-optimizer:research-agent"
 )
 ```
+→ Save the returned agentId to `agent_registry["research"]`
+→ Persist registry: `save_state(..., agent_registry=agent_registry)`
+
 Wait for research findings.
 
 ## Research Failure Recovery

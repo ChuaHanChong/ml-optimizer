@@ -235,9 +235,9 @@ def detect_patterns(events: list[dict]) -> list[dict]:
 
     patterns: list[dict] = []
 
-    # --- high_lr_divergence: 3+ divergence events ---
+    # --- high_lr_divergence: 2+ divergence events ---
     divergence_events = [e for e in events if e.get("category") == "divergence"]
-    if len(divergence_events) >= 3:
+    if len(divergence_events) >= 2:
         lrs = []
         for e in divergence_events:
             cfg = e.get("config", {})

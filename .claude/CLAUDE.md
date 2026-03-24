@@ -96,15 +96,15 @@ Ten subagent types, each with a preloaded skill and specified tool access. The o
 **Analytical agents** (`model: opus`, ultrathink prompting):
 - **research-agent**: WebSearch, WebFetch, Read, Write, Bash, Glob, Grep, Skill, alphaxiv MCP tools (6) — skills: `[ml-optimizer:research, claude-mem:mem-search]`
 - **tuning-agent**: Read, Write, Bash, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:hp-tune]`
-- **implement-agent**: Bash, Read, Write, Edit, Glob, Grep, Skill, WebSearch, WebFetch, alphaxiv MCP tools (2: repo reader, PDF Q&A) — skills: `[ml-optimizer:implement, superpowers:systematic-debugging]`
+- **implement-agent**: Bash, Read, Write, Edit, Glob, Grep, Skill, WebSearch, WebFetch, alphaxiv MCP tools (2: repo reader, PDF Q&A) — skills: `[ml-optimizer:implement, superpowers:systematic-debugging, feature-dev:code-explorer, feature-dev:code-reviewer]`
 - **analysis-agent**: Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:analyze]`
 - **report-agent**: Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:report]`
 - **review-agent**: Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:review]`
 
 For parallel execution, use `run_in_background: true`. External skills are also available:
 - **research-agent**: Uses `context7` for framework API docs, `claude-mem:mem-search` for cross-session learning, `alphaxiv` MCP for academic paper search/analysis (6 tools: embedding search, full-text search, agentic retrieval, paper content, PDF Q&A, GitHub repo reader)
-- **implement-agent**: Uses `context7` for API docs, `feature-dev:code-explorer` for codebase analysis, `superpowers:systematic-debugging` for error recovery, `alphaxiv` MCP for reference repo exploration (`read_files_from_github_repository`) and paper clarification (`answer_pdf_queries`)
-- **orchestrator**: Uses `claude-mem:mem-search` in Phase 1 for cross-session recall, `feature-dev:code-reviewer` in Phase 6 for post-implementation quality review
+- **implement-agent**: Uses `context7` for API docs, `feature-dev:code-explorer` for codebase analysis, `feature-dev:code-reviewer` for post-implementation quality review (advisory, Step 4e.5), `superpowers:systematic-debugging` for error recovery, `alphaxiv` MCP for reference repo exploration (`read_files_from_github_repository`) and paper clarification (`answer_pdf_queries`)
+- **orchestrator**: Uses `claude-mem:mem-search` in Phase 1 for cross-session recall, `superpowers:brainstorming` in Phase 0/4 for complex multi-objective optimization scenarios
 
 ### Python Scripts (`scripts/`)
 
@@ -226,6 +226,11 @@ The orchestrator can be stopped and resumed. On restart it reads `pipeline-state
 - **Early batch abort**: If >= 2 experiments diverge within 60 seconds of start, remaining experiments in the batch are cancelled to save compute.
 - **Tabular ML adaptive timeout**: For non-iterative frameworks, experiment timeout is computed from `fit_duration * (max_iters / profiling_iters) * 2` instead of a generic 4-hour fallback.
 - **Method stacking (Phase 8)**: After independent method testing identifies ≥5 methods that improve over baseline, the orchestrator sequentially merges them in descending order of improvement. Each stack step creates `ml-opt/stack-<N>` by merging the next method into the current best stack. Clean merges proceed directly; conflicts are resolved by the implement-agent. If a combination degrades performance, that method is skipped. Optional HP-tuning (1-2 iterations, narrowed scope) is applied when a combo shows >1% improvement. Stacking state persists in `pipeline-state.json` for resumption. Requires git branch strategy — skipped for `file_backup` projects.
+- **Structured ideation for knowledge mode**: The research skill's knowledge-based proposal generation (Phase 7 method proposals) uses a structured diverge-converge-refine process with 6 ideation lenses (Problem-First, Analogical Reasoning, What Changed Recently, Constraint Manipulation, Negation/Inversion, Composition/Decomposition). Generates 10-15 candidates, filters via scope/dead-end/two-sentence-test, refines survivors with implementation details.
+- **Statistical confidence assessment**: The analyze skill (Step 2.2) computes effect sizes (Cohen's d) for HP impact when ≥5 experiments exist, and labels findings by confidence level (high/medium/low). Method attribution distinguishes whether improvements came from the code change, HP tuning, or their compound effect.
+- **Reproducibility metadata**: The experiment skill (Step 1.3) captures random seeds, pip freeze snapshots, git SHA, and framework versions. Stored under `"reproducibility"` key in result JSONs. Enables exact reproduction of best experiments.
+- **Report threats to validity**: The report template includes a "Threats to Validity" section covering single-seed risk, limited search space, dataset specificity, budget constraints, and noise margins.
+- **Citation verification**: The report skill (Step 5.3) cross-references technique claims against experiment data and spot-checks source URL accessibility before writing the final report.
 
 ## Test Fixtures
 

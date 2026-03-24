@@ -247,6 +247,16 @@ Use this summary to add:
 2. **Learned Behaviors:** Summarize key HP constraints, method outcomes, and divergence patterns discovered during optimization
 3. **Scope Compliance:** Note any scope violations that were caught and corrected during the session
 
+## Step 5.3: Verify Claims Against Evidence
+
+Before writing the final report:
+
+1. **Cross-reference technique claims with experiment data:** For each "technique X improved Y by Z%" claim, verify the improvement percentage matches actual experiment results.
+
+2. **Check source URL accessibility** (if research findings were used): Use WebFetch on 2-3 key source URLs to verify they're still accessible. Mark broken links as "[link unavailable]".
+
+3. Add a brief note in the Appendix: "N/M source URLs verified accessible as of report date."
+
 ## Step 6: Write the Report
 
 Write to `experiments/reports/final-report.md` using the template from `references/report-template.md`.

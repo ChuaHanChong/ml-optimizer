@@ -339,6 +339,12 @@ class TestSchemaValidator:
         ({"exp_id": "exp-bad2", "status": "completed", "config": {"lr": 0.001},
           "metrics": {"loss": 0.5}, "warm_started": True},
          False),
+        # valid: reproducibility metadata
+        ({"exp_id": "exp-repro", "status": "completed", "config": {"lr": 0.01},
+          "metrics": {"loss": 0.4},
+          "reproducibility": {"random_seed": 42, "environment_file": "pip_freeze.txt",
+                               "git_sha": "abc123", "framework_version": "torch==2.1.0"}},
+         True),
     ])
     def test_validate_result(self, data, expect_valid):
         assert validate_result(data)["valid"] is expect_valid

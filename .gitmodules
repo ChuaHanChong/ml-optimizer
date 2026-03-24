@@ -1,0 +1,3 @@
+[submodule "skills/evolve/ShinkaEvolve"]
+	path = skills/evolve/ShinkaEvolve
+	url = git@github.com:ChuaHanChong/ShinkaEvolve.git

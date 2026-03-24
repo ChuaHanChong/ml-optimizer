@@ -434,6 +434,8 @@ For each agent, verify:
 - **implement-agent**: Confirm it can see `feature-dev:code-explorer` and `feature-dev:code-reviewer` in addition to `ml-optimizer:implement` and `superpowers:systematic-debugging`
 - **research-agent**: Confirm it can see `claude-mem:mem-search` (or reports it unavailable gracefully)
 
+**Special case — implement-agent:** Use this prompt instead: "This is a smoke test. List your tools. Confirm you can see these skills: ml-optimizer:implement, ml-optimizer:evolve, shinka-setup, shinka-convert, shinka-run, shinka-inspect. Confirm persistent agent memory. Respond in 2-3 sentences."
+
 Report results in a table.
 
 ## Step 6: Full pipeline via live Agent() dispatch
@@ -799,6 +801,90 @@ python3 $SCRIPTS/result_analyzer.py \
 
 Verify the output includes ranking information.
 
+#### Evolve Integration Check
+
+After analyze completes, verify the evolve pipeline is wired correctly:
+
+```bash
+python3 -c "
+import sys, os, json, threading, time, tempfile, importlib.util
+from pathlib import Path
+
+PLUGIN_ROOT = os.environ.get('PLUGIN_ROOT', '$PLUGIN_ROOT')
+issues = []
+
+# 1. Evolve skill exists
+evolve_skill = Path(PLUGIN_ROOT) / 'skills' / 'evolve' / 'SKILL.md'
+if evolve_skill.exists():
+    content = evolve_skill.read_text()
+    if 'EVOLVE-BLOCK' in content and 'ShinkaEvolve' in content:
+        print('✓ Evolve skill: exists, references EVOLVE-BLOCK and ShinkaEvolve')
+    else:
+        issues.append('evolve skill missing EVOLVE-BLOCK or ShinkaEvolve references')
+else:
+    issues.append('evolve skill SKILL.md not found')
+
+# 2. ShinkaEvolve submodule exists with patched query.py
+query_py = Path(PLUGIN_ROOT) / 'skills' / 'evolve' / 'ShinkaEvolve' / 'shinka' / 'llm' / 'query.py'
+if query_py.exists() and 'SHINKA_PROVIDER' in query_py.read_text():
+    print('✓ ShinkaEvolve: submodule present, query.py patched')
+else:
+    issues.append('ShinkaEvolve submodule missing or query.py not patched')
+
+# 3. File handoff provider importable and round-trip works
+provider_path = Path(PLUGIN_ROOT) / 'skills' / 'evolve' / 'ShinkaEvolve' / 'shinka' / 'llm' / 'file_handoff_provider.py'
+if provider_path.exists():
+    spec = importlib.util.spec_from_file_location('fhp', str(provider_path))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    with tempfile.TemporaryDirectory() as td:
+        mod.set_handoff_dir(td)
+        # Simulate: write pending, respond, read
+        def respond():
+            time.sleep(0.3)
+            pending = Path(td) / 'evolve' / 'pending'
+            for f in pending.glob('*.json'):
+                completed = Path(td) / 'evolve' / 'completed' / f.name
+                completed.write_text(json.dumps({'content': 'evolved code mutation'}))
+        t = threading.Thread(target=respond)
+        t.start()
+        result = mod.query_file_handoff('test', 'mutate', 'system', timeout_seconds=5)
+        t.join()
+        if result['content'] == 'evolved code mutation':
+            print('✓ File handoff: round-trip works (pending → completed → response)')
+        else:
+            issues.append('file handoff returned wrong content')
+else:
+    issues.append('file_handoff_provider.py not found')
+
+# 4. Analyze skill includes code_refinement pivot
+analyze_skill = Path(PLUGIN_ROOT) / 'skills' / 'analyze' / 'SKILL.md'
+if analyze_skill.exists() and 'code_refinement' in analyze_skill.read_text():
+    print('✓ Analyze skill: code_refinement pivot type present')
+else:
+    issues.append('analyze skill missing code_refinement pivot')
+
+# 5. Implement-agent has evolve + shinka skills
+agent_md = Path(PLUGIN_ROOT) / 'agents' / 'implement-agent.md'
+if agent_md.exists():
+    agent_content = agent_md.read_text()
+    required = ['ml-optimizer:evolve', 'shinka-setup', 'shinka-run']
+    missing = [s for s in required if s not in agent_content]
+    if not missing:
+        print('✓ Implement-agent: evolve + shinka skills listed')
+    else:
+        issues.append(f'implement-agent missing skills: {missing}')
+else:
+    issues.append('implement-agent.md not found')
+
+if issues:
+    print(f'✗ Evolve integration: {len(issues)} issues: ' + '; '.join(issues))
+else:
+    print('✓ Evolve integration: all 5 checks passed')
+"
+```
+
 #### Iteration 2: OOM + Divergence Triggers
 
 Run a second iteration to exercise error recovery features. Include one experiment with a deliberately extreme LR to trigger divergence, and log an OOM event to test the feedback loop.
@@ -1156,12 +1242,12 @@ Run these checks and report pass/fail for each:
 EXP=/tmp/ml-opt-diagnostic/experiments
 SCRIPTS=$PLUGIN_ROOT/scripts
 
-echo "=== Feature Verification (21 items) ==="
+echo "=== Feature Verification (25 items) ==="
 
 # 1. Immutable baseline
 python3 $SCRIPTS/pipeline_state.py $EXP verify-baseline 2>/dev/null \
-  && echo "✓ [1/21] Immutable baseline: checksum valid" \
-  || echo "✗ [1/21] Immutable baseline: FAILED"
+  && echo "✓ [1/22] Immutable baseline: checksum valid" \
+  || echo "✗ [1/22] Immutable baseline: FAILED"
 
 # 2. Research agenda
 python3 -c "
@@ -1170,35 +1256,35 @@ if os.path.exists('$EXP/reports/research-agenda.json'):
     agenda = json.loads(open('$EXP/reports/research-agenda.json').read()).get('ideas', [])
     tried = sum(1 for i in agenda if i.get('status') == 'tried')
     untried = sum(1 for i in agenda if i.get('status') == 'untried')
-    print(f'✓ [2/21] Research agenda: {len(agenda)} ideas ({tried} tried, {untried} untried)')
+    print(f'✓ [2/22] Research agenda: {len(agenda)} ideas ({tried} tried, {untried} untried)')
 else:
-    print('✗ [2/21] Research agenda: file missing')
+    print('✗ [2/22] Research agenda: file missing')
 "
 
 # 3. Dead-end catalog
 python3 -c "
 from pathlib import Path
 p = Path('$EXP/reports/dead-ends.json')
-print('✓ [3/21] Dead-end catalog: exists') if p.exists() else print('— [3/21] Dead-end catalog: not triggered (OK)')
+print('✓ [3/22] Dead-end catalog: exists') if p.exists() else print('— [3/22] Dead-end catalog: not triggered (OK)')
 "
 
 # 4. Dashboard (structural check)
 python3 -c "
 html = open('$EXP/reports/dashboard.html').read()
 ok = '<table' in html and '<tr' in html
-print('✓ [4/21] Dashboard: structural check passed') if ok else print('✗ [4/21] Dashboard: missing structural elements')
+print('✓ [4/22] Dashboard: structural check passed') if ok else print('✗ [4/22] Dashboard: missing structural elements')
 "
 
 # 5. Excalidraw
 test -f $EXP/artifacts/pipeline-overview.excalidraw \
-  && echo "✓ [5/21] Excalidraw: pipeline diagram exists" \
-  || echo "✗ [5/21] Excalidraw: missing"
+  && echo "✓ [5/22] Excalidraw: pipeline diagram exists" \
+  || echo "✗ [5/22] Excalidraw: missing"
 
 # 6. Baseline checksum in state
 python3 -c "
 import json
 state = json.loads(open('$EXP/pipeline-state.json').read())
-print('✓ [6/21] Baseline checksum: stored') if 'baseline_checksum' in state else print('✗ [6/21] Baseline checksum: missing')
+print('✓ [6/22] Baseline checksum: stored') if 'baseline_checksum' in state else print('✗ [6/22] Baseline checksum: missing')
 "
 
 # 7. Error tracking
@@ -1208,9 +1294,9 @@ r = subprocess.run(['python3', '$SCRIPTS/error_tracker.py', '$EXP', 'summary'], 
 if r.returncode == 0:
     data = json.loads(r.stdout)
     n = data.get('total_events', 0)
-    print(f'✓ [7/21] Error tracking: {n} events logged')
+    print(f'✓ [7/22] Error tracking: {n} events logged')
 else:
-    print('✗ [7/21] Error tracking: summary command failed')
+    print('✗ [7/22] Error tracking: summary command failed')
 "
 
 # 8. Schema validation (all output types)
@@ -1225,7 +1311,7 @@ for f in $EXP/results/exp-*.json; do
   [ -f "$f" ] && python3 $SCRIPTS/schema_validator.py "$f" result 2>/dev/null \
     && echo "  ✓ $(basename $f) valid" || echo "  ✗ $(basename $f) invalid"
 done
-echo "✓ [8/21] Schema validation: complete"
+echo "✓ [8/22] Schema validation: complete"
 
 # 9. Result metadata (placeholder verification)
 python3 -c "
@@ -1241,9 +1327,9 @@ for f in results:
         if field not in data:
             issues.append(f'{eid}: missing {field}')
 if issues:
-    print('✗ [9/21] Result metadata: ' + '; '.join(issues))
+    print('✗ [9/22] Result metadata: ' + '; '.join(issues))
 else:
-    print(f'✓ [9/21] Result metadata: all {len(results)} results complete')
+    print(f'✓ [9/22] Result metadata: all {len(results)} results complete')
 "
 
 # 10. Pipeline state
@@ -1254,7 +1340,7 @@ has_phase = 'phase' in state
 has_iter = 'iteration' in state
 has_choices = 'user_choices' in state
 ok = has_phase and has_iter and has_choices
-print(f'✓ [10/21] Pipeline state: phase={state.get(\"phase\")}, iteration={state.get(\"iteration\")}') if ok else print('✗ [10/21] Pipeline state: missing fields')
+print(f'✓ [10/22] Pipeline state: phase={state.get(\"phase\")}, iteration={state.get(\"iteration\")}') if ok else print('✗ [10/22] Pipeline state: missing fields')
 "
 
 # 11. Error tracker CLI subcommands
@@ -1266,16 +1352,16 @@ python3 $SCRIPTS/error_tracker.py $EXP proposals loss true > /dev/null 2>&1 && e
 python3 $SCRIPTS/error_tracker.py $EXP dead-end list > /dev/null 2>&1 && echo "  ✓ dead-end list" || echo "  ✗ dead-end list"
 python3 $SCRIPTS/error_tracker.py $EXP suggestion-history > /dev/null 2>&1 && echo "  ✓ suggestion-history" || echo "  ✗ suggestion-history"
 python3 $SCRIPTS/error_tracker.py $EXP agenda list > /dev/null 2>&1 && echo "  ✓ agenda list" || echo "  ✗ agenda list"
-echo "✓ [11/21] Error tracker CLI: subcommands verified"
+echo "✓ [11/22] Error tracker CLI: subcommands verified"
 
 # 12. Worktree cleanup
 python3 -c "
 from pathlib import Path
 wt = Path('$EXP/worktrees')
 if wt.exists() and list(wt.iterdir()):
-    print('✗ [12/21] Worktree cleanup: leftover worktrees found')
+    print('✗ [12/22] Worktree cleanup: leftover worktrees found')
 else:
-    print('✓ [12/21] Worktree cleanup: no leftover worktrees')
+    print('✓ [12/22] Worktree cleanup: no leftover worktrees')
 "
 
 # 13. Goal memory
@@ -1285,12 +1371,12 @@ import subprocess
 goals = Path('$EXP/optimization-goals.json')
 r = subprocess.run(['python3', '$SCRIPTS/goal_memory.py', '$EXP', 'summary'], capture_output=True, text=True)
 if goals.exists() and r.returncode == 0 and 'OPTIMIZATION GOALS' in r.stdout:
-    print('✓ [13/21] Goal memory: goals created, summary works')
+    print('✓ [13/22] Goal memory: goals created, summary works')
 else:
     missing = []
     if not goals.exists(): missing.append('goals missing')
     if r.returncode != 0: missing.append('summary failed')
-    print('✗ [13/21] Goal memory: ' + ', '.join(missing))
+    print('✗ [13/22] Goal memory: ' + ', '.join(missing))
 "
 
 # 14. Overfitting detection
@@ -1302,9 +1388,9 @@ train = [0.5, 0.4, 0.3, 0.2, 0.15, 0.1]
 val = [0.5, 0.55, 0.6, 0.65, 0.7, 0.75]
 r = check_overfitting(train, val, patience=5)
 if r['overfitting']:
-    print('✓ [14/21] Overfitting detection: works (severity=' + r['severity'] + ')')
+    print('✓ [14/22] Overfitting detection: works (severity=' + r['severity'] + ')')
 else:
-    print('✗ [14/21] Overfitting detection: FAILED to detect')
+    print('✗ [14/22] Overfitting detection: FAILED to detect')
 "
 
 # 15. HP interaction detection
@@ -1314,7 +1400,7 @@ sys.path.insert(0, '$SCRIPTS')
 from result_analyzer import detect_hp_interactions, load_results
 results = load_results('$EXP/results')
 out = detect_hp_interactions(results, 'loss', lower_is_better=True)
-print(f'✓ [15/21] HP interactions: {len(out.get(\"interactions\", []))} detected') if 'interactions' in out else print('✗ [15/21] HP interactions: FAILED')
+print(f'✓ [15/22] HP interactions: {len(out.get(\"interactions\", []))} detected') if 'interactions' in out else print('✗ [15/22] HP interactions: FAILED')
 "
 
 # 16. Branch scores
@@ -1324,7 +1410,7 @@ sys.path.insert(0, '$SCRIPTS')
 from result_analyzer import compute_branch_scores, load_results
 results = load_results('$EXP/results')
 scores = compute_branch_scores(results, 'loss', lower_is_better=True)
-print(f'✓ [16/21] Branch scores: {len(scores)} branches scored') if isinstance(scores, dict) else print('✗ [16/21] Branch scores: FAILED')
+print(f'✓ [16/22] Branch scores: {len(scores)} branches scored') if isinstance(scores, dict) else print('✗ [16/22] Branch scores: FAILED')
 "
 
 # 17. Checkpoint warm-starting
@@ -1336,7 +1422,7 @@ from pathlib import Path
 with tempfile.TemporaryDirectory() as td:
     p = generate_train_script(td, 'ckpt-test', 'python train.py', checkpoint_path='/tmp/ckpt.pt')
     ok = 'CHECKPOINT_PATH' in Path(p).read_text()
-    print('✓ [17/21] Checkpoint warm-start: script includes CHECKPOINT_PATH') if ok else print('✗ [17/21] Checkpoint warm-start: FAILED')
+    print('✓ [17/22] Checkpoint warm-start: script includes CHECKPOINT_PATH') if ok else print('✗ [17/22] Checkpoint warm-start: FAILED')
 "
 
 # 18. Experiment comparison
@@ -1349,9 +1435,9 @@ ids = [k for k in results if k.startswith('exp-')][:2]
 if len(ids) >= 2:
     cmp = compare_experiments('$EXP/results', ids, 'loss')
     ok = 'config_diff' in cmp and 'metrics_comparison' in cmp and 'winner' in cmp
-    print(f'✓ [18/21] Experiment comparison: {ids[0]} vs {ids[1]}') if ok else print('✗ [18/21] Experiment comparison: FAILED')
+    print(f'✓ [18/22] Experiment comparison: {ids[0]} vs {ids[1]}') if ok else print('✗ [18/22] Experiment comparison: FAILED')
 else:
-    print('— [18/21] Experiment comparison: need 2+ experiments')
+    print('— [18/22] Experiment comparison: need 2+ experiments')
 "
 
 # 19. Results table (Markdown)
@@ -1363,7 +1449,7 @@ from pathlib import Path
 path = generate_results_table('$EXP')
 content = Path(path).read_text()
 ok = '# ML Optimization Results' in content and '## Results' in content
-print(f'✓ [19/21] Results table: {path}') if ok else print('✗ [19/21] Results table: FAILED')
+print(f'✓ [19/22] Results table: {path}') if ok else print('✗ [19/22] Results table: FAILED')
 "
 
 # 20. Completeness enforcement (--strict mode)
@@ -1375,9 +1461,9 @@ incomplete = {'exp_id': 'test', 'status': 'completed', 'config': {}, 'metrics': 
 normal = validate_result(incomplete)
 strict = validate_result_strict(incomplete)
 if normal['valid'] and not strict['valid'] and len(normal.get('warnings', [])) > 0:
-    print(f'✓ [20/21] Completeness enforcement: {len(strict[\"errors\"])} issues caught in strict mode')
+    print(f'✓ [20/22] Completeness enforcement: {len(strict[\"errors\"])} issues caught in strict mode')
 else:
-    print('✗ [20/21] Completeness enforcement: FAILED')
+    print('✗ [20/22] Completeness enforcement: FAILED')
 "
 
 # 21. Status line
@@ -1393,11 +1479,40 @@ r2 = subprocess.run(['bash', hook], input=stdin_without, capture_output=True, te
 has_output = '[ml-opt]' in r1.stdout
 is_silent = r2.stdout.strip() == ''
 if has_output and is_silent:
-    print('✓ [21/21] Status line: active with state, silent without')
+    print('✓ [21/22] Status line: active with state, silent without')
 elif has_output:
-    print('✗ [21/21] Status line: not silent without state')
+    print('✗ [21/22] Status line: not silent without state')
 else:
-    print('✗ [21/21] Status line: no output with state')
+    print('✗ [21/22] Status line: no output with state')
+"
+
+# 22. Evolve file handoff (ShinkaEvolve integration)
+python3 -c "
+import sys, os, json, tempfile, threading, time
+sys.path.insert(0, os.path.join('$PLUGIN_ROOT', 'skills', 'evolve', 'ShinkaEvolve'))
+from shinka.llm.file_handoff_provider import set_handoff_dir, query_file_handoff
+
+with tempfile.TemporaryDirectory() as td:
+    set_handoff_dir(td)
+    pending = os.path.join(td, 'evolve', 'pending')
+    completed = os.path.join(td, 'evolve', 'completed')
+
+    # Simulate orchestrator responding
+    def respond():
+        time.sleep(0.5)
+        for f in os.listdir(pending):
+            req = json.loads(open(os.path.join(pending, f)).read())
+            open(os.path.join(completed, f), 'w').write(json.dumps({'content': 'evolved code'}))
+
+    t = threading.Thread(target=respond)
+    t.start()
+    result = query_file_handoff('test', 'mutate this', 'system', timeout_seconds=5)
+    t.join()
+
+    if result['content'] == 'evolved code':
+        print('✓ [25/25] Evolve file handoff: round-trip works')
+    else:
+        print('✗ [25/25] Evolve file handoff: FAILED')
 "
 
 echo "=== Feature Verification Done ==="
@@ -1471,6 +1586,7 @@ Feature Verification (17 items):
   22. Resumable subagents:    [✓/✗] — agent_registry in pipeline state, SendMessage patterns in phase refs
   23. Inter-agent relay:      [✓/✗] — CONTEXT FROM OTHER AGENTS in phase-7 dispatches
   24. Persistent/ephemeral:   [✓/✗] — 6 persistent + 4 ephemeral correctly classified
+  25. Evolve file handoff:    [✓/✗] — ShinkaEvolve round-trip works
 
 Skipped phases (by design):
   Phase 0 Discovery:    Interactive (requires user Q&A) — goals simulated via scripts/goal_memory.py init-goals

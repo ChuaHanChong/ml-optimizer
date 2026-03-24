@@ -65,9 +65,13 @@ If the user provided papers or URLs:
 
 Before searching, check for existing findings and dead ends:
 
-1. Check `experiments/reports/research-findings.md` (Phase 5 web-based proposals)
-2. Check `experiments/reports/research-findings-method-proposals*.md` (Phase 7 method proposals)
-3. **Check dead-end catalog** — techniques conclusively shown to be unpromising:
+1. Check ALL existing findings files in `experiments/reports/`:
+   - `research-findings.md` (Phase 5 web-based proposals)
+   - `research-findings-method-proposals.md` (Phase 7 pre-loop method proposals)
+   - `research-findings-method-proposals-iter*.md` (Phase 7 mid-loop iterations)
+   - `research-findings-method-proposals-both.md` (combined web + knowledge)
+   - The current `output_path` itself (if it already exists from a previous run)
+2. Check dead-end catalog — techniques conclusively shown to be unpromising:
    ```bash
    python3 scripts/error_tracker.py <exp_root> dead-end list
    ```
@@ -431,6 +435,8 @@ Where `<ideas_json>` is a JSON array of ideas derived from the proposals:
 Use the proposal's priority score (from ranking) as the initial priority. The `id` should be a URL-safe slug of the proposal name (lowercase, hyphens, no spaces).
 
 If a research agenda already exists (e.g., mid-loop research), use `agenda add` instead to append new ideas without overwriting the existing ones.
+
+**CRITICAL — Output verification:** After writing, verify the file exists at `output_path` using the Read tool. If the file is missing or empty, re-write it. The orchestrator depends on this file existing at the exact `output_path` specified in the dispatch parameters.
 
 ## Step 6: Summary for Orchestrator
 

@@ -59,7 +59,21 @@ If no manifest exists, run HP-only experiments on the current code.
 
 If `method_proposal_scope` is set in user_choices (i.e., user chose option 5 in Phase 4):
 
-1. **Dispatch the research agent:**
+1. **Dispatch the research agent** (resume-or-dispatch pattern):
+
+   **IF `agent_registry["research"]` is not null** (agent exists from Phase 5):
+   ```
+   SendMessage(
+     to: agent_registry["research"],
+     message: "Research method proposals (pre-loop).
+       CONTEXT FROM OTHER AGENTS:
+       - BASELINE: current_metrics={current_metrics}
+       Parameters: source: both, scope_level: {method_proposal_scope}, output_path: experiments/reports/research-findings-method-proposals.md, model_type: {model_type}, task: {task}, current_metrics: {current_metrics}, problem_description: {problem_description}, exp_root: {exp_root}."
+   )
+   ```
+   → If `SendMessage` fails: fall back to the `Agent()` dispatch below, update `agent_registry["research"]`.
+
+   **ELSE** (first dispatch — no existing agent, e.g., user skipped Phase 5):
    ```
    Agent(
      description: "Research method proposals",
@@ -67,6 +81,8 @@ If `method_proposal_scope` is set in user_choices (i.e., user chose option 5 in 
      subagent_type: "ml-optimizer:research-agent"
    )
    ```
+   → Save returned `agentId` to `agent_registry["research"]`
+   → Persist registry: `save_state(..., agent_registry=agent_registry)`
 
 2. **Present proposals to user for confirmation** (same as Phase 5 post-research checkpoint):
 
@@ -83,7 +99,21 @@ If `method_proposal_scope` is set in user_choices (i.e., user chose option 5 in 
    - [4] Skip, just tune HPs on existing code
    ```
 
-3. **If user selects proposals:** Dispatch the implement agent:
+3. **If user selects proposals:** Dispatch the implement agent (resume-or-dispatch pattern):
+
+   **IF `agent_registry["implement"]` is not null** (agent exists from Phase 6):
+   ```
+   SendMessage(
+     to: agent_registry["implement"],
+     message: "Implement method proposals (pre-loop).
+       CONTEXT FROM OTHER AGENTS:
+       - RESEARCH: found proposals in experiments/reports/research-findings-method-proposals.md
+       Parameters: findings_path: experiments/reports/research-findings-method-proposals.md, selected_indices: {selected_indices}, project_root: {project_root}."
+   )
+   ```
+   → If `SendMessage` fails: fall back to the `Agent()` dispatch below, update `agent_registry["implement"]`.
+
+   **ELSE** (first dispatch — no existing agent, e.g., user skipped Phase 6):
    ```
    Agent(
      description: "Implement method proposals",
@@ -91,6 +121,8 @@ If `method_proposal_scope` is set in user_choices (i.e., user chose option 5 in 
      subagent_type: "ml-optimizer:implement-agent"
    )
    ```
+   → Save returned `agentId` to `agent_registry["implement"]`
+   → Persist registry: `save_state(..., agent_registry=agent_registry)`
 
 4. **Check implementation results** from `experiments/results/implementation-manifest.json`:
    - Merge validated method proposal branches into the `code_branches` list
@@ -179,7 +211,22 @@ When the implementation manifest contains multiple code branches:
      2. If valid → use them as this iteration's configs. Skip hp-tune invocation entirely.
      3. If invalid → discard them and invoke hp-tune synchronously as normal.
    - **Otherwise (first iteration, or speculative proposals were discarded):**
-     Dispatch the tuning agent:
+     Dispatch the tuning agent (resume-or-dispatch pattern):
+
+     **IF `agent_registry["tuning"]` is not null** (agent exists from a previous iteration):
+     ```
+     SendMessage(
+       to: agent_registry["tuning"],
+       message: "HP tuning iteration {iteration}.
+         CONTEXT FROM OTHER AGENTS:
+         - ANALYZE (batch {N-1}): {recommendation}, correlations: {correlations}, branch_scores: {scores}
+         - MONITOR: max_batch_size={max_batch_size} (OOM constraint)
+         Parameters: project_root: {project_root}, num_gpus: {num_gpus}, search_space: {search_space}, iteration: {iteration}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, remaining_budget: {remaining_budget}, code_branches: {code_branches}, max_batch_size: {max_batch_size or omit}, warm_start_enabled: {warm_start_enabled or false}, available_checkpoints: {available_checkpoints_json or {}}, branch_scores: {branch_scores_json or {}}."
+     )
+     ```
+     → If `SendMessage` fails (agent no longer reachable): fall back to the `Agent()` dispatch below, update `agent_registry["tuning"]` with the new agentId.
+
+     **ELSE** (first dispatch — no existing agent):
      ```
      Agent(
        description: "HP tuning iteration {iteration}",
@@ -187,6 +234,9 @@ When the implementation manifest contains multiple code branches:
        subagent_type: "ml-optimizer:tuning-agent"
      )
      ```
+     → Save returned `agentId` to `agent_registry["tuning"]`
+     → Persist registry: `save_state(..., agent_registry=agent_registry)`
+
      - `remaining_budget`: `max_experiments - total_experiments_so_far`. HP-tune caps proposals at `min(max(num_gpus, 1), remaining_budget)`.
      - `code_branches`: From implementation manifest, or `[]` for HP-only.
      - `max_batch_size` *(optional)*: One step below the smallest OOM-causing batch size. Omit if no OOM events.
@@ -224,7 +274,21 @@ When the implementation manifest contains multiple code branches:
    - Each experiment runs on a separate GPU
 
 3. **Monitor experiments:**
-   - **If `divergence_metric` is not null**, dispatch the monitor agent:
+   - **If `divergence_metric` is not null**, dispatch the monitor agent (resume-or-dispatch pattern):
+
+     **IF `agent_registry["monitor"]` is not null** (agent exists from a previous batch):
+     ```
+     SendMessage(
+       to: agent_registry["monitor"],
+       message: "Monitor new batch of experiments.
+         CONTEXT FROM OTHER AGENTS:
+         - HP-TUNE: proposed configs with LR range {lr_range}
+         Parameters: log_files: {log_files}, exp_ids: {exp_ids}, project_root: {project_root}, poll_interval: 30, metric_to_watch: {divergence_metric}, lower_is_better: {divergence_lower_is_better}, model_category: {model_category}."
+     )
+     ```
+     → If `SendMessage` fails: fall back to the `Agent()` dispatch below, update `agent_registry["monitor"]` with the new agentId.
+
+     **ELSE** (first dispatch — no existing agent):
      ```
      Agent(
        description: "Monitor experiments for divergence",
@@ -232,6 +296,8 @@ When the implementation manifest contains multiple code branches:
        subagent_type: "ml-optimizer:monitor-agent"
      )
      ```
+     → Save returned `agentId` to `agent_registry["monitor"]`
+     → Persist registry: `save_state(..., agent_registry=agent_registry)`
    - Monitor status handling:
      - `healthy`: Training is progressing normally — continue waiting
      - `diverged`: Stop the experiment automatically, record divergence reason in experiment results
@@ -282,7 +348,23 @@ When the implementation manifest contains multiple code branches:
    4. Continue — analyze will skip failed experiments
 
 5. **Analyze results + speculative hp-tune (parallel):**
-   - **Start analyze synchronously:**
+   - **Start analyze synchronously** (resume-or-dispatch pattern):
+
+     **IF `agent_registry["analysis"]` is not null** (agent exists from a previous batch):
+     ```
+     SendMessage(
+       to: agent_registry["analysis"],
+       message: "Analyze batch {N} results.
+         CONTEXT FROM OTHER AGENTS:
+         - HP-TUNE: {config_summary}
+         - MONITOR: {divergence_count} diverged
+         - EXPERIMENTS: {completed}/{total} completed
+         Parameters: project_root: {project_root}, batch_number: {batch_number}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, target_value: {target_value or null}, remaining_budget: {remaining_budget}."
+     )
+     ```
+     → If `SendMessage` fails: fall back to the `Agent()` dispatch below, update `agent_registry["analysis"]` with the new agentId.
+
+     **ELSE** (first dispatch — no existing agent):
      ```
      Agent(
        description: "Analyze batch {N} results",
@@ -290,9 +372,24 @@ When the implementation manifest contains multiple code branches:
        subagent_type: "ml-optimizer:analysis-agent"
      )
      ```
+     → Save returned `agentId` to `agent_registry["analysis"]`
+     → Persist registry: `save_state(..., agent_registry=agent_registry)`
+
      - It compares all experiments, ranks them, identifies patterns
      - It recommends: continue, pivot, or stop
    - **At the SAME TIME, start speculative hp-tune in background** (only if `remaining_budget > max(num_gpus, 1)`):
+
+     **IF `agent_registry["tuning"]` is not null AND `remaining_budget > max(num_gpus, 1)`:**
+     ```
+     SendMessage(
+       to: agent_registry["tuning"],
+       message: "SPECULATIVE hp-tune for next batch — the orchestrator may discard these results if analyze recommends stop or pivot. Parameters: project_root: {project_root}, num_gpus: {num_gpus}, search_space: {search_space}, iteration: {iteration + 1}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, remaining_budget: {remaining_budget - current_batch_size}, code_branches: {code_branches}, warm_start_enabled: {warm_start_enabled or false}, available_checkpoints: {available_checkpoints_json or {}}, branch_scores: {branch_scores_json or {}}."
+     )
+     // SendMessage auto-resumes in background — do NOT block on result
+     ```
+     → If `SendMessage` fails: fall back to the `Agent()` dispatch below, update `agent_registry["tuning"]` with the new agentId.
+
+     **ELSE** (first dispatch, or agent not yet created):
      ```
      Agent(
        description: "Speculative hp-tune for next batch",
@@ -301,6 +398,8 @@ When the implementation manifest contains multiple code branches:
        run_in_background: true
      )
      ```
+     → Save returned `agentId` to `agent_registry["tuning"]`
+     → Persist registry: `save_state(..., agent_registry=agent_registry)`
    - If `remaining_budget <= max(num_gpus, 1)`: skip speculative hp-tune (not enough budget for another full batch)
    - Analyze completes first (it's synchronous). Speculative hp-tune may still be running.
    - **Live dashboard update:** After analyze completes, regenerate the dashboard so users can monitor progress in real-time:
@@ -341,7 +440,24 @@ When the implementation manifest contains multiple code branches:
          3. Read success metrics: `python3 scripts/error_tracker.py <exp_root> success <primary_metric> <lower_is_better>`
          4. Read dead-end catalog: `python3 scripts/error_tracker.py <exp_root> dead-end list`
          5. Read research agenda: `python3 scripts/error_tracker.py <exp_root> agenda list`
-         6. Dispatch the research agent with all failure context:
+         6. Dispatch the research agent with all failure context (resume-or-dispatch pattern):
+
+            **IF `agent_registry["research"]` is not null** (agent exists from a previous research round):
+            ```
+            SendMessage(
+              to: agent_registry["research"],
+              message: "Stuck protocol — find new approaches. The optimization is stuck — 3 consecutive batches showed no improvement.
+                CONTEXT FROM OTHER AGENTS:
+                - Error patterns: {patterns}
+                - Success metrics: {success}
+                - Dead ends (DO NOT re-propose): {dead_ends}
+                - Research agenda: {agenda}
+                Parameters: source: both, model_type: {model_type}, task: {task}, current_metrics: {best_metrics}, problem_description: {problem_description}, exp_root: {exp_root}, scope_level: {method_proposal_scope or 'architecture'}. Focus on techniques NOT in the dead-end catalog."
+            )
+            ```
+            → If `SendMessage` fails: fall back to the `Agent()` dispatch below, update `agent_registry["research"]` with the new agentId.
+
+            **ELSE** (first dispatch — no existing agent):
             ```
             Agent(
               description: "Stuck protocol — find new approaches",
@@ -349,6 +465,8 @@ When the implementation manifest contains multiple code branches:
               subagent_type: "ml-optimizer:research-agent"
             )
             ```
+            → Save returned `agentId` to `agent_registry["research"]`
+            → Persist registry: `save_state(..., agent_registry=agent_registry)`
          7. If research returns new proposals (not all deduplicated against dead ends):
             - Route to step 7 (mid-loop method proposal trigger) for implementation
             - Reset `consecutive_stop_count` to 0
@@ -389,7 +507,23 @@ When the implementation manifest contains multiple code branches:
       ```
       If user chooses 4 (skip), exit the loop and proceed to Phase 9 (report).
 
-   c. **Generate proposals:** Dispatch the research agent:
+   c. **Generate proposals:** Dispatch the research agent (resume-or-dispatch pattern):
+
+      **IF `agent_registry["research"]` is not null** (agent exists from a previous research round):
+      ```
+      SendMessage(
+        to: agent_registry["research"],
+        message: "Mid-loop research proposals.
+          CONTEXT FROM OTHER AGENTS:
+          - ANALYZE: pivot_type={pivot_type}, reason={reason}
+          - EXPERIMENTS: best improvement={best_improvement}%
+          - DEAD ENDS: {dead_end_catalog}
+          Parameters: source: both, scope_level: {scope_level}, output_path: experiments/reports/research-findings-method-proposals-iter{N}.md, model_type: {model_type}, task: {task}, current_metrics: {current_metrics}, problem_description: {problem_description}, exp_root: {exp_root}."
+      )
+      ```
+      → If `SendMessage` fails: fall back to the `Agent()` dispatch below, update `agent_registry["research"]` with the new agentId.
+
+      **ELSE** (first dispatch — no existing agent):
       ```
       Agent(
         description: "Mid-loop research proposals",
@@ -397,6 +531,8 @@ When the implementation manifest contains multiple code branches:
         subagent_type: "ml-optimizer:research-agent"
       )
       ```
+      → Save returned `agentId` to `agent_registry["research"]`
+      → Persist registry: `save_state(..., agent_registry=agent_registry)`
 
    **Goal validation (post-dispatch):** After research returns proposals:
    ```bash
@@ -409,7 +545,22 @@ When the implementation manifest contains multiple code branches:
 
       **Otherwise:** Show the generated proposals to the user for confirmation. The user can accept all, select a subset, or reject all (which exits the loop).
 
-   e. **Implement proposals:** Dispatch the implement agent with the confirmed method proposal findings. This creates new `ml-opt/<slug>` branches.
+   e. **Implement proposals:** Dispatch the implement agent with the confirmed method proposal findings (resume-or-dispatch pattern). This creates new `ml-opt/<slug>` branches.
+
+      **IF `agent_registry["implement"]` is not null** (agent exists from a previous implementation round):
+      ```
+      SendMessage(
+        to: agent_registry["implement"],
+        message: "Implement mid-loop proposals.
+          CONTEXT FROM OTHER AGENTS:
+          - RESEARCH: found {N} proposals in {findings_path}
+          - EXPERIMENTS: branches active: {code_branches}
+          Parameters: findings_path: {findings_path}, selected_indices: {selected_indices}, project_root: {project_root}."
+      )
+      ```
+      → If `SendMessage` fails: fall back to the `Agent()` dispatch below, update `agent_registry["implement"]` with the new agentId.
+
+      **ELSE** (first dispatch — no existing agent):
       ```
       Agent(
         description: "Implement mid-loop proposals",
@@ -417,6 +568,8 @@ When the implementation manifest contains multiple code branches:
         subagent_type: "ml-optimizer:implement-agent"
       )
       ```
+      → Save returned `agentId` to `agent_registry["implement"]`
+      → Persist registry: `save_state(..., agent_registry=agent_registry)`
 
    f. **Merge into experiment loop:** Add the new validated branches to `code_branches`. Reset the iteration counter for these new branches only (they start at iteration 1 = `method_default_hp` tier). Existing branches keep their iteration count.
 
@@ -444,7 +597,23 @@ When the implementation manifest contains multiple code branches:
       python3 scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"orchestrate","message":"Autonomous research round triggered after <N> HP batches","phase":7,"iteration":<iteration>,"context":{"batches_since_last_research":<N>,"method_proposal_iterations":<M>}}'
       ```
 
-   b. **Generate proposals:** Dispatch the research agent:
+   b. **Generate proposals:** Dispatch the research agent (resume-or-dispatch pattern):
+
+      **IF `agent_registry["research"]` is not null** (agent exists from a previous research round):
+      ```
+      SendMessage(
+        to: agent_registry["research"],
+        message: "Autonomous research round.
+          CONTEXT FROM OTHER AGENTS:
+          - ANALYZE: {last_analysis_summary}
+          - EXPERIMENTS: best improvement={best_improvement}%, branches active: {code_branches}
+          - DEAD ENDS: {dead_end_catalog}
+          Parameters: source: both, scope_level: {method_proposal_scope}, output_path: experiments/reports/research-findings-method-proposals-iter{N}.md, model_type: {model_type}, task: {task}, current_metrics: {current_metrics}, problem_description: {problem_description}, exp_root: {exp_root}."
+      )
+      ```
+      → If `SendMessage` fails: fall back to the `Agent()` dispatch below, update `agent_registry["research"]` with the new agentId.
+
+      **ELSE** (first dispatch — no existing agent):
       ```
       Agent(
         description: "Autonomous research round",
@@ -452,6 +621,8 @@ When the implementation manifest contains multiple code branches:
         subagent_type: "ml-optimizer:research-agent"
       )
       ```
+      → Save returned `agentId` to `agent_registry["research"]`
+      → Persist registry: `save_state(..., agent_registry=agent_registry)`
 
    c. **Check results:**
       - If research returns new proposals (not all filtered by deduplication): proceed to implement
@@ -460,7 +631,22 @@ When the implementation manifest contains multiple code branches:
         python3 scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"orchestrate","message":"Research round yielded no new proposals — increasing cadence to <new_value> batches","phase":7,"iteration":<iteration>}'
         ```
 
-   d. **Implement proposals (no user confirmation):** In autonomous mode, ALL returned proposals are implemented automatically (the user opted into autonomous operation). Dispatch the implement agent with the research findings. This creates new `ml-opt/<slug>` branches.
+   d. **Implement proposals (no user confirmation):** In autonomous mode, ALL returned proposals are implemented automatically (the user opted into autonomous operation). Dispatch the implement agent with the research findings (resume-or-dispatch pattern). This creates new `ml-opt/<slug>` branches.
+
+      **IF `agent_registry["implement"]` is not null** (agent exists from a previous implementation round):
+      ```
+      SendMessage(
+        to: agent_registry["implement"],
+        message: "Implement autonomous research proposals.
+          CONTEXT FROM OTHER AGENTS:
+          - RESEARCH: found {N} proposals in {findings_path}
+          - EXPERIMENTS: branches active: {code_branches}
+          Parameters: findings_path: {findings_path}, selected_indices: {all_indices}, project_root: {project_root}."
+      )
+      ```
+      → If `SendMessage` fails: fall back to the `Agent()` dispatch below, update `agent_registry["implement"]` with the new agentId.
+
+      **ELSE** (first dispatch — no existing agent):
       ```
       Agent(
         description: "Implement autonomous research proposals",
@@ -468,6 +654,8 @@ When the implementation manifest contains multiple code branches:
         subagent_type: "ml-optimizer:implement-agent"
       )
       ```
+      → Save returned `agentId` to `agent_registry["implement"]`
+      → Persist registry: `save_state(..., agent_registry=agent_registry)`
 
    e. **Merge into experiment loop:** Same as step 7f — add new validated branches to `code_branches`, reset iteration counter for new branches.
 
@@ -486,7 +674,24 @@ When the implementation manifest contains multiple code branches:
    If `wasted_budget` pattern has occurrences ≥ 3, OR if the last 2 consecutive batches both had zero successful experiments:
 
    **If `budget_mode == "autonomous"`:**
-   - Start review in background via Agent with `run_in_background: true`:
+   - Start review in background (resume-or-dispatch pattern):
+
+     **IF `agent_registry["review"]` is not null** (agent exists from a previous review):
+     ```
+     SendMessage(
+       to: agent_registry["review"],
+       message: "Async mid-pipeline review.
+         CONTEXT FROM OTHER AGENTS:
+         - ANALYZE: {last_analysis_summary}
+         - HP-TUNE: {tuning_efficiency}
+         - MONITOR: {divergence_patterns}
+         Parameters: project_root: {project_root}, exp_root: {exp_root}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, scope: session."
+     )
+     // SendMessage auto-resumes in background — do NOT block on result
+     ```
+     → If `SendMessage` fails: fall back to the `Agent()` dispatch below, update `agent_registry["review"]` with the new agentId.
+
+     **ELSE** (first dispatch — no existing agent):
      ```
      Agent(
        description: "Async mid-pipeline review",
@@ -495,6 +700,9 @@ When the implementation manifest contains multiple code branches:
        run_in_background: true
      )
      ```
+     → Save returned `agentId` to `agent_registry["review"]`
+     → Persist registry: `save_state(..., agent_registry=agent_registry)`
+
    - Continue to next loop iteration immediately (do NOT wait for review)
    - At the START of the next loop iteration (before step 1), check if the background review has completed:
      - If completed successfully: read suggestions and apply course corrections (narrow search space, prune branches, stop)
@@ -504,7 +712,23 @@ When the implementation manifest contains multiple code branches:
    - Log: "Mid-pipeline review started in background (autonomous mode)"
 
    **Otherwise (interactive/auto/custom):**
-   - Dispatch review agent synchronously:
+   - Dispatch review agent synchronously (resume-or-dispatch pattern):
+
+     **IF `agent_registry["review"]` is not null** (agent exists from a previous review):
+     ```
+     SendMessage(
+       to: agent_registry["review"],
+       message: "Mid-pipeline review.
+         CONTEXT FROM OTHER AGENTS:
+         - ANALYZE: {last_analysis_summary}
+         - HP-TUNE: {tuning_efficiency}
+         - MONITOR: {divergence_patterns}
+         Parameters: project_root: {project_root}, exp_root: {exp_root}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, scope: session."
+     )
+     ```
+     → If `SendMessage` fails: fall back to the `Agent()` dispatch below, update `agent_registry["review"]` with the new agentId.
+
+     **ELSE** (first dispatch — no existing agent):
      ```
      Agent(
        description: "Mid-pipeline review",
@@ -512,6 +736,8 @@ When the implementation manifest contains multiple code branches:
        subagent_type: "ml-optimizer:review-agent"
      )
      ```
+     → Save returned `agentId` to `agent_registry["review"]`
+     → Persist registry: `save_state(..., agent_registry=agent_registry)`
    - Read the review output's top suggestions
    - Apply relevant course corrections:
      - If review suggests narrowing LR range: pass constrained `search_space` to hp-tune

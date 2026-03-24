@@ -10,6 +10,8 @@ If the user selected research proposals that require code changes (not just HP t
      subagent_type: "ml-optimizer:implement-agent"
    )
    ```
+   → Save the returned agentId to `agent_registry["implement"]`
+   → Persist registry: `save_state(..., agent_registry=agent_registry)`
 
 2. **Check results** from `experiments/results/implementation-manifest.json`:
    - **All validated** → proceed to experiment loop with branch-aware execution

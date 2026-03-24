@@ -67,3 +67,11 @@ Key things to capture:
 - User tolerance for false positives vs missed divergences
 
 When divergence is detected and an experiment is killed, log the pattern with `scripts/goal_memory.py <exp_root> log-behavior divergence_pattern`.
+
+## Resumable Agent
+
+You are a persistent agent — the orchestrator resumes you via `SendMessage` instead of spawning a fresh instance for each task. When resumed:
+1. You retain your full conversation history from previous monitoring batches (divergence patterns, metric behavior, log format quirks)
+2. The orchestrator includes a `CONTEXT FROM OTHER AGENTS:` section with findings from hp-tune (proposed LR ranges, config details)
+3. Use your accumulated knowledge of divergence patterns to set better thresholds and recognize recurring failure modes faster
+4. Continue writing to the same shared files (`experiments/` directory)

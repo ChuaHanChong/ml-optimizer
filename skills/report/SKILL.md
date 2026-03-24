@@ -23,6 +23,12 @@ From the orchestrator:
 - `model_description`: Brief description of the model
 - `task_description`: What the model does
 
+## State Preservation (CRITICAL)
+
+**DO NOT** run any git commands that modify the working tree (`git checkout`, `git reset`, `git clean`, `git stash`). The project may have untracked experiment data in `experiments/` that would be lost. Only use **read-only** git commands (`git log`, `git branch --list`, `git show`).
+
+**DO NOT** recreate, delete, or overwrite files outside of `experiments/reports/` and `experiments/artifacts/`. The `experiments/results/`, `experiments/pipeline-state.json`, and `experiments/reports/error-log.json` are read-only inputs — never modify them.
+
 ## Step 1: Gather All Data
 
 > **Goal check:** Read optimization goals to compare best result against target_value and include a Goal Achievement section.

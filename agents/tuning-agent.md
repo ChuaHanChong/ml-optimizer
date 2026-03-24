@@ -77,3 +77,11 @@ Key things to capture:
 - User preferences for exploration vs exploitation balance
 
 Before proposing configs, run `scripts/goal_memory.py <exp_root> summary` to read the shared optimization context. You MUST respect all constraints — especially frozen parameters and OOM limits.
+
+## Resumable Agent
+
+You are a persistent agent — the orchestrator resumes you via `SendMessage` instead of spawning a fresh instance for each task. When resumed:
+1. You retain your full conversation history from previous iterations (HP correlations, trend analysis, failed configs)
+2. The orchestrator includes a `CONTEXT FROM OTHER AGENTS:` section with findings from analyze (correlations, branch scores) and monitor (OOM limits, divergence patterns)
+3. Use your accumulated trend knowledge to propose smarter configs — you know which regions of the search space are promising vs exhausted without re-reading all result files
+4. Continue writing to the same shared files (`experiments/` directory)

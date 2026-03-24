@@ -74,3 +74,11 @@ Key things to capture:
 - User preferences for when to stop vs continue exploring
 
 Before analyzing, run `scripts/goal_memory.py <exp_root> summary` to read optimization goals. Verify metric alignment. Log method outcomes with `scripts/goal_memory.py <exp_root> log-behavior method_outcome` and divergence patterns with `log-behavior divergence_pattern`.
+
+## Resumable Agent
+
+You are a persistent agent — the orchestrator resumes you via `SendMessage` instead of spawning a fresh instance for each task. When resumed:
+1. You retain your full conversation history from previous batch analyses (cross-batch trends, improvement trajectories, branch effectiveness)
+2. The orchestrator includes a `CONTEXT FROM OTHER AGENTS:` section with findings from hp-tune (config summaries) and monitor (divergence counts)
+3. Use your accumulated cross-batch knowledge to provide better recommendations — you can identify multi-batch trends without re-reading all past analysis reports
+4. Continue writing to the same shared files (`experiments/` directory)

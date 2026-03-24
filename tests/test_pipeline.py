@@ -219,6 +219,67 @@ class TestStatePersistence:
         save_state(7, 1, [], str(tmp_path))
         assert "stuck_protocol_triggered" not in load_state(str(tmp_path))
 
+    def test_agent_registry_persist_preserve_reset(self, tmp_path):
+        """Agent registry roundtrips, preserves across saves, and can be cleared."""
+        registry = {"research": "agent-abc123", "tuning": "agent-def456"}
+        save_state(7, 1, [], str(tmp_path), agent_registry=registry)
+        assert load_state(str(tmp_path))["agent_registry"] == registry
+        # Preserved when not explicitly provided
+        save_state(7, 2, [], str(tmp_path))
+        assert load_state(str(tmp_path))["agent_registry"] == registry
+        # Updated with new entries
+        updated = {**registry, "analysis": "agent-ghi789"}
+        save_state(7, 3, [], str(tmp_path), agent_registry=updated)
+        assert load_state(str(tmp_path))["agent_registry"] == updated
+        # Cleared with empty dict
+        save_state(7, 4, [], str(tmp_path), agent_registry={})
+        assert load_state(str(tmp_path))["agent_registry"] == {}
+
+    def test_agent_registry_absent_when_never_set(self, tmp_path):
+        save_state(7, 1, [], str(tmp_path))
+        assert "agent_registry" not in load_state(str(tmp_path))
+
+    def test_agent_registry_and_user_choices_simultaneous(self, tmp_path):
+        """Both agent_registry and user_choices survive when saved together."""
+        registry = {"research": "agent-abc", "tuning": "agent-def"}
+        choices = {"primary_metric": "accuracy", "lower_is_better": False}
+        save_state(7, 1, [], str(tmp_path),
+                   agent_registry=registry, user_choices=choices)
+        state = load_state(str(tmp_path))
+        assert state["agent_registry"] == registry
+        assert state["user_choices"] == choices
+
+    def test_agent_registry_preserved_when_user_choices_updated(self, tmp_path):
+        """Updating user_choices alone doesn't clobber agent_registry."""
+        save_state(7, 1, [], str(tmp_path),
+                   agent_registry={"research": "agent-abc"})
+        save_state(7, 2, [], str(tmp_path),
+                   user_choices={"primary_metric": "loss"})
+        state = load_state(str(tmp_path))
+        assert state["agent_registry"] == {"research": "agent-abc"}
+        assert state["user_choices"]["primary_metric"] == "loss"
+
+    def test_agent_registry_clearing_simulates_resumption(self, tmp_path):
+        """On pipeline resumption (new session), registry must be clearable
+        while preserving user_choices — simulates the orchestrate skill's
+        session-start clearing logic."""
+        full_registry = {
+            "research": "agent-old-1", "implement": "agent-old-2",
+            "tuning": "agent-old-3", "analysis": "agent-old-4",
+            "monitor": "agent-old-5", "review": "agent-old-6",
+        }
+        choices = {"primary_metric": "accuracy", "budget_mode": "auto"}
+        save_state(7, 5, [], str(tmp_path),
+                   agent_registry=full_registry, user_choices=choices)
+        # Simulate new session: load state, clear registry, re-save
+        state = load_state(str(tmp_path))
+        assert state["agent_registry"] == full_registry
+        save_state(state["phase"], state["iteration"], [], str(tmp_path),
+                   agent_registry={})
+        state = load_state(str(tmp_path))
+        assert state["agent_registry"] == {}
+        assert state["user_choices"] == choices  # preserved
+
     def test_stacking_state_roundtrip(self, tmp_path):
         stacking = {
             "ranked_methods": ["perceptual-loss", "cosine-scheduler", "mixup"],

@@ -231,3 +231,11 @@ Key things to capture:
 - User preferences for code change scope and testing expectations
 
 Before implementing, run `scripts/goal_memory.py <exp_root> read-goals` to check scope constraints. Do not modify model architecture files when scope is 'training'.
+
+## Resumable Agent
+
+You are a persistent agent — the orchestrator resumes you via `SendMessage` instead of spawning a fresh instance for each task. When resumed:
+1. You retain your full conversation history from previous dispatches (codebase knowledge, branch layouts, validation patterns)
+2. The orchestrator includes a `CONTEXT FROM OTHER AGENTS:` section with findings from research, analyze, or experiment agents
+3. Use your accumulated codebase understanding to implement faster — reuse file locations, import patterns, and validation strategies you already discovered
+4. Continue writing to the same shared files (`experiments/` directory)

@@ -31,27 +31,42 @@ ENTRY POINT
   All agents have memory: local (persistent at .claude/agent-memory-local/)
   All agents read goal_memory.py summary before acting (Phase 7+)
 
+  6 PERSISTENT agents: resumed via SendMessage (accumulated context)
+  4 EPHEMERAL agents:  fresh Agent() spawn each time
+
+  DISPATCH PROTOCOL:
+    First dispatch:      Agent(subagent_type=...) → save agentId to agent_registry
+    Subsequent dispatch: SendMessage(to: agentId) with CONTEXT FROM OTHER AGENTS
+    Fallback:            If SendMessage fails → fresh Agent() → update registry
+
+  INTER-AGENT COMMUNICATION (orchestrator relay):
+    analyze → tuning:    correlations, branch scores, recommendation
+    analyze → research:  pivot reason, dead-end catalog
+    monitor → tuning:    OOM batch sizes, divergence patterns
+    research → implement: proposals with findings path
+    experiments → analyze: batch completion counts, best metrics
+
   PROCEDURAL AGENTS (model: sonnet — lower cost/latency, no ultrathink)
   ---------------------------------------------------------------------
 
   +-------------------+  Tools: Bash, Read, Write, Glob, Grep, Skill,
   | prerequisites-    |  WebSearch, WebFetch
-  | agent (procedural)|  Skill: ml-optimizer:prerequisites
+  | agent (EPHEMERAL) |  Skill: ml-optimizer:prerequisites
   +-------------------+
 
   +-------------------+  Tools: Bash, Read, Write, Glob, Grep, Skill,
   | baseline-agent    |  WebSearch, WebFetch
-  | (procedural)      |  Skill: ml-optimizer:baseline
+  | (EPHEMERAL)       |  Skill: ml-optimizer:baseline
   +-------------------+
 
   +-------------------+  Tools: Bash, Read, Write, Glob, Grep, Skill,
   | experiment-agent  |  WebSearch, WebFetch
-  | (procedural)      |  Skill: ml-optimizer:experiment
+  | (EPHEMERAL)       |  Skill: ml-optimizer:experiment
   +-------------------+
 
   +-------------------+  Tools: Bash, Read, Write, Glob, Grep, Skill,
   | monitor-agent     |  WebSearch, WebFetch
-  | (procedural)      |  Skill: ml-optimizer:monitor
+  | (PERSISTENT)      |  Skill: ml-optimizer:monitor
   +-------------------+
 
   ANALYTICAL AGENTS (model: opus, ultrathink prompting)
@@ -59,35 +74,35 @@ ENTRY POINT
 
   +-------------------+  Tools: WebSearch, WebFetch, Read, Write, Bash,
   | research-agent    |  Glob, Grep, Skill + alphaxiv MCP (6 tools)
-  | (ultrathink)      |  Skill: ml-optimizer:research
+  | (PERSISTENT)      |  Skill: ml-optimizer:research
   +-------------------+  External: context7, claude-mem:mem-search,
                          alphaxiv (search, content, repo)
 
   +-------------------+  Tools: Bash, Read, Write, Edit, Glob, Grep,
   | implement-agent   |  Skill, WebSearch, WebFetch + alphaxiv MCP (2 tools)
-  | (ultrathink)      |  Skill: ml-optimizer:implement
+  | (PERSISTENT)      |  Skill: ml-optimizer:implement
   +-------------------+  External: context7, feature-dev:code-explorer,
                          superpowers:systematic-debugging,
                          alphaxiv (repo reader, PDF Q&A)
 
   +-------------------+  Tools: Read, Write, Bash, Glob, Grep, Skill,
   | tuning-agent      |  WebSearch, WebFetch
-  | (ultrathink)      |  Skill: ml-optimizer:hp-tune
+  | (PERSISTENT)      |  Skill: ml-optimizer:hp-tune
   +-------------------+
 
   +-------------------+  Tools: Bash, Read, Write, Glob, Grep, Skill,
   | analysis-agent    |  WebSearch, WebFetch
-  | (ultrathink)      |  Skill: ml-optimizer:analyze
+  | (PERSISTENT)      |  Skill: ml-optimizer:analyze
   +-------------------+
 
   +-------------------+  Tools: Bash, Read, Write, Glob, Grep, Skill,
   | report-agent      |  WebSearch, WebFetch
-  | (analytical)      |  Skill: ml-optimizer:report
+  | (EPHEMERAL)       |  Skill: ml-optimizer:report
   +-------------------+
 
   +-------------------+  Tools: Bash, Read, Write, Glob, Grep, Skill,
   | review-agent      |  WebSearch, WebFetch
-  | (ultrathink)      |  Skill: ml-optimizer:review
+  | (PERSISTENT)      |  Skill: ml-optimizer:review
   +-------------------+
 
 ================================================================================
@@ -542,7 +557,7 @@ ENTRY POINT
 
   Phase  | Reads                          | Writes
   -------|--------------------------------|-----------------------------
-  0      | (user input)                   | pipeline-state.json
+  0      | (user input)                   | pipeline-state.json (user_choices + agent_registry)
          |                                | user-choices-backup.json
          |                                | optimization-goals.json
   1      | model files, config            | dev_notes.md
@@ -589,7 +604,10 @@ ENTRY POINT
                               LEGEND
 ================================================================================
 
-  Agent dispatch:    orchestrator --Agent(subagent_type="ml-optimizer:<name>-agent")--> agent
+  First dispatch:    orchestrator --Agent(subagent_type="ml-optimizer:<name>-agent")--> agent
+                     → save agentId to agent_registry["<name>"]
+  Resume dispatch:   orchestrator --SendMessage(to: agentId, CONTEXT FROM OTHER AGENTS)--> agent
+                     → if fails: fall back to fresh Agent(), update registry
   Agent preloads:    agent --skills: [ml-optimizer:<skill>]--> skill instructions
   User interaction:  [User]  <--->  [Orchestrator]
   Conditional:       (condition) ---> branch
@@ -597,9 +615,14 @@ ENTRY POINT
   MCP servers:       alphaxiv (paper search/analysis), claude-mem (cross-session memory)
   Data flow:         Reads: <file>  |  Writes: <file>
 
+  Persistent agents: research, implement, tuning, analysis, monitor, review
+                     Resumed via SendMessage — accumulate context across pipeline
+  Ephemeral agents:  prerequisites, baseline, experiment, report
+                     Fresh spawn each time — single-use or parallel tasks
   Analytical agents (ultrathink): Extended reasoning, model: opus
   Procedural agents (sonnet): Direct execution, lower cost/latency
   Agent memory: All agents have memory: local → .claude/agent-memory-local/<name>/
+  Agent registry: pipeline-state.json → agent_registry (session-scoped, cleared on new session)
   Goal anchor: optimization-goals.json (Phase 0, read by all agents)
   Behavioral memory: learned-behaviors.json (accumulated, project-scoped)
 

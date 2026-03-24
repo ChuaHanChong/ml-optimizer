@@ -29,6 +29,8 @@ Inspired by [karpathy/autoresearch](https://github.com/karpathy/autoresearch), [
 | **Training Budget** | Optional fixed wall-clock duration or fixed epoch count per experiment for fair comparison |
 | **Goal Anchoring** | `optimization-goals.json` written at Phase 0; all agents read it before acting. Post-dispatch validation catches frozen param changes, scope breaches, dead-end re-proposals |
 | **Behavioral Memory** | `learned-behaviors.json` accumulates HP constraints, method outcomes, divergence patterns per project. All agents have `memory: local` for persistent role-specific learning |
+| **Resumable Subagents** | 6 persistent agents (research, implement, tuning, analysis, monitor, review) are dispatched once and resumed via `SendMessage` for subsequent tasks — preserving accumulated context (search results, HP trends, codebase knowledge) across the pipeline. Falls back to fresh dispatch if resumption fails |
+| **Inter-Agent Relay** | Orchestrator relays findings between agents via `CONTEXT FROM OTHER AGENTS:` sections — analyze findings reach hp-tune, monitor OOM info reaches hp-tune, research proposals reach implement |
 
 ## Installation
 
@@ -128,26 +130,28 @@ Only `orchestrate` is directly invocable. All other skills have `disable-model-i
 
 ## Workflow
 
+6 agents are **persistent** (resumed via `SendMessage` with accumulated context), 4 are **ephemeral** (fresh spawn). The orchestrator relays findings between agents via `CONTEXT FROM OTHER AGENTS:` sections.
+
 ```
 0. Discovery (plan mode, user Q&A — data paths, env manager)
 1. Understand model (read code + config, check GPUs)
-2. Prerequisites (validate dataset, prepare data, install deps)
-3. Establish baseline
+2. Prerequisites (validate dataset, prepare data, install deps)         [ephemeral]
+3. Establish baseline                                                    [ephemeral]
 4. User checkpoint: review baseline, choose direction
-5. Research (alphaxiv + web search + LLM knowledge for techniques)
-6. Implement proposals (creates git branches, applies + validates code changes)
+5. Research (alphaxiv + web search + LLM knowledge for techniques)       [persistent]
+6. Implement proposals (creates git branches, applies + validates)       [persistent]
 7. Experiment loop (autonomous, branch-aware):
-   a. hp-tune proposes configs (or uses speculative proposals from prior batch)
-   b. experiment runs training (parallel across GPUs)
-   c. monitor watches for divergence (concurrent with experiments)
-   d. analyze + speculative hp-tune decides: continue / pivot / stop
+   a. hp-tune proposes configs (resumed with analyze context)            [persistent]
+   b. experiment runs training (parallel across GPUs)                    [ephemeral]
+   c. monitor watches for divergence (resumed with HP context)           [persistent]
+   d. analyze + speculative hp-tune: continue / pivot / stop             [persistent]
    e. method proposal trigger (if analyze recommends pivot)
    f. autonomous research cadence (periodic in autonomous mode)
-   g. mid-pipeline review (auto-triggers on repeated failures)
+   g. mid-pipeline review (auto-triggers on repeated failures)           [persistent]
 8. Method stacking (if 5+ methods improved over baseline):
    -> Sequentially merges best methods, skip-on-failure, optional HP-tune per step
-9. Generate final report
-   -> Optional self-improvement review
+9. Generate final report                                                 [ephemeral]
+   -> Optional self-improvement review (resumed with session context)    [persistent]
 ```
 
 ## Project Directory Structure
@@ -172,7 +176,7 @@ The plugin creates this structure in your project:
   reports/session-review.md             # Self-improvement review
   results-table.md                      # Auto-generated Markdown results summary
   prepared-data/                        # Prepared dataset (if preprocessing needed)
-  pipeline-state.json                   # Resumable pipeline state
+  pipeline-state.json                   # Resumable pipeline state + agent_registry
   dev_notes.md                          # Running session log
 ```
 

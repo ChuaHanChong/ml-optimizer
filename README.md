@@ -29,7 +29,7 @@ Inspired by [karpathy/autoresearch](https://github.com/karpathy/autoresearch), [
 | **Training Budget** | Optional fixed wall-clock duration or fixed epoch count per experiment for fair comparison |
 | **Goal Anchoring** | `optimization-goals.json` written at Phase 0; all agents read it before acting. Post-dispatch validation catches frozen param changes, scope breaches, dead-end re-proposals |
 | **Behavioral Memory** | `learned-behaviors.json` accumulates HP constraints, method outcomes, divergence patterns per project. All agents have `memory: local` for persistent role-specific learning |
-| **Resumable Subagents** | 6 persistent agents (research, implement, tuning, analysis, monitor, review) are dispatched once and resumed via `SendMessage` for subsequent tasks — preserving accumulated context (search results, HP trends, codebase knowledge) across the pipeline. Falls back to fresh dispatch if resumption fails |
+| **Resumable Subagents** | 5 persistent agents (research, implement, tuning, analysis, monitor) are dispatched once and resumed via `SendMessage` for subsequent tasks — preserving accumulated context (search results, HP trends, codebase knowledge) across the pipeline. Falls back to fresh dispatch if resumption fails |
 | **Inter-Agent Relay** | Orchestrator relays findings between agents via `CONTEXT FROM OTHER AGENTS:` sections — analyze findings reach hp-tune, monitor OOM info reaches hp-tune, research proposals reach implement |
 
 ## Installation
@@ -50,7 +50,7 @@ claude plugin install ml-optimizer --scope local
 claude plugin install ml-optimizer --scope project
 ```
 
-After installation, run `/reload-plugin` or restart Claude Code. The `/optimize` command and all 10 agents will be available automatically.
+After installation, run `/reload-plugin` or restart Claude Code. The `/optimize` command and all 9 agents will be available automatically.
 
 > **Why local/project?** Agent memory (`memory: local`) stores learnings in `.claude/agent-memory-local/` within the project. Local or project-based installation keeps plugin code, agent memory, and experiment data together — scoped to your ML project, not polluting other workspaces.
 
@@ -126,12 +126,11 @@ Only `orchestrate` is directly invocable. All other skills have `disable-model-i
 | `monitor` | Watches training logs for divergence (NaN, explosion, plateau) | Internal |
 | `analyze` | Post-batch analysis — ranks results, recommends next action | Internal |
 | `report` | Generates comprehensive final optimization report | Internal |
-| `review` | Self-improvement analysis and mid-pipeline course correction | Internal |
 | `evolve` | Orchestrates evolutionary code refinement via full ShinkaEvolve pipeline (convert → run → inspect) | Internal |
 
 ## Workflow
 
-6 agents are **persistent** (resumed via `SendMessage` with accumulated context), 4 are **ephemeral** (fresh spawn). The orchestrator relays findings between agents via `CONTEXT FROM OTHER AGENTS:` sections.
+5 agents are **persistent** (resumed via `SendMessage` with accumulated context), 4 are **ephemeral** (fresh spawn). The orchestrator relays findings between agents via `CONTEXT FROM OTHER AGENTS:` sections.
 
 ```
 0. Discovery (plan mode, user Q&A — data paths, env manager)
@@ -145,12 +144,11 @@ Only `orchestrate` is directly invocable. All other skills have `disable-model-i
    a. hp-tune proposes configs (resumed with analyze context)            [persistent]
    b. experiment runs training (parallel across GPUs)                    [ephemeral]
    c. monitor watches for divergence (resumed with HP context)           [persistent]
-   d. analyze + speculative hp-tune: continue / pivot / stop             [persistent]
+   d. analyze: continue / pivot / stop                                   [persistent]
    e. method proposal trigger (if analyze recommends pivot)
    e2. code refinement: tuning (evolve HPs) → evolve → tuning (training HPs)
        → experiment (if analyze recommends code_refinement, scope_level=full)
    f. cadence-based research (when method proposals enabled)
-   g. mid-pipeline review (auto-triggers on repeated failures)           [persistent]
 8. Method stacking (if 5+ methods improved over baseline):
    -> Sequentially merges best methods, skip-on-failure
    -> After each stack step: analyze → tuning (evolve HPs) → evolve
@@ -221,7 +219,7 @@ No build step. No linter. Python 3.10+ required. All scripts use only the standa
 
 ## Agent Definitions
 
-Ten subagent types in `agents/`. The orchestrate skill dispatches agents directly via `Agent(subagent_type="ml-optimizer:<name>-agent")`.
+Nine subagent types in `agents/`. The orchestrate skill dispatches agents directly via `Agent(subagent_type="ml-optimizer:<name>-agent")`.
 
 | Agent | Tools | Model | Preloaded Skill |
 |-------|-------|-------|-----------------|
@@ -230,7 +228,6 @@ Ten subagent types in `agents/`. The orchestrate skill dispatches agents directl
 | `tuning-agent` | Read, Write, Bash, Glob, Grep, Skill, WebSearch, WebFetch | opus (ultrathink) | `ml-optimizer:hp-tune` |
 | `analysis-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | opus (ultrathink) | `ml-optimizer:analyze` |
 | `report-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | opus | `ml-optimizer:report` |
-| `review-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | opus (ultrathink) | `ml-optimizer:review` |
 | `baseline-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | sonnet | `ml-optimizer:baseline` |
 | `monitor-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | sonnet | `ml-optimizer:monitor` |
 | `experiment-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | sonnet | `ml-optimizer:experiment` |
@@ -258,7 +255,6 @@ Exit code `2` = block action. Exit code `0` = allow. Configured in `hooks/hooks.
 
 - **Non-git fallback**: If the project isn't a git repo, file backups replace branch isolation. Experiments run sequentially.
 - **Metric routing**: Monitor/divergence always uses loss. Analyze/hp-tune use the user's `primary_metric`.
-- **Speculative hp-tune**: In Phase 7, hp-tune runs in background alongside analyze. If analyze says "continue", proposals are used immediately — eliminating GPU idle time.
 - **OOM feedback loop**: When experiments OOM, batch size is recorded. Next hp-tune call receives `max_batch_size` to avoid re-proposing failing configs.
 - **All-diverge recovery**: If all experiments in a batch diverge, a recovery batch with halved learning rates runs before stopping.
 - **Research cadence**: When method proposals are enabled, research triggers every N batches. If no new proposals found, cadence doubles (exponential backoff).
@@ -266,7 +262,7 @@ Exit code `2` = block action. Exit code `0` = allow. Configured in `hooks/hooks.
 - **Loop exit conditions**: The experiment loop runs until: (1) target metric achieved, (2) analysis agent recommends "stop" 3 consecutive times (triggers stuck protocol), or (3) user manually stops.
 - **Three-tier result tracking**: Experiments carry `method_tier` (baseline / method_default_hp / method_tuned_hp) and `proposal_source` (paper / llm_knowledge) for attribution analysis.
 - **Method stacking**: After independent method testing, top methods are sequentially merged. Clean merges proceed; conflicts are LLM-resolved. Degrading combinations are skipped. After each successful stack step, the analysis agent assesses whether methods are interfering — if stacked gain < best individual, the evolve skill optimizes code interactions via ShinkaEvolve.
-- **Goal anchoring & behavioral memory**: `scripts/goal_memory.py` maintains `optimization-goals.json` (goal anchor) and `learned-behaviors.json` (accumulated learnings). The orchestrator validates agent outputs post-dispatch. All 10 agents have `memory: local` for persistent role-specific memory at `.claude/agent-memory-local/<agent-name>/` in the target project.
+- **Goal anchoring & behavioral memory**: `scripts/goal_memory.py` maintains `optimization-goals.json` (goal anchor) and `learned-behaviors.json` (accumulated learnings). The orchestrator validates agent outputs post-dispatch. All 9 agents have `memory: local` for persistent role-specific memory at `.claude/agent-memory-local/<agent-name>/` in the target project.
 - **Overfitting detection**: Monitor compares train vs val metrics to detect overfitting (val worsens while train improves). Reports severity and triggers regularization prioritization.
 - **HP interaction detection**: `detect_hp_interactions()` identifies 2-way HP interaction effects (e.g., "high LR only works with small batch size"). Integrated into analysis output.
 - **Adaptive branch budget**: HP-tune allocates more experiments to promising branches and fewer to struggling ones. Scores by improvement × confidence factor.

@@ -1,12 +1,12 @@
 ---
 name: run-diagnostic
-description: "Run end-to-end diagnostics — validates plugin structure, dispatches all 10 agents, and runs a full optimization pipeline on the test fixture via live Agent() dispatch."
+description: "Run end-to-end diagnostics — validates plugin structure, dispatches all 9 agents, and runs a full optimization pipeline on the test fixture via live Agent() dispatch."
 allowed-tools: "Bash, Read, Write, Edit, Glob, Grep, Agent, Skill, WebSearch, WebFetch"
 ---
 
 # ML Optimizer End-to-End Diagnostic
 
-You are running a comprehensive diagnostic of the ml-optimizer plugin. This validates plugin structure via pytest, exercises all 14 script CLIs, tests hook security boundaries, validates the resumable subagent infrastructure (agent registry, SendMessage patterns, context relay), confirms all 10 agents dispatch correctly, and runs the full Phase 2→9 pipeline via live Agent() dispatch — the only way to test the multi-agent orchestration end-to-end.
+You are running a comprehensive diagnostic of the ml-optimizer plugin. This validates plugin structure via pytest, exercises all 14 script CLIs, tests hook security boundaries, validates the resumable subagent infrastructure (agent registry, SendMessage patterns, context relay), confirms all 9 agents dispatch correctly, and runs the full Phase 2→9 pipeline via live Agent() dispatch — the only way to test the multi-agent orchestration end-to-end.
 
 ## Step 1: Run full test suite (pytest)
 
@@ -284,7 +284,7 @@ print('agent_registry: all 4 checks passed')
 
 ```bash
 # Verify persistent agents have "Resumable Agent" section
-for agent in research implement tuning analysis monitor review; do
+for agent in research implement tuning analysis monitor; do
   if grep -q "Resumable Agent" "$PLUGIN_ROOT/agents/${agent}-agent.md"; then
     echo "PASS: ${agent}-agent has Resumable Agent section"
   else
@@ -336,8 +336,8 @@ echo "  Context relay sections: $ctx_count (expected >=5)"
 fb_count=$(grep -ci "fall back" "$REFS/phase-7-experiment-loop.md")
 echo "  Fallback instructions: $fb_count (expected >=5)"
 
-# Verify all 6 persistent agents have registry entries in phase-7
-for agent in research implement tuning analysis monitor review; do
+# Verify all 5 persistent agents have registry entries in phase-7
+for agent in research implement tuning analysis monitor; do
   if grep -q "agent_registry\[\"$agent\"\]" "$REFS/phase-7-experiment-loop.md"; then
     echo "  PASS: $agent has agent_registry entry"
   else
@@ -355,10 +355,10 @@ for agent in implement tuning; do
 done
 
 echo "=== Phase 9: resume patterns ==="
-if grep -q 'agent_registry\["review"\]' "$REFS/phase-9-report.md"; then
-  echo "  PASS: review has resume pattern"
+if grep -q 'agent_registry\["analysis"\]' "$REFS/phase-9-report.md"; then
+  echo "  PASS: analysis has resume pattern"
 else
-  echo "  FAIL: review MISSING resume pattern"
+  echo "  FAIL: analysis MISSING resume pattern"
 fi
 
 # Verify ephemeral agents NOT in registry
@@ -391,7 +391,7 @@ Report results in a summary table:
 ```
 Resumable Subagent Infrastructure:
   agent_registry pipeline_state:  [✓/✗] — save/load/preserve/clear
-  Persistent agent sections:      [✓/✗] — 6/6 have Resumable Agent
+  Persistent agent sections:      [✓/✗] — 5/5 have Resumable Agent
   Ephemeral agent sections:       [✓/✗] — 4/4 correctly absent
   Orchestrate registry docs:      [✓/✗] — N/7 patterns found
   Phase 5/6 ID saves:             [✓/✗]
@@ -404,9 +404,9 @@ Resumable Subagent Infrastructure:
 
 ## Step 5: Agent dispatch smoke tests
 
-Dispatch each of the 10 agents with a minimal smoke-test prompt. Run them in 2 batches for speed.
+Dispatch each of the 9 agents with a minimal smoke-test prompt. Run them in 2 batches for speed.
 
-**For persistent agents (research, implement, tuning, analysis, monitor, review):** Also verify the agent confirms it understands resumption — it should mention "Resumable Agent" or "SendMessage" or "accumulated knowledge" when asked about its capabilities.
+**For persistent agents (research, implement, tuning, analysis, monitor):** Also verify the agent confirms it understands resumption — it should mention "Resumable Agent" or "SendMessage" or "accumulated knowledge" when asked about its capabilities.
 
 **Batch 1 — Procedural agents (model: sonnet):**
 
@@ -424,7 +424,6 @@ For each, dispatch with: "This is a smoke test. List your tools and confirm you 
 3. `ml-optimizer:tuning-agent`
 4. `ml-optimizer:analysis-agent`
 5. `ml-optimizer:report-agent`
-6. `ml-optimizer:review-agent`
 
 For each agent, verify:
 
@@ -1269,7 +1268,7 @@ print(f'✓ Excalidraw: {len(elems)} elements') if elems else print('✗ Excalid
 Agent(
   description: "Diagnostic: self-improvement review",
   prompt: "Ultrathink. Run self-improvement review. Parameters: project_root: /tmp/ml-opt-diagnostic, exp_root: /tmp/ml-opt-diagnostic/experiments, primary_metric: loss, lower_is_better: true, scope: session. After completing, update your agent memory with optimization anti-patterns observed and self-improvement suggestions for this project.",
-  subagent_type: "ml-optimizer:review-agent"
+  subagent_type: "ml-optimizer:analysis-agent"
 )
 ```
 
@@ -1545,7 +1544,7 @@ print(f'✓ [23/25] Inter-agent relay: {relay_count} context relay sections') if
 python3 -c "
 from pathlib import Path
 agents_dir = Path('$PLUGIN_ROOT/agents')
-persistent = ['research', 'implement', 'tuning', 'analysis', 'monitor', 'review']
+persistent = ['research', 'implement', 'tuning', 'analysis', 'monitor']
 ephemeral = ['prerequisites', 'baseline', 'experiment', 'report']
 issues = []
 for a in persistent:
@@ -1559,7 +1558,7 @@ for a in ephemeral:
 if issues:
     print('✗ [24/25] Persistent/ephemeral: ' + '; '.join(issues))
 else:
-    print('✓ [24/25] Persistent/ephemeral: 6 persistent + 4 ephemeral correctly classified')
+    print('✓ [24/25] Persistent/ephemeral: 5 persistent + 4 ephemeral correctly classified')
 "
 
 # 25. Evolve file handoff (ShinkaEvolve integration)
@@ -1616,7 +1615,7 @@ Structural tests (pytest):  X/Y passed (full suite — 10 test files)
 Script CLI smoke tests:     X/18 passed (14 scripts, some multi-subcommand)
 Hook functional tests:      X/19 passed (8 hooks)
 Resumable subagent infra:   X/Y checks passed (registry, patterns, docs)
-Agent smoke tests:          10/10 dispatched (memory: local confirmed)
+Agent smoke tests:          9/9 dispatched (memory: local confirmed)
 
 Full Pipeline (live Agent() dispatch):
   Phase 2 Prerequisites:    [passed/failed] — schema [valid/invalid]
@@ -1668,7 +1667,7 @@ Feature Verification (17 items):
   21. Status line:            [✓/✗] — active with state, silent without
   22. Resumable subagents:    [✓/✗] — agent_registry in pipeline state, SendMessage patterns in phase refs
   23. Inter-agent relay:      [✓/✗] — CONTEXT FROM OTHER AGENTS in phase-7 dispatches
-  24. Persistent/ephemeral:   [✓/✗] — 6 persistent + 4 ephemeral correctly classified
+  24. Persistent/ephemeral:   [✓/✗] — 5 persistent + 4 ephemeral correctly classified
   25. Evolve file handoff:    [✓/✗] — ShinkaEvolve round-trip works
 
 Skipped phases (by design):

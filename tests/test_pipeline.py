@@ -265,7 +265,7 @@ class TestStatePersistence:
         full_registry = {
             "research": "agent-old-1", "implement": "agent-old-2",
             "tuning": "agent-old-3", "analysis": "agent-old-4",
-            "monitor": "agent-old-5", "review": "agent-old-6",
+            "monitor": "agent-old-5",
         }
         choices = {"primary_metric": "accuracy"}
         save_state(7, 5, [], str(tmp_path),

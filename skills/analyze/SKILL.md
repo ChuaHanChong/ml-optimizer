@@ -327,3 +327,116 @@ Include in the analysis output:
 - `methods_with_improvement`: Count of unique code_branches whose best result beats baseline.
   Compute using `rank_methods_for_stacking()` from `scripts/result_analyzer.py`.
 - `stacking_candidates`: List of method names (code_proposal values) that improved, ranked by improvement magnitude.
+
+---
+
+## Session Review Mode
+
+When dispatched with `scope: "session"`, switch from batch analysis to session review mode. Instead of analyzing a single batch, review the entire optimization session to generate self-improvement recommendations. This is advisory only — present insights and recommendations, do NOT auto-apply changes.
+
+### Review Inputs
+
+From the orchestrator:
+- `project_root`: Project root directory
+- `exp_root`: Path to experiments/ directory (default: `<project_root>/experiments`)
+- `primary_metric`: The metric that was optimized
+- `lower_is_better`: Whether lower values are better for the primary metric
+- `scope`: `"session"`
+
+### Review Step 1: Load Error and Experiment Data
+
+1. Run session summary and pattern detection:
+```bash
+python3 scripts/error_tracker.py <exp_root> summary
+python3 scripts/error_tracker.py <exp_root> patterns
+```
+
+2. Read supporting files:
+   - `<exp_root>/reports/error-log.json` — full error event list
+   - `<exp_root>/reports/batch-*-analysis.md` — batch analysis reports
+   - `<exp_root>/dev_notes.md` — session narrative
+
+3. Read experiment data:
+   - `<exp_root>/results/baseline.json` — baseline metrics
+   - `<exp_root>/results/exp-*.json` — all experiment results
+   - `<exp_root>/results/implementation-manifest.json` — which proposals were implemented
+   - `<exp_root>/reports/research-findings*.md` — what techniques were researched
+   - `<exp_root>/optimization-goals.json` — what the user wanted to achieve
+   - `<exp_root>/learned-behaviors.json` — what was learned during the session
+
+### Review Step 2: Compute Success and Proposal Metrics
+
+1. Compute success metrics:
+```bash
+python3 scripts/error_tracker.py <exp_root> success <primary_metric> <lower_is_better>
+```
+Returns success rate, improvement rate, best improvement, duration analysis, time wasted on failures.
+
+2. Compute proposal outcomes:
+```bash
+python3 scripts/error_tracker.py <exp_root> proposals <primary_metric> <lower_is_better>
+```
+Returns research proposal outcomes, HP proposal stats, implementation stats.
+
+3. Load suggestion history to detect repeats:
+```bash
+python3 scripts/error_tracker.py <exp_root> suggestion-history
+```
+
+4. Query scope violations from behavioral memory:
+```bash
+python3 scripts/goal_memory.py <exp_root> query-behaviors scope_violation
+```
+
+### Review Step 3: Rank Patterns and Generate Recommendations
+
+1. Rank all detected patterns by impact score:
+```bash
+python3 scripts/error_tracker.py <exp_root> rank <total_experiments>
+```
+Where `<total_experiments>` comes from the success metrics output. Use this ranking to order suggestions — highest score first.
+
+2. For each pattern (in rank order), generate a specific, actionable recommendation:
+
+```markdown
+### Recommendation: [Concise Title]
+- **Severity:** [Critical / Warning / Info]
+- **Evidence:** [Which error events, experiments, or patterns support this]
+- **Problem:** [What went wrong, with specifics from the error log]
+- **Recommendation:** [What to do differently next time]
+- **Expected impact:** [What would improve]
+- **Confidence:** [High / Medium / Low — based on evidence strength and sample size]
+```
+
+### Review Step 4: Write session-review.md
+
+Write the review to `<exp_root>/reports/session-review.md` containing:
+- Executive summary (total experiments, success/failure/diverge counts, success rate, improvement rate, error events, patterns detected)
+- What worked (top performing configurations, effective patterns, efficiency highlights)
+- Proposal outcomes (research proposals table, implementation stats, HP success patterns)
+- Error timeline
+- Detected patterns with occurrences and affected experiments
+- All improvement suggestions in the recommendation format above
+
+After writing, log each suggestion:
+```bash
+python3 scripts/error_tracker.py <exp_root> log-suggestion <pattern_id> <scope>
+```
+
+### Review Rules
+
+1. **Advisory only** — present recommendations, do NOT auto-apply changes
+2. **Cite specific evidence** — every recommendation must reference concrete files (e.g., `experiments/results/exp-003.json`), exact values (e.g., "diverged at lr=0.05, NaN at step 42"), and specific `event_id` values from the error log
+3. **Distinguish patterns from one-offs** — a single divergence is an event; three divergences at similar LRs is a pattern worth recommending against
+4. **Note confidence based on sample size** — 2 experiments is Low confidence, 5+ is Medium, 10+ with consistent results is High
+5. **Focus on strategy** — recommend HP ranges, methods to try/avoid, budget allocation, scope changes
+6. **Check for repeats** — if a pattern was previously flagged (from suggestion history), note "Previously flagged" and assess whether the recommendation is still relevant
+7. **Present only the top 3** most impactful recommendations to the user
+
+### Review Error Handling
+
+- **No error log exists:** Report "No errors tracked in this session." Still run success metrics and proposal outcomes if experiment results exist.
+- **Empty error log:** Report "0 events tracked." Still analyze experiment outcomes for success patterns.
+- **No experiment results:** Report "No experiments found." Only analyze error events.
+- **Corrupt JSON files:** Skip the corrupt file, note it as a warning in the review.
+- **Missing primary_metric or lower_is_better:** Skip success metrics and proposal outcomes, note in the review that these inputs are needed for full analysis.

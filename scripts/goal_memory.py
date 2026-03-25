@@ -28,6 +28,7 @@ BEHAVIOR_CATEGORIES = [
     "resource_constraint",
     "training_insight",
     "scope_violation",
+    "goal_update",
 ]
 
 GOALS_REQUIRED_PATHS = [
@@ -99,6 +100,65 @@ def init_goals(exp_root: str, goals: dict) -> str:
     path = _goals_path(exp_root)
     _atomic_write_json(path, goals)
     return str(path)
+
+
+def update_goals(exp_root: str, updates: dict) -> dict:
+    """Merge updates into existing optimization-goals.json.
+
+    Supports partial updates — only the provided fields are changed.
+    Nested dicts are merged (not replaced). Logs the change to
+    learned-behaviors.json under category 'goal_update'.
+
+    Args:
+        exp_root: Path to experiments/ directory.
+        updates: Dict with partial goal structure. Example:
+            {"objective": {"target_value": 85.0}}
+            {"constraints": {"frozen_parameters": ["lr"]}}
+            {"objective": {"primary_metric": "f1", "lower_is_better": false}}
+
+    Returns:
+        {"updated": True, "changes": [...], "path": str} on success.
+        {"updated": False, "error": str} on failure.
+    """
+    goals = load_goals(exp_root)
+    if goals is None:
+        return {"updated": False, "error": "No optimization-goals.json found"}
+
+    changes: list[str] = []
+
+    def _merge(target: dict, source: dict, prefix: str = "") -> None:
+        for key, value in source.items():
+            full_key = f"{prefix}.{key}" if prefix else key
+            if isinstance(value, dict) and isinstance(target.get(key), dict):
+                _merge(target[key], value, full_key)
+            elif key in target and target[key] != value:
+                changes.append(f"{full_key}: {target[key]} → {value}")
+                target[key] = value
+            elif key not in target:
+                changes.append(f"{full_key}: (new) → {value}")
+                target[key] = value
+
+    _merge(goals, updates)
+
+    if not changes:
+        return {"updated": False, "error": "No changes detected"}
+
+    # Re-validate after merge
+    result = validate_goals(goals)
+    if not result["valid"]:
+        return {"updated": False, "error": f"Invalid after update: {'; '.join(result['errors'])}"}
+
+    goals["updated_at"] = datetime.now(timezone.utc).isoformat()
+    path = _goals_path(exp_root)
+    _atomic_write_json(path, goals)
+
+    # Log the change to behavioral memory
+    log_behavior(exp_root, "goal_update", {
+        "changes": changes,
+        "timestamp": goals["updated_at"],
+    })
+
+    return {"updated": True, "changes": changes, "path": str(path)}
 
 
 def load_goals(exp_root: str) -> dict | None:
@@ -719,6 +779,7 @@ Usage: python3 goal_memory.py <exp_root> <action> [args...]
 
 Actions:
   init-goals <goals_json>              Write optimization-goals.json
+  update-goals <updates_json>          Merge partial updates into goals (mid-run)
   read-goals                           Print goals to stdout
   log-behavior <category> <entry_json> Append a learned behavior
   query-behaviors [category] [recent]  Query behaviors (optionally filtered, recent=N for last N)
@@ -749,6 +810,15 @@ def main(argv: list[str] | None = None) -> int:
             goals = json.loads(args[2])
             path = init_goals(exp_root, goals)
             print(json.dumps({"status": "ok", "path": path}))
+
+        elif action == "update-goals":
+            if len(args) < 3:
+                print("Error: update-goals requires a JSON string argument", file=sys.stderr)
+                return 1
+            updates = json.loads(args[2])
+            result = update_goals(exp_root, updates)
+            print(json.dumps(result, indent=2))
+            return 0 if result.get("updated") else 1
 
         elif action == "read-goals":
             goals = load_goals(exp_root)

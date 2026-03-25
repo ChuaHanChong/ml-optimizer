@@ -16,6 +16,7 @@ from goal_memory import (
     log_behavior,
     main,
     sync_from_errors,
+    update_goals,
     validate_agent_output,
 )
 
@@ -81,6 +82,69 @@ class TestGoalInitialization:
         exp.mkdir()
         (exp / "optimization-goals.json").write_text("{bad json")
         assert load_goals(str(exp)) is None
+
+
+# ---------------------------------------------------------------------------
+# TestGoalUpdates
+# ---------------------------------------------------------------------------
+
+
+class TestGoalUpdates:
+    """Mid-run goal updates via update_goals()."""
+
+    def test_update_target_value(self, tmp_path):
+        """Partial update merges into existing goals."""
+        init_goals(str(tmp_path), SAMPLE_GOALS)
+        result = update_goals(str(tmp_path), {"objective": {"target_value": 85.0}})
+        assert result["updated"] is True
+        assert len(result["changes"]) == 1
+        assert "85.0" in result["changes"][0]
+        goals = load_goals(str(tmp_path))
+        assert goals["objective"]["target_value"] == 85.0
+        assert goals["objective"]["primary_metric"] == "accuracy"  # unchanged
+
+    def test_update_frozen_parameters(self, tmp_path):
+        init_goals(str(tmp_path), SAMPLE_GOALS)
+        result = update_goals(str(tmp_path), {"constraints": {"frozen_parameters": ["lr"]}})
+        assert result["updated"] is True
+        assert load_goals(str(tmp_path))["constraints"]["frozen_parameters"] == ["lr"]
+
+    def test_update_primary_metric(self, tmp_path):
+        init_goals(str(tmp_path), SAMPLE_GOALS)
+        result = update_goals(str(tmp_path), {
+            "objective": {"primary_metric": "f1", "lower_is_better": False}
+        })
+        assert result["updated"] is True
+        goals = load_goals(str(tmp_path))
+        assert goals["objective"]["primary_metric"] == "f1"
+        assert goals["objective"]["lower_is_better"] is False
+
+    def test_update_no_changes(self, tmp_path):
+        init_goals(str(tmp_path), SAMPLE_GOALS)
+        goals = load_goals(str(tmp_path))
+        result = update_goals(str(tmp_path), {
+            "objective": {"primary_metric": goals["objective"]["primary_metric"]}
+        })
+        assert result["updated"] is False
+        assert "No changes" in result["error"]
+
+    def test_update_logs_to_behaviors(self, tmp_path):
+        init_goals(str(tmp_path), SAMPLE_GOALS)
+        update_goals(str(tmp_path), {"objective": {"target_value": 80.0}})
+        behaviors = get_behaviors(str(tmp_path), category="goal_update")
+        assert len(behaviors) == 1
+        assert "changes" in behaviors[0]
+
+    def test_update_no_goals_file(self, tmp_path):
+        result = update_goals(str(tmp_path), {"objective": {"target_value": 80.0}})
+        assert result["updated"] is False
+        assert "No optimization-goals.json" in result["error"]
+
+    def test_update_adds_timestamp(self, tmp_path):
+        init_goals(str(tmp_path), SAMPLE_GOALS)
+        update_goals(str(tmp_path), {"objective": {"target_value": 80.0}})
+        goals = load_goals(str(tmp_path))
+        assert "updated_at" in goals
 
 
 # ---------------------------------------------------------------------------

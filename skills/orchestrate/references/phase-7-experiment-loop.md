@@ -202,13 +202,8 @@ When the implementation manifest contains multiple code branches:
 
 ## Loop Iteration:
 
-1. **Get HP configs** (use speculative proposals from previous iteration if available):
-   - **If speculative proposals are available from the previous iteration's background hp-tune:**
-     1. Validate speculative proposals before use (see "Speculative Proposal Validation" below)
-     2. If valid → use them as this iteration's configs. Skip hp-tune invocation entirely.
-     3. If invalid → discard them and invoke hp-tune synchronously as normal.
-   - **Otherwise (first iteration, or speculative proposals were discarded):**
-     Dispatch the tuning agent (resume-or-dispatch pattern):
+1. **Get HP configs:**
+   Dispatch the tuning agent (resume-or-dispatch pattern):
 
      **IF `agent_registry["tuning"]` is not null** (agent exists from a previous iteration):
      ```
@@ -317,6 +312,11 @@ When the implementation manifest contains multiple code branches:
      2. Set `status: "timeout"` in the experiment result JSON
      3. Log to error tracker: `category: "timeout", severity: "warning", source: "orchestrate", message: "Experiment <exp_id> timed out after <duration>s (limit: <max_duration>s)"`
      4. Continue with the remaining experiments in the batch
+   - **Incremental dashboard updates:** As individual experiments complete, regenerate the live dashboard so users can monitor progress in real-time:
+     ```bash
+     python3 scripts/dashboard.py <exp_root> --live
+     ```
+     Log to dev_notes: "Experiment {exp_id} completed mid-batch: {primary_metric}={value}"
    - Save pipeline state after each batch completes
 
    ### Post-Batch Completeness Validation
@@ -334,8 +334,8 @@ When the implementation manifest contains multiple code branches:
    3. Otherwise set `status: "failed"` in the result file with `notes: "Completeness validation failed: <errors>"`
    4. Continue — analyze will skip failed experiments
 
-5. **Analyze results + speculative hp-tune (parallel):**
-   - **Start analyze synchronously** (resume-or-dispatch pattern):
+5. **Analyze results:**
+   Dispatch the analysis agent (resume-or-dispatch pattern):
 
      **IF `agent_registry["analysis"]` is not null** (agent exists from a previous batch):
      ```
@@ -364,30 +364,6 @@ When the implementation manifest contains multiple code branches:
 
      - It compares all experiments, ranks them, identifies patterns
      - It recommends: continue, pivot, or stop
-   - **At the SAME TIME, start speculative hp-tune in background:**
-
-     **IF `agent_registry["tuning"]` is not null:**
-     ```
-     SendMessage(
-       to: agent_registry["tuning"],
-       message: "SPECULATIVE hp-tune for next batch — the orchestrator may discard these results if analyze recommends stop or pivot. Parameters: project_root: {project_root}, num_gpus: {num_gpus}, search_space: {search_space}, iteration: {iteration + 1}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, code_branches: {code_branches}, warm_start_enabled: {warm_start_enabled or false}, available_checkpoints: {available_checkpoints_json or {}}, branch_scores: {branch_scores_json or {}}."
-     )
-     // SendMessage auto-resumes in background — do NOT block on result
-     ```
-     → If `SendMessage` fails: fall back to the `Agent()` dispatch below, update `agent_registry["tuning"]` with the new agentId.
-
-     **ELSE** (first dispatch, or agent not yet created):
-     ```
-     Agent(
-       description: "Speculative hp-tune for next batch",
-       prompt: "Ultrathink. This is a SPECULATIVE proposal — the orchestrator may discard these results if analyze recommends stop or pivot. Parameters: project_root: {project_root}, num_gpus: {num_gpus}, search_space: {search_space}, iteration: {iteration + 1}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, code_branches: {code_branches}, warm_start_enabled: {warm_start_enabled or false}, available_checkpoints: {available_checkpoints_json or {}}, branch_scores: {branch_scores_json or {}}.",
-       subagent_type: "ml-optimizer:tuning-agent",
-       run_in_background: true
-     )
-     ```
-     → Save returned `agentId` to `agent_registry["tuning"]`
-     → Persist registry: `save_state(..., agent_registry=agent_registry)`
-   - Analyze completes first (it's synchronous). Speculative hp-tune may still be running.
    - **Live dashboard update:** After analyze completes, regenerate the dashboard so users can monitor progress in real-time:
      ```bash
      python3 scripts/dashboard.py <exp_root> --live
@@ -397,16 +373,34 @@ When the implementation manifest contains multiple code branches:
      python3 scripts/goal_memory.py <exp_root> validate-output analyze '<analyze_output_json>'
      ```
      If metric mismatch detected: log a critical error to the error tracker. Do NOT trust the analysis — the metric confusion could cause wrong ranking of experiments.
-   - **Wait policy:** If analyze says "continue" and speculative hp-tune has not completed, wait up to 120 seconds. If it completes in time, validate and use. If it doesn't, discard and invoke hp-tune synchronously. Log timeout to error tracker with `category: "agent_failure", severity: "info"`.
-   - If analyze says "pivot" or "stop", discard speculative hp-tune immediately — do not wait.
+
+5b. **Mid-run goal adjustment (if user provides input):**
+
+   The user can type goal changes at any time during the session. If the user has provided input after the batch analysis is presented (e.g., "change target to 85%" or "freeze learning rate at 0.01"), process it as a goal update:
+
+   1. Parse the user's request into a goal update
+   2. Apply via:
+      ```bash
+      python3 scripts/goal_memory.py <exp_root> update-goals '<updates_json>'
+      ```
+      Example updates:
+      - Target: `{"objective": {"target_value": 85.0}}`
+      - Metric: `{"objective": {"primary_metric": "f1", "lower_is_better": false}}`
+      - Freeze: `{"constraints": {"frozen_parameters": ["lr"]}}`
+      - Scope: `{"constraints": {"scope_level": "architecture"}}`
+   3. Update `user_choices` in pipeline state to match
+   4. Log to dev_notes: "Mid-run goal update at iteration {N}: {changes}"
+   5. The next hp-tune, research, and analyze dispatches will use the updated goals
+
+   If the user hasn't typed anything, continue immediately — no checkpoint, no pause.
+
+   **Important:** If the user changes `primary_metric`, all future experiment rankings use the new metric. Past experiments are NOT re-ranked — the change applies going forward only.
 
 6. **Decision:**
-   - If analyze says **continue** AND speculative proposals are available and valid:
-     - Use speculative proposals → loop back to step 2 immediately (zero GPU idle time)
-   - If analyze says **continue** BUT speculative proposals are invalid or unavailable:
-     - Discard speculative proposals (if Agent failure, log to error tracker with `category: "agent_failure", source: "orchestrate"`). Invoke hp-tune synchronously → loop back to step 2
+   - If analyze says **continue**:
+     - Invoke hp-tune → loop back to step 2
    - If analyze says **pivot**:
-     - Discard speculative proposals. Apply pivot adjustments → invoke hp-tune synchronously → loop back to step 2
+     - Apply pivot adjustments → invoke hp-tune → loop back to step 2
      **Pivot dispatch by type:**
      - `"branch_test"`: Pass analyze's suggestion to hp-tune. Generate configs for untested branches with baseline HPs. No research needed.
      - `"hp_expand"`: Widen the search space around the best config (extend LR range by 2× in each direction). Pass updated `search_space` to hp-tune.
@@ -416,7 +410,6 @@ When the implementation manifest contains multiple code branches:
      - `"method_proposal"`, `"qualitative_change"`: Route to step 7 (existing handling).
      - **Unknown pivot_type:** Treat as `"hp_expand"` (safest default). Log to error tracker.
    - If analyze says **stop**:
-     - Discard speculative proposals.
      - Log the stop recommendation. Increment `consecutive_stop_count` in pipeline state (reset to 0 on "continue" or "pivot"). Persist via `save_state()` at the end of each iteration. On pipeline resume, read from state (default 0).
        - **On 3 consecutive stops → Stuck Protocol** (instead of immediate exit):
          If `consecutive_stop_count >= 3` AND `stuck_protocol_triggered` is false:
@@ -669,72 +662,14 @@ When the implementation manifest contains multiple code branches:
 
    **If conditions NOT met:** Increment `batches_since_last_research` and continue.
 
-9. **Mid-pipeline review check** (after step 6/7/8, before looping):
-   Run pattern detection:
-   ```bash
-   python3 scripts/error_tracker.py <exp_root> patterns
-   ```
-   If `wasted_budget` pattern has occurrences ≥ 3, OR if the last 2 consecutive batches both had zero successful experiments:
-
-   Start review in background (resume-or-dispatch pattern):
-
-     **IF `agent_registry["review"]` is not null** (agent exists from a previous review):
-     ```
-     SendMessage(
-       to: agent_registry["review"],
-       message: "Async mid-pipeline review.
-         CONTEXT FROM OTHER AGENTS:
-         - ANALYZE: {last_analysis_summary}
-         - HP-TUNE: {tuning_efficiency}
-         - MONITOR: {divergence_patterns}
-         Parameters: project_root: {project_root}, exp_root: {exp_root}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, scope: session."
-     )
-     // SendMessage auto-resumes in background — do NOT block on result
-     ```
-     → If `SendMessage` fails: fall back to the `Agent()` dispatch below, update `agent_registry["review"]` with the new agentId.
-
-     **ELSE** (first dispatch — no existing agent):
-     ```
-     Agent(
-       description: "Async mid-pipeline review",
-       prompt: "Ultrathink. Run a mid-pipeline review. Parameters: project_root: {project_root}, exp_root: {exp_root}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, scope: session.",
-       subagent_type: "ml-optimizer:review-agent",
-       run_in_background: true
-     )
-     ```
-     → Save returned `agentId` to `agent_registry["review"]`
-     → Persist registry: `save_state(..., agent_registry=agent_registry)`
-
-   - Continue to next loop iteration immediately (do NOT wait for review)
-   - At the START of the next loop iteration (before step 1), check if the background review has completed:
-     - If completed successfully: read suggestions and apply course corrections (narrow search space, prune branches, stop)
-     - If completed with error or no output: log as `agent_failure` to error tracker, skip course corrections for this iteration
-     - If still running: continue without waiting (suggestions will be applied in the following iteration)
-   - **Design note:** Applying review suggestions one batch late is intentional — blocking the pipeline to wait for review would waste GPU time. Review suggestions are strategic (search space narrowing, branch pruning), so a one-batch delay is acceptable.
-   - Log: "Mid-pipeline review started in background"
-   - Log the mid-pipeline review:
-     ```bash
-     python3 scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"orchestrate","message":"Mid-pipeline review triggered after consecutive failures","phase":7,"iteration":<iteration>,"context":{"trigger":"consecutive_failures"}}'
-     ```
-
-10. **Loop back:**
+9. **Loop back:**
 
     **End-of-iteration sync:** Keep behavioral memory current with the latest error events:
     ```bash
     python3 scripts/goal_memory.py <exp_root> sync-from-errors
     ```
 
-    After steps 6/7/8/9, increment `batches_since_last_research` and return to step 1 (Get HP configs). The loop continues until the Decision step (6) forces an exit.
-
-## Speculative Proposal Validation
-
-Before using speculative proposals from a previous iteration's background hp-tune, verify ALL of these:
-
-1. **Branch validity:** All `code_branch` values in proposals still exist in the active branch list (none were pruned by analyze)
-2. **No search space conflict:** If analyze recommended narrowing the search space (via pivot), check that speculative proposals fall within the new bounds
-3. **No duplicates:** Speculative proposals don't duplicate experiments from the just-completed batch
-
-If ANY check fails, discard ALL speculative proposals and invoke hp-tune synchronously with updated parameters.
+    After steps 6/7/8, increment `batches_since_last_research` and return to step 1 (Get HP configs). The loop continues until the Decision step (6) forces an exit.
 
 ## Parallel GPU Dispatch Pattern
 

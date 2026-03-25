@@ -23,13 +23,13 @@ If any are missing, log to error tracker (`category: "config_error"`) and warn t
    AskUserQuestion: "Would you like a self-improvement review? It analyzes what worked, what didn't, and suggests plugin improvements for future sessions."
    Options: ["Yes, run review", "No, skip"]
    ```
-   If yes, dispatch the review agent:
+   If yes, dispatch the analysis agent in review mode:
 
-   **IF `agent_registry["review"]` is not null** (agent exists from mid-pipeline reviews in Phase 7):
+   **IF `agent_registry["analysis"]` is not null** (agent exists from batch analysis in Phase 7):
    ```
    SendMessage(
-     to: agent_registry["review"],
-     message: "End-of-session self-improvement review. You have context from any mid-pipeline reviews.
+     to: agent_registry["analysis"],
+     message: "End-of-session self-improvement review. You have context from batch analyses.
        CONTEXT FROM OTHER AGENTS:
        - ANALYZE: final analysis across all batches
        - RESEARCH: all proposals attempted, {N_successful}/{N_total} improved
@@ -37,17 +37,17 @@ If any are missing, log to error tracker (`category: "config_error"`) and warn t
        Parameters: project_root: {project_root}, exp_root: {exp_root}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, scope: both."
    )
    ```
-   → If `SendMessage` fails (agent no longer reachable): fall back to the `Agent()` dispatch below, update `agent_registry["review"]` with the new agentId.
+   → If `SendMessage` fails (agent no longer reachable): fall back to the `Agent()` dispatch below, update `agent_registry["analysis"]` with the new agentId.
 
    **ELSE** (first dispatch — no existing agent):
    ```
    Agent(
      description: "Self-improvement review",
      prompt: "Ultrathink. Run self-improvement review. Parameters: project_root: {project_root}, exp_root: {exp_root}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, scope: both.",
-     subagent_type: "ml-optimizer:review-agent"
+     subagent_type: "ml-optimizer:analysis-agent"
    )
    ```
-   → Save returned `agentId` to `agent_registry["review"]`
+   → Save returned `agentId` to `agent_registry["analysis"]`
    → Persist registry: `save_state(..., agent_registry=agent_registry)`
 4. Generate the progress dashboard:
    ```bash

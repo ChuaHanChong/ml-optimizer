@@ -25,13 +25,13 @@ ENTRY POINT
                     v
 
 ================================================================================
-                          AGENT ROSTER (10 types)
+                          AGENT ROSTER (9 types)
 ================================================================================
 
   All agents have memory: local (persistent at .claude/agent-memory-local/)
   All agents read goal_memory.py summary before acting (Phase 7+)
 
-  6 PERSISTENT agents: resumed via SendMessage (accumulated context)
+  5 PERSISTENT agents: resumed via SendMessage (accumulated context)
   4 EPHEMERAL agents:  fresh Agent() spawn each time
 
   DISPATCH PROTOCOL:
@@ -100,11 +100,6 @@ ENTRY POINT
   +-------------------+  Tools: Bash, Read, Write, Glob, Grep, Skill,
   | report-agent      |  WebSearch, WebFetch
   | (EPHEMERAL)       |  Skill: ml-optimizer:report
-  +-------------------+
-
-  +-------------------+  Tools: Bash, Read, Write, Glob, Grep, Skill,
-  | review-agent      |  WebSearch, WebFetch
-  | (PERSISTENT)      |  Skill: ml-optimizer:review
   +-------------------+
 
 ================================================================================
@@ -380,13 +375,8 @@ ENTRY POINT
   |                    |                                                     |
   |                    v                                                     |
   |  +--------------------------------------------------------------------+  |
-  |  |  7.4  ANALYZE + SPECULATIVE HP-TUNE (parallel)                     |  |
+  |  |  7.4  ANALYZE                                                      |  |
   |  |  Agent: analysis-agent --> ml-optimizer:analyze skill              |  |
-  |  |                                                                    |  |
-  |  |  Runs IN PARALLEL with a speculative hp-tune call:                 |  |
-  |  |    - If analyze says "continue" and speculative proposals pass     |  |
-  |  |      validation → use them immediately (saves 30-60s idle time)    |  |
-  |  |    - If analyze says stop/pivot → discard speculative proposals    |  |
   |  |                                                                    |  |
   |  |  Post-analyze actions:                                             |  |
   |  |    - Statistical confidence: Cohen's d effect sizes, confidence    |  |
@@ -448,18 +438,7 @@ ENTRY POINT
   |         |                                                                |
   |         v                                                                |
   |  +--------------------------------------------------------------------+  |
-  |  |  7.7  MID-PIPELINE REVIEW (auto-triggered)                         |  |
-  |  |  Agent: review-agent --> ml-optimizer:review skill                 |  |
-  |  |                                                                    |  |
-  |  |  Triggers:                                                         |  |
-  |  |    - wasted_budget pattern ≥ 3 occurrences                         |  |
-  |  |    - 2 consecutive batches with zero successful experiments        |  |
-  |  |                                                                    |  |
-  |  |  Output: course correction suggestions in session-review.md        |  |
-  |  +--------------------------------------------------------------------+  |
-  |         |                                                                |
-  |  +--------------------------------------------------------------------+  |
-  |  |  7.8  STUCK PROTOCOL                                               |  |
+  |  |  7.7  STUCK PROTOCOL                                               |  |
   |  |                                                                    |  |
   |  |  Triggers: 3 consecutive "stop" recommendations                    |  |
   |  |  (one-shot — stuck_protocol_triggered prevents infinite loops)     |  |
@@ -571,7 +550,7 @@ ENTRY POINT
 
   OPTIONAL: END-OF-SESSION REVIEW
   ================================
-  Agent: review-agent --> ml-optimizer:review skill (scope: "session")
+  Agent: analysis-agent --> ml-optimizer:analyze skill (review mode)
 
     - Self-improvement analysis
     - What worked, what didn't
@@ -615,8 +594,7 @@ ENTRY POINT
          |                                | results-table.md (--table)
   7.5    | research-findings*.md,         | research-findings-method-proposals-iterN.md
          | dead-ends.json                 |
-  7.7    | reports/error-log.json         | reports/session-review.md
-  7.8    | error patterns, dead-ends,     | (research dispatch or exit)
+  7.7    | error patterns, dead-ends,     | (research dispatch or exit)
          | agenda, success metrics        |
   8      | results/exp-*.json,            | results/exp-*.json (stacking)
          | implementation-manifest.json   | Git branches: ml-opt/stack-<N>
@@ -648,7 +626,7 @@ ENTRY POINT
   MCP servers:       alphaxiv (paper search/analysis), claude-mem (cross-session memory)
   Data flow:         Reads: <file>  |  Writes: <file>
 
-  Persistent agents: research, implement, tuning, analysis, monitor, review
+  Persistent agents: research, implement, tuning, analysis, monitor
                      Resumed via SendMessage — accumulate context across pipeline
   Ephemeral agents:  prerequisites, baseline, experiment, report
                      Fresh spawn each time — single-use or parallel tasks

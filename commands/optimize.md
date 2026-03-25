@@ -1,6 +1,6 @@
 ---
 description: "Optimize an ML model with agent orchestration"
-argument-hint: "[model-path-or-description]"
+argument-hint: "[describe your model optimization goal]"
 allowed-tools: "Bash, Read, Write, Edit, Glob, Grep, Agent, Skill, WebSearch, WebFetch, AskUserQuestion, EnterPlanMode, ExitPlanMode"
 ---
 

@@ -46,9 +46,9 @@ Each phase has a dedicated reference file with the full workflow. Read the refer
 | 4 | `references/phase-4-checkpoint.md` | — (AskUserQuestion) |
 | 5 | `references/phase-5-research.md` | `ml-optimizer:research-agent` |
 | 6 | `references/phase-6-implement.md` | `ml-optimizer:implement-agent` |
-| 7 | `references/phase-7-experiment-loop.md` | tuning, experiment, monitor, analysis, review agents |
+| 7 | `references/phase-7-experiment-loop.md` | tuning, experiment, monitor, analysis agents |
 | 8 | `references/phase-8-stacking.md` | experiment, implement, tuning agents |
-| 9 | `references/phase-9-report.md` | `ml-optimizer:report-agent`, `ml-optimizer:review-agent` |
+| 9 | `references/phase-9-report.md` | `ml-optimizer:report-agent`, `ml-optimizer:analysis-agent` (review mode) |
 
 ## Phase 0: Discovery & Planning (MANDATORY)
 
@@ -98,7 +98,7 @@ Read `references/phase-7-experiment-loop.md` for the full workflow.
 
 Pre-loop: validate state, load manifest, generate method proposals, route hp_only proposals, initialize research cadence, save state.
 
-Loop: hp-tune → experiment → monitor → analyze+speculative-hp-tune → decision (continue/pivot/stop) → mid-loop method proposals → research round check → mid-pipeline review → loop back.
+Loop: hp-tune → experiment → monitor → analyze → decision (continue/pivot/stop) → mid-loop method proposals → research round check → loop back.
 
 3 consecutive stop recommendations trigger a **Stuck Protocol** (structured recovery) before exiting. The stuck protocol reads error patterns, dead ends, and research agenda, then dispatches the research agent for new approaches. If new proposals are found, the loop resumes. Triggers once per session to prevent infinite loops.
 
@@ -114,7 +114,7 @@ Triggered when experiment loop ends AND ≥5 methods improved over baseline. Req
 
 Read `references/phase-9-report.md` for the full workflow.
 
-Dispatch `ml-optimizer:report-agent`. Sync errors. Optional self-improvement review via `ml-optimizer:review-agent`. Present summary.
+Dispatch `ml-optimizer:report-agent`. Sync errors. Optional self-improvement review via `ml-optimizer:analysis-agent` (review mode). Present summary.
 
 ## Error Handling
 
@@ -149,10 +149,10 @@ python3 scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficie
 python3 scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"orchestrate","message":"Pipeline resumed from interrupted state","phase":<resumed_phase>}'
 ```
 
-### After review skill failure (Phase 7 or Phase 9):
-If the review skill crashes or produces invalid output:
+### After analysis review mode failure (Phase 9):
+If the analysis agent's review mode crashes or produces invalid output:
 ```bash
-python3 scripts/error_tracker.py <exp_root> log '{"category":"agent_failure","severity":"warning","source":"orchestrate","message":"Review skill failed: <error description>","agent":"review","phase":<phase>}'
+python3 scripts/error_tracker.py <exp_root> log '{"category":"agent_failure","severity":"warning","source":"orchestrate","message":"Analysis review mode failed: <error description>","agent":"analysis","phase":<phase>}'
 ```
 
 ## Directory Structure Created
@@ -191,10 +191,12 @@ Before each phase transition, validate prerequisites via `pipeline_state.validat
 
 ## Agent Registry (Resumable Subagents)
 
-Six agents are **persistent** — dispatched once via `Agent()` and resumed via `SendMessage()` for subsequent tasks. This preserves accumulated context (search results, HP trends, codebase knowledge) across the pipeline. Four agents are **ephemeral** — fresh spawn each time.
+Five agents are **persistent** — dispatched once via `Agent()` and resumed via `SendMessage()` for subsequent tasks. This preserves accumulated context (search results, HP trends, codebase knowledge) across the pipeline. Four agents are **ephemeral** — fresh spawn each time.
 
-**Persistent agents:** research, implement, tuning, analysis, monitor, review
+**Persistent agents:** research, implement, tuning, analysis, monitor
 **Ephemeral agents:** prerequisites, baseline, experiment, report
+
+The analysis agent handles both per-batch analysis (foreground) and session review (foreground, Phase 9 only). The `ml-optimizer:analyze` skill includes a "Session Review Mode" section activated by `scope: "session"` dispatch parameter.
 
 The orchestrator maintains an in-memory registry of persistent agent IDs:
 
@@ -203,9 +205,8 @@ agent_registry = {
   "research": null,    # Set after first Phase 5 dispatch
   "implement": null,   # Set after first Phase 6 dispatch
   "tuning": null,      # Set after first Phase 7 step 1 dispatch
-  "analysis": null,    # Set after first Phase 7 step 5 dispatch
+  "analysis": null,    # Set after first Phase 7 step 5 dispatch (also handles review)
   "monitor": null,     # Set after first Phase 7 step 3 dispatch
-  "review": null       # Set after first Phase 7 step 9 or Phase 9 dispatch
 }
 ```
 

@@ -1,6 +1,6 @@
 """Comprehensive plugin structure validation.
 
-Validates all 10 agents, 11 skills, hooks, and scripts are correctly
+Validates all 9 agents, 10 skills, hooks, and scripts are correctly
 configured for the agent-based dispatch architecture. Run anytime:
 
     python -m pytest tests/test_plugin_structure.py -v
@@ -146,16 +146,11 @@ EXPECTED_AGENTS = {
         "required_tools": {"Read", "Write", "Bash", "Glob", "Grep", "Skill"},
         "forbidden_tools": {"Edit"}, "color": "blue", "background": False,
     },
-    "review-agent": {
-        "model": "opus", "skill": "ml-optimizer:review",
-        "required_tools": {"Read", "Write", "Bash", "Glob", "Grep", "Skill"},
-        "forbidden_tools": {"Edit"}, "color": "yellow", "background": True,
-    },
 }
 
 EXPECTED_SKILLS = [
     "orchestrate", "prerequisites", "baseline", "experiment", "monitor",
-    "research", "implement", "hp-tune", "analyze", "report", "review",
+    "research", "implement", "hp-tune", "analyze", "report",
     "evolve", "shinka-setup", "shinka-convert", "shinka-run", "shinka-inspect",
 ]
 
@@ -167,10 +162,10 @@ NON_ORCHESTRATE_SKILLS = [s for s in EXPECTED_SKILLS if s != "orchestrate"]
 # ---------------------------------------------------------------------------
 
 class TestAgentFiles:
-    """Validate all 10 agent definition files."""
+    """Validate all 9 agent definition files."""
 
-    def test_all_10_agents_exist_and_no_extra(self):
-        """All 10 expected agent files exist and no unexpected ones."""
+    def test_all_9_agents_exist_and_no_extra(self):
+        """All 9 expected agent files exist and no unexpected ones."""
         for name in EXPECTED_AGENTS:
             assert (AGENTS_DIR / f"{name}.md").exists(), f"Missing: {name}"
         actual = {f.stem for f in AGENTS_DIR.glob("*.md")}
@@ -229,7 +224,7 @@ class TestAgentFiles:
 # ---------------------------------------------------------------------------
 
 class TestSkillFiles:
-    """Validate all 11 skill definition files."""
+    """Validate all 10 skill definition files."""
 
     # ShinkaEvolve skills are third-party (symlinked from submodule) —
     # they have different frontmatter conventions, so only check name + existence
@@ -378,7 +373,7 @@ class TestPluginManifest:
 # ---------------------------------------------------------------------------
 
 class TestOrchestrateDispatch:
-    """Verify the orchestrate skill references all 10 agents correctly."""
+    """Verify the orchestrate skill references all 9 agents correctly."""
 
     @staticmethod
     def _orchestrate_full_text():
@@ -391,7 +386,7 @@ class TestOrchestrateDispatch:
         return "\n".join(parts)
 
     def test_dispatch_patterns(self):
-        """Named agent dispatch, no bare skill invocations, all 10 agents referenced."""
+        """Named agent dispatch, no bare skill invocations, all 9 agents referenced."""
         text = self._orchestrate_full_text()
         named_dispatches = re.findall(r'subagent_type.*ml-optimizer:', text)
         assert len(named_dispatches) >= 5
@@ -406,7 +401,7 @@ class TestOrchestrateDispatch:
 # ---------------------------------------------------------------------------
 
 # Agents that should use SendMessage resume pattern (dispatched multiple times)
-PERSISTENT_AGENTS = {"research", "implement", "tuning", "analysis", "monitor", "review"}
+PERSISTENT_AGENTS = {"research", "implement", "tuning", "analysis", "monitor"}
 # Agents that always get fresh Agent() dispatch (single-use or parallel)
 EPHEMERAL_AGENTS = {"prerequisites", "baseline", "experiment", "report"}
 
@@ -486,9 +481,9 @@ class TestResumableSubagents:
         """Phase 7 must contain multiple SendMessage calls for agent resumption."""
         text = self._phase_text("phase-7-experiment-loop.md")
         sendmessage_count = len(re.findall(r"SendMessage\(", text))
-        # At minimum: tuning, monitor, analysis, speculative, research, implement, review
-        assert sendmessage_count >= 7, (
-            f"Phase 7 should have >=7 SendMessage calls, found {sendmessage_count}"
+        # At minimum: tuning, monitor, analysis, research, implement
+        assert sendmessage_count >= 5, (
+            f"Phase 7 should have >=5 SendMessage calls, found {sendmessage_count}"
         )
 
     def test_phase7_has_context_relay_sections(self):
@@ -514,11 +509,11 @@ class TestResumableSubagents:
         assert 'agent_registry["implement"]' in text
         assert 'agent_registry["tuning"]' in text
 
-    def test_phase9_resumes_review_agent(self):
-        """Phase 9 must use resume pattern for review agent."""
+    def test_phase9_resumes_analysis_agent(self):
+        """Phase 9 must use resume pattern for analysis agent."""
         text = self._phase_text("phase-9-report.md")
         assert "SendMessage" in text
-        assert 'agent_registry["review"]' in text
+        assert 'agent_registry["analysis"]' in text
 
     def test_ephemeral_agents_not_in_resume_pattern(self):
         """Ephemeral agents (experiment, report) should NOT have agent_registry entries."""
@@ -572,10 +567,10 @@ class TestResumableSubagents:
 # ---------------------------------------------------------------------------
 
 class TestDocumentation:
-    """Verify docs reflect 10-agent architecture and key features."""
+    """Verify docs reflect 9-agent architecture and key features."""
 
     @pytest.mark.parametrize("keyword", [
-        "10 subagent definitions", 'Agent(subagent_type="ml-optimizer:',
+        "9 subagent definitions", 'Agent(subagent_type="ml-optimizer:',
         "stuck protocol", "dead-end", "research agenda",
         "immutable baseline", "disable-model-invocation",
     ])
@@ -604,7 +599,7 @@ class TestSkillContracts:
     """Verify skills reference the autoresearch-inspired features they consume."""
 
     @pytest.mark.parametrize("skill,keyword", [
-        ("analyze", "dead-end"), ("analyze", "agenda"),
+        ("analyze", "dead-end"), ("analyze", "agenda"), ("analyze", "session review mode"),
         ("research", "dead-end"), ("research", "agenda"),
         ("hp-tune", "dead-end"), ("hp-tune", "agenda"),
         ("report", "agenda"), ("experiment", "time_budget"),
@@ -795,7 +790,7 @@ def test_prerequisites_contract():
     assert failed["ready_for_baseline"] is False
 
 
-# --- HP batch size, method_tier, speculative, monitor, analyze, review trigger ---
+# --- HP batch size, method_tier, monitor, analyze ---
 
 def test_hp_batch_size_contract():
     """HP batch size = max(num_gpus, 1) and stop-after-3-consecutive logic."""
@@ -820,25 +815,8 @@ def test_method_tier_rules():
     assert tier("ml-opt/x", 3) == "method_tuned_hp"
 
 
-def test_speculative_proposal_rules():
-    """Speculative proposals: discard on stop/pivot, use on continue, validate branches."""
-    assert ("stop" == "continue") is False
-    assert ("pivot" == "continue") is False
-    assert ("continue" == "continue") is True
-    # Branch pruning
-    proposals = [
-        {"exp_id": "e1", "code_branch": "ml-opt/pruned"},
-        {"exp_id": "e2", "code_branch": None},
-    ]
-    valid = [p for p in proposals if p.get("code_branch") is None or p["code_branch"] != "ml-opt/pruned"]
-    assert len(valid) == 1 and valid[0]["exp_id"] == "e2"
-    # Budget gate
-    assert (2 > max(4, 1)) is False
-    assert (10 > max(4, 1)) is True
-
-
 def test_monitor_and_analyze_contracts():
-    """Monitor divergence_status schema; analyze stop/pivot flow; review trigger logic."""
+    """Monitor divergence_status schema; analyze stop/pivot flow."""
     # Monitor
     for status in ("healthy", "diverged", "completed", "unmonitored", "failed", "no_output"):
         assert status in ("healthy", "diverged", "completed", "unmonitored", "failed", "no_output")
@@ -856,12 +834,6 @@ def test_monitor_and_analyze_contracts():
     }
     assert "code_refinement" in valid_pivots
 
-    # Review trigger
-    def should_trigger(wasted, consecutive):
-        return wasted >= 3 or consecutive >= 2
-    assert should_trigger(3, 0) is True
-    assert should_trigger(1, 2) is True
-    assert should_trigger(2, 1) is False
 
 
 # --- Experiment → Monitor log format ---

@@ -129,7 +129,7 @@ EXPECTED_AGENTS = {
         "model": "opus", "skill": "ml-optimizer:implement",
         "required_tools": {"Bash", "Read", "Write", "Edit", "Glob", "Grep"},
         "forbidden_tools": set(), "color": "magenta", "background": False,
-        "external_skills": ["superpowers:systematic-debugging", "feature-dev:code-explorer", "feature-dev:code-reviewer", "shinka-setup", "shinka-convert", "shinka-run", "shinka-inspect"],
+        "external_skills": ["superpowers:systematic-debugging", "feature-dev:code-explorer", "feature-dev:code-reviewer", "ml-optimizer:shinka-setup", "ml-optimizer:shinka-convert", "ml-optimizer:shinka-run", "ml-optimizer:shinka-inspect"],
     },
     "tuning-agent": {
         "model": "opus", "skill": "ml-optimizer:hp-tune",
@@ -235,6 +235,10 @@ class TestSkillFiles:
     # they have different frontmatter conventions, so only check name + existence
     _THIRD_PARTY_SKILLS = {"shinka-setup", "shinka-convert", "shinka-run", "shinka-inspect"}
 
+    # orchestrate is the user-facing entry point — it must be invocable
+    # (no disable-model-invocation, no user-invocable: false)
+    _USER_FACING_SKILLS = {"orchestrate"}
+
     @pytest.mark.parametrize("skill_name", EXPECTED_SKILLS)
     def test_skill_frontmatter(self, skill_name):
         """Each skill exists and has correct name, disable-model-invocation, user-invocable."""
@@ -242,7 +246,11 @@ class TestSkillFiles:
         assert path.exists(), f"Missing skill: {path}"
         fm = _parse_frontmatter(path)
         assert fm.get("name") == skill_name, f"{skill_name}: name mismatch"
-        if skill_name not in self._THIRD_PARTY_SKILLS:
+        if skill_name in self._USER_FACING_SKILLS:
+            # User-facing skills must NOT have disable-model-invocation
+            assert fm.get("disable-model-invocation") is not True, (
+                f"{skill_name}: user-facing skill must not disable model invocation")
+        elif skill_name not in self._THIRD_PARTY_SKILLS:
             assert fm.get("disable-model-invocation") is True, (
                 f"{skill_name}: must have disable-model-invocation: true")
             assert fm.get("user-invocable") is False, (
@@ -787,18 +795,17 @@ def test_prerequisites_contract():
     assert failed["ready_for_baseline"] is False
 
 
-# --- Budget, method_tier, speculative, monitor, analyze, review trigger ---
+# --- HP batch size, method_tier, speculative, monitor, analyze, review trigger ---
 
-def test_budget_flow_contract():
-    """Budget calculation, capping, exhaustion, tracking, and difficulty multipliers."""
-    assert min(max(4, 1), 3) == 3    # capped by remaining_budget
-    assert min(max(2, 1), 10) == 2   # capped by GPU count
-    assert min(max(0, 1), 5) == 1    # CPU-only
-    assert max(1, 1) * 8 == 8        # easy 1 GPU
-    assert max(4, 1) * 25 == 100     # hard 4 GPUs
-    # Autonomous: stop after 3 consecutive
-    assert ("autonomous" == "autonomous" and 3 >= 3) is True
-    assert ("autonomous" == "autonomous" and 0 >= 3) is False
+def test_hp_batch_size_contract():
+    """HP batch size = max(num_gpus, 1) and stop-after-3-consecutive logic."""
+    assert max(4, 1) == 4   # 4 GPUs
+    assert max(2, 1) == 2   # 2 GPUs
+    assert max(0, 1) == 1   # CPU-only
+    assert max(1, 1) == 1   # 1 GPU
+    # Stop after 3 consecutive
+    assert 3 >= 3  # triggers stuck protocol
+    assert 0 < 3   # not enough to trigger
     # Branch iter 1
     assert min(3 + 1, 5) == 4
     assert min(3 + 1, 2) == 2

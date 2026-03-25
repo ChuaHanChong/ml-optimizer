@@ -19,7 +19,7 @@ From the orchestrator:
 - `primary_metric`: The metric to optimize
 - `lower_is_better`: Whether lower values are better (True for loss, False for PSNR/accuracy)
 - `target_value`: The goal value for the primary metric (optional)
-- `remaining_budget`: How many more experiments can be run (used in pivot decision tree)
+- `scope_level`: Constraint on changes (`"training"` = HP only, `"architecture"` = HP + research, `"full"` = everything including ShinkaEvolve)
 
 ## Step 1: Load and Compare Results
 
@@ -92,29 +92,16 @@ For each code branch that has `method_default_hp` results:
 
 ### Inform the Decision (Step 3)
 - If promising branches exist but haven't been HP-tuned yet (`method_tuned_hp` results don't exist for them), recommend **continue** with direction: "tune HPs on promising method branches"
-- If all branches have been pruned (all methods hurt), recommend **pivot** or **stop** depending on remaining budget
+- If all branches have been pruned (all methods hurt), recommend **pivot** or **stop**
 - Include the method effectiveness ranking in the batch analysis report (Step 4)
 
 If no experiments have `method_tier` fields, skip this step entirely.
 
 **Fallback for missing per-branch baseline:** If a `method_default_hp` experiment exists but no per-branch baseline result is available, use the global baseline metric (from `baseline.json`) as the comparison point for computing the isolated method effect.
 
-## Step 2.2: Statistical Confidence Assessment (when >= 5 completed experiments)
+## Step 2.2: Statistical Confidence Assessment
 
-### Effect Size Estimation
-For each HP that was varied across 3+ experiments, estimate the effect size:
-- Compute mean metric for top-performing group vs bottom-performing group
-- d = |mean_top - mean_bottom| / pooled_std_dev
-- |d| < 0.2: **negligible** → do not recommend changing this HP
-- 0.2 ≤ |d| < 0.5: **small** → secondary tuning target
-- 0.5 ≤ |d| < 0.8: **medium** → focused exploration recommended
-- |d| ≥ 0.8: **large** → primary driver, prioritize in next batch
-
-### Confidence Labeling
-Rate each finding by evidence strength:
-- **High** (≥ 8 experiments, consistent direction): state as fact with effect size
-- **Medium** (4-7 experiments, mostly consistent): state as trend
-- **Low** (< 4 experiments or mixed results): state as preliminary signal
+Assess the statistical confidence of your findings based on available data. Use your judgment — more data means higher confidence, but don't refuse to analyze with fewer experiments. Cohen's d effect sizes (negligible/small/medium/large) and confidence labels (high/medium/low/preliminary) are guidelines, not rigid thresholds.
 
 ### Method Attribution (when method_tier data exists)
 When method proposals were tested, explicitly attribute improvements:
@@ -147,24 +134,23 @@ Output:
 ### Try Different Approach (Pivot)
 **When:** Current HP tuning has plateaued but goal not reached
 
-**Pivot Decision Tree** — evaluate conditions in order:
+**Pivot Decision Tree** — evaluate conditions in order, respecting `scope_level`:
 
-1. **Budget check:** If `remaining_budget < 3`, do NOT pivot to research. Recommend stop with current best.
-2. **Branch coverage:**
+1. **Branch coverage:**
    - Untested branches exist → "Test untested code branches with baseline HPs"
    - All branches tested but some with only 1-2 configs → "Increase HP exploration on promising branches (within 5% of best)"
-3. **Research status:**
-   - No research done AND `remaining_budget >= 5` → "Switch to research + code changes — HP tuning alone has plateaued"
-   - Research done but not all proposals implemented AND `remaining_budget >= 3` → "Implement next-priority research proposal"
-3b. **Method proposals (LLM knowledge + web search):**
-   - HP tuning plateaued AND `remaining_budget >= 3` AND no method proposals tried yet → pivot_type: `"method_proposal"`, suggestion: "Propose new optimization methods (method proposals)"
-3c. **Code refinement (evolutionary improvement):**
-   - A method branch improved over baseline AND HP tuning shows diminishing returns (all HP correlations |rho| < 0.3) AND `remaining_budget >= 3` → pivot_type: `"code_refinement"`, suggestion: "Evolve the best method branch through targeted code mutations"
-4. **Failure pattern:**
-   - >50% of recent experiments diverged → "Narrow search space — constrain LR to [best_lr × 0.5, best_lr × 2.0]"
+2. **Research status** _(skip if `scope_level == "training"` — HP-only mode, no code changes)_:
+   - No research done → "Switch to research + code changes — HP tuning alone has plateaued"
+   - Research done but not all proposals implemented → "Implement next-priority research proposal"
+2b. **Method proposals** _(skip if `scope_level == "training"`)_:
+   - HP tuning plateaued AND no method proposals tried yet → pivot_type: `"method_proposal"`, suggestion: "Propose new optimization methods (method proposals)"
+2c. **Code refinement via ShinkaEvolve** _(skip if `scope_level != "full"` — only available when user chose "let me decide" or explicit full scope)_:
+   - A method branch improved over baseline AND HP tuning shows diminishing returns (all HP correlations |rho| < 0.3) → pivot_type: `"code_refinement"`, suggestion: "Evolve the best method branch through targeted code mutations". The tuning agent will propose evolve HPs separately.
+3. **Failure pattern:**
+   - >50% of recent experiments diverged → "Narrow search space around the best config" (let the tuning agent decide the exact ranges)
    - All experiments within 1% of each other → "Try qualitatively different change (different optimizer, scheduler, data augmentation)"
    - Overfitting detected (train improving, val flat/degrading) → "Add regularization (weight_decay, dropout, data augmentation)"
-5. **Default:** "Continue with hybrid exploration/exploitation batch" with diminishing-returns warning.
+4. **Default:** "Continue with hybrid exploration/exploitation batch" with diminishing-returns warning.
 
 Output:
 ```json
@@ -173,17 +159,16 @@ Output:
   "reason": "<which condition from the decision tree triggered>",
   "pivot_type": "<branch_test|hp_expand|research|method_proposal|narrow_space|qualitative_change|regularization|code_refinement>",
   "suggestion": "<specific actionable next step>",
-  "remaining_potential": "<estimated room for improvement>",
-  "budget_remaining": "<N>"
+  "remaining_potential": "<estimated room for improvement>"
 }
 ```
 
 **Orchestrator contract:** The orchestrator dispatches each `pivot_type` as follows:
 - `branch_test`, `hp_expand`, `narrow_space`, `regularization`: Adjust search space and invoke hp-tune. No research round.
-- `research`, `method_proposal`, `qualitative_change`: Trigger research → implement cycle (step 7 in orchestrate). Requires `remaining_budget >= 3`.
+- `research`, `method_proposal`, `qualitative_change`: Trigger research → implement cycle (step 7 in orchestrate).
   - `qualitative_change`: Fundamental approach change within current code (e.g., different optimizer, scheduler, augmentation). No web research trigger — the implement agent applies the change directly.
   - `method_proposal`: New techniques needed that go beyond the current codebase. Triggers research (web + LLM knowledge) → implement cycle.
-- `code_refinement`: Trigger evolution loop — dispatch implement-agent with evolve skill to generate mutations from the best branch. Requires `remaining_budget >= 3`.
+- `code_refinement`: Trigger evolution loop — dispatch implement-agent with evolve skill to generate mutations from the best branch.
 See orchestrate SKILL.md Phase 7 step 6 "Pivot dispatch by type" for details.
 
 ### Stop

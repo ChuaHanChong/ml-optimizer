@@ -13,7 +13,7 @@ The ml-optimizer plugin understands your ML model, establishes baselines, resear
 - Structured `experiments/` directory in your project
 - User checkpoints after baseline and research; experiment loop is autonomous
 
-### Autonomous Mode Features (Autoresearch-Inspired)
+### Advanced Features (Autoresearch-Inspired)
 
 Inspired by [karpathy/autoresearch](https://github.com/karpathy/autoresearch), [autoresearch-gen](https://github.com/liviaellen/autoresearch-gen), and [autosae](https://github.com/alif-munim/autosae):
 
@@ -127,7 +127,7 @@ Only `orchestrate` is directly invocable. All other skills have `disable-model-i
 | `analyze` | Post-batch analysis — ranks results, recommends next action | Internal |
 | `report` | Generates comprehensive final optimization report | Internal |
 | `review` | Self-improvement analysis and mid-pipeline course correction | Internal |
-| `evolve` | Generates targeted code mutations guided by fitness feedback (ShinkaEvolve integration) | Internal |
+| `evolve` | Orchestrates evolutionary code refinement via full ShinkaEvolve pipeline (convert → run → inspect) | Internal |
 
 ## Workflow
 
@@ -136,7 +136,7 @@ Only `orchestrate` is directly invocable. All other skills have `disable-model-i
 ```
 0. Discovery (plan mode, user Q&A — data paths, env manager)
 1. Understand model (read code + config, check GPUs)
-2. Prerequisites (validate dataset, prepare data, install deps)         [ephemeral]
+2. Prerequisites (validate dataset, prepare data, install deps)          [ephemeral]
 3. Establish baseline                                                    [ephemeral]
 4. User checkpoint: review baseline, choose direction
 5. Research (alphaxiv + web search + LLM knowledge for techniques)       [persistent]
@@ -147,11 +147,15 @@ Only `orchestrate` is directly invocable. All other skills have `disable-model-i
    c. monitor watches for divergence (resumed with HP context)           [persistent]
    d. analyze + speculative hp-tune: continue / pivot / stop             [persistent]
    e. method proposal trigger (if analyze recommends pivot)
-   e2. code refinement via ShinkaEvolve (if analyze recommends code_refinement)
-   f. autonomous research cadence (periodic in autonomous mode)
+   e2. code refinement: tuning (evolve HPs) → evolve → tuning (training HPs)
+       → experiment (if analyze recommends code_refinement, scope_level=full)
+   f. cadence-based research (when method proposals enabled)
    g. mid-pipeline review (auto-triggers on repeated failures)           [persistent]
 8. Method stacking (if 5+ methods improved over baseline):
-   -> Sequentially merges best methods, skip-on-failure, optional HP-tune per step
+   -> Sequentially merges best methods, skip-on-failure
+   -> After each stack step: analyze → tuning (evolve HPs) → evolve
+      → tuning (training HPs) → experiment (loops until improvement)
+   -> Analysis agent decides: evolve again / continue / skip method
 9. Generate final report                                                 [ephemeral]
    -> Optional self-improvement review (resumed with session context)    [persistent]
 ```
@@ -234,7 +238,7 @@ Ten subagent types in `agents/`. The orchestrate skill dispatches agents directl
 
 Analytical agents use "ultrathink" prompting and `model: opus`. Procedural agents use Sonnet for lower cost/latency.
 
-## Hooks (Autonomous Mode Safeguards)
+## Hooks (Safety Guardrails)
 
 Lifecycle hooks in `hooks/` protect against common failure modes during autonomous operation:
 
@@ -253,21 +257,21 @@ Exit code `2` = block action. Exit code `0` = allow. Configured in `hooks/hooks.
 ## Key Design Patterns
 
 - **Non-git fallback**: If the project isn't a git repo, file backups replace branch isolation. Experiments run sequentially.
-- **Budget modes**: `auto` (difficulty-based: easy x8, moderate x15, hard x25 per GPU), `autonomous` (unlimited — stops after 3 consecutive stop recommendations), or custom integer.
 - **Metric routing**: Monitor/divergence always uses loss. Analyze/hp-tune use the user's `primary_metric`.
 - **Speculative hp-tune**: In Phase 7, hp-tune runs in background alongside analyze. If analyze says "continue", proposals are used immediately — eliminating GPU idle time.
 - **OOM feedback loop**: When experiments OOM, batch size is recorded. Next hp-tune call receives `max_batch_size` to avoid re-proposing failing configs.
 - **All-diverge recovery**: If all experiments in a batch diverge, a recovery batch with halved learning rates runs before stopping.
-- **Research cadence**: In autonomous mode, research triggers every N batches. If no new proposals found, cadence doubles (exponential backoff).
+- **Research cadence**: When method proposals are enabled, research triggers every N batches. If no new proposals found, cadence doubles (exponential backoff).
 - **Pipeline resumption**: `pipeline-state.json` persists phase, user choices, and stop count. On restart, stale experiments are cleaned up and phase gates prevent cascading failures.
+- **Loop exit conditions**: The experiment loop runs until: (1) target metric achieved, (2) analysis agent recommends "stop" 3 consecutive times (triggers stuck protocol), or (3) user manually stops.
 - **Three-tier result tracking**: Experiments carry `method_tier` (baseline / method_default_hp / method_tuned_hp) and `proposal_source` (paper / llm_knowledge) for attribution analysis.
-- **Method stacking**: After independent method testing, top methods are sequentially merged. Clean merges proceed; conflicts are LLM-resolved. Degrading combinations are skipped.
+- **Method stacking**: After independent method testing, top methods are sequentially merged. Clean merges proceed; conflicts are LLM-resolved. Degrading combinations are skipped. After each successful stack step, the analysis agent assesses whether methods are interfering — if stacked gain < best individual, the evolve skill optimizes code interactions via ShinkaEvolve.
 - **Goal anchoring & behavioral memory**: `scripts/goal_memory.py` maintains `optimization-goals.json` (goal anchor) and `learned-behaviors.json` (accumulated learnings). The orchestrator validates agent outputs post-dispatch. All 10 agents have `memory: local` for persistent role-specific memory at `.claude/agent-memory-local/<agent-name>/` in the target project.
 - **Overfitting detection**: Monitor compares train vs val metrics to detect overfitting (val worsens while train improves). Reports severity and triggers regularization prioritization.
 - **HP interaction detection**: `detect_hp_interactions()` identifies 2-way HP interaction effects (e.g., "high LR only works with small batch size"). Integrated into analysis output.
 - **Adaptive branch budget**: HP-tune allocates more experiments to promising branches and fewer to struggling ones. Scores by improvement × confidence factor.
 - **Checkpoint warm-starting**: Experiments can resume from prior checkpoints (lower LR, fewer epochs). Saves 50-80% compute in later iterations.
-- **Evolutionary code refinement**: When HP tuning plateaus, the implement-agent's evolve skill generates targeted code mutations guided by fitness feedback. Best mutation becomes new parent for next generation. Inspired by ShinkaEvolve.
+- **Evolutionary code refinement**: When HP tuning plateaus (analyze recommends `code_refinement`), the evolve skill orchestrates the full ShinkaEvolve pipeline internally: `shinka-convert` → `shinka-run` (with file-based LLM handoff) → `shinka-inspect` → commit best mutation. Evolve HPs (`num_generations`, `population_size`) are tuning-agent-driven — the tuning agent proposes evolve HPs based on prior outcomes in `learned-behaviors.json` before the implement agent executes. In Phase 8, the analysis agent triggers evolution when stacked methods interfere (stacked gain < best individual gain), looping evolve + HP-tune until the analysis agent confirms improvement or recommends stopping.
 - **Small dataset awareness**: Research agent shifts search toward low-data techniques (transfer learning, few-shot learning, adapters, prompt tuning, semi-supervised methods) when dataset has fewer than 5K samples.
 - **Structured ideation**: Knowledge-mode research proposals use a diverge-converge-refine process with 6 ideation lenses (Problem-First, Analogical Reasoning, What Changed Recently, Constraint Manipulation, Negation/Inversion, Composition/Decomposition) plus a Two-Sentence Test filter.
 - **Statistical confidence assessment**: Analysis computes Cohen's d effect sizes for HP impact and labels findings by evidence strength (high/medium/low). Method attribution distinguishes code-change vs HP-tuning vs compound effects.
@@ -313,14 +317,15 @@ skills/
 
 ### How it works
 
-Instead of calling LLM APIs directly, ShinkaEvolve's mutations are generated by Claude Code subagents via a file-based handoff:
+The evolve skill handles the full pipeline internally — one dispatch, one result:
 
-1. ShinkaEvolve writes a mutation prompt to `experiments/evolve/pending/<id>.json`
-2. The orchestrator polls, dispatches an implement-agent with the prompt
-3. The agent's response is written to `experiments/evolve/completed/<id>.json`
-4. ShinkaEvolve reads the response and continues evolution
+1. `shinka-convert` converts the best branch's code to a ShinkaEvolve task (adds EVOLVE-BLOCK markers, creates evaluate.py)
+2. `shinka-run` launches evolution in the background with `SHINKA_PROVIDER=claude_code` and `SHINKA_HANDOFF_DIR=<exp_root>`
+3. The implement-agent polls `experiments/evolve/pending/` for mutation requests, generates SEARCH/REPLACE patches, writes responses to `experiments/evolve/completed/`
+4. `shinka-inspect` extracts the best evolved program
+5. The winning code is committed as a new `ml-opt/evolved-<slug>` branch
 
-Set `SHINKA_PROVIDER=claude_code` to enable this mode.
+If ShinkaEvolve is unavailable, the skill reports `shinkaevolve_unavailable` and the orchestrator falls back to the research → implement path.
 
 ## Progress Dashboard
 

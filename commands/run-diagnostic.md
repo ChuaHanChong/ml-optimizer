@@ -434,7 +434,7 @@ For each agent, verify:
 - **implement-agent**: Confirm it can see `feature-dev:code-explorer` and `feature-dev:code-reviewer` in addition to `ml-optimizer:implement` and `superpowers:systematic-debugging`
 - **research-agent**: Confirm it can see `claude-mem:mem-search` (or reports it unavailable gracefully)
 
-**Special case — implement-agent:** Use this prompt instead: "This is a smoke test. List your tools. Confirm you can see these skills: ml-optimizer:implement, ml-optimizer:evolve, shinka-setup, shinka-convert, shinka-run, shinka-inspect. Confirm persistent agent memory. Respond in 2-3 sentences."
+**Special case — implement-agent:** Use this prompt instead: "This is a smoke test. List your tools. Confirm you can see these skills: ml-optimizer:implement, ml-optimizer:evolve, ml-optimizer:shinka-setup, ml-optimizer:shinka-convert, ml-optimizer:shinka-run, ml-optimizer:shinka-inspect. Confirm persistent agent memory. Respond in 2-3 sentences."
 
 Report results in a table.
 
@@ -523,9 +523,8 @@ sys.path.insert(0, '$SCRIPTS')
 from pipeline_state import save_state, _compute_baseline_checksum
 baseline = json.loads(open('/tmp/ml-opt-diagnostic/experiments/results/baseline.json').read())
 checksum = _compute_baseline_checksum(baseline['metrics'])
-save_state(3, 0, [], '/tmp/ml-opt-diagnostic/experiments', baseline_checksum=checksum, user_choices={
-  'primary_metric': 'loss', 'lower_is_better': True, 'budget_mode': 'auto',
-  'difficulty': 'easy', 'difficulty_multiplier': 8, 'fixed_time_budget': 30, 'fixed_epoch_budget': None
+save_state(3, 0, [], '/tmp/ml-opt-diagnostic/experiments', baseline_checksum=checksum, agent_registry={}, user_choices={
+  'primary_metric': 'loss', 'lower_is_better': True, 'fixed_time_budget': 30, 'fixed_epoch_budget': None
 })
 print(f'Baseline checksum stored: {checksum[:16]}...')
 "
@@ -696,7 +695,7 @@ Confirm output shows `"valid": true`.
 ```text
 Agent(
   description: "Diagnostic: propose HP configs",
-  prompt: "Ultrathink. Propose HP configurations. Parameters: project_root: /tmp/ml-opt-diagnostic, num_gpus: 1, primary_metric: loss, lower_is_better: true, iteration: 1, remaining_budget: 4, fixed_time_budget: 30, code_branches: [<VALIDATED_BRANCHES>], exp_root: /tmp/ml-opt-diagnostic/experiments. After proposing configs, update your agent memory with HP ranges tried, search space insights, and interaction effects discovered for this model.",
+  prompt: "Ultrathink. Propose HP configurations. Parameters: project_root: /tmp/ml-opt-diagnostic, num_gpus: 1, primary_metric: loss, lower_is_better: true, iteration: 1, fixed_time_budget: 30, code_branches: [<VALIDATED_BRANCHES>], exp_root: /tmp/ml-opt-diagnostic/experiments. After proposing configs, update your agent memory with HP ranges tried, search space insights, and interaction effects discovered for this model.",
   subagent_type: "ml-optimizer:tuning-agent"
 )
 ```
@@ -778,7 +777,7 @@ else:
 ```text
 Agent(
   description: "Diagnostic: analyze results",
-  prompt: "Ultrathink. Analyze experiment results. Parameters: project_root: /tmp/ml-opt-diagnostic, batch_number: 1, primary_metric: loss, lower_is_better: true, remaining_budget: 3, exp_root: /tmp/ml-opt-diagnostic/experiments. After completing, update your agent memory with correlation patterns, pivot decision reasoning, and metric signals that mattered for this project.",
+  prompt: "Ultrathink. Analyze experiment results. Parameters: project_root: /tmp/ml-opt-diagnostic, batch_number: 1, primary_metric: loss, lower_is_better: true, exp_root: /tmp/ml-opt-diagnostic/experiments. After completing, update your agent memory with correlation patterns, pivot decision reasoning, and metric signals that mattered for this project.",
   subagent_type: "ml-optimizer:analysis-agent"
 )
 ```
@@ -801,89 +800,57 @@ python3 $SCRIPTS/result_analyzer.py \
 
 Verify the output includes ranking information.
 
-#### Evolve Integration Check
+#### Live Evolve Skill Dispatch (Phase 7 code_refinement flow)
 
-After analyze completes, verify the evolve pipeline is wired correctly:
+Tests the full Phase 7 evolve chain: **tuning agent → implement agent → experiment agent**.
 
-```bash
-python3 -c "
-import sys, os, json, threading, time, tempfile, importlib.util
-from pathlib import Path
+**Step 1: Tune evolve HPs.** Dispatch tuning agent to propose ShinkaEvolve hyperparameters:
 
-PLUGIN_ROOT = os.environ.get('PLUGIN_ROOT', '$PLUGIN_ROOT')
-issues = []
-
-# 1. Evolve skill exists
-evolve_skill = Path(PLUGIN_ROOT) / 'skills' / 'evolve' / 'SKILL.md'
-if evolve_skill.exists():
-    content = evolve_skill.read_text()
-    if 'EVOLVE-BLOCK' in content and 'ShinkaEvolve' in content:
-        print('✓ Evolve skill: exists, references EVOLVE-BLOCK and ShinkaEvolve')
-    else:
-        issues.append('evolve skill missing EVOLVE-BLOCK or ShinkaEvolve references')
-else:
-    issues.append('evolve skill SKILL.md not found')
-
-# 2. ShinkaEvolve submodule exists with patched query.py
-query_py = Path(PLUGIN_ROOT) / 'skills' / 'evolve' / 'ShinkaEvolve' / 'shinka' / 'llm' / 'query.py'
-if query_py.exists() and 'SHINKA_PROVIDER' in query_py.read_text():
-    print('✓ ShinkaEvolve: submodule present, query.py patched')
-else:
-    issues.append('ShinkaEvolve submodule missing or query.py not patched')
-
-# 3. File handoff provider importable and round-trip works
-provider_path = Path(PLUGIN_ROOT) / 'skills' / 'evolve' / 'ShinkaEvolve' / 'shinka' / 'llm' / 'file_handoff_provider.py'
-if provider_path.exists():
-    spec = importlib.util.spec_from_file_location('fhp', str(provider_path))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-
-    with tempfile.TemporaryDirectory() as td:
-        mod.set_handoff_dir(td)
-        # Simulate: write pending, respond, read
-        def respond():
-            time.sleep(0.3)
-            pending = Path(td) / 'evolve' / 'pending'
-            for f in pending.glob('*.json'):
-                completed = Path(td) / 'evolve' / 'completed' / f.name
-                completed.write_text(json.dumps({'content': 'evolved code mutation'}))
-        t = threading.Thread(target=respond)
-        t.start()
-        result = mod.query_file_handoff('test', 'mutate', 'system', timeout_seconds=5)
-        t.join()
-        if result['content'] == 'evolved code mutation':
-            print('✓ File handoff: round-trip works (pending → completed → response)')
-        else:
-            issues.append('file handoff returned wrong content')
-else:
-    issues.append('file_handoff_provider.py not found')
-
-# 4. Analyze skill includes code_refinement pivot
-analyze_skill = Path(PLUGIN_ROOT) / 'skills' / 'analyze' / 'SKILL.md'
-if analyze_skill.exists() and 'code_refinement' in analyze_skill.read_text():
-    print('✓ Analyze skill: code_refinement pivot type present')
-else:
-    issues.append('analyze skill missing code_refinement pivot')
-
-# 5. Implement-agent has evolve + shinka skills
-agent_md = Path(PLUGIN_ROOT) / 'agents' / 'implement-agent.md'
-if agent_md.exists():
-    agent_content = agent_md.read_text()
-    required = ['ml-optimizer:evolve', 'shinka-setup', 'shinka-run']
-    missing = [s for s in required if s not in agent_content]
-    if not missing:
-        print('✓ Implement-agent: evolve + shinka skills listed')
-    else:
-        issues.append(f'implement-agent missing skills: {missing}')
-else:
-    issues.append('implement-agent.md not found')
-
-if issues:
-    print(f'✗ Evolve integration: {len(issues)} issues: ' + '; '.join(issues))
-else:
-    print('✓ Evolve integration: all 5 checks passed')
-"
+```text
+Agent(
+  description: "Diagnostic: tune evolve HPs",
+  prompt: "Propose ShinkaEvolve evolution HPs for code_refinement. Read learned-behaviors.json category evolve_hp for prior evolution outcomes (if any). Return evolve_recommendation: {num_generations, population_size, reasoning}. Default to num_generations: 5, population_size: 2 if no prior data.",
+  subagent_type: "ml-optimizer:tuning-agent"
+)
 ```
+
+**Step 2: Execute evolve.** Dispatch implement-agent with evolve skill and tuning agent's recommendation:
+
+```text
+Agent(
+  description: "Diagnostic: evolve skill live test",
+  prompt: "Use the evolve skill via Skill('ml-optimizer:evolve'). Run the full ShinkaEvolve pipeline on the best method branch. Parameters: project_root: /tmp/ml-opt-diagnostic, parent_branch: <BEST_BRANCH>, parent_metrics: {loss: <BEST_LOSS>, accuracy: <BEST_ACC>}, primary_metric: loss, lower_is_better: true, scope_level: full, exp_root: /tmp/ml-opt-diagnostic/experiments, evolve_recommendation: <FROM_TUNING_AGENT>, feedback_context: {batch_analysis: 'Nesterov momentum improved loss by 18.6% vs baseline. Model still converging at 30s cutoff.', error_patterns: [], dead_ends: [], learned_behaviors: []}.",
+  subagent_type: "ml-optimizer:implement-agent"
+)
+```
+
+**Step 3: Tune training HPs for evolved branch.** Verify the tuning agent can propose training HPs for evolved code:
+
+```text
+Agent(
+  description: "Diagnostic: tune training HPs for evolved branch",
+  prompt: "Ultrathink. Propose HP configs for the evolved method branch. Parameters: project_root: /tmp/ml-opt-diagnostic, num_gpus: 1, primary_metric: loss, lower_is_better: true, code_branches: [<EVOLVED_BRANCH>], iteration: 1, exp_root: /tmp/ml-opt-diagnostic/experiments.",
+  subagent_type: "ml-optimizer:tuning-agent"
+)
+```
+
+**Step 4: Run experiment on evolved branch with tuned HPs.**
+
+```text
+Agent(
+  description: "Diagnostic: experiment on evolved branch",
+  prompt: "Run experiment. Parameters: exp_id: exp-evolved, config: <FROM_TUNING_AGENT>, gpu_id: 0, project_root: /tmp/ml-opt-diagnostic, train_command: python train.py --epochs 2, code_branch: <EVOLVED_BRANCH>, iteration: 1, method_tier: method_tuned_hp, exp_root: /tmp/ml-opt-diagnostic/experiments.",
+  subagent_type: "ml-optimizer:experiment-agent"
+)
+```
+
+**Verify Phase 7 evolve chain (all 4 steps):**
+- Tuning agent proposed evolve HPs (num_generations, population_size)
+- Implement agent invoked the evolve skill (output mentions "evolve" or "shinka")
+- A `ml-opt/evolved-*` branch was created (or `shinkaevolve_unavailable` — acceptable)
+- Tuning agent proposed training HPs for evolved branch
+- Experiment ran on the evolved branch with tuned HPs
+- If ShinkaEvolve unavailable: log as SKIPPED (optional integration)
 
 #### Iteration 2: OOM + Divergence Triggers
 
@@ -1154,6 +1121,7 @@ save_state(
             'stack_base_exp': 'exp-stack-live',
             'skipped_methods': [],
             'stacked_methods': ['weight-decay', 'label-smoothing'],
+        'evolved_methods': [],
         }
     }
 )
@@ -1164,6 +1132,77 @@ if state and 'stacking' in state.get('user_choices', {}):
 else:
     print('✗ Stacking state not persisted')
 "
+```
+
+#### Phase 8 — Evolve on Stacked Code (Component Test)
+
+Test the full Phase 8 evolve chain: analysis → tuning (evolve HPs) → evolve → tuning (training HPs) → experiment. Each step is dispatched unconditionally to verify the component works — the diagnostic tests capabilities, not decision logic.
+
+**Step 1: Analyze stacked result.** Verify the analysis agent can assess stacked experiments:
+
+```text
+Agent(
+  description: "Phase 8: analyze stacked result",
+  prompt: "Analyze stacked experiment result. Compare the stacked gain to the best individual method gain. Stacked experiment: exp-stack-live on ml-opt/stack-2 (weight-decay + label-smoothing). Best individual method gain: <BEST_INDIVIDUAL_GAIN>%. Parameters: project_root: /tmp/ml-opt-diagnostic, primary_metric: loss, lower_is_better: true, scope_level: full, exp_root: /tmp/ml-opt-diagnostic/experiments.",
+  subagent_type: "ml-optimizer:analysis-agent"
+)
+```
+
+**Step 2: Tune evolve HPs.** Verify the tuning agent can propose ShinkaEvolve HPs:
+
+```text
+Agent(
+  description: "Phase 8: tune evolve HPs for stacked code",
+  prompt: "Propose ShinkaEvolve evolution HPs for stacking code_refinement. Stacked methods: weight-decay + label-smoothing. Read learned-behaviors.json category evolve_hp for prior outcomes. Return evolve_recommendation: {num_generations, population_size, reasoning}.",
+  subagent_type: "ml-optimizer:tuning-agent"
+)
+```
+
+**Step 3: Execute evolve on stacked branch.** Verify the implement agent can run evolve on a stacked branch:
+
+```text
+Agent(
+  description: "Phase 8: evolve stacked code",
+  prompt: "Use the evolve skill via Skill('ml-optimizer:evolve'). Parameters: project_root: /tmp/ml-opt-diagnostic, parent_branch: ml-opt/stack-2, parent_metrics: {loss: <STACKED_LOSS>}, primary_metric: loss, lower_is_better: true, scope_level: full, exp_root: /tmp/ml-opt-diagnostic/experiments, evolve_recommendation: <FROM_TUNING_AGENT>, feedback_context: {batch_analysis: 'Stacked methods: weight-decay + label-smoothing. Diagnostic: testing evolve on stacked code.', error_patterns: [], dead_ends: [], learned_behaviors: []}.",
+  subagent_type: "ml-optimizer:implement-agent"
+)
+```
+
+**Step 4: Tune training HPs for evolved stacked code.** Verify the tuning agent can propose training HPs for the evolved branch:
+
+```text
+Agent(
+  description: "Phase 8: tune training HPs for evolved stack",
+  prompt: "Ultrathink. Propose HP configs for the evolved stacked method. Parameters: project_root: /tmp/ml-opt-diagnostic, num_gpus: 1, primary_metric: loss, lower_is_better: true, code_branches: [<EVOLVED_BRANCH_OR_STACK_2>], iteration: 1, exp_root: /tmp/ml-opt-diagnostic/experiments.",
+  subagent_type: "ml-optimizer:tuning-agent"
+)
+```
+
+**Step 5: Run experiment on evolved stacked code with tuned HPs.**
+
+```text
+Agent(
+  description: "Phase 8: experiment on evolved stacked code",
+  prompt: "Run experiment. Parameters: exp_id: exp-stack-evolved, config: <FROM_TUNING_AGENT>, gpu_id: 0, project_root: /tmp/ml-opt-diagnostic, train_command: python train.py --epochs 2, code_branch: <EVOLVED_BRANCH_OR_STACK_2>, iteration: 1, method_tier: stacked_tuned_hp, exp_root: /tmp/ml-opt-diagnostic/experiments.",
+  subagent_type: "ml-optimizer:experiment-agent"
+)
+```
+
+**Verify Phase 8 evolve chain (all 5 steps):**
+- Analysis agent assessed stacked result (compared vs best individual)
+- Tuning agent proposed evolve HPs
+- Implement agent ran evolve skill on stacked branch
+- Tuning agent proposed training HPs for evolved code
+- Experiment agent ran training with tuned HPs
+- If ShinkaEvolve unavailable: Steps 3-5 use original stack branch instead
+
+```
+Phase 8 Evolve (Component Test — full chain):
+  1. Analysis dispatch:        [passed/failed]
+  2. Tuning (evolve HPs):     [passed/failed]
+  3. Evolve execution:        [passed/failed/skipped]
+  4. Tuning (training HPs):   [passed/failed]
+  5. Experiment on evolved:   [passed/failed]
 ```
 
 ### 6.7: Phase 9 — Report + Review
@@ -1246,8 +1285,8 @@ echo "=== Feature Verification (25 items) ==="
 
 # 1. Immutable baseline
 python3 $SCRIPTS/pipeline_state.py $EXP verify-baseline 2>/dev/null \
-  && echo "✓ [1/22] Immutable baseline: checksum valid" \
-  || echo "✗ [1/22] Immutable baseline: FAILED"
+  && echo "✓ [1/25] Immutable baseline: checksum valid" \
+  || echo "✗ [1/25] Immutable baseline: FAILED"
 
 # 2. Research agenda
 python3 -c "
@@ -1256,35 +1295,35 @@ if os.path.exists('$EXP/reports/research-agenda.json'):
     agenda = json.loads(open('$EXP/reports/research-agenda.json').read()).get('ideas', [])
     tried = sum(1 for i in agenda if i.get('status') == 'tried')
     untried = sum(1 for i in agenda if i.get('status') == 'untried')
-    print(f'✓ [2/22] Research agenda: {len(agenda)} ideas ({tried} tried, {untried} untried)')
+    print(f'✓ [2/25] Research agenda: {len(agenda)} ideas ({tried} tried, {untried} untried)')
 else:
-    print('✗ [2/22] Research agenda: file missing')
+    print('✗ [2/25] Research agenda: file missing')
 "
 
 # 3. Dead-end catalog
 python3 -c "
 from pathlib import Path
 p = Path('$EXP/reports/dead-ends.json')
-print('✓ [3/22] Dead-end catalog: exists') if p.exists() else print('— [3/22] Dead-end catalog: not triggered (OK)')
+print('✓ [3/25] Dead-end catalog: exists') if p.exists() else print('— [3/25] Dead-end catalog: not triggered (OK)')
 "
 
 # 4. Dashboard (structural check)
 python3 -c "
 html = open('$EXP/reports/dashboard.html').read()
 ok = '<table' in html and '<tr' in html
-print('✓ [4/22] Dashboard: structural check passed') if ok else print('✗ [4/22] Dashboard: missing structural elements')
+print('✓ [4/25] Dashboard: structural check passed') if ok else print('✗ [4/25] Dashboard: missing structural elements')
 "
 
 # 5. Excalidraw
 test -f $EXP/artifacts/pipeline-overview.excalidraw \
-  && echo "✓ [5/22] Excalidraw: pipeline diagram exists" \
-  || echo "✗ [5/22] Excalidraw: missing"
+  && echo "✓ [5/25] Excalidraw: pipeline diagram exists" \
+  || echo "✗ [5/25] Excalidraw: missing"
 
 # 6. Baseline checksum in state
 python3 -c "
 import json
 state = json.loads(open('$EXP/pipeline-state.json').read())
-print('✓ [6/22] Baseline checksum: stored') if 'baseline_checksum' in state else print('✗ [6/22] Baseline checksum: missing')
+print('✓ [6/25] Baseline checksum: stored') if 'baseline_checksum' in state else print('✗ [6/25] Baseline checksum: missing')
 "
 
 # 7. Error tracking
@@ -1294,9 +1333,9 @@ r = subprocess.run(['python3', '$SCRIPTS/error_tracker.py', '$EXP', 'summary'], 
 if r.returncode == 0:
     data = json.loads(r.stdout)
     n = data.get('total_events', 0)
-    print(f'✓ [7/22] Error tracking: {n} events logged')
+    print(f'✓ [7/25] Error tracking: {n} events logged')
 else:
-    print('✗ [7/22] Error tracking: summary command failed')
+    print('✗ [7/25] Error tracking: summary command failed')
 "
 
 # 8. Schema validation (all output types)
@@ -1311,7 +1350,7 @@ for f in $EXP/results/exp-*.json; do
   [ -f "$f" ] && python3 $SCRIPTS/schema_validator.py "$f" result 2>/dev/null \
     && echo "  ✓ $(basename $f) valid" || echo "  ✗ $(basename $f) invalid"
 done
-echo "✓ [8/22] Schema validation: complete"
+echo "✓ [8/25] Schema validation: complete"
 
 # 9. Result metadata (placeholder verification)
 python3 -c "
@@ -1327,9 +1366,9 @@ for f in results:
         if field not in data:
             issues.append(f'{eid}: missing {field}')
 if issues:
-    print('✗ [9/22] Result metadata: ' + '; '.join(issues))
+    print('✗ [9/25] Result metadata: ' + '; '.join(issues))
 else:
-    print(f'✓ [9/22] Result metadata: all {len(results)} results complete')
+    print(f'✓ [9/25] Result metadata: all {len(results)} results complete')
 "
 
 # 10. Pipeline state
@@ -1340,7 +1379,7 @@ has_phase = 'phase' in state
 has_iter = 'iteration' in state
 has_choices = 'user_choices' in state
 ok = has_phase and has_iter and has_choices
-print(f'✓ [10/22] Pipeline state: phase={state.get(\"phase\")}, iteration={state.get(\"iteration\")}') if ok else print('✗ [10/22] Pipeline state: missing fields')
+print(f'✓ [10/25] Pipeline state: phase={state.get(\"phase\")}, iteration={state.get(\"iteration\")}') if ok else print('✗ [10/25] Pipeline state: missing fields')
 "
 
 # 11. Error tracker CLI subcommands
@@ -1352,16 +1391,16 @@ python3 $SCRIPTS/error_tracker.py $EXP proposals loss true > /dev/null 2>&1 && e
 python3 $SCRIPTS/error_tracker.py $EXP dead-end list > /dev/null 2>&1 && echo "  ✓ dead-end list" || echo "  ✗ dead-end list"
 python3 $SCRIPTS/error_tracker.py $EXP suggestion-history > /dev/null 2>&1 && echo "  ✓ suggestion-history" || echo "  ✗ suggestion-history"
 python3 $SCRIPTS/error_tracker.py $EXP agenda list > /dev/null 2>&1 && echo "  ✓ agenda list" || echo "  ✗ agenda list"
-echo "✓ [11/22] Error tracker CLI: subcommands verified"
+echo "✓ [11/25] Error tracker CLI: subcommands verified"
 
 # 12. Worktree cleanup
 python3 -c "
 from pathlib import Path
 wt = Path('$EXP/worktrees')
 if wt.exists() and list(wt.iterdir()):
-    print('✗ [12/22] Worktree cleanup: leftover worktrees found')
+    print('✗ [12/25] Worktree cleanup: leftover worktrees found')
 else:
-    print('✓ [12/22] Worktree cleanup: no leftover worktrees')
+    print('✓ [12/25] Worktree cleanup: no leftover worktrees')
 "
 
 # 13. Goal memory
@@ -1371,12 +1410,12 @@ import subprocess
 goals = Path('$EXP/optimization-goals.json')
 r = subprocess.run(['python3', '$SCRIPTS/goal_memory.py', '$EXP', 'summary'], capture_output=True, text=True)
 if goals.exists() and r.returncode == 0 and 'OPTIMIZATION GOALS' in r.stdout:
-    print('✓ [13/22] Goal memory: goals created, summary works')
+    print('✓ [13/25] Goal memory: goals created, summary works')
 else:
     missing = []
     if not goals.exists(): missing.append('goals missing')
     if r.returncode != 0: missing.append('summary failed')
-    print('✗ [13/22] Goal memory: ' + ', '.join(missing))
+    print('✗ [13/25] Goal memory: ' + ', '.join(missing))
 "
 
 # 14. Overfitting detection
@@ -1388,9 +1427,9 @@ train = [0.5, 0.4, 0.3, 0.2, 0.15, 0.1]
 val = [0.5, 0.55, 0.6, 0.65, 0.7, 0.75]
 r = check_overfitting(train, val, patience=5)
 if r['overfitting']:
-    print('✓ [14/22] Overfitting detection: works (severity=' + r['severity'] + ')')
+    print('✓ [14/25] Overfitting detection: works (severity=' + r['severity'] + ')')
 else:
-    print('✗ [14/22] Overfitting detection: FAILED to detect')
+    print('✗ [14/25] Overfitting detection: FAILED to detect')
 "
 
 # 15. HP interaction detection
@@ -1400,7 +1439,7 @@ sys.path.insert(0, '$SCRIPTS')
 from result_analyzer import detect_hp_interactions, load_results
 results = load_results('$EXP/results')
 out = detect_hp_interactions(results, 'loss', lower_is_better=True)
-print(f'✓ [15/22] HP interactions: {len(out.get(\"interactions\", []))} detected') if 'interactions' in out else print('✗ [15/22] HP interactions: FAILED')
+print(f'✓ [15/25] HP interactions: {len(out.get(\"interactions\", []))} detected') if 'interactions' in out else print('✗ [15/25] HP interactions: FAILED')
 "
 
 # 16. Branch scores
@@ -1410,7 +1449,7 @@ sys.path.insert(0, '$SCRIPTS')
 from result_analyzer import compute_branch_scores, load_results
 results = load_results('$EXP/results')
 scores = compute_branch_scores(results, 'loss', lower_is_better=True)
-print(f'✓ [16/22] Branch scores: {len(scores)} branches scored') if isinstance(scores, dict) else print('✗ [16/22] Branch scores: FAILED')
+print(f'✓ [16/25] Branch scores: {len(scores)} branches scored') if isinstance(scores, dict) else print('✗ [16/25] Branch scores: FAILED')
 "
 
 # 17. Checkpoint warm-starting
@@ -1422,7 +1461,7 @@ from pathlib import Path
 with tempfile.TemporaryDirectory() as td:
     p = generate_train_script(td, 'ckpt-test', 'python train.py', checkpoint_path='/tmp/ckpt.pt')
     ok = 'CHECKPOINT_PATH' in Path(p).read_text()
-    print('✓ [17/22] Checkpoint warm-start: script includes CHECKPOINT_PATH') if ok else print('✗ [17/22] Checkpoint warm-start: FAILED')
+    print('✓ [17/25] Checkpoint warm-start: script includes CHECKPOINT_PATH') if ok else print('✗ [17/25] Checkpoint warm-start: FAILED')
 "
 
 # 18. Experiment comparison
@@ -1435,9 +1474,9 @@ ids = [k for k in results if k.startswith('exp-')][:2]
 if len(ids) >= 2:
     cmp = compare_experiments('$EXP/results', ids, 'loss')
     ok = 'config_diff' in cmp and 'metrics_comparison' in cmp and 'winner' in cmp
-    print(f'✓ [18/22] Experiment comparison: {ids[0]} vs {ids[1]}') if ok else print('✗ [18/22] Experiment comparison: FAILED')
+    print(f'✓ [18/25] Experiment comparison: {ids[0]} vs {ids[1]}') if ok else print('✗ [18/25] Experiment comparison: FAILED')
 else:
-    print('— [18/22] Experiment comparison: need 2+ experiments')
+    print('— [18/25] Experiment comparison: need 2+ experiments')
 "
 
 # 19. Results table (Markdown)
@@ -1449,7 +1488,7 @@ from pathlib import Path
 path = generate_results_table('$EXP')
 content = Path(path).read_text()
 ok = '# ML Optimization Results' in content and '## Results' in content
-print(f'✓ [19/22] Results table: {path}') if ok else print('✗ [19/22] Results table: FAILED')
+print(f'✓ [19/25] Results table: {path}') if ok else print('✗ [19/25] Results table: FAILED')
 "
 
 # 20. Completeness enforcement (--strict mode)
@@ -1461,9 +1500,9 @@ incomplete = {'exp_id': 'test', 'status': 'completed', 'config': {}, 'metrics': 
 normal = validate_result(incomplete)
 strict = validate_result_strict(incomplete)
 if normal['valid'] and not strict['valid'] and len(normal.get('warnings', [])) > 0:
-    print(f'✓ [20/22] Completeness enforcement: {len(strict[\"errors\"])} issues caught in strict mode')
+    print(f'✓ [20/25] Completeness enforcement: {len(strict[\"errors\"])} issues caught in strict mode')
 else:
-    print('✗ [20/22] Completeness enforcement: FAILED')
+    print('✗ [20/25] Completeness enforcement: FAILED')
 "
 
 # 21. Status line
@@ -1479,18 +1518,60 @@ r2 = subprocess.run(['bash', hook], input=stdin_without, capture_output=True, te
 has_output = '[ml-opt]' in r1.stdout
 is_silent = r2.stdout.strip() == ''
 if has_output and is_silent:
-    print('✓ [21/22] Status line: active with state, silent without')
+    print('✓ [21/25] Status line: active with state, silent without')
 elif has_output:
-    print('✗ [21/22] Status line: not silent without state')
+    print('✗ [21/25] Status line: not silent without state')
 else:
-    print('✗ [21/22] Status line: no output with state')
+    print('✗ [21/25] Status line: no output with state')
 "
 
-# 22. Evolve file handoff (ShinkaEvolve integration)
+# 22. Resumable subagents
 python3 -c "
-import sys, os, json, tempfile, threading, time
-sys.path.insert(0, os.path.join('$PLUGIN_ROOT', 'skills', 'evolve', 'ShinkaEvolve'))
-from shinka.llm.file_handoff_provider import set_handoff_dir, query_file_handoff
+import json
+state = json.loads(open('$EXP/pipeline-state.json').read())
+has_registry = 'agent_registry' in state
+print('✓ [22/25] Resumable subagents: agent_registry in pipeline state') if has_registry else print('✗ [22/25] Resumable subagents: agent_registry missing')
+"
+
+# 23. Inter-agent relay
+python3 -c "
+content = open('$PLUGIN_ROOT/skills/orchestrate/references/phase-7-experiment-loop.md').read()
+relay_count = content.count('CONTEXT FROM OTHER AGENTS')
+ok = relay_count >= 5
+print(f'✓ [23/25] Inter-agent relay: {relay_count} context relay sections') if ok else print(f'✗ [23/25] Inter-agent relay: only {relay_count} (need ≥5)')
+"
+
+# 24. Persistent/ephemeral classification
+python3 -c "
+from pathlib import Path
+agents_dir = Path('$PLUGIN_ROOT/agents')
+persistent = ['research', 'implement', 'tuning', 'analysis', 'monitor', 'review']
+ephemeral = ['prerequisites', 'baseline', 'experiment', 'report']
+issues = []
+for a in persistent:
+    content = (agents_dir / f'{a}-agent.md').read_text()
+    if 'Resumable Agent' not in content:
+        issues.append(f'{a} missing Resumable Agent')
+for a in ephemeral:
+    content = (agents_dir / f'{a}-agent.md').read_text()
+    if 'Resumable Agent' in content:
+        issues.append(f'{a} should NOT have Resumable Agent')
+if issues:
+    print('✗ [24/25] Persistent/ephemeral: ' + '; '.join(issues))
+else:
+    print('✓ [24/25] Persistent/ephemeral: 6 persistent + 4 ephemeral correctly classified')
+"
+
+# 25. Evolve file handoff (ShinkaEvolve integration)
+python3 -c "
+import sys, os, json, tempfile, threading, time, importlib.util
+# Import directly to avoid ShinkaEvolve's __init__.py (requires dotenv)
+_provider_path = os.path.join('$PLUGIN_ROOT', 'skills', 'evolve', 'ShinkaEvolve', 'shinka', 'llm', 'file_handoff_provider.py')
+_spec = importlib.util.spec_from_file_location('file_handoff_provider', _provider_path)
+_mod = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_mod)
+set_handoff_dir = _mod.set_handoff_dir
+query_file_handoff = _mod.query_file_handoff
 
 with tempfile.TemporaryDirectory() as td:
     set_handoff_dir(td)
@@ -1551,7 +1632,9 @@ Full Pipeline (live Agent() dispatch):
     - Monitor:              [passed/failed]
     - Analyze:              [passed/failed]
     - Result analyzer CLI:  [passed/failed]
+  Phase 7 Evolve:           [passed/failed/skipped] — tuning → evolve → experiment chain
   Phase 8 Stacking:         [passed/failed] — N branches merged, stacked experiment, state persisted
+  Phase 8 Evolve:           [passed/failed/skipped] — analysis → tuning → evolve for interference
   Phase 9 Report:           [passed/failed]
   Phase 9 Review:           [passed/failed]
 
@@ -1592,7 +1675,7 @@ Skipped phases (by design):
   Phase 0 Discovery:    Interactive (requires user Q&A) — goals simulated via scripts/goal_memory.py init-goals
   Phase 1 Understand:   Could partially test — deferred
   Phase 4 Checkpoint:   Interactive (user direction choice)
-  Phase 8 Stacking:     [passed/failed] — N branches merged, stacked experiment run, state persisted
+  Phase 8 Stacking:     [passed/failed] — N branches merged, stacked experiment run, evolve integration, state persisted
 
 Issues found: [none or list]
 ```

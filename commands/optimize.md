@@ -4,6 +4,6 @@ argument-hint: "[model-path-or-description]"
 allowed-tools: "Bash, Read, Write, Edit, Glob, Grep, Agent, Skill, WebSearch, WebFetch, AskUserQuestion, EnterPlanMode, ExitPlanMode"
 ---
 
-Use the `ml-optimizer:orchestrate` skill with the following user input:
+You MUST invoke the `ml-optimizer:orchestrate` skill using the Skill tool BEFORE generating any response. Do NOT attempt to handle optimization without loading this skill first.
 
-$ARGUMENTS
+User request: $ARGUMENTS

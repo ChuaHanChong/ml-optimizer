@@ -131,7 +131,7 @@ def generate_train_script(
     return str(script_path)
 
 
-def setup(project_root: str, train_command: str, gpu_id: int = 0, config: dict | None = None, checkpoint_path: str | None = None) -> dict:
+def setup(project_root: str, train_command: str, gpu_id: int = 0, config: dict | None = None, checkpoint_path: str | None = None, method_tier: str | None = None, iteration: int | None = None) -> dict:
     """Full setup: create dirs, generate ID, write config and script.
 
     Uses atomic file creation to prevent race conditions when multiple
@@ -145,11 +145,16 @@ def setup(project_root: str, train_command: str, gpu_id: int = 0, config: dict |
     for attempt in range(max_retries):
         exp_id = next_experiment_id(results_dir)
         try:
-            config_path = write_experiment_config(results_dir, exp_id, {
+            placeholder = {
                 "exp_id": exp_id,
                 "config": config,
                 "status": "pending",
-            }, exclusive=True)
+            }
+            if method_tier is not None:
+                placeholder["method_tier"] = method_tier
+            if iteration is not None:
+                placeholder["iteration"] = iteration
+            config_path = write_experiment_config(results_dir, exp_id, placeholder, exclusive=True)
             break
         except FileExistsError:
             if attempt == max_retries - 1:

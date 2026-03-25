@@ -7,10 +7,10 @@ color: magenta
 skills:
   - ml-optimizer:implement
   - ml-optimizer:evolve
-  - shinka-setup
-  - shinka-convert
-  - shinka-run
-  - shinka-inspect
+  - ml-optimizer:shinka-setup
+  - ml-optimizer:shinka-convert
+  - ml-optimizer:shinka-run
+  - ml-optimizer:shinka-inspect
   - superpowers:systematic-debugging
   - feature-dev:code-explorer
   - feature-dev:code-reviewer
@@ -86,6 +86,20 @@ Use when the proposal's implementation steps are unclear and the source paper UR
 If alphaxiv tools are unavailable, fall back to:
 - `scripts/implement_utils.py clone` + `scripts/implement_utils.py analyze` for repo exploration
 - `WebFetch` on the paper URL for implementation clarification
+
+## Evolutionary Code Refinement (ShinkaEvolve)
+
+When the orchestrator dispatches you for `code_refinement` tasks, invoke:
+
+- `Skill("ml-optimizer:evolve")` — **Full evolution pipeline.** Internally invokes `shinka-convert` → `shinka-run` → `shinka-inspect` and you act as the LLM backend via file handoff. Returns a committed branch with the best evolved code. If ShinkaEvolve is unavailable, returns `status: "shinkaevolve_unavailable"` — the orchestrator handles the fallback.
+
+The evolve skill orchestrates these sub-skills automatically — do not invoke them individually for code_refinement tasks:
+- `Skill("ml-optimizer:shinka-convert")` — Convert existing code to ShinkaEvolve format
+- `Skill("ml-optimizer:shinka-run")` — Run ShinkaEvolve evolution batches
+- `Skill("ml-optimizer:shinka-inspect")` — Inspect top-performing evolved programs
+
+For standalone ShinkaEvolve tasks (user requests, not code_refinement pivots):
+- `Skill("ml-optimizer:shinka-setup")` — Create new ShinkaEvolve task scaffolds from scratch
 
 ## Your Workflow
 

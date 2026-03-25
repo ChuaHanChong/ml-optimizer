@@ -56,7 +56,6 @@ def _create_experiments(exp_root: Path, num=3, metric="loss"):
         "user_choices": {
             "primary_metric": metric,
             "lower_is_better": True,
-            "budget_mode": "auto",
         },
     }
     (exp_root / "pipeline-state.json").write_text(json.dumps(state))

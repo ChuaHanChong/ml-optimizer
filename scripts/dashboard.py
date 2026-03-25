@@ -183,7 +183,6 @@ svg{max-width:100%}
     <div style="font-size:0.9rem">
       <div>Phase: <strong>${phase}</strong></div>
       <div>Iteration: <strong>${iteration}</strong></div>
-      <div>Budget mode: <strong>${budget_mode}</strong></div>
     </div>
   </div>
 </div>
@@ -505,7 +504,6 @@ def generate_dashboard(exp_root: str, *, live: bool = False) -> str:
         improvement=improvement,
         phase=str(ps.get("phase", "—")),
         iteration=str(ps.get("iteration", "—")),
-        budget_mode=uc.get("budget_mode", "—"),
         running_section=running_section,
         timeline_svg=timeline_svg,
         results_rows="\n".join(rows),

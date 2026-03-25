@@ -1,5 +1,5 @@
 {
-  "description": "Security, reliability, and compliance hooks for ml-optimizer autonomous mode",
+  "description": "Security, reliability, and compliance hooks for ml-optimizer",
   "hooks": {
     "SubagentStop": [
       {

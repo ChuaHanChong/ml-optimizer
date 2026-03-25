@@ -36,15 +36,15 @@ Search the project for evaluation scripts:
 
 3. If no clear eval command found:
 
-   **Autonomous mode auto-skip:** If `budget_mode == "autonomous"`, skip the user question. Instead:
+   First try auto-fallback:
    - Set `eval_command = null`
    - Use training output as the evaluation source — run training for the profiling duration and extract final metrics via `scripts/parse_logs.py`
    - If metrics containing the `primary_metric` keyword are found in training output: use those as baseline metrics
    - If no recognizable metrics found: look for checkpoint/log files (TensorBoard events, CSV logs, JSON summaries) and parse those
-   - Log to dev_notes: "No eval command found — using training output metrics as baseline (autonomous mode)"
-   - Log to error tracker: `category: "config_error", severity: "info", source: "baseline", message: "No eval command — falling back to training output metrics (autonomous mode)"`
+   - Log to dev_notes: "No eval command found — using training output metrics as baseline"
+   - Log to error tracker: `category: "config_error", severity: "info", source: "baseline", message: "No eval command — falling back to training output metrics"`
 
-   **Otherwise (interactive mode):** Use AskUserQuestion:
+   If auto-fallback fails to find metrics, use AskUserQuestion:
    ```
    I couldn't automatically identify an evaluation command.
    How do I evaluate this model? Please provide:

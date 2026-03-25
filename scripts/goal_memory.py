@@ -466,12 +466,10 @@ def generate_summary(exp_root: str) -> str:
         direction = "lower is better" if lib else "higher is better"
         target = obj.get("target_value")
         scope = con.get("scope_level", "?")
-        budget = con.get("budget_mode", "?")
-
         lines.append("=== OPTIMIZATION GOALS ===")
         target_str = f", Target: {target}" if target is not None else ""
         lines.append(f"Metric: {metric} ({direction}){target_str}")
-        lines.append(f"Scope: {scope} | Budget mode: {budget}")
+        lines.append(f"Scope: {scope}")
 
         frozen = con.get("frozen_parameters", [])
         if frozen:

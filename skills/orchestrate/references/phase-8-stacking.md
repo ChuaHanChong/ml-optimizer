@@ -25,8 +25,9 @@ Then count entries in the result. If fewer than 5, skip to Phase 9.
 
    a. **Create stack branch:**
    ```bash
-   git checkout -b ml-opt/stack-<order> ml-opt/stack-<order-1>
-   # (For order=2, branch from ml-opt/stack-1 which is the best method's branch)
+   git checkout -b ml-opt/stack-<order> <stack_base_branch>
+   # stack_base_branch tracks the current best stack (may be an evolved branch)
+   # For order=2, this is ml-opt/stack-1 (or ml-opt/evolved-stack-1 if evolved)
    ```
 
    b. **Merge the next method:**
@@ -80,34 +81,81 @@ Then count entries in the result. If fewer than 5, skip to Phase 9.
       - Compare to previous stack step's metric value.
       - **If improved:** Keep this stack step.
         - Update `stack_base_branch = ml-opt/stack-<order>`
-        - **Optional HP-tune:** If the improvement is > 1% AND remaining budget allows, dispatch the tuning agent (resume-or-dispatch pattern):
 
-          **IF `agent_registry["tuning"]` is not null** (agent exists from a previous iteration or phase):
+        - **Analyze stacked result:** Dispatch the analysis agent to assess whether the stacked code needs evolution or HP-tuning (resume-or-dispatch pattern, same as Phase 7):
+
+          **IF `agent_registry["analysis"]` is not null:**
           ```
           SendMessage(
-            to: agent_registry["tuning"],
-            message: "HP-tune stacked method stack-{order}.
+            to: agent_registry["analysis"],
+            message: "Analyze stacked experiment result.
               CONTEXT FROM OTHER AGENTS:
-              - EXPERIMENTS: stacked method improved by {improvement}% over individual
-              Parameters: project_root: {project_root}, num_gpus: {num_gpus}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, code_branches: [ml-opt/stack-{order}], iteration: 1, remaining_budget: {min(2, actual_remaining)}, search_space: {narrowed_search_space}."
+              - EXPERIMENTS: stacked experiment on ml-opt/stack-{order}: {stacked_metrics}
+              - STACKING: methods combined: {stacked_methods}, stacking order: {order}
+              - BEST INDIVIDUAL: best single method gain: {best_individual_gain}%
+              Parameters: project_root: {project_root}, batch_number: stack-{order},
+              primary_metric: {primary_metric}, lower_is_better: {lower_is_better},
+              exp_root: {exp_root}.
+              Compare the stacked gain to the best individual method gain. If the stack underperforms
+              the best individual (methods interfering), recommend code_refinement. Otherwise recommend continue."
           )
           ```
-          → If `SendMessage` fails (agent no longer reachable): fall back to the `Agent()` dispatch below, update `agent_registry["tuning"]` with the new agentId.
+          → If `SendMessage` fails: fall back to `Agent()` dispatch below, update `agent_registry["analysis"]`.
 
-          **ELSE** (first dispatch — no existing agent):
+          **ELSE:**
           ```
           Agent(
-            description: "HP-tune stacked method stack-{order}",
-            prompt: "Ultrathink. Propose HP configs for stacked method. Parameters: project_root: {project_root}, num_gpus: {num_gpus}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, code_branches: [ml-opt/stack-{order}], iteration: 1, remaining_budget: {min(2, actual_remaining)}, search_space: {narrowed_search_space}.",
-            subagent_type: "ml-optimizer:tuning-agent"
+            description: "Analyze stacked result stack-{order}",
+            prompt: <same as above>,
+            subagent_type: "ml-optimizer:analysis-agent"
           )
           ```
-          → Save returned `agentId` to `agent_registry["tuning"]`
+          → Save returned `agentId` to `agent_registry["analysis"]`
           → Persist registry: `save_state(..., agent_registry=agent_registry)`
-        - If HP-tune improves further, record as `method_tier: "stacked_tuned_hp"`
-      - **If worse or equal:** Skip this method.
+
+        - **If analysis recommends `pivot_type: "code_refinement"`:**
+
+          **Step 1: Tune evolve HPs.** Dispatch tuning agent (resume-or-dispatch):
+          ```
+          SendMessage(to: agent_registry["tuning"]) OR Agent(subagent_type="ml-optimizer:tuning-agent")
+          ```
+          Prompt: "Propose ShinkaEvolve evolution HPs for stacking code_refinement. Stacked methods: {stacked_methods}. Read `learned-behaviors.json` category `evolve_hp` for prior outcomes. Return `evolve_recommendation: {num_generations, population_size, reasoning}`."
+
+          **Step 2: Execute evolve.** Dispatch implement-agent with evolve skill (resume-or-dispatch):
+          ```
+          SendMessage(to: agent_registry["implement"]) OR Agent(subagent_type="ml-optimizer:implement-agent")
+          ```
+          Prompt: `Skill("ml-optimizer:evolve")` with parameters:
+            - `project_root`, `parent_branch: ml-opt/stack-{order}`, `parent_metrics: {stacked metrics}`
+            - `primary_metric`, `lower_is_better`, `scope_level`, `exp_root`
+            - `evolve_recommendation`: from tuning agent (Step 1)
+            - `feedback_context`: {batch_analysis, error_patterns, dead_ends, learned_behaviors}
+
+          **Handle evolve result:**
+          - If `status == "validated"`:
+            - Run experiment on the evolved branch (`ml-opt/evolved-*`)
+            - If evolved result is better than pre-evolution stack → update `stack_base_branch` to evolved branch, add `"stack-<order>"` to `evolved_methods` in stacking state
+            - If evolved result is worse → discard evolved branch, keep pre-evolution `ml-opt/stack-<order>` as stack base
+          - If `status == "shinkaevolve_unavailable"` or `"validation_failed"`:
+            - Log to error tracker, continue without evolution (proceed to HP-tune)
+
+        - **HP-tune on (potentially evolved) stack branch:** Dispatch the tuning agent to propose training HPs, then run experiment (resume-or-dispatch pattern):
+
+          ```
+          SendMessage(to: agent_registry["tuning"]) OR Agent(subagent_type="ml-optimizer:tuning-agent")
+          ```
+          Prompt: "Propose HP configs for stacked method. Parameters: project_root: {project_root}, num_gpus: {num_gpus}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, code_branches: [{stack_base_branch}], iteration: 1, search_space: {narrowed_search_space}."
+
+          Run experiments with proposed configs. If HP-tune improves, record as `method_tier: "stacked_tuned_hp"`.
+
+        - **Re-analyze:** After evolve + HP-tune, dispatch the analysis agent again on the updated result:
+          - If analysis recommends `code_refinement` again → loop back to the tuning + evolve step above (with new HPs from tuning agent)
+          - If analysis recommends `continue` → improvement achieved, proceed to next stack step
+          - If analysis recommends `stop` → skip this method, the combination can't be fixed
+
+      - **If analysis recommends `stop`:** Skip this method.
         - Delete `ml-opt/stack-<order>` branch
-        - Log: "Method <slug> skipped in stacking (metric degraded by X%)"
+        - Log: "Method <slug> skipped in stacking (analysis determined combination unproductive)"
         - Continue to next method (next stack branch re-branches from last successful stack)
 
 4. **Save stacking state** to `pipeline-state.json` via `save_state(user_choices={"stacking": {...}})` after each stack step (for resumption):
@@ -120,7 +168,8 @@ Then count entries in the result. If fewer than 5, skip to Phase 9.
          "stack_base_branch": "ml-opt/stack-2",
          "stack_base_exp": "exp-stack-002",
          "skipped_methods": ["method-c"],
-         "stacked_methods": ["method-b", "method-a"]
+         "stacked_methods": ["method-b", "method-a"],
+         "evolved_methods": ["stack-2"]
        }
      }
    }

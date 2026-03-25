@@ -1,137 +1,180 @@
 ---
 name: evolve
-description: Generate a single targeted code mutation from a parent branch based on fitness feedback. Each invocation produces ONE mutation in an isolated git worktree.
+description: Orchestrate evolutionary code refinement on a method branch via the full ShinkaEvolve pipeline (convert → run → inspect).
 disable-model-invocation: true
 user-invocable: false
 ---
 
 # Evolve Skill
 
-Use extended thinking for all reasoning. Ultrathink. Analyze parent code deeply, understand what worked and failed, then generate ONE targeted mutation that addresses a specific weakness.
+Use extended thinking for all reasoning. Ultrathink.
 
 ## Overview
 
-This skill generates a **single code mutation** from a parent implementation, guided by fitness feedback. It operates in one of two modes:
+This skill orchestrates **evolutionary code refinement** on the best method branch. It runs the full ShinkaEvolve pipeline internally — converting code, running evolution, and extracting the best mutation — then commits the result as a new branch.
 
-1. **ShinkaEvolve mode (primary):** ShinkaEvolve's `shinka-run` drives the evolution loop. When ShinkaEvolve needs an LLM to generate a mutation, it writes a prompt to a file. The orchestrator picks it up and dispatches this skill to fulfill the request. The response flows back via the file handoff. In this mode, the mutation prompt (system_msg + user_msg) comes from ShinkaEvolve's prompt sampler — respect its EVOLVE-BLOCK markers and SEARCH/REPLACE patch format.
+ShinkaEvolve provides population management, island model, novelty detection, and selection pressure. The implement-agent acts as the LLM backend via file-based handoff (`SHINKA_PROVIDER=claude_code`).
 
-2. **Direct dispatch mode (fallback):** The orchestrator creates git worktrees and dispatches this skill directly, without ShinkaEvolve. Used when ShinkaEvolve is not available or for simple single-generation evolution.
+## Prerequisites
 
-**Architecture:** ShinkaEvolve's 4 built-in Claude Code skills (`shinka-setup`, `shinka-convert`, `shinka-run`, `shinka-inspect`) handle the evolution lifecycle. This skill handles the actual code mutation generation within that lifecycle. ShinkaEvolve manages population, islands, selection, and novelty detection — this skill just generates ONE mutation per invocation.
+ShinkaEvolve must be available. If not installed, install it:
+```bash
+pip install shinkaevolve
+```
+
+If installation fails, report `status: "shinkaevolve_unavailable"` and return immediately. The orchestrator will fall back to the research → implement path.
 
 ## Input Parameters
 
-- `project_root`: Path to the isolated git worktree for this mutation
+- `project_root`: Path to the project
 - `parent_branch`: Git branch with the current best implementation
-- `parent_code_diff`: The diff of parent vs main (provided by orchestrator to avoid git operations in worktree)
-- `parent_metrics`: Dict of parent's metrics
-- `mutation_type`: One of `"targeted_refinement"`, `"variant_exploration"`, `"cross_pollination"`
-- `mutation_id`: Unique ID for this mutation (e.g., `"mut-1-3"` = generation 1, mutation 3)
-- `generation`: Current generation number
-- `feedback_context`: Structured feedback from previous generations:
+- `parent_metrics`: Dict of parent's metrics (e.g., `{loss: 0.35, accuracy: 0.88}`)
+- `primary_metric`: Which metric to optimize
+- `lower_is_better`: Metric direction
+- `scope_level`: Constraint on changes (`"training"`, `"architecture"`, `"full"`)
+- `exp_root`: Path to experiments directory
+- `feedback_context`: Structured feedback:
   - `batch_analysis`: Summary of what worked/failed
   - `error_patterns`: From error-log.json
   - `dead_ends`: Techniques to avoid
   - `learned_behaviors`: Accumulated patterns
-  - `previous_mutations`: What was tried in prior generations and their results
-- `primary_metric`: Which metric to optimize
-- `lower_is_better`: Metric direction
-- `scope_level`: Constraint on changes (`"training"`, `"architecture"`, `"full"`)
-- `exp_root`: Path to experiments directory (in the main project, not the worktree)
+- `evolve_recommendation`: Dict from tuning agent with `{num_generations, population_size, reasoning}` — the tuning agent decides these values based on prior evolution outcomes
 
-## Step 1: Understand the Parent
+## Step 0: Resolve Evolve HPs
 
-1. **Read parent code diff** from `parent_code_diff` parameter (pre-computed by orchestrator)
-2. **Read parent metrics** from `parent_metrics` parameter
-3. **Read feedback context** from `feedback_context` parameter
-4. **Check goal constraints:** Read `<exp_root>/optimization-goals.json` for scope limits and frozen parameters
+The tuning agent sets evolve HPs via `evolve_recommendation`. Resolve in priority order:
 
-## Step 2: Design ONE Mutation
+1. Use `evolve_recommendation` from dispatch parameters (set by tuning agent).
+2. If not provided, read `<exp_root>/learned-behaviors.json` for entries with `category: "evolve_hp"`. Use the most recent recommendation.
+3. If neither exists, use defaults: `num_generations=10`, `population_size=2`.
 
-Based on the `mutation_type` assigned by the orchestrator:
-
-### If `targeted_refinement`:
-- Identify the weakest aspect from feedback (e.g., "loss plateaued", "overfitting detected", "slow convergence")
-- Design a focused code change that addresses this specific weakness
-- Change ONE thing only — keep everything else identical to parent
-
-### If `variant_exploration`:
-- Identify an alternative approach to the parent's strategy
-- Replace a component (optimizer, scheduler, augmentation, loss function) with an alternative
-- Maintain the parent's overall structure but swap the target component
-
-### If `cross_pollination`:
-- Requires `previous_mutations` in feedback_context to contain successful elements from other branches
-- Combine TWO successful elements from different mutations/branches
-- Only attempt if orchestrator provided cross-pollination candidates
-
-## Step 3: Apply the Mutation
-
-**In ShinkaEvolve mode:** The prompt from ShinkaEvolve specifies editable regions via `EVOLVE-BLOCK` markers:
-```python
-# EVOLVE-BLOCK-START
-<editable code here>
-# EVOLVE-BLOCK-END
-```
-Only modify code within these markers. Use ShinkaEvolve's SEARCH/REPLACE patch format in your response:
-```
-<<<<<<< SEARCH
-<original code to find>
-========
-<replacement code>
->>>>>>> REPLACE
+After evolution completes, log the outcome to learned-behaviors for future runs:
+```bash
+python3 scripts/goal_memory.py <exp_root> log-behavior evolve_hp \
+  '{"num_generations": <actual>, "population_size": <actual>, "mutations_evaluated": <N>, "best_improvement_pct": <X>, "insight": "<what happened>"}'
 ```
 
-**In direct dispatch mode:** The orchestrator has set up a git worktree on `parent_branch`. Apply changes directly using Edit tool.
+## Step 1: Convert Best Branch to ShinkaEvolve Task
 
-In both modes:
+Checkout the parent branch first:
+```bash
+git checkout <parent_branch>
+```
 
-1. **Read the target files** (in worktree or as provided by ShinkaEvolve)
-2. **Apply code changes** — respecting EVOLVE-BLOCK boundaries if present
-3. **Mark all changes** with `# [ml-opt] evolve-v<generation>-<mutation_id>: <description>`
-4. **Stay within scope_level constraints**
+Then invoke via `Skill("ml-optimizer:shinka-convert")`.
 
-## Step 4: Validate
+**Input:** The best branch's training code (now checked out).
 
-1. **Syntax check:**
+**Task:** Create a ShinkaEvolve task directory at `<exp_root>/artifacts/shinka-task/`:
+- `initial.py` — Snapshot of training code with `EVOLVE-BLOCK` markers around mutable regions (optimizer, scheduler, loss, augmentation — scoped by `scope_level`)
+- `evaluate.py` — Fitness evaluator that runs training and reports metrics in ShinkaEvolve's contract:
+  ```json
+  {"combined_score": <float>, "public": {<metrics>}, "private": {}, "text_feedback": "<summary>"}
+  ```
+  **Important:** The evaluator must construct the model the same way `initial.py` does — import model construction from the candidate program, not hardcode parameters. If the evolved code changes model architecture (e.g., `base_channels`, layer count, hidden dimensions), `evaluate.py` must pick up those changes. Use dynamic imports or read architecture params from the candidate code.
+- `shinka.yaml` — Evolution config
+
+**Scope enforcement:** Only wrap code sections allowed by `scope_level` in EVOLVE-BLOCK markers:
+- `"training"`: optimizer, scheduler, loss function, augmentation, regularization
+- `"architecture"`: + model layers, attention mechanisms, normalization
+- `"full"`: any code
+
+**combined_score formula:** For `lower_is_better` metrics (like loss), negate: `combined_score = -loss`. For higher-is-better (accuracy), use directly: `combined_score = accuracy`.
+
+## Step 2: Run Evolution
+
+Invoke via `Skill("ml-optimizer:shinka-run")`.
+
+Start `shinka-run` as a background process with file-based LLM handoff:
+
+```bash
+export SHINKA_PROVIDER=claude_code
+export SHINKA_HANDOFF_DIR=<exp_root>
+shinka_run \
+  --task-dir <exp_root>/artifacts/shinka-task \
+  --results_dir <exp_root>/artifacts/shinka-results \
+  --num_generations <num_generations> \
+  --max-evaluation-jobs 1 \
+  --max-proposal-jobs 2 \
+  --max-db-workers 2 \
+  --set db.num_islands=2 \
+  --set evo.max_patch_resamples=2 &
+SHINKA_PID=$!
+```
+
+## Step 3: Fulfill Mutation Requests (File Handoff Loop)
+
+While `shinka-run` is running in the background, poll for LLM requests:
+
+```
+While shinka-run process is alive (check: kill -0 $SHINKA_PID 2>/dev/null):
+  For each <exp_root>/evolve/pending/*.json:
+    1. Read {system_msg, user_msg, model_name} from the request
+    2. Generate the code mutation:
+       - Read the system_msg (contains EVOLVE-BLOCK code + instructions)
+       - Read the user_msg (contains parent metrics + mutation request)
+       - Generate a SEARCH/REPLACE patch that improves the code
+       - Respect EVOLVE-BLOCK boundaries
+       - Check dead_ends — do NOT use dead-end techniques
+       - Stay within scope_level constraints
+    3. Write response to <exp_root>/evolve/completed/<same_filename>.json:
+       {"content": "<SEARCH/REPLACE patch>"}
+  Sleep 2s
+```
+
+**Important:** You ARE the LLM that ShinkaEvolve is calling. Read the prompt carefully and generate a high-quality code mutation. Understand the code, identify weaknesses, propose targeted improvements.
+
+## Step 4: Inspect Results
+
+Invoke via `Skill("ml-optimizer:shinka-inspect")`.
+
+After `shinka-run` completes:
+1. Load top programs from `<exp_root>/artifacts/shinka-results/`
+2. Rank by `combined_score`
+3. Select the best program that passes correctness checks
+
+## Step 5: Apply Winner and Commit
+
+1. **Read the best evolved program** from shinka-inspect output
+2. **Derive slug** from parent branch name (e.g., `ml-opt/label-smoothing` → slug `label-smoothing`)
+3. **Create branch:** `git checkout -b ml-opt/evolved-<slug> <parent_branch>`
+   If the branch already exists, append a suffix: `ml-opt/evolved-<slug>-2`, `-3`, etc.
+4. **Apply the winning code changes** to the project files (replace the relevant sections with the evolved code)
+5. **Update eval.py if architecture changed:** If the evolved code modified model architecture parameters (e.g., `base_channels`, layer count, hidden dimensions), update the project's `eval.py` to match. The eval script must construct the model the same way the evolved training code does.
+6. **Mark changes:** `# [ml-opt] evolved: <description>`
+7. **Validate:**
    ```bash
    python3 -c "import py_compile; py_compile.compile('<modified_file>', doraise=True)"
    ```
-
-2. **Import check:**
+8. **Commit:**
    ```bash
-   python3 -c "import <module>"
+   git add -A && git commit -m "evolve: <description of best mutation>"
    ```
+9. **Return to original branch:** `git checkout <original_branch>`
 
-3. **If validation fails:** Attempt ONE fix. If still fails, report `status: "validation_failed"`.
+## Output Format
 
-## Step 5: Commit and Report
-
-**In ShinkaEvolve mode:** Return the mutation as text (SEARCH/REPLACE patches). ShinkaEvolve handles committing and evaluation. No git operations needed.
-
-**In direct dispatch mode:** Commit in the worktree:
-```bash
-git add -A && git commit -m "evolve v<generation> mut-<id>: <description>"
+```json
+{
+  "status": "validated|validation_failed|shinkaevolve_unavailable",
+  "branch": "ml-opt/evolved-<slug>",
+  "description": "<what the best mutation changed and why>",
+  "mutations_evaluated": 12,
+  "best_combined_score": 0.85,
+  "generations_completed": 10,
+  "files_modified": ["train.py"],
+  "reasoning": "<why this mutation was chosen based on feedback>"
+}
 ```
 
-**In both modes, return structured result:**
-   ```json
-   {
-     "mutation_id": "<mutation_id>",
-     "status": "validated|validation_failed",
-     "branch": "<worktree branch name>",
-     "description": "<what was changed and why>",
-     "mutation_type": "<type>",
-     "files_modified": ["<path>"],
-     "reasoning": "<why this mutation was chosen based on feedback>"
-   }
-   ```
+If ShinkaEvolve is unavailable or crashes: `status: "shinkaevolve_unavailable"`, no branch created. The orchestrator falls back to research → implement.
 
 ## Important Rules
 
-- **ONE mutation per invocation.** You generate exactly one code variant. The orchestrator handles population management.
-- **Work only in your worktree.** Do not touch the main project directory.
 - **Respect scope_level.** Training scope = only optimizer, scheduler, loss, augmentation, regularization.
 - **Check dead ends.** If a technique is in `feedback_context.dead_ends`, do NOT use it.
-- **Keep it focused.** Change ONE thing. Compound mutations are hard to attribute.
-- **Preserve provenance.** All code must have `# [ml-opt] evolve-v<N>-<id>` comments.
+- **Preserve provenance.** All code must have `# [ml-opt] evolved: <description>` comments.
+- **Return to original branch.** Never leave the repo on the evolved branch.
+- **Use analysis-recommended HPs.** Always use `evolve_recommendation` from Step 0 — the analysis agent sizes the run based on budget and prior outcomes.
+- **Report failures cleanly.** If shinka-run crashes or produces no valid programs, return `status: "shinkaevolve_unavailable"`. Do not attempt ad-hoc mutations — let the orchestrator decide the fallback.
+- **File handoff cleanup.** After evolution completes, remove `<exp_root>/evolve/pending/` and `<exp_root>/evolve/completed/` contents.

@@ -25,7 +25,7 @@ If the user selected research proposals that require code changes (not just HP t
 
    Install them? (The experiment will fail without them.)
    ```
-   **Autonomous mode auto-skip:** If `budget_mode == "autonomous"`, auto-approve dependency installation. Log to error tracker: `category: "pipeline_inefficiency", severity: "info", source: "orchestrate", message: "Autonomous mode: auto-approved installation of [packages]"`.
+   Auto-approve dependency installation if the user is not available. Log to error tracker: `category: "pipeline_inefficiency", severity: "info", source: "orchestrate", message: "Auto-approved installation of [packages]"`.
 
 4. **If license warnings flagged** → Use AskUserQuestion to surface to user:
    ```
@@ -34,15 +34,12 @@ If the user selected research proposals that require code changes (not just HP t
 
    Please review before proceeding. Continue with these proposals?
    ```
-   **Autonomous mode auto-skip:** If `budget_mode == "autonomous"`, auto-accept license warnings and proceed. Log to error tracker: `category: "pipeline_inefficiency", severity: "warning", source: "orchestrate", message: "Autonomous mode: auto-accepted license warnings for [proposals]"`. Log to dev_notes for user review later.
+   Auto-accept license warnings if the user is not available. Log to error tracker: `category: "pipeline_inefficiency", severity: "warning", source: "orchestrate", message: "Auto-accepted license warnings for [proposals]"`. Log to dev_notes for user review later.
 
 5. **If conflicts detected** → Inform user which proposals touch the same files. Each is on its own branch, so experiments run independently, but merging winners later may need manual conflict resolution.
 
-6. **Post-implementation quality review** (skip in autonomous mode):
-   **Autonomous mode auto-skip:** If `budget_mode == "autonomous"`, skip code review to avoid blocking the pipeline. The experiment loop catches broken implementations via early abort. Log to dev_notes: "Skipping post-implementation code review (autonomous mode)."
-
-   **Otherwise:**
-   For validated proposals, dispatch `feature-dev:code-reviewer` to review each implementation branch for bugs, logic errors, and code quality issues. This catches problems before wasting experiment budget on broken implementations.
+6. **Post-implementation quality review:**
+   For validated proposals, dispatch `feature-dev:code-reviewer` to review each implementation branch for bugs, logic errors, and code quality issues. This catches problems before running experiments on broken implementations.
    - Only review proposals with `status: "validated"` in the manifest
    - If the reviewer flags critical issues, mark the proposal as `validation_failed` and skip it
    - If the reviewer flags minor issues (style, non-blocking), log them but proceed

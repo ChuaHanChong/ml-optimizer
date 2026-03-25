@@ -38,16 +38,6 @@ if [ -d "$RESULTS_DIR" ]; then
     done
 fi
 
-# Budget info
-BUDGET=""
-BUDGET_MODE=$(jq -r '.user_choices.budget_mode // ""' "$STATE_FILE" 2>/dev/null)
-if [ "$BUDGET_MODE" = "autonomous" ]; then
-    BUDGET="auto"
-else
-    DIFF_MULT=$(jq -r '.user_choices.difficulty_multiplier // ""' "$STATE_FILE" 2>/dev/null)
-    [ -n "$DIFF_MULT" ] && BUDGET="$DIFF_MULT"
-fi
-
 # Best metric from completed experiments
 BEST=""
 if [ -d "$RESULTS_DIR" ] && [ "$COMPLETED" -gt 0 ]; then
@@ -114,7 +104,7 @@ fi
 # Build status line
 PARTS=("[ml-opt] P${PHASE} I${ITER}")
 
-EXP_PART="${COMPLETED}/${BUDGET:-$TOTAL} exp"
+EXP_PART="${COMPLETED}/${TOTAL} exp"
 [ "$RUNNING" -gt 0 ] && EXP_PART="${EXP_PART} (${RUNNING} running)"
 PARTS+=("$EXP_PART")
 

@@ -9,7 +9,6 @@
   },
   "constraints": {
     "scope_level": "architecture",
-    "budget_mode": "auto",
     "max_experiments": 30,
     "model_category": "supervised",
     "frozen_parameters": ["batch_size"]

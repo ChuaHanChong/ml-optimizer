@@ -18,34 +18,7 @@ If any are missing, log to error tracker (`category: "config_error"`) and warn t
    ```
 2. It generates a comprehensive final report
 3. **Self-improvement review** (resume-or-dispatch pattern):
-   **Autonomous mode auto-skip:** If `budget_mode == "autonomous"`, auto-run review with `scope: "session"`. Skip AskUserQuestion. Log to dev_notes: "Auto-running self-improvement review (autonomous mode)."
-
-   **IF `agent_registry["review"]` is not null** (agent exists from mid-pipeline reviews in Phase 7):
-   ```
-   SendMessage(
-     to: agent_registry["review"],
-     message: "End-of-session self-improvement review. You have context from any mid-pipeline reviews.
-       CONTEXT FROM OTHER AGENTS:
-       - ANALYZE: final analysis across all batches
-       - RESEARCH: all proposals attempted, {N_successful}/{N_total} improved
-       - HP-TUNE: {total_iterations} iterations, best config: {best_config}
-       Parameters: project_root: {project_root}, exp_root: {exp_root}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, scope: session."
-   )
-   ```
-   → If `SendMessage` fails (agent no longer reachable): fall back to the `Agent()` dispatch below, update `agent_registry["review"]` with the new agentId.
-
-   **ELSE** (first dispatch — no existing agent):
-   ```
-   Agent(
-     description: "Self-improvement review (autonomous)",
-     prompt: "Ultrathink. Run self-improvement review. Parameters: project_root: {project_root}, exp_root: {exp_root}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, scope: session.",
-     subagent_type: "ml-optimizer:review-agent"
-   )
-   ```
-   → Save returned `agentId` to `agent_registry["review"]`
-   → Persist registry: `save_state(..., agent_registry=agent_registry)`
-
-   **Otherwise:** Ask the user:
+   Ask the user:
    ```
    AskUserQuestion: "Would you like a self-improvement review? It analyzes what worked, what didn't, and suggests plugin improvements for future sessions."
    Options: ["Yes, run review", "No, skip"]

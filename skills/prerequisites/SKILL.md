@@ -43,9 +43,7 @@ This scans the training script AND any local modules it imports for data-loading
 
 If confidence is "low" or format is "unknown":
 
-**Autonomous mode auto-skip:** If `budget_mode == "autonomous"`: use the dataset as-is without format conversion. Log warning to dev_notes: "Unknown dataset format — using as-is (autonomous mode)". Skip AskUserQuestion.
-
-Otherwise, use AskUserQuestion:
+Use the dataset as-is without format conversion. Log warning to dev_notes: "Unknown dataset format — using as-is". If the user is available, ask for clarification via AskUserQuestion:
 ```
 I couldn't automatically determine the expected dataset format from the training code.
 
@@ -74,9 +72,7 @@ If the user said "embedded in code" (e.g., CIFAR10 auto-download), skip validati
 
 If there's a format mismatch between user data and what the training script expects:
 
-**Autonomous mode auto-skip:** If `budget_mode == "autonomous"`: skip data preparation/conversion. Log warning to dev_notes: "Dataset format mismatch — skipping preparation (autonomous mode)". Skip AskUserQuestion.
-
-Otherwise, use AskUserQuestion:
+Use AskUserQuestion:
 ```
 Your data appears to be in [detected format] but the training script expects [expected format].
 
@@ -109,9 +105,7 @@ Compare the detected manager with the user's specified manager (`env_manager` fr
 - **Match:** Proceed as normal
 - **Mismatch:**
 
-  **Autonomous mode auto-skip:** If `budget_mode == "autonomous"`: use the detected environment manager instead. Log to dev_notes: "Env manager mismatch — using detected '<detected_manager>' (autonomous mode)". Skip AskUserQuestion.
-
-  Otherwise, use AskUserQuestion to warn:
+  Use the detected environment manager instead. Log to dev_notes: "Env manager mismatch — using detected '<detected_manager>'". If the user is available, confirm via AskUserQuestion:
   ```
   I detected [detected_manager] (found [config_file]) but you specified [user_manager].
   Which should I use for package installation?
@@ -126,9 +120,7 @@ conda env list | grep -w <env_name>
 ```
 If the environment does not exist:
 
-**Autonomous mode auto-skip:** If `budget_mode == "autonomous"`: auto-create the conda environment with `conda create -n <env_name> python=<detected_python_version> -y`. Log to dev_notes: "Auto-created conda env '<env_name>' (autonomous mode)". Skip AskUserQuestion.
-
-Otherwise, use AskUserQuestion:
+Auto-create the conda environment with `conda create -n <env_name> python=<detected_python_version> -y`. Log to dev_notes: "Auto-created conda env '<env_name>'". If auto-creation fails, use AskUserQuestion:
 ```
 Conda environment "<env_name>" does not exist.
 Options:

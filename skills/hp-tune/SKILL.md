@@ -25,7 +25,6 @@ From the orchestrator:
 - `iteration`: Which tuning iteration this is (1, 2, 3, ...)
 - `primary_metric`: The metric to optimize (e.g., "loss", "accuracy", "psnr")
 - `lower_is_better`: Whether lower metric values are better (True for loss, False for accuracy)
-- `remaining_budget`: Maximum number of experiments that can still be run. Calculated by orchestrator as `max_experiments - total_experiments_so_far` (where `max_experiments` is set by adaptive difficulty assessment: easy=×8, moderate=×15, hard=×25, or user override). Cap proposals at `min(max(num_gpus, 1), remaining_budget)`. If remaining_budget ≤ 0, recommend stopping.
 - `code_branches`: List of validated code branches from the implementation manifest (e.g., `["ml-opt/perceptual-loss"]`), or `[]` for HP-only. In iteration 1, generate one config per branch (with baseline HPs) plus one for the original code, instead of spanning the search space.
 - `warm_start_enabled`: Whether checkpoint warm-starting is enabled (boolean, default false). When true and iteration >= 2, propose warm-starting from the best completed experiment on the same branch.
 - `available_checkpoints`: Dict mapping exp_id to checkpoint info (optional). Only provided when `warm_start_enabled` is true. Example: `{"exp-005": {"checkpoint_path": "experiments/artifacts/exp-005/best.pt", "code_branch": "ml-opt/method-a"}}`.
@@ -103,12 +102,7 @@ This is the core of LLM-driven HP tuning. Think through the following:
 ### Iteration 1 (Exploration)
 If this is the first tuning iteration (only baseline exists):
 
-**If `code_branches` is non-empty:** Generate one config per branch using baseline HPs, plus one config for the original code (no branch). This tests each code change in isolation before HP tuning. Assign each config a `code_branch` and `code_proposal` field. Cap total configs at `min(len(code_branches) + 1, remaining_budget)`.
-
-**If budget forces branch dropping:** When `remaining_budget < len(code_branches) + 1`, some branches must be skipped. Prioritize by research proposal ranking (higher `impact × confidence` first). Log a warning to error_tracker:
-```bash
-python3 scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"warning","source":"hp-tune","message":"Budget insufficient to test all branches. Testing <N> of <M> branches (dropped: <list>). Prioritized by proposal ranking.","phase":7,"iteration":<iteration>}'
-```
+**If `code_branches` is non-empty:** Generate one config per branch using baseline HPs, plus one config for the original code (no branch). This tests each code change in isolation before HP tuning. Assign each config a `code_branch` and `code_proposal` field. Cap total configs at `len(code_branches) + 1`.
 
 **If `code_branches` is empty (HP-only):**
 
@@ -187,7 +181,7 @@ When `search_space` includes non-numeric choices (e.g., `optimizer: ["adam", "sg
 
 Before finalizing, check each proposed config:
 
-1. **Budget cap:** Total proposals must not exceed `min(max(num_gpus, 1), remaining_budget)`. If `remaining_budget ≤ 0`, skip proposal generation and recommend stopping.
+1. **Batch size cap:** Total proposals must not exceed `max(num_gpus, 1)`.
 2. **GPU memory:** Will the batch size fit? (Check against baseline profiling)
 3. **Not a duplicate:** Has this exact config been tried before?
 4. **Within search space:** All values within defined ranges
@@ -198,11 +192,6 @@ Before finalizing, check each proposed config:
 ### If proposals duplicate previously tried configs (caught in step 4.3):
 ```bash
 python3 scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"hp-tune","message":"Regenerated <N> proposals due to duplication with past configs","phase":7,"iteration":<iteration>}'
-```
-
-### If remaining_budget <= 0:
-```bash
-python3 scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"warning","source":"hp-tune","message":"Budget exhausted with <N> experiments completed","phase":7,"iteration":<iteration>,"context":{"total_experiments":<N>}}'
 ```
 
 ## Step 5: Write Proposed Configs
@@ -306,4 +295,4 @@ When invoked during the stacking phase (identifiable by `method_tier: "stacked_d
    - New augmentation → vary `batch_size`, `learning_rate`
    - New scheduler → vary `learning_rate`, `warmup_steps`
 3. **Budget:** Cap at 2 iterations maximum during stacking.
-4. **Proposals:** Generate `min(max(num_gpus, 1), remaining_budget)` configs, all targeting the stack branch.
+4. **Proposals:** Generate `max(num_gpus, 1)` configs, all targeting the stack branch.

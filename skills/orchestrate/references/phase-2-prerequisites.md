@@ -11,23 +11,14 @@ Agent(
 
 **Check results** from `experiments/results/prerequisites.json`:
 - `ready_for_baseline = true` → proceed to Phase 3
-- **If `budget_mode == "autonomous"`:**
-  - `status = "partial"` → log warnings to `experiments/dev_notes.md`: "Prerequisites partial — proceeding anyway (autonomous mode)." Proceed to Phase 3.
-  - `status = "failed"` → Classify the failure reason from `prerequisites.json`:
-    - **Data path invalid / not found:** If `budget_mode == "autonomous"`, attempt auto-recovery: search the project for data files, check the training script for auto-download patterns (CIFAR, MNIST, HuggingFace `load_dataset`). If a plausible path is found, update `train_data_path`/`val_data_path` and re-run Phase 2. If not found: BLOCK with AskUserQuestion.
-    - **Dependency install failed:** If `budget_mode == "autonomous"`, retry install once with `--no-deps`, then check if import still fails. If still fails: BLOCK with AskUserQuestion.
-    - **Environment not found:** If `budget_mode == "autonomous"` and env_manager is conda, auto-create the environment. If creation also fails: BLOCK.
-    - **Dry-run failed:** If `budget_mode == "autonomous"`, log error and attempt Phase 3 anyway (baseline may succeed where dry-run failed). If baseline also fails, exit via Phase 3 failure path.
-    - **All other failures:** BLOCK with AskUserQuestion (unrecoverable without user input).
-    - Log all auto-recovery attempts to dev_notes and error tracker with `category: "config_error", severity: "warning", source: "orchestrate"`.
-- **Otherwise (interactive/auto/custom):**
-  - `status = "partial"` → inform user of issues, ask if they want to proceed anyway or fix first
-  - `status = "failed"` → diagnose from `prerequisites.json` error details:
-    - Dataset not found / path invalid → ask user to verify `train_data_path`/`val_data_path` via AskUserQuestion
-    - Dataset format unrecognized → ask user to specify format manually
-    - Dependency install failed → show the failed packages/error, ask user to install manually
-    - Environment not found → ask user to verify `env_manager`/`env_name`
-    - If fixable, re-run Phase 2 after corrections. Otherwise stop and report.
+- `status = "partial"` → log warnings to `experiments/dev_notes.md`: "Prerequisites partial — proceeding anyway." Proceed to Phase 3.
+- `status = "failed"` → Classify the failure reason from `prerequisites.json`:
+  - **Data path invalid / not found:** Attempt auto-recovery: search the project for data files, check the training script for auto-download patterns (CIFAR, MNIST, HuggingFace `load_dataset`). If a plausible path is found, update `train_data_path`/`val_data_path` and re-run Phase 2. If not found: BLOCK with AskUserQuestion.
+  - **Dependency install failed:** Retry install once with `--no-deps`, then check if import still fails. If still fails: BLOCK with AskUserQuestion.
+  - **Environment not found:** If env_manager is conda, auto-create the environment. If creation also fails: BLOCK.
+  - **Dry-run failed:** Log error and attempt Phase 3 anyway (baseline may succeed where dry-run failed). If baseline also fails, exit via Phase 3 failure path.
+  - **All other failures:** BLOCK with AskUserQuestion (unrecoverable without user input).
+  - Log all auto-recovery attempts to dev_notes and error tracker with `category: "config_error", severity: "warning", source: "orchestrate"`.
 
 **If dataset was prepared** to a new directory:
 1. Read `prerequisites.json` → `dataset.prepared` field

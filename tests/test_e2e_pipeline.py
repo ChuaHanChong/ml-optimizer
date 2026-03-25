@@ -5,12 +5,15 @@ existing Python scripts (parse_logs, detect_divergence, experiment_setup,
 result_analyzer, gpu_check) work correctly with real training output.
 """
 
+import importlib.util
 import json
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -1267,39 +1270,21 @@ class TestMethodProposalParsing:
 
 
 # ---------------------------------------------------------------------------
-# D3: Autonomous Mode Budget Logic (no PyTorch needed)
+# D3: Autonomous Mode Exit Logic (no PyTorch needed)
 # ---------------------------------------------------------------------------
 
-class TestAutonomousMode:
-    """Test autonomous budget mode logic and continuous research cadence."""
+class TestExperimentLoopControl:
+    """Test experiment loop exit logic and continuous research cadence."""
 
-    def test_easy_budget_calculation(self):
-        """Auto mode, easy difficulty: max(num_gpus, 1) × 8."""
-        multiplier = 8
-        for num_gpus, expected in [(0, 8), (1, 8), (2, 16), (4, 32)]:
-            budget = max(num_gpus, 1) * multiplier
-            assert budget == expected, f"num_gpus={num_gpus}: expected {expected}, got {budget}"
+    def test_hp_batch_size_calculation(self):
+        """HP batch size = max(num_gpus, 1)."""
+        for num_gpus, expected in [(0, 1), (1, 1), (2, 2), (4, 4)]:
+            batch_size = max(num_gpus, 1)
+            assert batch_size == expected, f"num_gpus={num_gpus}: expected {expected}, got {batch_size}"
 
-    def test_moderate_budget_calculation(self):
-        """Auto mode, moderate difficulty: max(num_gpus, 1) × 15."""
-        multiplier = 15
-        for num_gpus, expected in [(0, 15), (1, 15), (2, 30), (4, 60)]:
-            budget = max(num_gpus, 1) * multiplier
-            assert budget == expected, f"num_gpus={num_gpus}: expected {expected}, got {budget}"
-
-    def test_hard_budget_calculation(self):
-        """Auto mode, hard difficulty: max(num_gpus, 1) × 25."""
-        multiplier = 25
-        for num_gpus, expected in [(0, 25), (1, 25), (2, 50), (4, 100)]:
-            budget = max(num_gpus, 1) * multiplier
-            assert budget == expected, f"num_gpus={num_gpus}: expected {expected}, got {budget}"
-
-    def test_autonomous_budget_unlimited(self):
-        """Autonomous mode has no fixed budget cap."""
-        # In autonomous mode, remaining_budget is effectively infinite.
-        # Stop requires 3 consecutive recommendations.
+    def test_stop_counter_reset(self):
+        """Consecutive stops reset on continue/pivot."""
         consecutive_stops = 0
-        max_budget = float("inf")
         # Simulate: 2 stops then a continue resets the counter
         for recommendation in ["stop", "stop", "continue", "stop"]:
             if recommendation == "stop":
@@ -1310,7 +1295,7 @@ class TestAutonomousMode:
         assert consecutive_stops < 3  # not enough to terminate
 
     def test_stop_recommendation_counting(self):
-        """3 consecutive stop recommendations terminate autonomous mode."""
+        """3 consecutive stop recommendations trigger stuck protocol."""
         consecutive_stops = 0
         recommendations = ["continue", "stop", "continue", "stop", "stop", "stop"]
         terminated = False
@@ -1359,11 +1344,10 @@ class TestAutonomousMode:
         assert cadence_history[3] == 12  # round 2: no proposals, doubled again
         assert cadence_history[4] == 3   # round 3: found proposals, reset
 
-    def test_user_choices_persist_budget_mode(self, tmp_path):
-        """Budget mode persists in pipeline state user_choices."""
+    def test_user_choices_persist_hp_batches(self, tmp_path):
+        """HP batches per round persists in pipeline state user_choices."""
         exp_root = str(tmp_path / "exp")
         user_choices = {
-            "budget_mode": "autonomous",
             "hp_batches_per_round": 3,
             "primary_metric": "accuracy",
         }
@@ -1371,7 +1355,6 @@ class TestAutonomousMode:
                    user_choices=user_choices)
         state = load_state(exp_root)
         assert state is not None
-        assert state["user_choices"]["budget_mode"] == "autonomous"
         assert state["user_choices"]["hp_batches_per_round"] == 3
 
 
@@ -1584,9 +1567,6 @@ class TestFullWorkflowE2E:
             "env_manager": "conda",
             "env_name": "base",
             "model_category": "supervised",
-            "budget_mode": "autonomous",
-            "difficulty": "moderate",
-            "difficulty_multiplier": 15,
             "method_proposal_scope": "training",
             "method_proposal_iterations": 2,
             "hp_batches_per_round": 3,
@@ -2053,8 +2033,7 @@ class TestStatusLine:
         (exp / "results").mkdir()
         (exp / "pipeline-state.json").write_text(json.dumps({
             "phase": 7, "iteration": 3,
-            "user_choices": {"primary_metric": "loss", "lower_is_better": True,
-                             "budget_mode": "auto", "difficulty_multiplier": 8},
+            "user_choices": {"primary_metric": "loss", "lower_is_better": True},
         }))
         (exp / "results" / "baseline.json").write_text(json.dumps({
             "exp_id": "baseline", "status": "completed",
@@ -2097,3 +2076,242 @@ class TestStatusLine:
         )
         assert result.returncode == 0
         assert result.stdout.strip() == ""
+
+
+# ---------------------------------------------------------------------------
+# Evolve E2E Tests
+# ---------------------------------------------------------------------------
+
+
+_EVOLVE_PLUGIN_ROOT = Path(__file__).parent.parent
+
+
+class TestEvolveE2E:
+    """End-to-end tests for the ShinkaEvolve integration."""
+
+    def test_evolve_skill_content_valid(self):
+        """Evolve SKILL.md has all required sections for pipeline orchestrator."""
+        skill_path = _EVOLVE_PLUGIN_ROOT / "skills" / "evolve" / "SKILL.md"
+        content = skill_path.read_text()
+
+        # Required sections (pipeline steps — no mode detection, no direct fallback)
+        assert "## Prerequisites" in content
+        assert "## Input Parameters" in content
+        assert "## Step 1:" in content  # Convert
+        assert "## Step 2:" in content  # Run evolution
+        assert "## Step 3:" in content  # File handoff loop
+        assert "## Step 4:" in content  # Inspect results
+        assert "## Step 5:" in content  # Apply winner
+        assert "## Output Format" in content
+        assert "## Important Rules" in content
+
+        # Pipeline orchestration (ShinkaEvolve only, no direct fallback)
+        assert "shinka-convert" in content
+        assert "shinka-run" in content
+        assert "shinka-inspect" in content
+        assert "SHINKA_PROVIDER" in content
+        assert "SHINKA_HANDOFF_DIR" in content
+        assert "shinkaevolve_unavailable" in content
+
+        # EVOLVE-BLOCK format
+        assert "EVOLVE-BLOCK" in content
+
+    def test_code_refinement_in_analyze_pivot(self):
+        """Analyze skill includes code_refinement as a valid pivot type."""
+        analyze_path = _EVOLVE_PLUGIN_ROOT / "skills" / "analyze" / "SKILL.md"
+        content = analyze_path.read_text()
+        assert "code_refinement" in content
+        assert "pivot_type" in content
+        # Verify it's in the pivot type enum
+        assert "code_refinement>" in content or "code_refinement\"" in content
+
+    def test_implement_agent_has_evolve_instructions(self):
+        """Implement-agent has explicit Skill() invocation instructions for evolve."""
+        agent_path = _EVOLVE_PLUGIN_ROOT / "agents" / "implement-agent.md"
+        content = agent_path.read_text()
+        assert 'Skill("ml-optimizer:evolve")' in content
+        assert 'Skill("ml-optimizer:shinka-setup")' in content
+        assert 'Skill("ml-optimizer:shinka-run")' in content
+        assert 'Skill("ml-optimizer:shinka-inspect")' in content
+
+    def test_phase7_has_code_refinement_dispatch(self):
+        """Phase 7 dispatches tuning → evolve → tuning → experiment for code_refinement."""
+        phase7_path = (_EVOLVE_PLUGIN_ROOT / "skills" / "orchestrate" / "references"
+                      / "phase-7-experiment-loop.md")
+        content = phase7_path.read_text()
+        assert "code_refinement" in content
+        # Tuning agent proposes evolve HPs, then implement agent executes
+        assert 'Skill("ml-optimizer:evolve")' in content
+        assert "Tune evolve HPs" in content
+        assert "Execute evolve" in content
+        # No artificial cooldown — analysis agent's conditions are sufficient
+        assert "last_evolved_iteration" not in content
+
+    def test_mock_evolution_three_generations(self, tmp_path):
+        """Simulate 3 generations of evolution, each with 2 mutations."""
+        provider_path = str(_EVOLVE_PLUGIN_ROOT / "skills" / "evolve" / "ShinkaEvolve"
+                           / "shinka" / "llm" / "file_handoff_provider.py")
+        spec = importlib.util.spec_from_file_location("fhp", provider_path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        exp_root = tmp_path / "experiments"
+        exp_root.mkdir()
+        mod.set_handoff_dir(str(exp_root))
+
+        pending = exp_root / "evolve" / "pending"
+        completed = exp_root / "evolve" / "completed"
+
+        all_results = []
+
+        for gen in range(3):
+            # Simulate orchestrator
+            def orchestrator():
+                responded = set()
+                for _ in range(30):
+                    time.sleep(0.1)
+                    for f in pending.glob("*.json"):
+                        if f.name not in responded:
+                            req = json.loads(f.read_text())
+                            (completed / f.name).write_text(
+                                json.dumps({"content": f"gen{gen}_mutation_{req['id']}"})
+                            )
+                            responded.add(f.name)
+
+            # 2 mutations per generation
+            results = [None, None]
+            def request(idx):
+                results[idx] = mod.query_file_handoff(
+                    "opus", f"Gen {gen} mut {idx}", "sys", timeout_seconds=5
+                )
+
+            orch = threading.Thread(target=orchestrator)
+            t0 = threading.Thread(target=request, args=(0,))
+            t1 = threading.Thread(target=request, args=(1,))
+
+            orch.start(); t0.start(); t1.start()
+            t0.join(); t1.join(); orch.join()
+
+            for r in results:
+                assert r is not None
+                assert f"gen{gen}" in r["content"]
+            all_results.extend(results)
+
+        # 3 generations × 2 mutations = 6 total
+        assert len(all_results) == 6
+
+    def test_evolve_skill_scope_constraints(self):
+        """Evolve SKILL.md documents scope_level constraints for each level."""
+        skill_path = _EVOLVE_PLUGIN_ROOT / "skills" / "evolve" / "SKILL.md"
+        content = skill_path.read_text()
+        # Scope levels are documented
+        assert '"training"' in content
+        assert '"architecture"' in content
+        assert '"full"' in content
+        # Training scope restricts what can be changed
+        assert "scope_level" in content
+        # Explicit constraint instruction
+        assert "Respect scope_level" in content
+        assert "Training scope" in content
+
+    def test_dead_end_fuzzy_matching_in_evolve_context(self, tmp_path):
+        """Dead-end fuzzy matching catches variant spellings used in evolve feedback."""
+        from error_tracker import log_dead_end, is_dead_end
+
+        exp_root = str(tmp_path)
+        log_dead_end(exp_root, {
+            "technique": "label-smoothing",
+            "reason": "Degrades accuracy on small datasets",
+        })
+
+        # Exact match
+        assert is_dead_end(exp_root, "label-smoothing")
+        # Case insensitive
+        assert is_dead_end(exp_root, "Label-Smoothing")
+        # Underscore variant
+        assert is_dead_end(exp_root, "label_smoothing")
+        # Substring containment
+        assert is_dead_end(exp_root, "label smoothing loss")
+        # Unrelated technique should NOT match
+        assert not is_dead_end(exp_root, "mixup augmentation")
+
+    def test_code_refinement_pivot_conditions(self):
+        """Analyze SKILL.md documents conditions and scope gating for code_refinement."""
+        analyze_path = _EVOLVE_PLUGIN_ROOT / "skills" / "analyze" / "SKILL.md"
+        content = analyze_path.read_text()
+        # code_refinement conditions documented
+        assert "code_refinement" in content
+        assert "method branch improved" in content or "branch improved" in content
+        assert "rho" in content or "correlation" in content
+        assert "0.3" in content
+        # Scope gating: code_refinement only for scope_level "full"
+        assert "scope_level" in content
+        # Research pivots gated on scope
+        assert "training" in content and "skip" in content.lower()
+        # HP-only mode disables research and evolve
+        assert "HP-only" in content or "hp.only" in content.lower() or "HP only" in content
+
+    def test_phase8_stacking_has_analysis_driven_evolve_loop(self):
+        """Phase 8 loops evolve + HP-tune until analysis confirms improvement or stops."""
+        phase8_path = (_EVOLVE_PLUGIN_ROOT / "skills" / "orchestrate" / "references"
+                      / "phase-8-stacking.md")
+        content = phase8_path.read_text()
+        # Analysis agent dispatched to assess stacked result
+        assert "Analyze stacked" in content
+        # Analysis recommends code_refinement → evolve
+        assert "code_refinement" in content
+        assert 'Skill("ml-optimizer:evolve")' in content or "ml-optimizer:evolve" in content
+        # Compares stacked vs best individual (interference detection)
+        assert "best individual" in content or "best_individual" in content
+        # Loops until analysis says continue or stop — no hard max
+        assert "Re-analyze" in content or "re-analyze" in content
+        assert "loop back" in content.lower()
+        assert "stop" in content.lower()
+        # Tracks which steps were evolved
+        assert "evolved_methods" in content
+        # Handles evolve failure gracefully
+        assert "shinkaevolve_unavailable" in content
+        # Dispatches tuning agent for evolve HPs
+        assert "tuning" in content.lower()
+
+    def test_evolve_skill_reads_tuning_agent_recommendations(self):
+        """Evolve SKILL.md reads evolve HPs from tuning agent."""
+        skill_path = _EVOLVE_PLUGIN_ROOT / "skills" / "evolve" / "SKILL.md"
+        content = skill_path.read_text()
+        # Reads evolve_recommendation from tuning agent
+        assert "evolve_recommendation" in content
+        assert "tuning agent" in content
+        # Falls back to learned-behaviors.json
+        assert "learned-behaviors.json" in content or "learned_behaviors" in content
+        assert "evolve_hp" in content
+        # Logs outcome after evolution
+        assert "log-behavior" in content or "log_behavior" in content
+
+    def test_analyze_skill_delegates_evolve_hps_to_tuning(self):
+        """Analyze SKILL.md does NOT set evolve HPs — tuning agent does."""
+        analyze_path = _EVOLVE_PLUGIN_ROOT / "skills" / "analyze" / "SKILL.md"
+        content = analyze_path.read_text()
+        # Analyze recommends code_refinement but delegates HP tuning
+        assert "code_refinement" in content
+        assert "tuning agent" in content.lower()
+
+    def test_phase7_dispatches_tuning_before_evolve(self):
+        """Phase 7 dispatches tuning agent for evolve HPs before implement agent."""
+        phase7_path = (_EVOLVE_PLUGIN_ROOT / "skills" / "orchestrate" / "references"
+                      / "phase-7-experiment-loop.md")
+        content = phase7_path.read_text()
+        # Tuning agent proposes evolve HPs
+        assert "Tune evolve HPs" in content or "evolve HP" in content.lower()
+        # Then implement agent executes
+        assert "Execute evolve" in content
+
+    def test_phase8_uses_stack_base_branch(self):
+        """Phase 8 uses stack_base_branch variable, not hardcoded branch names."""
+        phase8_path = (_EVOLVE_PLUGIN_ROOT / "skills" / "orchestrate" / "references"
+                      / "phase-8-stacking.md")
+        content = phase8_path.read_text()
+        # Branch creation uses stack_base_branch (not hardcoded ml-opt/stack-<order-1>)
+        assert "stack_base_branch" in content
+        assert "ml-opt/stack-<order-1>" not in content
+        # HP-tune dispatch uses stack_base_branch (not hardcoded)
+        assert "{stack_base_branch}]" in content

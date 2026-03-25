@@ -86,8 +86,6 @@ If `method_proposal_scope` is set in user_choices (i.e., user chose option 5 in 
 
 2. **Present proposals to user for confirmation** (same as Phase 5 post-research checkpoint):
 
-   **Autonomous mode auto-skip:** If `budget_mode == "autonomous"`, skip the user question. Auto-select all proposals. Log to dev_notes: `"Autonomous mode: auto-selected all N method proposals for implementation"`.
-
    ```
    Method proposals (from LLM knowledge + web search):
    [summary of proposals from research-findings-method-proposals.md]
@@ -141,10 +139,10 @@ This prevents unnecessary implementation overhead for proposals that only affect
 
 ## Pre-Loop: Initialize Research Cadence
 
-Initialize the research round counter for autonomous mode:
+Initialize the research round counter:
 - `batches_since_last_research = 0`
 - This counter tracks how many HP tuning batches have run since the last research → implement cycle
-- In autonomous mode, when this counter reaches `hp_batches_per_round`, step 8 auto-triggers a new research round
+- When this counter reaches `hp_batches_per_round`, step 8 auto-triggers a new research round
 
 ## Pre-Loop: Save Pipeline State
 
@@ -170,7 +168,6 @@ save_state(6, 0, [], '<exp_root>', user_choices={
     'env_name': '<env_name or None>',
     'model_category': '<model_category or None>',
     'user_papers': <user_papers or None>,
-    'budget_mode': '<budget_mode>',
     'method_proposal_scope': '<method_proposal_scope or None>',
     'method_proposal_iterations': <method_proposal_iterations or 0>,
     'hp_batches_per_round': <hp_batches_per_round or 3>,
@@ -221,7 +218,7 @@ When the implementation manifest contains multiple code branches:
          CONTEXT FROM OTHER AGENTS:
          - ANALYZE (batch {N-1}): {recommendation}, correlations: {correlations}, branch_scores: {scores}
          - MONITOR: max_batch_size={max_batch_size} (OOM constraint)
-         Parameters: project_root: {project_root}, num_gpus: {num_gpus}, search_space: {search_space}, iteration: {iteration}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, remaining_budget: {remaining_budget}, code_branches: {code_branches}, max_batch_size: {max_batch_size or omit}, warm_start_enabled: {warm_start_enabled or false}, available_checkpoints: {available_checkpoints_json or {}}, branch_scores: {branch_scores_json or {}}."
+         Parameters: project_root: {project_root}, num_gpus: {num_gpus}, search_space: {search_space}, iteration: {iteration}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, code_branches: {code_branches}, max_batch_size: {max_batch_size or omit}, warm_start_enabled: {warm_start_enabled or false}, available_checkpoints: {available_checkpoints_json or {}}, branch_scores: {branch_scores_json or {}}."
      )
      ```
      → If `SendMessage` fails (agent no longer reachable): fall back to the `Agent()` dispatch below, update `agent_registry["tuning"]` with the new agentId.
@@ -230,18 +227,17 @@ When the implementation manifest contains multiple code branches:
      ```
      Agent(
        description: "HP tuning iteration {iteration}",
-       prompt: "Ultrathink. Propose HP configurations. Parameters: project_root: {project_root}, num_gpus: {num_gpus}, search_space: {search_space}, iteration: {iteration}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, remaining_budget: {remaining_budget}, code_branches: {code_branches}, max_batch_size: {max_batch_size or omit}, warm_start_enabled: {warm_start_enabled or false}, available_checkpoints: {available_checkpoints_json or {}}, branch_scores: {branch_scores_json or {}}.",
+       prompt: "Ultrathink. Propose HP configurations. Parameters: project_root: {project_root}, num_gpus: {num_gpus}, search_space: {search_space}, iteration: {iteration}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, code_branches: {code_branches}, max_batch_size: {max_batch_size or omit}, warm_start_enabled: {warm_start_enabled or false}, available_checkpoints: {available_checkpoints_json or {}}, branch_scores: {branch_scores_json or {}}.",
        subagent_type: "ml-optimizer:tuning-agent"
      )
      ```
      → Save returned `agentId` to `agent_registry["tuning"]`
      → Persist registry: `save_state(..., agent_registry=agent_registry)`
 
-     - `remaining_budget`: `max_experiments - total_experiments_so_far`. HP-tune caps proposals at `min(max(num_gpus, 1), remaining_budget)`.
      - `code_branches`: From implementation manifest, or `[]` for HP-only.
      - `max_batch_size` *(optional)*: One step below the smallest OOM-causing batch size. Omit if no OOM events.
    - It reads past results and proposes the next batch of configs
-   - Number of configs = `min(max(num_gpus, 1), remaining_budget)` (capped to prevent budget overshoot)
+   - Number of configs = `max(num_gpus, 1)`
    - **Check hp-tune recommendation:** If hp-tune output includes `"recommendation": "stop"`, log it to error tracker with `category: "pipeline_inefficiency"` and note it for the analyze step. Analyze makes the final continue/pivot/stop decision, but hp-tune's recommendation provides an early signal of search space exhaustion.
 
    ### HP-Tune Failure Recovery
@@ -252,8 +248,7 @@ When the implementation manifest contains multiple code branches:
    2. **If validation fails:** Retry hp-tune once with a simplified prompt: "Propose {N} configs within these ranges: {search_space}. Return valid JSON only."
    3. **If retry also fails:** Fall back to random sampling — pick `lr` uniformly from search space log-range, `batch_size` from allowed set, other HPs at baseline values. The orchestrator constructs the JSON directly.
    4. **If random sampling also fails** (construction error):
-      - **Autonomous mode:** If `budget_mode == "autonomous"`, use the baseline config as-is for all experiments in this batch (re-validates baseline, keeps loop alive). Log to error tracker: `category: "agent_failure", severity: "critical", source: "orchestrate", message: "All HP-tune fallbacks failed — using baseline config as placeholder batch (autonomous mode)"`. Log to dev_notes: "HP-tune completely failed — running baseline-config batch as placeholder." Proceed to step 2 with baseline configs.
-      - **Interactive mode:** Ask user to provide configs manually via AskUserQuestion.
+      Use the baseline config as-is for all experiments in this batch (re-validates baseline, keeps loop alive). Log to error tracker: `category: "agent_failure", severity: "critical", source: "orchestrate", message: "All HP-tune fallbacks failed — using baseline config as placeholder batch"`. Log to dev_notes: "HP-tune completely failed — running baseline-config batch as placeholder." Proceed to step 2 with baseline configs.
 
    Log each fallback step to error tracker with `category: "agent_failure"`, `source: "orchestrate"`.
 
@@ -309,15 +304,7 @@ When the implementation manifest contains multiple code branches:
 
    ### Early Batch Abort on Mass Divergence
 
-   When monitoring a batch of experiments in parallel, track divergence timestamps:
-
-   - **Trigger:** If `>= 2` experiments in the same batch diverge AND all divergences occurred within 60 seconds of their respective start times:
-     1. Cancel remaining running experiments in the batch (kill processes)
-     2. Mark cancelled experiments as `status: "cancelled"` with `notes: "Early batch abort — mass divergence detected"`
-     3. Log to error tracker: `category: "training_failure", severity: "critical", source: "orchestrate", message: "Early batch abort: <N_diverged> of <batch_size> experiments diverged within 60s of start"`
-     4. Log to dev_notes: "Early batch abort at iteration <N>: <diverged_count> experiments diverged within 60s. Cancelled <cancelled_count> remaining."
-     5. Proceed directly to step 4 with partial results
-   - **Rationale:** Divergence within 60 seconds indicates a systematic config problem (LR too high, NaN initialization) that will affect all similar configs. Two or more confirms it's systematic, not a fluke.
+   The monitor agent handles each experiment individually — killing diverging experiments as they're detected. The analysis agent will see the results (including diverged experiments) and recommend appropriate action (narrow search space, etc.).
 
 4. **Wait for completion:**
    - All experiments in the batch must complete (or be stopped) before analysis
@@ -359,7 +346,7 @@ When the implementation manifest contains multiple code branches:
          - HP-TUNE: {config_summary}
          - MONITOR: {divergence_count} diverged
          - EXPERIMENTS: {completed}/{total} completed
-         Parameters: project_root: {project_root}, batch_number: {batch_number}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, target_value: {target_value or null}, remaining_budget: {remaining_budget}."
+         Parameters: project_root: {project_root}, batch_number: {batch_number}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, target_value: {target_value or null}."
      )
      ```
      → If `SendMessage` fails: fall back to the `Agent()` dispatch below, update `agent_registry["analysis"]` with the new agentId.
@@ -368,7 +355,7 @@ When the implementation manifest contains multiple code branches:
      ```
      Agent(
        description: "Analyze batch {N} results",
-       prompt: "Ultrathink. Analyze batch {N} results. Parameters: project_root: {project_root}, batch_number: {batch_number}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, target_value: {target_value or null}, remaining_budget: {remaining_budget}.",
+       prompt: "Ultrathink. Analyze batch {N} results. Parameters: project_root: {project_root}, batch_number: {batch_number}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, target_value: {target_value or null}.",
        subagent_type: "ml-optimizer:analysis-agent"
      )
      ```
@@ -377,13 +364,13 @@ When the implementation manifest contains multiple code branches:
 
      - It compares all experiments, ranks them, identifies patterns
      - It recommends: continue, pivot, or stop
-   - **At the SAME TIME, start speculative hp-tune in background** (only if `remaining_budget > max(num_gpus, 1)`):
+   - **At the SAME TIME, start speculative hp-tune in background:**
 
-     **IF `agent_registry["tuning"]` is not null AND `remaining_budget > max(num_gpus, 1)`:**
+     **IF `agent_registry["tuning"]` is not null:**
      ```
      SendMessage(
        to: agent_registry["tuning"],
-       message: "SPECULATIVE hp-tune for next batch — the orchestrator may discard these results if analyze recommends stop or pivot. Parameters: project_root: {project_root}, num_gpus: {num_gpus}, search_space: {search_space}, iteration: {iteration + 1}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, remaining_budget: {remaining_budget - current_batch_size}, code_branches: {code_branches}, warm_start_enabled: {warm_start_enabled or false}, available_checkpoints: {available_checkpoints_json or {}}, branch_scores: {branch_scores_json or {}}."
+       message: "SPECULATIVE hp-tune for next batch — the orchestrator may discard these results if analyze recommends stop or pivot. Parameters: project_root: {project_root}, num_gpus: {num_gpus}, search_space: {search_space}, iteration: {iteration + 1}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, code_branches: {code_branches}, warm_start_enabled: {warm_start_enabled or false}, available_checkpoints: {available_checkpoints_json or {}}, branch_scores: {branch_scores_json or {}}."
      )
      // SendMessage auto-resumes in background — do NOT block on result
      ```
@@ -393,14 +380,13 @@ When the implementation manifest contains multiple code branches:
      ```
      Agent(
        description: "Speculative hp-tune for next batch",
-       prompt: "Ultrathink. This is a SPECULATIVE proposal — the orchestrator may discard these results if analyze recommends stop or pivot. Parameters: project_root: {project_root}, num_gpus: {num_gpus}, search_space: {search_space}, iteration: {iteration + 1}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, remaining_budget: {remaining_budget - current_batch_size}, code_branches: {code_branches}, warm_start_enabled: {warm_start_enabled or false}, available_checkpoints: {available_checkpoints_json or {}}, branch_scores: {branch_scores_json or {}}.",
+       prompt: "Ultrathink. This is a SPECULATIVE proposal — the orchestrator may discard these results if analyze recommends stop or pivot. Parameters: project_root: {project_root}, num_gpus: {num_gpus}, search_space: {search_space}, iteration: {iteration + 1}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, code_branches: {code_branches}, warm_start_enabled: {warm_start_enabled or false}, available_checkpoints: {available_checkpoints_json or {}}, branch_scores: {branch_scores_json or {}}.",
        subagent_type: "ml-optimizer:tuning-agent",
        run_in_background: true
      )
      ```
      → Save returned `agentId` to `agent_registry["tuning"]`
      → Persist registry: `save_state(..., agent_registry=agent_registry)`
-   - If `remaining_budget <= max(num_gpus, 1)`: skip speculative hp-tune (not enough budget for another full batch)
    - Analyze completes first (it's synchronous). Speculative hp-tune may still be running.
    - **Live dashboard update:** After analyze completes, regenerate the dashboard so users can monitor progress in real-time:
      ```bash
@@ -426,13 +412,12 @@ When the implementation manifest contains multiple code branches:
      - `"hp_expand"`: Widen the search space around the best config (extend LR range by 2× in each direction). Pass updated `search_space` to hp-tune.
      - `"narrow_space"`: Constrain the search space to the range around the best result (analyze's `suggestion` field contains bounds). Pass narrowed `search_space` to hp-tune.
      - `"regularization"`: Add regularization HPs (weight_decay, dropout) to the search space or expand their range. Pass updated `search_space` to hp-tune. No research needed.
-     - `"research"`: Route to step 7 (same as `method_proposal`). Requires `remaining_budget >= 5`.
-     - `"method_proposal"`, `"qualitative_change"`: Route to step 7 (existing handling). Requires `remaining_budget >= 3`.
+     - `"research"`: Route to step 7 (same as `method_proposal`).
+     - `"method_proposal"`, `"qualitative_change"`: Route to step 7 (existing handling).
      - **Unknown pivot_type:** Treat as `"hp_expand"` (safest default). Log to error tracker.
    - If analyze says **stop**:
      - Discard speculative proposals.
-     - In `"auto"` or `"custom"` mode: exit loop
-     - In `"autonomous"` mode: log the stop recommendation but continue the loop. Increment `consecutive_stop_count` in pipeline state (reset to 0 on "continue" or "pivot"). Persist via `save_state()` at the end of each iteration. On pipeline resume, read from state (default 0).
+     - Log the stop recommendation. Increment `consecutive_stop_count` in pipeline state (reset to 0 on "continue" or "pivot"). Persist via `save_state()` at the end of each iteration. On pipeline resume, read from state (default 0).
        - **On 3 consecutive stops → Stuck Protocol** (instead of immediate exit):
          If `consecutive_stop_count >= 3` AND `stuck_protocol_triggered` is false:
          1. Set `stuck_protocol_triggered = true` in pipeline state
@@ -474,26 +459,18 @@ When the implementation manifest contains multiple code branches:
             - Continue loop
          8. If research returns no new proposals: exit loop. Log: "Stuck protocol exhausted — no new proposals found."
        - **On 3 consecutive stops after stuck protocol already triggered:** Exit loop immediately (prevents infinite recovery loops).
-   - **If analyze output is malformed or contains an unexpected action:** Treat as `agent_failure`. Log to error tracker. Retry analyze once with a simplified prompt: "Based on the experiment results, should we continue, pivot, or stop? Respond with exactly one of: continue, pivot, stop." If retry also fails, default to `continue` if remaining_budget > 0, or `stop` if budget exhausted.
-   - **Safety limit:** Maximum experiments budget depends on `budget_mode` from Phase 1:
-     - `"auto"` (default): `max(num_gpus, 1) × difficulty_multiplier` (easy=8, moderate=15, hard=25)
-     - `"custom"`: user-specified `custom_budget`
-     - `"autonomous"`: 999 (effectively unlimited — runs until interrupted or 3 consecutive stop recommendations)
-     After budget exhausted, force exit and report. When `num_gpus=0` (CPU-only, e.g., scikit-learn), the multiplier applies to `1`.
+   - **If analyze output is malformed or contains an unexpected action:** Treat as `agent_failure`. Log to error tracker. Retry analyze once with a simplified prompt: "Based on the experiment results, should we continue, pivot, or stop? Respond with exactly one of: continue, pivot, stop." If retry also fails, default to `continue`.
+   - **Loop exit conditions:** The experiment loop exits when:
+     1. Target metric achieved (from Phase 0)
+     2. Analysis agent recommends "stop" 3 consecutive times (triggers stuck protocol, then exits if no new proposals)
+     3. User manually stops
 
 7. **Mid-loop method proposal trigger** (when analyze recommends new methods):
 
    If analyze returns `pivot_type: "method_proposal"` or `pivot_type: "qualitative_change"`:
 
-   a. **Budget gate:** If `remaining_budget < 3`, skip method proposals and recommend stop with current best result. Log:
-      ```bash
-      python3 scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"orchestrate","message":"Method proposals skipped: remaining_budget (<N>) < 3","phase":7,"iteration":<iteration>}'
-      ```
-
-   b. **Scope confirmation:**
-      **Autonomous mode auto-skip:** If `budget_mode == "autonomous"`, use stored `method_proposal_scope` from user_choices. Log to dev_notes: "Autonomous mode: using stored method_proposal_scope '<scope>' for mid-loop proposals". Skip AskUserQuestion.
-
-      **Otherwise:** Ask the user which scope level to use:
+   a. **Scope confirmation:**
+      If `method_proposal_scope` is already set in user_choices, use it. Otherwise, ask the user which scope level to use:
       ```
       HP tuning has plateaued. I can propose new optimization methods.
 
@@ -507,7 +484,7 @@ When the implementation manifest contains multiple code branches:
       ```
       If user chooses 4 (skip), exit the loop and proceed to Phase 9 (report).
 
-   c. **Generate proposals:** Dispatch the research agent (resume-or-dispatch pattern):
+   b. **Generate proposals:** Dispatch the research agent (resume-or-dispatch pattern):
 
       **IF `agent_registry["research"]` is not null** (agent exists from a previous research round):
       ```
@@ -540,12 +517,10 @@ When the implementation manifest contains multiple code branches:
    ```
    If `valid` is false: remove scope-violating and dead-end proposals before passing to implement. Log violations to behavioral memory.
 
-   d. **Present proposals:**
-      **Autonomous mode auto-skip:** If `budget_mode == "autonomous"`, accept all proposals automatically. Log to dev_notes: "Autonomous mode: auto-accepted all N mid-loop method proposals". Skip AskUserQuestion.
+   c. **Present proposals:**
+      Show the generated proposals to the user for confirmation. The user can accept all, select a subset, or reject all (which exits the loop).
 
-      **Otherwise:** Show the generated proposals to the user for confirmation. The user can accept all, select a subset, or reject all (which exits the loop).
-
-   e. **Implement proposals:** Dispatch the implement agent with the confirmed method proposal findings (resume-or-dispatch pattern). This creates new `ml-opt/<slug>` branches.
+   d. **Implement proposals:** Dispatch the implement agent with the confirmed method proposal findings (resume-or-dispatch pattern). This creates new `ml-opt/<slug>` branches.
 
       **IF `agent_registry["implement"]` is not null** (agent exists from a previous implementation round):
       ```
@@ -571,50 +546,49 @@ When the implementation manifest contains multiple code branches:
       → Save returned `agentId` to `agent_registry["implement"]`
       → Persist registry: `save_state(..., agent_registry=agent_registry)`
 
-   f. **Merge into experiment loop:** Add the new validated branches to `code_branches`. Reset the iteration counter for these new branches only (they start at iteration 1 = `method_default_hp` tier). Existing branches keep their iteration count.
+   e. **Merge into experiment loop:** Add the new validated branches to `code_branches`. Reset the iteration counter for these new branches only (they start at iteration 1 = `method_default_hp` tier). Existing branches keep their iteration count.
 
    **If `pivot_type == "code_refinement"` (evolutionary code improvement):**
 
-   Instead of research → implement, use ShinkaEvolve to evolve the best branch's code:
+   Instead of research → implement, the flow is: **tuning agent → implement agent → tuning agent → experiment agent**. The analysis agent's own conditions (|rho| < 0.3 + method improved) prevent unnecessary evolution — no artificial cooldown needed.
 
-   a. **Convert to Shinka task:** Dispatch implement-agent with `shinka-convert` skill to create a Shinka task directory from the best method branch (adds `EVOLVE-BLOCK` markers and `evaluate.py`).
-
-   b. **Run evolution:** The orchestrator starts ShinkaEvolve's CLI in the background with `SHINKA_PROVIDER=claude_code`, then polls `experiments/evolve/pending/` for LLM requests. For each request, dispatch an implement-agent with the prompt content. Write responses to `experiments/evolve/completed/`. ShinkaEvolve's evolution loop runs autonomously using the file-based handoff.
-
-      ```bash
-      export SHINKA_PROVIDER=claude_code
-      python3 -m shinka.cli.run --task-dir <task_dir> --results_dir <results_dir> --generations <N> &
+   a. **Tune evolve HPs:** Dispatch the tuning agent to propose ShinkaEvolve hyperparameters (resume-or-dispatch pattern):
       ```
-
-      Polling loop (concurrent):
+      SendMessage(to: agent_registry["tuning"]) OR Agent(subagent_type="ml-optimizer:tuning-agent")
       ```
-      While ShinkaEvolve is running:
-        For each *.json in experiments/evolve/pending/:
-          → Read {system_msg, user_msg}
-          → Agent(subagent_type="ml-optimizer:implement-agent", prompt=system_msg + user_msg)
-          → Write response to experiments/evolve/completed/<id>.json
-        Sleep 2s
+      Prompt: "Propose ShinkaEvolve evolution HPs for code_refinement. Read `learned-behaviors.json` category `evolve_hp` for prior evolution outcomes. Consider: how many generations produced the best mutation last time, whether more population diversity is needed, and the improvement trajectory. Return `evolve_recommendation: {num_generations, population_size, reasoning}`."
+
+   b. **Execute evolve:** Dispatch the implement-agent with the evolve skill (resume-or-dispatch pattern):
       ```
+      SendMessage(to: agent_registry["implement"]) OR Agent(subagent_type="ml-optimizer:implement-agent")
+      ```
+      Prompt: `Skill("ml-optimizer:evolve")` with parameters:
+      - `project_root`, `parent_branch` (best method branch), `parent_metrics` (best result metrics)
+      - `primary_metric`, `lower_is_better`, `scope_level`
+      - `exp_root`
+      - `feedback_context`: {batch_analysis from latest analyze, error_patterns, dead_ends, learned_behaviors}
+      - `evolve_recommendation`: from tuning agent (step a) — `{num_generations, population_size, reasoning}`
 
-   c. **Inspect results:** Dispatch implement-agent with `shinka-inspect` skill to load top evolved programs and commit the best as a new `ml-opt/evolved-<slug>` branch.
+      The evolve skill runs: `shinka-convert` → `shinka-run` (with file handoff loop) → `shinka-inspect` → commit best as `ml-opt/evolved-<slug>`.
 
-   d. **Evaluate:** Dispatch experiment-agent on the evolved branch like any other method branch. The evolution result enters the normal HP-tune → experiment → analyze loop.
+   c. **Verify result:** The evolve skill returns `{status, branch, mutations_evaluated, best_combined_score, ...}`.
+      - If `status == "validated"`: add `branch` to `code_branches`
+      - If `status == "validation_failed"`: log to error tracker, continue loop without new branch
+      - If `status == "shinkaevolve_unavailable"`: ShinkaEvolve couldn't be installed or crashed. Fall back to the research → implement path (step 7a-f above) instead. Log the failure.
 
-   e. **Budget:** Each ShinkaEvolve generation consumes ~1 experiment slot worth of compute per mutation. Track via `remaining_budget`.
+   d. **Tune training HPs + run experiment:** Dispatch tuning agent to propose training HPs for the evolved branch, then dispatch experiment-agent. The evolved branch enters the normal HP-tune → experiment → analyze loop.
 
-   g. **Update state:**
+   d. **Update state:**
       - Increment `method_proposal_iterations` in user_choices
-      - Deduct expected cost from `remaining_budget`: `expected_cost = len(new_branches) * max(num_gpus, 1)` (accounts for GPU-parallel batch sizing per branch)
       - Save pipeline state
 
-   h. **Continue loop:** Loop back to step 1 (hp-tune) with the expanded `code_branches` list. Reset `batches_since_last_research = 0`.
+   e. **Continue loop:** Loop back to step 1 (hp-tune) with the expanded `code_branches` list. Reset `batches_since_last_research = 0`.
 
-8. **Research round check** (autonomous mode only — cadence-based research trigger):
+8. **Research round check** (cadence-based research trigger):
 
-   This step auto-triggers research → implement on a regular cadence, independent of analyze's pivot recommendation. It only applies in autonomous mode with `method_proposal_scope` set.
+   This step auto-triggers research → implement on a regular cadence, independent of analyze's pivot recommendation. It applies when `method_proposal_scope` is set.
 
    **Conditions (ALL must be true):**
-   - `budget_mode == "autonomous"`
    - `method_proposal_scope` is set (user opted into method proposals)
    - `batches_since_last_research >= hp_batches_per_round`
    - Step 7 did NOT already trigger this iteration (avoid double research)
@@ -623,7 +597,7 @@ When the implementation manifest contains multiple code branches:
 
    a. **Log the trigger:**
       ```bash
-      python3 scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"orchestrate","message":"Autonomous research round triggered after <N> HP batches","phase":7,"iteration":<iteration>,"context":{"batches_since_last_research":<N>,"method_proposal_iterations":<M>}}'
+      python3 scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"orchestrate","message":"Cadence-based research round triggered after <N> HP batches","phase":7,"iteration":<iteration>,"context":{"batches_since_last_research":<N>,"method_proposal_iterations":<M>}}'
       ```
 
    b. **Generate proposals:** Dispatch the research agent (resume-or-dispatch pattern):
@@ -632,7 +606,7 @@ When the implementation manifest contains multiple code branches:
       ```
       SendMessage(
         to: agent_registry["research"],
-        message: "Autonomous research round.
+        message: "Cadence-based research round.
           CONTEXT FROM OTHER AGENTS:
           - ANALYZE: {last_analysis_summary}
           - EXPERIMENTS: best improvement={best_improvement}%, branches active: {code_branches}
@@ -645,7 +619,7 @@ When the implementation manifest contains multiple code branches:
       **ELSE** (first dispatch — no existing agent):
       ```
       Agent(
-        description: "Autonomous research round",
+        description: "Cadence-based research round",
         prompt: "Ultrathink. Research ML optimization techniques. Parameters: source: both, scope_level: {method_proposal_scope}, output_path: experiments/reports/research-findings-method-proposals-iter{N}.md, model_type: {model_type}, task: {task}, current_metrics: {current_metrics}, problem_description: {problem_description}, exp_root: {exp_root}.",
         subagent_type: "ml-optimizer:research-agent"
       )
@@ -660,13 +634,13 @@ When the implementation manifest contains multiple code branches:
         python3 scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"orchestrate","message":"Research round yielded no new proposals — increasing cadence to <new_value> batches","phase":7,"iteration":<iteration>}'
         ```
 
-   d. **Implement proposals (no user confirmation):** In autonomous mode, ALL returned proposals are implemented automatically (the user opted into autonomous operation). Dispatch the implement agent with the research findings (resume-or-dispatch pattern). This creates new `ml-opt/<slug>` branches.
+   d. **Implement proposals:** ALL returned proposals are implemented automatically. Dispatch the implement agent with the research findings (resume-or-dispatch pattern). This creates new `ml-opt/<slug>` branches.
 
       **IF `agent_registry["implement"]` is not null** (agent exists from a previous implementation round):
       ```
       SendMessage(
         to: agent_registry["implement"],
-        message: "Implement autonomous research proposals.
+        message: "Implement cadence-based research proposals.
           CONTEXT FROM OTHER AGENTS:
           - RESEARCH: found {N} proposals in {findings_path}
           - EXPERIMENTS: branches active: {code_branches}
@@ -678,7 +652,7 @@ When the implementation manifest contains multiple code branches:
       **ELSE** (first dispatch — no existing agent):
       ```
       Agent(
-        description: "Implement autonomous research proposals",
+        description: "Implement cadence-based research proposals",
         prompt: "Ultrathink. Implement research proposals. Parameters: findings_path: {findings_path}, selected_indices: {all_indices}, project_root: {project_root}.",
         subagent_type: "ml-optimizer:implement-agent"
       )
@@ -702,8 +676,7 @@ When the implementation manifest contains multiple code branches:
    ```
    If `wasted_budget` pattern has occurrences ≥ 3, OR if the last 2 consecutive batches both had zero successful experiments:
 
-   **If `budget_mode == "autonomous"`:**
-   - Start review in background (resume-or-dispatch pattern):
+   Start review in background (resume-or-dispatch pattern):
 
      **IF `agent_registry["review"]` is not null** (agent exists from a previous review):
      ```
@@ -738,40 +711,7 @@ When the implementation manifest contains multiple code branches:
      - If completed with error or no output: log as `agent_failure` to error tracker, skip course corrections for this iteration
      - If still running: continue without waiting (suggestions will be applied in the following iteration)
    - **Design note:** Applying review suggestions one batch late is intentional — blocking the pipeline to wait for review would waste GPU time. Review suggestions are strategic (search space narrowing, branch pruning), so a one-batch delay is acceptable.
-   - Log: "Mid-pipeline review started in background (autonomous mode)"
-
-   **Otherwise (interactive/auto/custom):**
-   - Dispatch review agent synchronously (resume-or-dispatch pattern):
-
-     **IF `agent_registry["review"]` is not null** (agent exists from a previous review):
-     ```
-     SendMessage(
-       to: agent_registry["review"],
-       message: "Mid-pipeline review.
-         CONTEXT FROM OTHER AGENTS:
-         - ANALYZE: {last_analysis_summary}
-         - HP-TUNE: {tuning_efficiency}
-         - MONITOR: {divergence_patterns}
-         Parameters: project_root: {project_root}, exp_root: {exp_root}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, scope: session."
-     )
-     ```
-     → If `SendMessage` fails: fall back to the `Agent()` dispatch below, update `agent_registry["review"]` with the new agentId.
-
-     **ELSE** (first dispatch — no existing agent):
-     ```
-     Agent(
-       description: "Mid-pipeline review",
-       prompt: "Ultrathink. Run a mid-pipeline review. Parameters: project_root: {project_root}, exp_root: {exp_root}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, scope: session.",
-       subagent_type: "ml-optimizer:review-agent"
-     )
-     ```
-     → Save returned `agentId` to `agent_registry["review"]`
-     → Persist registry: `save_state(..., agent_registry=agent_registry)`
-   - Read the review output's top suggestions
-   - Apply relevant course corrections:
-     - If review suggests narrowing LR range: pass constrained `search_space` to hp-tune
-     - If review suggests pruning a branch: remove it from `code_branches`
-     - If review suggests stopping: follow the stop recommendation
+   - Log: "Mid-pipeline review started in background"
    - Log the mid-pipeline review:
      ```bash
      python3 scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"orchestrate","message":"Mid-pipeline review triggered after consecutive failures","phase":7,"iteration":<iteration>,"context":{"trigger":"consecutive_failures"}}'
@@ -784,16 +724,15 @@ When the implementation manifest contains multiple code branches:
     python3 scripts/goal_memory.py <exp_root> sync-from-errors
     ```
 
-    After steps 6/7/8/9, increment `batches_since_last_research` and return to step 1 (Get HP configs). The loop continues until the Decision step (6) or budget exhaustion forces an exit.
+    After steps 6/7/8/9, increment `batches_since_last_research` and return to step 1 (Get HP configs). The loop continues until the Decision step (6) forces an exit.
 
 ## Speculative Proposal Validation
 
 Before using speculative proposals from a previous iteration's background hp-tune, verify ALL of these:
 
 1. **Branch validity:** All `code_branch` values in proposals still exist in the active branch list (none were pruned by analyze)
-2. **Budget compliance:** Number of proposals ≤ `remaining_budget`
-3. **No search space conflict:** If analyze recommended narrowing the search space (via pivot), check that speculative proposals fall within the new bounds
-4. **No duplicates:** Speculative proposals don't duplicate experiments from the just-completed batch
+2. **No search space conflict:** If analyze recommended narrowing the search space (via pivot), check that speculative proposals fall within the new bounds
+3. **No duplicates:** Speculative proposals don't duplicate experiments from the just-completed batch
 
 If ANY check fails, discard ALL speculative proposals and invoke hp-tune synchronously with updated parameters.
 
@@ -825,7 +764,7 @@ Example for analytical dispatch:
 ```
 Agent(
   description: "Analyze batch {N} results",
-  prompt: "Ultrathink. Analyze batch {N} results. Parameters: project_root: {project_root}. Primary metric: {primary_metric}. Lower is better: {lower_is_better}. Target: {target_value or null}. Remaining budget: {remaining_budget}.",
+  prompt: "Ultrathink. Analyze batch {N} results. Parameters: project_root: {project_root}. Primary metric: {primary_metric}. Lower is better: {lower_is_better}. Target: {target_value or null}.",
   subagent_type: "ml-optimizer:analysis-agent"
 )
 ```

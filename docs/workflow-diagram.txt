@@ -80,10 +80,11 @@ ENTRY POINT
 
   +-------------------+  Tools: Bash, Read, Write, Edit, Glob, Grep,
   | implement-agent   |  Skill, WebSearch, WebFetch + alphaxiv MCP (2 tools)
-  | (PERSISTENT)      |  Skills: ml-optimizer:implement,
-  +-------------------+    superpowers:systematic-debugging,
-                           feature-dev:code-explorer,
-                           feature-dev:code-reviewer
+  | (PERSISTENT)      |  Skills: ml-optimizer:implement, ml-optimizer:evolve,
+  +-------------------+    ml-optimizer:shinka-setup, ml-optimizer:shinka-convert,
+                           ml-optimizer:shinka-run, ml-optimizer:shinka-inspect,
+                           superpowers:systematic-debugging,
+                           feature-dev:code-explorer, feature-dev:code-reviewer
                          External: context7, alphaxiv (repo reader, PDF Q&A)
 
   +-------------------+  Tools: Read, Write, Bash, Glob, Grep, Skill,
@@ -128,8 +129,7 @@ ENTRY POINT
     Q8: Data paths (train, val)
     Q9: Environment manager (conda/venv/none)
     Q10: Model category (supervised/RL/generative)
-    Q11: Budget mode (standard/extended/autonomous)
-    Q12: User papers (optional, for research)
+    Q11: User papers (optional, for research)
 
   +-- RL polarity validation -------------------------------------------+
   | If divergence_metric contains "reward"/"return"/"score"             |
@@ -301,11 +301,10 @@ ENTRY POINT
 
   PHASE 7: EXPERIMENT LOOP
   =========================
-  Budget modes:
-    auto:       max_experiments = max(num_gpus, 1) × difficulty_multiplier
-                  easy=×8, moderate=×15, hard=×25 (agent judges task difficulty)
-    autonomous: unlimited (runs until 3 consecutive stop recommendations)
-    custom:     user-specified experiment limit
+  Loop exit conditions:
+    1. Target metric achieved
+    2. Analysis agent recommends "stop" 3 consecutive times (triggers stuck protocol)
+    3. User manually stops
 
   +==========================================================================+
   |                                                                          |
@@ -314,7 +313,7 @@ ENTRY POINT
   |  |  7.1  HP-TUNE                                                      |  |
   |  |  Agent: tuning-agent --> ml-optimizer:hp-tune skill                |  |
   |  |                                                                    |  |
-  |  |  Inputs: past results (grouped by code_branch), remaining_budget   |  |
+  |  |  Inputs: past results (grouped by code_branch)                     |  |
   |  |  Iter 1: one config per branch + one baseline HP config            |  |
   |  |  Iter 2+: prune underperforming branches, focus configs            |  |
   |  |    - Adaptive branch budget: allocate slots proportionally to      |  |
@@ -323,7 +322,7 @@ ENTRY POINT
   |  |    - Checkpoint warm-starting (when enabled): propose configs      |  |
   |  |      that resume from prior checkpoints (lower LR, fewer epochs,   |  |
   |  |      same-branch only). CHECKPOINT_PATH exported in train script.  |  |
-  |  |  Cap: min(max(num_gpus, 1), remaining_budget) proposals            |  |
+  |  |  Batch size: max(num_gpus, 1) proposals                            |  |
   |  |                                                                    |  |
   |  |  WARNING: If branches dropped due to budget, log to                |  |
   |  |  error_tracker with priority order (impact × confidence)           |  |
@@ -370,7 +369,6 @@ ENTRY POINT
   |  |    → validate result: schema_validator.py <exp>.json result        |  |
   |  |                                                                    |  |
   |  |  Recovery mechanisms:                                              |  |
-  |  |    - Early batch abort: ≥2 diverge within 60s → cancel rest        |  |
   |  |    - All-diverge recovery: all diverge → retry halved LR           |  |
   |  |    - OOM feedback: record max_batch_size for next hp-tune          |  |
   |  +--------------------------------------------------------------------+  |
@@ -392,7 +390,7 @@ ENTRY POINT
   |  |                                                                    |  |
   |  |  Post-analyze actions:                                             |  |
   |  |    - Statistical confidence: Cohen's d effect sizes, confidence    |  |
-  |  |      labeling (high/medium/low), method attribution (Step 2.2)    |  |
+  |  |      labeling (high/medium/low), method attribution (Step 2.2)     |  |
   |  |    - HP interaction detection: detect_hp_interactions() finds      |  |
   |  |      2-way HP pairs with synergistic effects on the metric         |  |
   |  |    - Branch scores: compute_branch_scores() for adaptive budget    |  |
@@ -410,11 +408,8 @@ ENTRY POINT
   |  |    "continue"         → next HP iteration                          |  |
   |  |    "stop"             → check stuck protocol, then Phase 9         |  |
   |  |    "method_proposal"  → trigger 7.5 research pivot                 |  |
-  |  |      (requires remaining_budget >= 3)                              |  |
   |  |    "qualitative_change" → trigger full research                    |  |
-  |  |      (requires remaining_budget >= 5)                              |  |
   |  |    "code_refinement" → evolve best branch via ShinkaEvolve         |  |
-  |  |      (requires remaining_budget >= 3)                              |  |
   |  +--------------------------------------------------------------------+  |
   |                   |                                                      |
   |         +---------+------+----------+-----------+                        |
@@ -431,17 +426,19 @@ ENTRY POINT
   |  |  If method_proposal/qualitative_change:                            |  |
   |  |    research-agent → implement-agent                                |  |
   |  |                                                                    |  |
-  |  |  If code_refinement (ShinkaEvolve):                                |  |
-  |  |    shinka-convert → shinka-run (file handoff)                      |  |
-  |  |    → shinka-inspect → commit best as branch                        |  |
-  |  |    ShinkaEvolve LLM calls routed via file handoff                  |  |
-  |  |    to implement-agent subagents                                    |  |
+  |  |  If code_refinement (scope_level=full only):                       |  |
+  |  |    1. tuning-agent → propose evolve HPs                            |  |
+  |  |    2. implement-agent → Skill("evolve")                            |  |
+  |  |       shinka-convert → shinka-run → shinka-inspect → commit        |  |
+  |  |    3. tuning-agent → propose training HPs for evolved branch       |  |
+  |  |    4. experiment-agent → run training on evolved code              |  |
+  |  |    Fallback: shinkaevolve_unavailable → research → implement       |  |
   |  +--------------------------------------------------------------------+  |
   |         |                                                                |
   |         v                                                                |
   |  +--------------------------------------------------------------------+  |
   |  |  7.6  AUTONOMOUS RESEARCH CADENCE                                  |  |
-  |  |  (autonomous mode only, method_proposal_scope set)                 |  |
+  |  |  (when method_proposal_scope is set)                               |  |
   |  |                                                                    |  |
   |  |  Every hp_batches_per_round batches (default 3):                   |  |
   |  |    Auto-trigger research → implement cycle                         |  |
@@ -462,7 +459,7 @@ ENTRY POINT
   |  +--------------------------------------------------------------------+  |
   |         |                                                                |
   |  +--------------------------------------------------------------------+  |
-  |  |  7.8  STUCK PROTOCOL (autonomous mode only)                        |  |
+  |  |  7.8  STUCK PROTOCOL                                               |  |
   |  |                                                                    |  |
   |  |  Triggers: 3 consecutive "stop" recommendations                    |  |
   |  |  (one-shot — stuck_protocol_triggered prevents infinite loops)     |  |
@@ -477,13 +474,13 @@ ENTRY POINT
   |  |  7. If no proposals → exit loop                                    |  |
   |  +--------------------------------------------------------------------+  |
   |         |                                                                |
-  |         +-- Loop back to 7.1 HP-TUNE (if budget remains) -->             |
+  |         +-- Loop back to 7.1 HP-TUNE -->                                 |
   |                                                                          |
   +============================ END LOOP ====================================+
 
                     |
-      (budget exhausted, or "stop" recommendation,
-       or stuck protocol triggered in autonomous mode)
+      (target achieved, 3 consecutive stop recommendations,
+       or user manually stops)
                     v
 
   PHASE 8: METHOD STACKING (post-loop, if applicable)
@@ -500,13 +497,24 @@ ENTRY POINT
     |  2. Initialize: best method branch -> ml-opt/stack-1         |
     |                                                              |
     |  3. For each remaining method (in rank order):               |
-    |     a. Create ml-opt/stack-<N> by merging next method        |
-    |     b. Clean merge -> proceed; conflicts -> implement-agent  |
-    |     c. Run experiment with best individual HPs               |
-    |     d. If improved: keep stack, optional HP-tune (1-2 iters) |
-    |     e. If degraded: skip method, re-branch from last success |
+    |     a. Create ml-opt/stack-<N> from <stack_base_branch>      |
+    |        (may be an evolved branch from prior step)            |
+    |     b. Merge next method; conflicts -> implement-agent       |
+    |     c. Run experiment                                        |
+    |     d. Dispatch analysis agent on stacked result:            |
+    |        - Compare stacked gain vs best individual             |
+    |        - If interference detected:                           |
+    |          1. tuning-agent → evolve HPs                        |
+    |          2. implement-agent → evolve (ShinkaEvolve)          |
+    |          3. tuning-agent → training HPs for evolved          |
+    |          4. experiment-agent → run on evolved code           |
+    |          5. re-analyze → loop until improved or stop         |
+    |        - Else: proceed to HP-tune                            |
+    |     e. HP-tune on (potentially evolved) code                 |
+    |     f. If degraded: skip, re-branch from last success        |
     |                                                              |
-    |  4. Save stacking state to pipeline-state.json (resumable)   |
+    |  4. Save stacking state (+ evolved_methods) to               |
+    |     pipeline-state.json (resumable)                          |
     +--------------------------------------------------------------+
 
   Reads: results/exp-*.json, implementation-manifest.json, baseline.json
@@ -536,7 +544,7 @@ ENTRY POINT
     |    - Dead-end catalog summary                                |
     |    - Proposal outcome tracking                               |
     |    - Threats to Validity section (conditional caveats)       |
-    |    - Citation verification (Step 5.3: cross-ref claims vs   |
+    |    - Citation verification (Step 5.3: cross-ref claims vs    |
     |      experiment data, check source URL accessibility)        |
     |                                                              |
     |  Three-tier comparison (when method_tier present):           |
@@ -599,7 +607,7 @@ ENTRY POINT
          |                                | logs/<exp-id>/pip_freeze.txt
          |                                | scripts/<exp-id>.sh
   7.3    | logs/<exp-id>/train.log        | (status: healthy/diverged/unmonitored)
-  7.4    | results/, remaining_budget,    | reports/batch-N-analysis.md
+  7.4    | results/,                      | reports/batch-N-analysis.md
          | optimization-goals.json        | reports/research-agenda.json (updated)
          |                                | reports/dead-ends.json (if pruned)
          |                                | learned-behaviors.json (method outcomes, divergence)
@@ -612,6 +620,9 @@ ENTRY POINT
          | agenda, success metrics        |
   8      | results/exp-*.json,            | results/exp-*.json (stacking)
          | implementation-manifest.json   | Git branches: ml-opt/stack-<N>
+         |                                | Git branches: ml-opt/evolved-stack-<N> (if evolved)
+         |                                | artifacts/shinka-task/ (evolve conversion)
+         |                                | artifacts/shinka-results/ (evolve output)
   9      | results/, error-log.json,      | reports/final-report.md
          | research-agenda.json,          | reports/dashboard.html
          |                                | results-table.md

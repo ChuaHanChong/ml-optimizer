@@ -23,8 +23,6 @@ If the research skill fails (web search errors, timeout, or no results):
 
 ## User Checkpoint (Post-Research)
 
-**Autonomous mode auto-skip:** If `budget_mode == "autonomous"`, skip the user question below. Auto-select all proposals. Log to dev_notes: `"Autonomous mode: auto-selected all N research proposals for implementation"`.
-
 Use AskUserQuestion to show research findings:
 
 ```

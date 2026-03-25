@@ -20,10 +20,10 @@
       - GPU memory limit? (or should I auto-detect?)
       - Any parameters you do NOT want changed?
    5. **Prior attempts:** Have you already tried any optimizations? What worked/didn't?
-   6. **Scope preference:**
+   6. **Scope preference** _(default: full autonomous optimization)_:
       - HP tuning only (fastest, no code changes)
-      - HP tuning + architecture research (slower, potentially bigger gains)
-      - Let me decide based on analysis
+      - HP tuning + research (web search for methods, no evolutionary code refinement)
+      - Full autonomous optimization (HP + research + ShinkaEvolve — **default if not specified**)
    7. **Divergence metric name** _(skip for scikit-learn, XGBoost, or LightGBM — these train in a single fit() call with no iterative loss stream)_: What metric should be monitored for training divergence? (default: "loss". Common alternatives: "train_loss", "val_loss", "objective", "nll_loss", "perplexity" for LLMs). For RL tasks: if a policy/value loss is logged, use it. If only reward is logged, set divergence_metric to the reward metric name and note that the monitor skill will use reward-based heuristics (higher-is-better divergence detection).
    7a. **Divergence polarity** _(auto-inferred, confirm if ambiguous)_:
        Based on the metric name from Q7, infer the polarity:
@@ -67,8 +67,7 @@
        "problem_description": "<synthesized from user context>"
      },
      "constraints": {
-       "scope_level": "<from Q6: 'training' if HP-only, 'architecture' if HP+research, 'full' if let-me-decide>",
-       "budget_mode": "<from budget selection>",
+       "scope_level": "<from Q6: 'training' if HP-only, 'architecture' if HP+research, 'full' if full autonomous or not specified (default)>",
        "model_category": "<from Q8 or auto-detected>",
        "frozen_parameters": ["<from Q4: parameters user does NOT want changed>"],
        "fixed_time_budget": "<from Q9: seconds, or null>",

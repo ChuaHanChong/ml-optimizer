@@ -172,7 +172,7 @@ class TestStatePersistence:
         datetime.fromisoformat(state["timestamp"])
 
     def test_user_choices_full_roundtrip(self, tmp_path):
-        """All 20+ documented user_choices fields survive save/load."""
+        """All documented user_choices fields survive save/load."""
         all_choices = {
             "primary_metric": "accuracy", "divergence_metric": "loss",
             "divergence_lower_is_better": True, "lower_is_better": False,
@@ -184,8 +184,7 @@ class TestStatePersistence:
             "env_manager": "conda", "env_name": "ml-env",
             "model_category": "supervised",
             "user_papers": ["paper1.pdf", "paper2.pdf"],
-            "budget_mode": "autonomous", "difficulty": "moderate",
-            "difficulty_multiplier": 15, "method_proposal_scope": "training",
+            "method_proposal_scope": "training",
             "method_proposal_iterations": 3, "hp_batches_per_round": 3,
         }
         save_state(4, 1, [], str(tmp_path), user_choices=all_choices)
@@ -268,7 +267,7 @@ class TestStatePersistence:
             "tuning": "agent-old-3", "analysis": "agent-old-4",
             "monitor": "agent-old-5", "review": "agent-old-6",
         }
-        choices = {"primary_metric": "accuracy", "budget_mode": "auto"}
+        choices = {"primary_metric": "accuracy"}
         save_state(7, 5, [], str(tmp_path),
                    agent_registry=full_registry, user_choices=choices)
         # Simulate new session: load state, clear registry, re-save

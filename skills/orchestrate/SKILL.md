@@ -1,8 +1,6 @@
 ---
 name: orchestrate
 description: "Core ML optimization orchestrator. Understands model problems, dispatches specialized agents for research, HP tuning, and experiments. Use when: user wants to optimize an ML model, improve training, tune hyperparameters, or run optimization experiments."
-disable-model-invocation: true
-user-invocable: false
 ---
 
 # ML Optimization Orchestrator
@@ -62,19 +60,19 @@ Enter plan mode, ask discovery questions (metric target, constraints, data paths
 
 Read `references/phase-1-understand.md` for the full workflow.
 
-Locate model code, training config, and training script. Check GPUs. Synthesize understanding (framework, task, architecture). Detect tabular ML, RL, or generative models. Create optimization plan. Confirm with user and set budget mode.
+Locate model code, training config, and training script. Check GPUs. Synthesize understanding (framework, task, architecture). Detect tabular ML, RL, or generative models. Create optimization plan. Confirm with user.
 
 ## Phase 2: Prerequisites Check
 
 Read `references/phase-2-prerequisites.md` for the full workflow.
 
-Dispatch `ml-optimizer:prerequisites-agent`. Check results. Handle autonomous/interactive failure recovery. Persist user choices.
+Dispatch `ml-optimizer:prerequisites-agent`. Check results. Handle failure recovery. Persist user choices.
 
 ## Phase 3: Establish Baseline
 
 Read `references/phase-3-baseline.md` for the full workflow.
 
-Dispatch `ml-optimizer:baseline-agent`. Handle failure recovery with up to 2 retries. Autonomous mode exits on unrecoverable failures.
+Dispatch `ml-optimizer:baseline-agent`. Handle failure recovery with up to 2 retries.
 
 ## Phase 4: User Checkpoint (Post-Baseline)
 
@@ -92,7 +90,7 @@ Dispatch `ml-optimizer:research-agent`. Handle failure recovery (fallback to kno
 
 Read `references/phase-6-implement.md` for the full workflow.
 
-Dispatch `ml-optimizer:implement-agent`. Check manifest results. Handle dependencies, license warnings, conflicts. Post-implementation code review (skipped in autonomous mode).
+Dispatch `ml-optimizer:implement-agent`. Check manifest results. Handle dependencies, license warnings, conflicts. Post-implementation code review.
 
 ## Phase 7: Experiment Loop (Autonomous)
 
@@ -102,7 +100,7 @@ Pre-loop: validate state, load manifest, generate method proposals, route hp_onl
 
 Loop: hp-tune → experiment → monitor → analyze+speculative-hp-tune → decision (continue/pivot/stop) → mid-loop method proposals → research round check → mid-pipeline review → loop back.
 
-In autonomous mode, 3 consecutive stop recommendations trigger a **Stuck Protocol** (structured recovery) before exiting. The stuck protocol reads error patterns, dead ends, and research agenda, then dispatches the research agent for new approaches. If new proposals are found, the loop resumes. Triggers once per session to prevent infinite loops.
+3 consecutive stop recommendations trigger a **Stuck Protocol** (structured recovery) before exiting. The stuck protocol reads error patterns, dead ends, and research agenda, then dispatches the research agent for new approaches. If new proposals are found, the loop resumes. Triggers once per session to prevent infinite loops.
 
 After each batch, the live dashboard is regenerated (`scripts/dashboard.py --live`) so users can monitor progress in real-time. Baseline integrity is verified before each batch.
 
@@ -124,7 +122,7 @@ Dispatch `ml-optimizer:report-agent`. Sync errors. Optional self-improvement rev
 - **Training crashes:** Record the error, skip to next experiment in batch
 - **All experiments diverge in a batch:**
   - **Recovery attempt:** Before stopping, attempt a recovery batch with halved learning rates (divide all LR values by 2). Log to error tracker: `category: "training_failure", severity: "warning", message: "All experiments diverged — attempting recovery with halved LRs"`.
-  - If the recovery batch also all-diverges: stop the loop and report to user. In autonomous mode, log to dev_notes and proceed to Phase 9 (report). In interactive mode, use AskUserQuestion to inform user.
+  - If the recovery batch also all-diverges: stop the loop and report to user.
 - **OOM feedback to hp-tune:** When an experiment fails with `CUDA out of memory`:
   1. Record the OOM-causing batch size in the error tracker: `category: "training_failure", context: {"oom_batch_size": <batch_size>}`
   2. On the next hp-tune invocation, pass `max_batch_size` constraint (one step below the OOM-causing batch size) so hp-tune avoids proposing configs that will OOM again

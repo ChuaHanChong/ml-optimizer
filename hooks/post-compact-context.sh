@@ -24,7 +24,6 @@ ITERATION=$(jq -r '.iteration // 0' "$STATE_FILE" 2>/dev/null)
 STOP_COUNT=$(jq -r '.consecutive_stop_count // 0' "$STATE_FILE" 2>/dev/null)
 PRIMARY_METRIC=$(jq -r '.user_choices.primary_metric // "unknown"' "$STATE_FILE" 2>/dev/null)
 LOWER_IS_BETTER=$(jq -r '.user_choices.lower_is_better // "unknown"' "$STATE_FILE" 2>/dev/null)
-BUDGET_MODE=$(jq -r '.user_choices.budget_mode // "auto"' "$STATE_FILE" 2>/dev/null)
 RUNNING=$(jq -r '.running_experiments // [] | length' "$STATE_FILE" 2>/dev/null)
 
 # Count completed experiments
@@ -38,7 +37,7 @@ cat <<EOF
 ML-OPTIMIZER PIPELINE CONTEXT (restored after compaction):
 - Phase: $PHASE | Status: $STATUS | Iteration: $ITERATION
 - Primary metric: $PRIMARY_METRIC (lower_is_better=$LOWER_IS_BETTER)
-- Budget mode: $BUDGET_MODE | Consecutive stops: $STOP_COUNT
+- Consecutive stops: $STOP_COUNT
 - Experiments completed: $COMPLETED | Currently running: $RUNNING
 - State file: experiments/pipeline-state.json
 - Read the full state file to restore detailed context before proceeding.

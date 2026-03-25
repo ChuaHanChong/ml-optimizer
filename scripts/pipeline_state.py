@@ -223,11 +223,10 @@ def save_state(
             lower_is_better, target_value, train_command, eval_command,
             train_data_path, val_data_path, prepared_train_path,
             prepared_val_path, env_manager, env_name, model_category,
-            user_papers, budget_mode, difficulty, difficulty_multiplier,
-            method_proposal_scope, method_proposal_iterations,
+            user_papers, method_proposal_scope, method_proposal_iterations,
             hp_batches_per_round). These are preserved across pipeline
             resumptions.
-        consecutive_stop_count: Optional counter for autonomous mode's
+        consecutive_stop_count: Optional counter for the
             3-consecutive-stop exit rule. Persisted at root level.
         stuck_protocol_triggered: Whether the stuck protocol has been
             triggered this session. Prevents infinite recovery loops.
@@ -263,13 +262,13 @@ def save_state(
     elif existing and existing.get("user_choices"):
         state["user_choices"] = existing["user_choices"]
 
-    # Preserve consecutive_stop_count for autonomous mode
+    # Preserve consecutive_stop_count for 3-consecutive-stop exit rule
     if consecutive_stop_count is not None:
         state["consecutive_stop_count"] = consecutive_stop_count
     elif existing and "consecutive_stop_count" in existing:
         state["consecutive_stop_count"] = existing["consecutive_stop_count"]
 
-    # Preserve stuck_protocol_triggered for autonomous mode
+    # Preserve stuck_protocol_triggered (prevents infinite recovery loops)
     if stuck_protocol_triggered is not None:
         state["stuck_protocol_triggered"] = stuck_protocol_triggered
     elif existing and "stuck_protocol_triggered" in existing:

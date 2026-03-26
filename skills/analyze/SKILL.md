@@ -86,9 +86,10 @@ For each code branch that has `method_default_hp` results:
 3. Rank branches by isolated method effect
 
 ### Branch Pruning Recommendations
-- **Prune (>5% worse than baseline):** If a method with default HPs performs >5% worse (relative) than baseline, recommend pruning that branch — the method itself hurts, HP tuning is unlikely to recover it
-- **Promising (>2% better than baseline):** Flag as high-priority for HP tuning in subsequent iterations
-- **Neutral (within ±2% of baseline):** Keep but deprioritize — the method's effect is marginal, HP tuning may or may not help
+Use your judgment based on the magnitude and consistency of results — no fixed percentage thresholds:
+- **Prune:** If a method with default HPs performs substantially worse than baseline and the deficit is consistent across configs, recommend pruning — HP tuning is unlikely to recover it
+- **Promising:** If a method clearly improves over baseline, flag as high-priority for HP tuning
+- **Neutral:** If the method's effect is marginal or inconsistent, keep but deprioritize
 
 ### Inform the Decision (Step 3)
 - If promising branches exist but haven't been HP-tuned yet (`method_tuned_hp` results don't exist for them), recommend **continue** with direction: "tune HPs on promising method branches"
@@ -132,50 +133,53 @@ Output:
 ```
 
 ### Try Different Approach (Pivot)
-**When:** Current HP tuning has plateaued but goal not reached
+**When:** You judge that the current approach has plateaued. Use your analysis of trends, effect sizes, confidence levels, and improvement trajectories to decide — **no hardcoded thresholds**.
 
-**Pivot Decision Tree** — evaluate conditions in order, respecting `scope_level`:
+**Pivot Decision Tree** — evaluate conditions in order, respecting `scope_level`. Use your judgment on what "plateaued", "declining", or "stalled" means based on the evidence:
 
 1. **Branch coverage:**
-   - Untested branches exist → "Test untested code branches with baseline HPs"
-   - All branches tested but some with only 1-2 configs → "Increase HP exploration on promising branches (within 5% of best)"
-2. **Research status** _(skip if `scope_level == "training"` — HP-only mode, no code changes)_:
-   - No research done → "Switch to research + code changes — HP tuning alone has plateaued"
-   - Research done but not all proposals implemented → "Implement next-priority research proposal"
-2b. **Method proposals** _(skip if `scope_level == "training"`)_:
-   - HP tuning plateaued AND no method proposals tried yet → pivot_type: `"method_proposal"`, suggestion: "Propose new optimization methods (method proposals)"
-2c. **Code refinement via ShinkaEvolve** _(skip if `scope_level != "full"` — only available when user chose "let me decide" or explicit full scope)_:
-   - A method branch improved over baseline AND HP tuning shows diminishing returns (all HP correlations |rho| < 0.3) → pivot_type: `"code_refinement"`, suggestion: "Evolve the best method branch through targeted code mutations". The tuning agent will propose evolve HPs separately.
-3. **Failure pattern:**
-   - >50% of recent experiments diverged → "Narrow search space around the best config" (let the tuning agent decide the exact ranges)
-   - All experiments within 1% of each other → "Try qualitatively different change (different optimizer, scheduler, data augmentation)"
-   - Overfitting detected (train improving, val flat/degrading) → "Add regularization (weight_decay, dropout, data augmentation)"
-4. **Default:** "Continue with hybrid exploration/exploitation batch" with diminishing-returns warning.
+   - Untested branches exist → `branch_test`
+   - Tested branches with insufficient configs → `hp_expand`
+2. **Code-level optimization** _(skip if `scope_level == "training"`)_:
+   All code-level pivots emit `code_evolution`. The hyperagent decides which operator to use.
+   - Trigger: ANY of these conditions → pivot_type: `"code_evolution"`:
+     - HP tuning shows diminishing returns (you judge from trend analysis, not a fixed %)
+     - HP correlations are weak (improvement is not explained by HP changes)
+     - No research done yet and HP exploration is flattening
+     - All current approaches are stalling → additionally include `"meta_improvement_recommended": true`
+3. **Method stacking** _(skip if `scope_level == "training"` or non-git project)_:
+   Multiple methods from different papers or significant code changes have improved independently → pivot_type: `"method_stacking"`. Combining them could yield compound gains. No fixed method count — you judge from the archive whether stacking is worth trying.
+4. **Failure pattern:**
+   - High divergence rate → `narrow_space`
+   - Results clustering tightly (no variance) → `code_evolution` (need qualitative change)
+   - Overfitting detected → `regularization`
+5. **Default:** `continue` — keep exploring. The loop runs autonomously until the goal is reached or the user manually stops.
 
 Output:
 ```json
 {
   "action": "pivot",
-  "reason": "<which condition from the decision tree triggered>",
-  "pivot_type": "<branch_test|hp_expand|research|method_proposal|narrow_space|qualitative_change|regularization|code_refinement>",
+  "reason": "<your evidence-based justification>",
+  "pivot_type": "<branch_test|hp_expand|narrow_space|regularization|code_evolution|method_stacking>",
+  "meta_improvement_recommended": false,
   "suggestion": "<specific actionable next step>",
-  "remaining_potential": "<estimated room for improvement>"
+  "remaining_potential": "<your assessment of room for improvement>"
 }
 ```
 
-**Orchestrator contract:** The orchestrator dispatches each `pivot_type` as follows:
-- `branch_test`, `hp_expand`, `narrow_space`, `regularization`: Adjust search space and invoke hp-tune. No research round.
-- `research`, `method_proposal`, `qualitative_change`: Trigger research → implement cycle (step 7 in orchestrate).
-  - `qualitative_change`: Fundamental approach change within current code (e.g., different optimizer, scheduler, augmentation). No web research trigger — the implement agent applies the change directly.
-  - `method_proposal`: New techniques needed that go beyond the current codebase. Triggers research (web + LLM knowledge) → implement cycle.
-- `code_refinement`: Trigger evolution loop — dispatch implement-agent with evolve skill to generate mutations from the best branch.
-See orchestrate SKILL.md Phase 7 step 6 "Pivot dispatch by type" for details.
+**Role split — analysis advises, hyperagent decides:**
+
+You (the analysis agent) evaluate evidence and advise a DIRECTION. The hyperagent reads your advice and decides the specific ACTION.
+
+| You advise (pivot_type) | Hyperagent decides |
+|---|---|
+| `branch_test`, `hp_expand`, `narrow_space`, `regularization` | Delegates to tuning-agent with adjusted search space |
+| `code_evolution` | Which operator: LLM patch, ShinkaEvolve, or research-implement |
+| `code_evolution` + `meta_improvement_recommended` | Whether to meta-improve (modify skill instructions) |
+| `method_stacking` | Whether to stack, which methods, in what order |
 
 ### Stop
-**When:** Goal reached OR no more improvement possible
-- Target metric value achieved
-- Exhaustive search completed with diminishing returns
-- All reasonable approaches tried
+**When:** Target metric achieved. This is the ONLY automatic stop condition. The loop is autonomous — it runs until the goal is reached or the user manually stops. Even if progress is slow, keep trying different approaches. Never recommend stop just because improvement is small — breakthroughs can come after plateaus.
 
 Output:
 ```json
@@ -197,9 +201,9 @@ After each analysis, log notable inefficiencies to the error tracker:
 python3 scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"warning","source":"analyze","message":"All <N> experiments in batch <batch> diverged/failed — wasted budget","phase":7,"iteration":<batch_number>,"context":{"experiments_wasted":<N>}}'
 ```
 
-### If recommending stop due to diminishing returns:
+### If observing diminishing returns (log for context, but do NOT recommend stop):
 ```bash
-python3 scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"analyze","message":"Diminishing returns: last <N> batches showed <X%> improvement","phase":7,"context":{"total_experiments":<N>}}'
+python3 scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"analyze","message":"Diminishing returns observed: last <N> batches showed <X%> improvement — recommend pivot to different operator","phase":7,"context":{"total_experiments":<N>}}'
 ```
 
 ### If a code branch consistently underperforms baseline:
@@ -212,7 +216,7 @@ python3 scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficie
 When a technique is conclusively unpromising, log it to the dead-end catalog so it's never re-proposed:
 
 **When to log a dead end:**
-- A code branch is pruned (>5% worse than baseline across all HP configs)
+- A code branch is pruned (substantially worse than baseline across all HP configs)
 - All experiments in a batch diverge or fail after recovery attempt
 - Analyze recommends stop and a specific method showed no improvement after tuning
 
@@ -276,7 +280,7 @@ python3 scripts/error_tracker.py <exp_root> agenda update '<idea_id>' '{"status"
 **Priority adjustment rules:**
 - If improved over baseline: increase priority by 1-2 points, set `status: "improved"`
 - If mixed results (some configs better, some worse): keep priority, set `status: "tried"`, add evidence
-- If conclusively worse (>5% below baseline across all configs): decrease priority to 1, set `status: "dead-end"`, also log to dead-end catalog (Step 3.2)
+- If conclusively worse (substantially below baseline across all configs, in your judgment): decrease priority to 1, set `status: "dead-end"`, also log to dead-end catalog (Step 3.2)
 
 **Add evidence-suggested ideas:** If the analysis reveals new optimization directions (e.g., LR sensitivity is very high → try cyclical LR), add them:
 ```bash

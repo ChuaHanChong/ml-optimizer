@@ -19,6 +19,7 @@ import pytest
 from pipeline_state import (
     _compute_baseline_checksum,
     cleanup_stale,
+    init_hyperagent_state,
     load_state,
     save_state,
     validate_phase_requirements,
@@ -328,6 +329,73 @@ class TestStatePersistence:
         with mock.patch("pipeline_state.tempfile.mkstemp", side_effect=mock_mkstemp):
             path = save_state(1, 0, [], str(exp_root), user_choices={"metric": "loss"})
         assert json.loads(Path(path).read_text())["user_choices"]["metric"] == "loss"
+
+
+# ---------------------------------------------------------------------------
+# TestHyperagentState
+# ---------------------------------------------------------------------------
+
+class TestHyperagentState:
+    """init_hyperagent_state() and save_state hyperagent_state roundtrip."""
+
+    def test_init_hyperagent_state_defaults(self):
+        """init_hyperagent_state() returns correct structure with enabled=True."""
+        state = init_hyperagent_state()
+        assert state["enabled"] is True
+        assert state["archive_generation"] == 0
+        assert state["meta_improvement_count"] == 0
+        assert state["active_meta_patches"] == []
+        assert state["strategy_history"] == []
+        assert "llm_patch" in state["operator_stats"]
+        assert "shinka_evolve" in state["operator_stats"]
+        assert "research_implement" in state["operator_stats"]
+        for op in state["operator_stats"].values():
+            assert op["attempts"] == 0
+            assert op["improvements"] == 0
+
+    def test_init_hyperagent_state_disabled(self):
+        """Can explicitly disable."""
+        state = init_hyperagent_state(enabled=False)
+        assert state["enabled"] is False
+
+    def test_hyperagent_state_save_load_roundtrip(self, tmp_path):
+        """hyperagent_state survives save/load cycle."""
+        ha = init_hyperagent_state()
+        ha["archive_generation"] = 7
+        ha["meta_improvement_count"] = 2
+        ha["active_meta_patches"] = ["hp-tune-SKILL.md"]
+        ha["operator_stats"]["llm_patch"]["attempts"] = 5
+        ha["operator_stats"]["llm_patch"]["improvements"] = 3
+        ha["strategy_history"] = [
+            {"iteration": 1, "action": "hp_tune"},
+            {"iteration": 2, "action": "llm_patch", "genid": "gen-001"},
+        ]
+        save_state(7, 5, [], str(tmp_path), hyperagent_state=ha)
+        loaded = load_state(str(tmp_path))
+        assert loaded["hyperagent_state"] == ha
+
+    def test_hyperagent_state_preserved_when_not_passed(self, tmp_path):
+        """Once set, hyperagent_state persists across saves that don't pass it."""
+        ha = init_hyperagent_state()
+        ha["archive_generation"] = 3
+        save_state(7, 1, [], str(tmp_path), hyperagent_state=ha)
+        # Save again without hyperagent_state arg
+        save_state(7, 2, [], str(tmp_path))
+        loaded = load_state(str(tmp_path))
+        assert loaded["hyperagent_state"]["archive_generation"] == 3
+
+    def test_hyperagent_state_updated_when_passed(self, tmp_path):
+        """Passing new hyperagent_state overwrites the old one."""
+        ha1 = init_hyperagent_state()
+        ha1["archive_generation"] = 3
+        save_state(7, 1, [], str(tmp_path), hyperagent_state=ha1)
+        ha2 = init_hyperagent_state()
+        ha2["archive_generation"] = 10
+        ha2["meta_improvement_count"] = 1
+        save_state(7, 5, [], str(tmp_path), hyperagent_state=ha2)
+        loaded = load_state(str(tmp_path))
+        assert loaded["hyperagent_state"]["archive_generation"] == 10
+        assert loaded["hyperagent_state"]["meta_improvement_count"] == 1
 
 
 # ---------------------------------------------------------------------------

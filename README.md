@@ -1,35 +1,55 @@
 # ml-optimizer
 
-A Claude Code plugin that acts as an autonomous agent orchestrator for ML model optimization.
+A **self-referential, self-improving hyperagent** for autonomous ML model optimization. Powered by Claude Code.
+
+> **The plugin IS the hyperagent.** It doesn't just optimize your ML model — it optimizes how it optimizes. The hyperagent controls the entire loop, learns which strategies work, and evolves its own approach with each session. No hardcoded thresholds. No fixed pipeline. Autonomous by default — runs until the goal is reached or you stop it.
+
+## Why a Hyperagent?
+
+Traditional ML optimization tools follow a fixed pipeline — same strategy every time regardless of the task. The ml-optimizer takes a different approach:
+
+1. **Optimizes your ML model** (the task) — using an evolutionary archive with lineage tracking, parent selection, staged evaluation, and three mutation operators (LLM patches, ShinkaEvolve, research-implement)
+
+2. **Optimizes its own optimization strategy** (the meta-task) — the hyperagent modifies the plugin's own skill instructions based on what worked and what didn't. The agents make evidence-based decisions, not rule-based.
+
+3. **Gets better with each session** — promoted meta-patches persist in the plugin, claude-mem recalls insights from prior sessions. Future optimization sessions start smarter.
+
+**Core principle: Standing on the shoulders of giants.** The best ML optimization comes from building on proven research. The plugin prioritizes finding and implementing techniques from papers before inventing from scratch. User-provided papers get highest priority. Research-implement is a first-class strategy, not a fallback.
 
 ## Overview
 
-The ml-optimizer plugin understands your ML model, establishes baselines, researches improvements, tunes hyperparameters, runs experiments (in parallel across GPUs), monitors for training divergence, and produces structured reports.
+The ml-optimizer understands your ML model, establishes baselines, researches improvements, tunes hyperparameters, evolves code, runs experiments (in parallel across GPUs), monitors for training divergence, and gets better at optimizing with each session.
 
 **Key design decisions:**
+- **Hyperagent architecture**: Enables self-improvement and drives Phase 7 (experiments) ↔ Phase 8 (stacking) in a loop, choosing between HP tuning, LLM code patches, ShinkaEvolve, research-implement, stacking, and meta-improvement at each iteration
+- **Self-referential improvement**: The hyperagent can modify the plugin's own skill instructions to evolve the optimization strategy (session-scoped with end-of-session promotion)
+- **Archive-based evolutionary search**: Population archive with lineage tracking and parent selection (Hyperagents' DGM framework, sigmoid + diversity penalty)
+- **Staged evaluation**: Two-stage eval (10% budget cheap filter → full training if promising) saves 50-80% compute
 - LLM-driven hyperparameter tuning (Claude reasons about results — no Optuna/grid search)
 - Research via web search + alphaxiv academic paper search + user-provided papers
-- Log file polling for divergence monitoring
+- ShinkaEvolve for fine-grained evolutionary code mutations
 - Structured `experiments/` directory in your project
-- User checkpoints after baseline and research; experiment loop is autonomous
 
-### Advanced Features (Autoresearch-Inspired)
+### Hyperagent Capabilities
 
-Inspired by [karpathy/autoresearch](https://github.com/karpathy/autoresearch), [autoresearch-gen](https://github.com/liviaellen/autoresearch-gen), and [autosae](https://github.com/alif-munim/autosae):
+Inspired by [Facebook Research Hyperagents](https://github.com/facebookresearch/Hyperagents) (DGM framework), [SakanaAI ShinkaEvolve](https://github.com/SakanaAI/ShinkaEvolve) and [karpathy/autoresearch](https://github.com/karpathy/autoresearch):
 
 | Feature | What it does |
 |---------|-------------|
-| **Stuck Protocol** | After 3 consecutive stop recommendations, triggers structured recovery — reads error patterns, dead ends, and research agenda, dispatches research agent for new approaches |
+| **Hyperagent** | Opus agent that enables self-improvement and helps Phase 7 ↔ Phase 8 in a loop. Analysis advises direction, hyperagent decides specific action |
+| **Evolutionary Code Archive** | JSONL archive tracking code variants with parent-child lineage, fitness scores, and mutation operators. Parent selection uses Hyperagents' sigmoid + diversity penalty math |
+| **Staged Evaluation** | Two-stage eval: 10% budget cheap filter with adaptive threshold → full training only if promising. Warm-starts from staged checkpoint |
+| **Three Mutation Operators** | LLM patches (structural), ShinkaEvolve (fine-grained AST), research-implement (paper-informed). Hyperagent learns which operator is most effective |
+| **Self-Referential Improvement** | Hyperagent modifies the plugin's own skill instructions (hp-tune, analyze, research). Session-scoped with end-of-session promotion gate |
+| **Cross-Session Learning** | Promoted meta-patches persist in the plugin. claude-mem recalls prior sessions |
+| **Stuck Protocol** | When analysis advises stop, the hyperagent tries other operators first. If stuck, reads error patterns and dispatches research for new approaches |
 | **Dead-End Catalog** | Tracks techniques conclusively shown to be unpromising. Research and hp-tune agents consult it before proposing, preventing wasted budget |
 | **Research Agenda** | Living document initialized from proposals, reprioritized after each batch based on experimental evidence |
 | **Progress Dashboard** | Self-contained HTML dashboard with auto-refresh (`--live`), SVG timeline, sortable results, HP sensitivity, method explanations |
-| **Excalidraw Diagrams** | Pipeline overview, experiment comparison, HP landscape, and architecture change diagrams in Excalidraw JSON format |
 | **Immutable Baseline** | SHA-256 checksum of baseline metrics verified before each batch — halts if metrics are modified |
-| **Auto-Repair Loop** | Intra-agent retry (3 attempts) for retryable errors. OOM/SyntaxError not retried |
-| **Training Budget** | Optional fixed wall-clock duration or fixed epoch count per experiment for fair comparison |
 | **Goal Anchoring** | `optimization-goals.json` written at Phase 0; all agents read it before acting. Post-dispatch validation catches frozen param changes, scope breaches, dead-end re-proposals |
-| **Behavioral Memory** | `learned-behaviors.json` accumulates HP constraints, method outcomes, divergence patterns per project. All agents have `memory: local` for persistent role-specific learning |
-| **Resumable Subagents** | 5 persistent agents (research, implement, tuning, analysis, monitor) are dispatched once and resumed via `SendMessage` for subsequent tasks — preserving accumulated context (search results, HP trends, codebase knowledge) across the pipeline. Falls back to fresh dispatch if resumption fails |
+| **Behavioral Memory** | `learned-behaviors.json` accumulates HP constraints, method outcomes, divergence patterns. All agents have `memory: local` for persistent role-specific learning |
+| **Resumable Subagents** | 6 persistent agents (research, implement, tuning, analysis, monitor, meta) resumed via `SendMessage` — preserving accumulated context across the pipeline |
 | **Inter-Agent Relay** | Orchestrator relays findings between agents via `CONTEXT FROM OTHER AGENTS:` sections — analyze findings reach hp-tune, monitor OOM info reaches hp-tune, research proposals reach implement |
 
 ## Installation
@@ -50,7 +70,15 @@ claude plugin install ml-optimizer --scope local
 claude plugin install ml-optimizer --scope project
 ```
 
-After installation, run `/reload-plugin` or restart Claude Code. The `/optimize` command and all 9 agents will be available automatically.
+After installation, run the setup scripts and reload:
+
+```bash
+# Initialize submodules (ShinkaEvolve + Hyperagents)
+bash scripts/setup_evolve.sh
+bash scripts/setup_hyperagent.sh
+```
+
+Run `/reload-plugin` or restart Claude Code. The `/optimize` command and all 10 agents will be available automatically.
 
 > **Why local/project?** Agent memory (`memory: local`) stores learnings in `.claude/agent-memory-local/` within the project. Local or project-based installation keeps plugin code, agent memory, and experiment data together — scoped to your ML project, not polluting other workspaces.
 
@@ -127,10 +155,16 @@ Only `orchestrate` is directly invocable. All other skills have `disable-model-i
 | `analyze` | Post-batch analysis — ranks results, recommends next action | Internal |
 | `report` | Generates comprehensive final optimization report | Internal |
 | `evolve` | Orchestrates evolutionary code refinement via full ShinkaEvolve pipeline (convert → run → inspect) | Internal |
+| `hyperagent-setup` | Initialize Hyperagents submodule and verify environment | Internal |
+| `hyperagent-init` | Create evolutionary archive from baseline + existing branches | Internal |
+| `hyperagent-select` | Select parent from archive (5 strategies: sigmoid + diversity) | Internal |
+| `hyperagent-generate` | Core mutation — LLM patch / ShinkaEvolve / research-implement + self-referential improvement | Internal |
+| `hyperagent-eval` | Two-stage evaluation: staged filter → full training with warm-start | Internal |
+| `hyperagent-archive` | Update archive with results, track lineage and operator effectiveness | Internal |
 
 ## Workflow
 
-5 agents are **persistent** (resumed via `SendMessage` with accumulated context), 4 are **ephemeral** (fresh spawn). The orchestrator relays findings between agents via `CONTEXT FROM OTHER AGENTS:` sections.
+6 agents are **persistent** (resumed via `SendMessage` with accumulated context), 4 are **ephemeral** (fresh spawn). The hyperagent enables self-improvement and drives Phase 7 ↔ Phase 8 in a loop. The orchestrator relays findings between agents.
 
 ```
 0. Discovery (plan mode, user Q&A — data paths, env manager)
@@ -140,22 +174,23 @@ Only `orchestrate` is directly invocable. All other skills have `disable-model-i
 4. User checkpoint: review baseline, choose direction
 5. Research (alphaxiv + web search + LLM knowledge for techniques)       [persistent]
 6. Implement proposals (creates git branches, applies + validates)       [persistent]
-7. Experiment loop (autonomous, branch-aware):
-   a. hp-tune proposes configs (resumed with analyze context)            [persistent]
-   b. experiment runs training (parallel across GPUs)                    [ephemeral]
-   c. monitor watches for divergence (resumed with HP context)           [persistent]
-   d. analyze: continue / pivot / stop                                   [persistent]
-   e. method proposal trigger (if analyze recommends pivot)
-   e2. code refinement: tuning (evolve HPs) → evolve → tuning (training HPs)
-       → experiment (if analyze recommends code_refinement, scope_level=full)
-   f. cadence-based research (when method proposals enabled)
-8. Method stacking (if 5+ methods improved over baseline):
+7. Hyperagent Driven Experiment Loop (autonomous):
+   -> Initialize code archive (baseline + implementation branches)
+   -> Each iteration, the hyperagent decides:
+      a. HP tuning (delegates to tuning-agent)                           [persistent]
+      b. LLM code patch (hyperagent modifies code directly)             [persistent]
+      c. ShinkaEvolve mutation (delegates to evolve skill)
+      d. Research-implement (delegates to research + implement agents)
+      e. Meta-improvement (modifies skill files, max 3/session)
+   -> Staged eval → full experiment → archive → analyze → next iteration
+   -> When analysis advises stop, hyperagent tries other operators
+8. Method stacking (Phase 7 ↔ Phase 8 loop):
+   -> Analysis advises stacking, hyperagent decides
    -> Sequentially merges best methods, skip-on-failure
-   -> After each stack step: analyze → tuning (evolve HPs) → evolve
-      → tuning (training HPs) → experiment (loops until improvement)
-   -> Analysis agent decides: evolve again / continue / skip method
+   -> Analysis agent loops evolve + HP-tune until improvement or stop
 9. Generate final report                                                 [ephemeral]
-   -> Optional self-improvement review (resumed with session context)    [persistent]
+   -> Meta-patch promotion gate (if meta-improvements were made)
+   -> Optional self-improvement review                                   [persistent]
 ```
 
 ## Project Directory Structure
@@ -180,7 +215,9 @@ The plugin creates this structure in your project:
   reports/session-review.md             # Self-improvement review
   results-table.md                      # Auto-generated Markdown results summary
   prepared-data/                        # Prepared dataset (if preprocessing needed)
-  pipeline-state.json                   # Resumable pipeline state + agent_registry
+  code-archive.jsonl                    # Hyperagent evolutionary archive (lineage + fitness)
+  meta-patches/                         # Session-scoped meta-improvement skill patches
+  pipeline-state.json                   # Resumable pipeline state + agent_registry + hyperagent_state
   dev_notes.md                          # Running session log
 ```
 
@@ -204,6 +241,8 @@ All scripts in `scripts/` use only the standard library and work as both importa
 | `scripts/dashboard.py` | `python3 scripts/dashboard.py <exp_root> [--live] [--table] [--serve --port 8080]` — HTML dashboard + Markdown results table |
 | `scripts/excalidraw_gen.py` | `python3 scripts/excalidraw_gen.py <exp_root> pipeline\|comparison\|hp-landscape\|architecture <args>` — Excalidraw JSON diagrams |
 | `scripts/goal_memory.py` | `python3 scripts/goal_memory.py <exp_root> init-goals\|read-goals\|log-behavior\|query-behaviors\|validate-output\|summary\|sync-from-errors` — goal anchoring, behavioral memory, agent output validation |
+| `scripts/hyperagent_adapter.py` | `python3 scripts/hyperagent_adapter.py <exp_root> init\|select-parent\|add\|lineage\|stats\|best\|operator-stats\|prune` — archive management + parent selection (Hyperagents' exact algorithms) |
+| `scripts/setup_hyperagent.sh` | `bash scripts/setup_hyperagent.sh` — initialize Hyperagents submodule and create skill symlinks for auto-discovery |
 
 ## Running Tests
 
@@ -219,12 +258,13 @@ No build step. No linter. Python 3.10+ required. All scripts use only the standa
 
 ## Agent Definitions
 
-Nine subagent types in `agents/`. The orchestrate skill dispatches agents directly via `Agent(subagent_type="ml-optimizer:<name>-agent")`.
+Ten subagent types in `agents/`. The orchestrate skill dispatches agents directly via `Agent(subagent_type="ml-optimizer:<name>-agent")`.
 
 | Agent | Tools | Model | Preloaded Skill |
 |-------|-------|-------|-----------------|
+| **`hyperagent`** | Read, Write, Edit, Bash, Glob, Grep, Skill, WebSearch, WebFetch | **opus (ultrathink)** | `ml-optimizer:hyperagent` + all hyperagent-* + evolve + shinka-* + claude-mem |
 | `research-agent` | WebSearch, WebFetch, Read, Write, Bash, Glob, Grep, Skill + alphaxiv MCP (6) | opus (ultrathink) | `ml-optimizer:research` |
-| `implement-agent` | Bash, Read, Write, Edit, Glob, Grep, Skill, WebSearch, WebFetch + alphaxiv MCP (2) | opus (ultrathink) | `ml-optimizer:implement` + `feature-dev:code-explorer` + `feature-dev:code-reviewer` |
+| `implement-agent` | Bash, Read, Write, Edit, Glob, Grep, Skill, WebSearch, WebFetch + alphaxiv MCP (2) | opus (ultrathink) | `ml-optimizer:implement` + evolve + shinka-* |
 | `tuning-agent` | Read, Write, Bash, Glob, Grep, Skill, WebSearch, WebFetch | opus (ultrathink) | `ml-optimizer:hp-tune` |
 | `analysis-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | opus (ultrathink) | `ml-optimizer:analyze` |
 | `report-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | opus | `ml-optimizer:report` |
@@ -233,7 +273,7 @@ Nine subagent types in `agents/`. The orchestrate skill dispatches agents direct
 | `experiment-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | sonnet | `ml-optimizer:experiment` |
 | `prerequisites-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | sonnet | `ml-optimizer:prerequisites` |
 
-Analytical agents use "ultrathink" prompting and `model: opus`. Procedural agents use Sonnet for lower cost/latency.
+The **hyperagent** is the primary loop driver — it decides the optimization strategy at each iteration. Other agents are specialized workers it coordinates through the orchestrator relay. Analytical agents use "ultrathink" prompting and `model: opus`. Procedural agents use Sonnet for lower cost/latency.
 
 ## Hooks (Safety Guardrails)
 
@@ -259,7 +299,7 @@ Exit code `2` = block action. Exit code `0` = allow. Configured in `hooks/hooks.
 - **All-diverge recovery**: If all experiments in a batch diverge, a recovery batch with halved learning rates runs before stopping.
 - **Research cadence**: When method proposals are enabled, research triggers every N batches. If no new proposals found, cadence doubles (exponential backoff).
 - **Pipeline resumption**: `pipeline-state.json` persists phase, user choices, and stop count. On restart, stale experiments are cleaned up and phase gates prevent cascading failures.
-- **Loop exit conditions**: The experiment loop runs until: (1) target metric achieved, (2) analysis agent recommends "stop" 3 consecutive times (triggers stuck protocol), or (3) user manually stops.
+- **Loop exit conditions**: The experiment loop is autonomous — runs until: (1) target metric achieved, or (2) user manually stops. When analysis advises stop, the hyperagent tries other operators first.
 - **Three-tier result tracking**: Experiments carry `method_tier` (baseline / method_default_hp / method_tuned_hp) and `proposal_source` (paper / llm_knowledge) for attribution analysis.
 - **Method stacking**: After independent method testing, top methods are sequentially merged. Clean merges proceed; conflicts are LLM-resolved. Degrading combinations are skipped. After each successful stack step, the analysis agent assesses whether methods are interfering — if stacked gain < best individual, the evolve skill optimizes code interactions via ShinkaEvolve.
 - **Goal anchoring & behavioral memory**: `scripts/goal_memory.py` maintains `optimization-goals.json` (goal anchor) and `learned-behaviors.json` (accumulated learnings). The orchestrator validates agent outputs post-dispatch. All 9 agents have `memory: local` for persistent role-specific memory at `.claude/agent-memory-local/<agent-name>/` in the target project.
@@ -267,7 +307,10 @@ Exit code `2` = block action. Exit code `0` = allow. Configured in `hooks/hooks.
 - **HP interaction detection**: `detect_hp_interactions()` identifies 2-way HP interaction effects (e.g., "high LR only works with small batch size"). Integrated into analysis output.
 - **Adaptive branch budget**: HP-tune allocates more experiments to promising branches and fewer to struggling ones. Scores by improvement × confidence factor.
 - **Checkpoint warm-starting**: Experiments can resume from prior checkpoints (lower LR, fewer epochs). Saves 50-80% compute in later iterations.
-- **Evolutionary code refinement**: When HP tuning plateaus (analyze recommends `code_refinement`), the evolve skill orchestrates the full ShinkaEvolve pipeline internally: `shinka-convert` → `shinka-run` (with file-based LLM handoff) → `shinka-inspect` → commit best mutation. Evolve HPs (`num_generations`, `population_size`) are tuning-agent-driven — the tuning agent proposes evolve HPs based on prior outcomes in `learned-behaviors.json` before the implement agent executes. In Phase 8, the analysis agent triggers evolution when stacked methods interfere (stacked gain < best individual gain), looping evolve + HP-tune until the analysis agent confirms improvement or recommends stopping.
+- **Hyperagent-driven optimization**: The hyperagent drives Phase 7 ↔ Phase 8 in a loop and enables self-improvement. It maintains a code archive (`code-archive.jsonl`) with lineage tracking and selects parents using Hyperagents' exact algorithms: `sigmoid(10(s - μ)) × exp(-(children/8)³)`. Three mutation operators: LLM patches (structural), ShinkaEvolve (fine-grained), research-implement (paper-informed). The hyperagent learns which operator is effective and adapts.
+- **Staged evaluation**: Every code mutation gets a cheap pre-filter (10% budget, adaptive threshold) before full training. Warm-starts from staged checkpoint. Saves 50-80% compute by filtering unpromising variants early.
+- **Self-referential meta-improvement**: The hyperagent can modify the plugin's own skill instructions (hp-tune, analyze, research). Session-scoped patches in `experiments/meta-patches/`. Max 3 per session. End-of-session promotion gate: analysis-agent evaluates, user approves, committed to plugin branch.
+- **ShinkaEvolve as mutation operator**: ShinkaEvolve is one tool within the Hyperagent loop. The hyperagent dispatches it for fine-grained code mutations (numerical constants, local optimizations) via `Skill("ml-optimizer:evolve")`. The full pipeline: `shinka-convert` → `shinka-run` (file-based LLM handoff) → `shinka-inspect` → commit. Evolve HPs are tuning-agent-driven.
 - **Small dataset awareness**: Research agent shifts search toward low-data techniques (transfer learning, few-shot learning, adapters, prompt tuning, semi-supervised methods) when dataset has fewer than 5K samples.
 - **Structured ideation**: Knowledge-mode research proposals use a diverge-converge-refine process with 6 ideation lenses (Problem-First, Analogical Reasoning, What Changed Recently, Constraint Manipulation, Negation/Inversion, Composition/Decomposition) plus a Two-Sentence Test filter.
 - **Statistical confidence assessment**: Analysis computes Cohen's d effect sizes for HP impact and labels findings by evidence strength (high/medium/low). Method attribution distinguishes code-change vs HP-tuning vs compound effects.
@@ -284,44 +327,50 @@ Exit code `2` = block action. Exit code `0` = allow. Configured in `hooks/hooks.
 - **Multiple research findings files**: `research-findings.md` (Phase 5), `research-findings-method-proposals.md` (pre-loop), `research-findings-method-proposals-iter<N>.md` (mid-loop). Deduplication checks all of them.
 - **`scripts/goal_memory.py validate-output` returns exit code 2** for violations (0=valid, 1=script error, 2=violations). Imports `scripts/error_tracker.py` lazily for dead-end checks — both must be in `scripts/`.
 
-## Evolutionary Code Refinement (ShinkaEvolve)
+## Evolutionary Submodules
 
-The plugin integrates [ShinkaEvolve](https://github.com/SakanaAI/ShinkaEvolve) for evolutionary code optimization. When HP tuning plateaus, the analyze skill can recommend `code_refinement`, which evolves the best method branch through LLM-guided code mutations.
+The plugin integrates two evolutionary frameworks as git submodules:
 
-### Setup
+### Hyperagents (Facebook Research)
 
-ShinkaEvolve is included as a git submodule. After cloning the plugin, run:
+[Hyperagents](https://github.com/facebookresearch/Hyperagents) provides the archive management and parent selection algorithms for the evolutionary code search loop. The hyperagent uses these to maintain a population of code variants with lineage tracking.
+
+```bash
+bash scripts/setup_hyperagent.sh
+```
+
+```
+skills/hyperagent/
+  Hyperagents/                              # Git submodule (ChuaHanChong/HyperAgents)
+    utils/gl_utils.py                       # Archive + parent selection algorithms
+    skills/hyperagent-*/                    # Claude Code skills (in the submodule)
+  hyperagent-setup → hyperagent/Hyperagents/skills/hyperagent-setup   # Symlinks
+  hyperagent-init → hyperagent/Hyperagents/skills/hyperagent-init
+  hyperagent-select → hyperagent/Hyperagents/skills/hyperagent-select
+  hyperagent-generate → hyperagent/Hyperagents/skills/hyperagent-generate
+  hyperagent-eval → hyperagent/Hyperagents/skills/hyperagent-eval
+  hyperagent-archive → hyperagent/Hyperagents/skills/hyperagent-archive
+```
+
+### ShinkaEvolve (SakanaAI)
+
+[ShinkaEvolve](https://github.com/SakanaAI/ShinkaEvolve) provides fine-grained evolutionary code mutations. Used as one mutation operator within the Hyperagent loop.
 
 ```bash
 bash scripts/setup_evolve.sh
 ```
 
-This initializes the submodule and creates symlinks so Claude Code can discover the shinka skills:
-
 ```
-skills/
-  evolve/                    # ml-optimizer's evolve skill
-    SKILL.md
-    ShinkaEvolve/            # Git submodule (SakanaAI/ShinkaEvolve)
-      skills/shinka-*/       # ShinkaEvolve's built-in Claude Code skills
-      shinka/llm/query.py    # Patched for file-based subagent handoff
-  shinka-setup → evolve/ShinkaEvolve/skills/shinka-setup     # Symlinks for auto-discovery
+skills/evolve/
+  ShinkaEvolve/                             # Git submodule (ChuaHanChong/ShinkaEvolve)
+    skills/shinka-*/                        # ShinkaEvolve's Claude Code skills
+  shinka-setup → evolve/ShinkaEvolve/skills/shinka-setup     # Symlinks
   shinka-convert → evolve/ShinkaEvolve/skills/shinka-convert
   shinka-run → evolve/ShinkaEvolve/skills/shinka-run
   shinka-inspect → evolve/ShinkaEvolve/skills/shinka-inspect
 ```
 
-### How it works
-
-The evolve skill handles the full pipeline internally — one dispatch, one result:
-
-1. `shinka-convert` converts the best branch's code to a ShinkaEvolve task (adds EVOLVE-BLOCK markers, creates evaluate.py)
-2. `shinka-run` launches evolution in the background with `SHINKA_PROVIDER=claude_code` and `SHINKA_HANDOFF_DIR=<exp_root>`
-3. The implement-agent polls `experiments/evolve/pending/` for mutation requests, generates SEARCH/REPLACE patches, writes responses to `experiments/evolve/completed/`
-4. `shinka-inspect` extracts the best evolved program
-5. The winning code is committed as a new `ml-opt/evolved-<slug>` branch
-
-If ShinkaEvolve is unavailable, the skill reports `shinkaevolve_unavailable` and the orchestrator falls back to the research → implement path.
+The hyperagent dispatches ShinkaEvolve via `Skill("ml-optimizer:evolve")` for fine-grained mutations (numerical constants, local optimizations). The full pipeline: `shinka-convert` → `shinka-run` (file-based LLM handoff, `SHINKA_PROVIDER=claude_code`) → `shinka-inspect` → commit.
 
 ## Progress Dashboard
 

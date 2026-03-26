@@ -10,6 +10,29 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
+def init_hyperagent_state(enabled: bool = True) -> dict:
+    """Create initial hyperagent_state structure for pipeline-state.json.
+
+    Called by the orchestrator in Phase 0. Hyperagent mode is ON by default —
+    the hyperagent enables self-improvement and helps Phase 7 and Phase 8.
+    All fields are initialized to defaults.
+    """
+    return {
+        "enabled": enabled,
+        "archive_generation": 0,
+        "strategy_history": [],
+        "meta_improvement_count": 0,
+        "active_meta_patches": [],
+        "operator_stats": {
+            "hp_tune": {"attempts": 0, "improvements": 0},
+            "llm_patch": {"attempts": 0, "improvements": 0},
+            "shinka_evolve": {"attempts": 0, "improvements": 0},
+            "research_implement": {"attempts": 0, "improvements": 0},
+            "meta_improve": {"attempts": 0, "improvements": 0},
+        },
+    }
+
+
 def _compute_baseline_checksum(metrics: dict) -> str:
     """Compute a deterministic SHA-256 checksum of a baseline metrics dict.
 
@@ -214,6 +237,7 @@ def save_state(
     stuck_protocol_triggered: bool | None = None,
     baseline_checksum: str | None = None,
     agent_registry: dict | None = None,
+    hyperagent_state: dict | None = None,
 ) -> str:
     """Write pipeline-state.json to exp_root.
 
@@ -234,6 +258,10 @@ def save_state(
             their agentIds (e.g. {"research": "abc123", "tuning": "def456"}).
             Used for resuming agents via SendMessage instead of fresh dispatch.
             Session-scoped — cleared on new session, preserved within session.
+        hyperagent_state: Optional dict for Hyperagent mode state. Created
+            via init_hyperagent_state(). Tracks archive generation,
+            strategy history, meta-improvement count, operator stats,
+            and active meta-patches. Preserved across pipeline resumptions.
 
     Returns the path to the state file.
     """
@@ -252,7 +280,7 @@ def save_state(
         load_state(exp_root)
         if (user_choices is None or consecutive_stop_count is None
             or stuck_protocol_triggered is None or baseline_checksum is None
-            or agent_registry is None)
+            or agent_registry is None or hyperagent_state is None)
         else None
     )
 
@@ -285,6 +313,12 @@ def save_state(
         state["agent_registry"] = agent_registry
     elif existing and "agent_registry" in existing:
         state["agent_registry"] = existing["agent_registry"]
+
+    # Preserve hyperagent_state (Hyperagent mode: evolutionary code search)
+    if hyperagent_state is not None:
+        state["hyperagent_state"] = hyperagent_state
+    elif existing and "hyperagent_state" in existing:
+        state["hyperagent_state"] = existing["hyperagent_state"]
 
     state_path = root / "pipeline-state.json"
     tmp_fd, tmp_path = tempfile.mkstemp(dir=str(root), suffix=".tmp")

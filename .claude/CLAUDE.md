@@ -4,7 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-A Claude Code plugin that orchestrates autonomous ML model optimization. It dispatches specialized agents for research, hyperparameter tuning, experiment execution, and result analysis. The plugin uses LLM-driven HP tuning (Claude reasons about results directly — no Optuna/grid search).
+A Claude Code plugin that IS a **self-referential, self-improving hyperagent** for autonomous ML model optimization. It doesn't just optimize your model — it optimizes how it optimizes:
+
+1. **Optimizes the ML model** — evolutionary archive with lineage, three mutation operators (LLM patches, ShinkaEvolve, research-implement), staged evaluation
+2. **Optimizes its own strategy** — the hyperagent modifies skill instructions based on evidence. No hardcoded thresholds. Agents decide.
+3. **Gets better each session** — promoted meta-patches persist, claude-mem recalls insights
+
+Powered by Facebook Research's Hyperagents (DGM framework) for archive-based evolutionary code search, and SakanaAI's ShinkaEvolve for fine-grained code mutations. The hyperagent enables the plugin to self-improve, driving Phase 7 (experiments) and Phase 8 (method stacking) in a loop. Always on. Autonomous by default — runs until the goal or the user stops it.
+
+**Core principle: Standing on the shoulders of giants.** Research-implement is a first-class strategy — the plugin prioritizes finding and applying techniques from papers (Phase 5/6 + mid-loop research) before inventing from scratch. User-provided papers are given highest priority.
 
 ## Usage
 
@@ -39,13 +47,16 @@ The plugin works without any MCP servers but benefits significantly from alphaxi
 ### Plugin Structure
 
 ```
-.claude-plugin/plugin.json  — Plugin metadata (name, version)
-commands/optimize.md        — /optimize slash command (entry point)
-skills/                     — Skill definitions (SKILL.md files)
-skills/evolve/ShinkaEvolve/ — Git submodule (SakanaAI/ShinkaEvolve) for evolutionary code optimization
-agents/                     — 9 subagent definitions
-scripts/                    — Python utilities (stdlib only)
-tests/                      — pytest test suite
+.claude-plugin/plugin.json      — Plugin metadata (name, version)
+commands/optimize.md             — /optimize slash command (entry point)
+skills/                          — Skill definitions (SKILL.md files)
+skills/evolve/ShinkaEvolve/      — Git submodule (SakanaAI/ShinkaEvolve) for evolutionary code mutation
+skills/hyperagent/Hyperagents/   — Git submodule (facebookresearch/Hyperagents) for evolutionary code search
+skills/hyperagent/skills/        — 6 Hyperagent skills (alongside submodule, symlinked for auto-discovery)
+skills/hyperagent-*/             — Symlinks → skills/hyperagent/skills/hyperagent-* (created by setup_hyperagent.sh)
+agents/                          — 10 subagent definitions
+scripts/                         — Python utilities (stdlib only)
+tests/                           — pytest test suite
 ```
 
 ### Skill Pipeline (Orchestrator Flow)
@@ -66,7 +77,7 @@ Phase 7: Experiment loop (autonomous, pipelined):
          monitor → watch for divergence (concurrent with experiments)
          analyze → decide continue/pivot/stop
          [method_proposal] → mid-loop research + implement
-         [code_refinement] → tuning (evolve HPs) → evolve → tuning (training HPs) → experiment (scope_level=full only)
+         [code_evolution] → tuning (evolve HPs) → evolve → tuning (training HPs) → experiment (scope_level=full only)
          [research_round] → cadence-based research (when method proposals enabled)
 Phase 8: Method stacking (if 5+ methods improved):
          Sequential accumulation — merge best methods one by one
@@ -87,7 +98,7 @@ The implement skill creates `ml-opt/<slug>` branches per research proposal. The 
 
 ### Agent Definitions (`agents/`)
 
-Nine subagent types, each with a preloaded skill and specified tool access. Skills are instruction documents only — they have `disable-model-invocation: true` and `user-invocable: false`, and are not directly invocable. The one exception is `orchestrate`, which is the user-facing entry point (no `disable-model-invocation`, no `user-invocable: false`) so the `/optimize` command can load it via the Skill tool. All 9 agents have `memory: local` for persistent role-specific memory at `.claude/agent-memory-local/<agent-name>/` in the target project.
+Ten subagent types, each with a preloaded skill and specified tool access. Skills are instruction documents only — they have `disable-model-invocation: true` and `user-invocable: false`, and are not directly invocable. The one exception is `orchestrate`, which is the user-facing entry point (no `disable-model-invocation`, no `user-invocable: false`) so the `/optimize` command can load it via the Skill tool. All 10 agents have `memory: local` for persistent role-specific memory at `.claude/agent-memory-local/<agent-name>/` in the target project.
 
 **Persistent agents** — dispatched once via `Agent(subagent_type=...)`, resumed via `SendMessage(to: agentId)` for subsequent tasks. The orchestrator tracks agent IDs in `pipeline-state.json` under `agent_registry` and falls back to fresh dispatch if resumption fails.
 
@@ -101,15 +112,50 @@ Nine subagent types, each with a preloaded skill and specified tool access. Skil
 
 **Analytical agents** (`model: opus`, ultrathink prompting):
 - **research-agent** *(persistent)*: WebSearch, WebFetch, Read, Write, Bash, Glob, Grep, Skill, alphaxiv MCP tools (6) — skills: `[ml-optimizer:research, claude-mem:mem-search]`
-- **tuning-agent** *(persistent)*: Read, Write, Bash, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:hp-tune]`
+- **tuning-agent** *(persistent)*: Read, Write, Bash, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:hp-tune, claude-mem:mem-search]`
 - **implement-agent** *(persistent)*: Bash, Read, Write, Edit, Glob, Grep, Skill, WebSearch, WebFetch, alphaxiv MCP tools (2: repo reader, PDF Q&A) — skills: `[ml-optimizer:implement, ml-optimizer:evolve, ml-optimizer:shinka-setup, ml-optimizer:shinka-convert, ml-optimizer:shinka-run, ml-optimizer:shinka-inspect, superpowers:systematic-debugging, feature-dev:code-explorer, feature-dev:code-reviewer]`
-- **analysis-agent** *(persistent)*: Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:analyze]` (includes session review mode)
+- **analysis-agent** *(persistent)*: Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:analyze, claude-mem:mem-search]` (includes session review mode)
+- **hyperagent** *(persistent)*: Read, Write, Edit, Bash, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:hyperagent, ml-optimizer:hyperagent-generate, ml-optimizer:hyperagent-select, ml-optimizer:hyperagent-eval, ml-optimizer:hyperagent-archive, ml-optimizer:hyperagent-init, ml-optimizer:hyperagent-setup, ml-optimizer:evolve, ml-optimizer:shinka-*, claude-mem:mem-search, superpowers:systematic-debugging, feature-dev:code-explorer]` — enables self-improvement, drives Phase 7 experiments and Phase 8 stacking in a loop
 - **report-agent** *(ephemeral)*: Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:report]`
 
 For parallel execution, use `run_in_background: true`. External skills are also available:
 - **research-agent**: Uses `context7` for framework API docs, `claude-mem:mem-search` for cross-session learning, `alphaxiv` MCP for academic paper search/analysis (6 tools: embedding search, full-text search, agentic retrieval, paper content, PDF Q&A, GitHub repo reader)
 - **implement-agent**: Uses `context7` for API docs, `feature-dev:code-explorer` for codebase analysis, `feature-dev:code-reviewer` for post-implementation quality review (advisory, Step 4e.5), `superpowers:systematic-debugging` for error recovery, `alphaxiv` MCP for reference repo exploration (`read_files_from_github_repository`) and paper clarification (`answer_pdf_queries`)
 - **orchestrator**: Uses `claude-mem:mem-search` in Phase 1 for cross-session recall, `superpowers:brainstorming` in Phase 0/4 for complex multi-objective optimization scenarios
+
+### Hyperagent Architecture (Self-Referential Evolutionary Optimization)
+
+The plugin IS a **self-referential, self-improving hyperagent** — always on by default, not an optional mode. Powered by Facebook Research's Hyperagents (DGM framework, arXiv 2603.19461). The hyperagent enables self-improvement and drives Phase 7 (experiments) and Phase 8 (method stacking) in a loop, deciding at each iteration what action to take:
+
+- **HP tuning** — delegates to tuning-agent (cheapest, best for early exploration)
+- **LLM patch** — hyperagent directly modifies code (structural/architectural changes)
+- **ShinkaEvolve** — dispatches evolve skill for fine-grained code mutation
+- **Research-implement** — dispatches research + implement agents for paper-informed changes
+- **Meta-improvement** — modifies the plugin's own skill instructions (session-scoped, max 3 per session, end-of-session promotion gate)
+
+The hyperagent learns which operators are effective and adapts its strategy. The archive tracks all code variants with lineage. The analyze skill advises, the hyperagent decides.
+
+**Submodule:** `skills/hyperagent/Hyperagents/` (CC BY-NC-SA 4.0 license). Skills at `skills/hyperagent/skills/hyperagent-*/`, symlinked to `skills/hyperagent-*/` for auto-discovery. Setup: `bash scripts/setup_hyperagent.sh` (inits submodule + creates symlinks, same pattern as `setup_evolve.sh`).
+
+**6 Hyperagent skills:**
+- `hyperagent-setup` — Initialize submodule and verify environment
+- `hyperagent-init` — Create archive from baseline + existing branches
+- `hyperagent-select` — Parent selection (5 strategies: best, latest, random, score_prop, score_child_prop). Uses Hyperagents' exact math: `sigmoid(10(s - μ)) × exp(-(children/8)³)`
+- `hyperagent-generate` — Hyperagent generates code variant (replaces Hyperagents' litellm hyperagent with Claude Code Opus agent). Can dispatch ShinkaEvolve as mutation operator.
+- `hyperagent-eval` — Two-stage evaluation: cheap staged eval (10% budget) → adaptive threshold → full training if passes. Warm-starts from staged checkpoint.
+- `hyperagent-archive` — Update archive with results, track lineage and operator effectiveness
+
+**Archive file:** `experiments/code-archive.jsonl` — JSONL format with genid, parent_genid, code_branch, mutation_type, fitness_score, lineage, status.
+
+**Adapter CLI:** `python3 scripts/hyperagent_adapter.py <exp_root> <command>` — wraps Hyperagents' gl_utils.py functions for archive management and parent selection. Concurrent-safe via `fcntl.flock()`.
+
+**ShinkaEvolve + Hyperagent collaboration:** ShinkaEvolve is one mutation operator within the experiment loop. When the hyperagent needs fine-grained code tuning (numerical constants, local optimizations), it dispatches ShinkaEvolve via `Skill("ml-optimizer:evolve")`. When it needs structural/architectural changes, it generates LLM patches directly.
+
+**Pipeline state:** `hyperagent_state` in `pipeline-state.json` tracks: `enabled` (always true), `archive_generation`, `strategy_history` (log of hyperagent decisions), `meta_improvement_count`, `active_meta_patches`, `operator_stats`.
+
+**Simplified analyze pivots:** All code-level pivots (research, method proposals, code refinement) emit `code_evolution`. HP-focused pivots (`branch_test`, `hp_expand`, `narrow_space`, `regularization`) remain separate. When all approaches stall, analyze includes `meta_improvement_recommended: true` so the hyperagent considers self-improvement.
+
+**Meta-improvement patches:** Session-scoped skill modifications at `experiments/meta-patches/`. End-of-session: analysis-agent evaluates patches, presents validated ones to user for promotion to the plugin branch.
 
 ### Python Scripts (`scripts/`)
 
@@ -132,6 +178,8 @@ All scripts work as both importable modules and CLI tools:
 | `scripts/error_tracker.py` | `python3 scripts/error_tracker.py <exp_root> log\|show\|patterns\|summary\|success\|proposals\|rank\|log-suggestion\|suggestion-history\|dead-end <add\|list\|check>\|agenda <init\|update\|list\|add>` — error tracking, pattern detection, success metrics, proposal outcomes, suggestion ranking, suggestion history, dead-end catalog, research agenda |
 | `scripts/goal_memory.py` | `python3 scripts/goal_memory.py <exp_root> init-goals\|read-goals\|log-behavior <category> <json>\|query-behaviors [category]\|validate-output <agent> <json>\|summary\|sync-from-errors` — goal anchoring, behavioral memory, agent output validation, compact briefings |
 | `scripts/setup_evolve.sh` | `bash scripts/setup_evolve.sh` — initialize ShinkaEvolve submodule and create skill symlinks for auto-discovery |
+| `scripts/setup_hyperagent.sh` | `bash scripts/setup_hyperagent.sh` — initialize Hyperagents submodule and verify environment |
+| `scripts/hyperagent_adapter.py` | `python3 scripts/hyperagent_adapter.py <exp_root> init\|select-parent\|add\|lineage\|stats\|best\|operator-stats\|prune` — archive management and parent selection CLI. Uses Hyperagents' exact algorithms (sigmoid + diversity penalty). Concurrent-safe. |
 
 ### State & Output (in target project)
 
@@ -156,11 +204,13 @@ experiments/
   reports/research-agenda.json       — Living research agenda (reprioritized after each batch)
   reports/research-agenda.md         — Human-readable research agenda companion
   reports/dashboard.html              — Self-contained HTML progress dashboard
-  reports/session-review.md          — Self-improvement review (from review skill)
+  reports/session-review.md          — Session review (from analysis agent review mode)
   scripts/<exp-id>/                  — Per-experiment command scripts (train, eval, etc.)
   artifacts/                         — Model checkpoints, intermediate files, images, plots
   artifacts/<exp-id>/                — Per-experiment artifacts (checkpoints, visualizations)
   artifacts/*.excalidraw             — Excalidraw diagrams (pipeline, comparison, HP landscape, architecture)
+  code-archive.jsonl                 — Hyperagent evolutionary archive (JSONL, lineage + fitness)
+  meta-patches/                      — Session-scoped meta-improvement skill patches
   dev_notes.md                       — Running session log
 ```
 
@@ -192,15 +242,15 @@ The orchestrator can be stopped and resumed. On restart it reads `pipeline-state
 
 ## Key Design Patterns
 
-- **Resumable subagents**: 5 persistent agents (research, implement, tuning, analysis, monitor) are dispatched once via `Agent()` and resumed via `SendMessage(to: agentId)` for subsequent tasks. This preserves accumulated context (search results, HP trends, codebase knowledge) across the pipeline. 4 ephemeral agents (prerequisites, baseline, experiment, report) get fresh spawns. The orchestrator tracks agent IDs in `pipeline-state.json` under `agent_registry` and falls back to fresh dispatch if resumption fails. Agent IDs are session-scoped — cleared on new session start since subagent transcripts don't survive across sessions.
+- **Resumable subagents**: 6 persistent agents (research, implement, tuning, analysis, monitor, meta) are dispatched once via `Agent()` and resumed via `SendMessage(to: agentId)` for subsequent tasks. This preserves accumulated context (search results, HP trends, codebase knowledge) across the pipeline. 4 ephemeral agents (prerequisites, baseline, experiment, report) get fresh spawns. The hyperagent joins the persistent set — it accumulates understanding of which mutation operators are effective across generations. The orchestrator tracks agent IDs in `pipeline-state.json` under `agent_registry` and falls back to fresh dispatch if resumption fails. Agent IDs are session-scoped — cleared on new session start since subagent transcripts don't survive across sessions.
 - **Inter-agent communication (orchestrator relay)**: When resuming a persistent agent, the orchestrator includes a `CONTEXT FROM OTHER AGENTS:` section with relevant findings from other agents. This enables indirect communication: analyze findings reach hp-tune, monitor OOM info reaches hp-tune, research proposals reach implement, etc. The orchestrator acts as a message bus. Key relay routes: analyze→tuning (correlations, branch scores), analyze→research (pivot reasons, dead-ends), monitor→tuning (OOM constraints), research→implement (proposals), experiments→analyze (batch results).
 - **Non-git fallback**: If the target project isn't a git repo, the implement skill uses file backups instead of branches. Each proposal is validated against a clean baseline backup (restore-before-apply pattern) to prevent cross-proposal code leakage. This forces sequential (not parallel) experiment execution.
-- **Loop exit conditions**: The experiment loop runs until: (1) target metric achieved, (2) analysis agent recommends "stop" 3 consecutive times (triggers stuck protocol), or (3) user manually stops. HP-tune proposes `max(num_gpus, 1)` configs per batch. **Continuous research**: When `method_proposal_scope` is set, the orchestrator auto-triggers a research → implement cycle every `hp_batches_per_round` batches (default 3). If research yields no new proposals, the cadence doubles (exponential backoff).
+- **Loop exit conditions**: The experiment loop is autonomous — runs until: (1) target metric achieved, or (2) user manually stops. When analysis advises stop, the hyperagent tries other operators before giving up. Phase 7 ↔ Phase 8 loop continuously.
 - **Proposal priority scoring**: `(impact * confidence) / (11 - min(feasibility, 10))` — feasibility clamped to [1,10] to prevent division by zero.
 - **Spearman correlation**: `scripts/result_analyzer.py` uses rank correlation with average-rank tie-breaking to identify HP-metric relationships (no scipy dependency).
 - **Dual implementation strategy**: Research proposals include an `implementation_strategy` field (`from_scratch` or `from_reference`). The implement agent dispatches accordingly — either implementing from paper descriptions (Section 8) or cloning and adapting reference repos (Section 9). Strategy is decided by the research agent based on repo availability and quality.
 - **Research skill modes**: The research skill accepts `source` (`"web"` | `"knowledge"` | `"both"`), `scope_level` (`"training"` | `"architecture"` | `"full"`), and `output_path` parameters. Knowledge mode skips web search and uses LLM training knowledge only.
-- **Scope-gated pivots**: The analysis agent's pivot decision tree respects `scope_level`: `"training"` (HP-only) disables research and code_refinement pivots — only HP adjustments are available. `"architecture"` enables research but not ShinkaEvolve. `"full"` enables everything including code_refinement via ShinkaEvolve. This ensures the pipeline matches what the user asked for.
+- **Scope-gated pivots**: The analysis agent's pivot decision tree respects `scope_level`: `"training"` (HP-only) disables research and code_evolution pivots — only HP adjustments are available. `"architecture"` enables research but not ShinkaEvolve. `"full"` enables everything including code_evolution via ShinkaEvolve. This ensures the pipeline matches what the user asked for.
 - **Auto-resolution behaviors**: The pipeline auto-resolves many situations: Phase 2 partial prereqs → proceed with warnings, RL polarity → auto-infer from metric name, dirty working trees → auto-stash, environment mismatches → use detected manager, missing conda envs → auto-create, no eval command → fall back to training output metrics. Only unrecoverable errors (Phase 2 failed, baseline failed) block the pipeline. Decisions are logged to dev_notes and error tracker for post-session review.
 - **Parallel research**: All WebSearch calls in the research skill are issued simultaneously in a single tool-call message, alongside 3 alphaxiv search calls (embedding similarity, full-text keyword, agentic retrieval). WebFetch follow-ups for different URLs are also parallelized. Domain-specific query sets (NLP, CV, RL, time-series) are issued alongside generic queries. If alphaxiv MCP is unavailable, WebSearch provides full coverage as fallback.
 - **Parallel implementation**: When using git branch strategy with multiple proposals, each proposal is implemented in a separate git worktree via parallel Agent dispatches. File-backup strategy remains sequential.
@@ -214,11 +264,11 @@ The orchestrator can be stopped and resumed. On restart it reads `pipeline-state
 - **Tabular ML HP strategy**: For tree-based models (sklearn/XGBoost/LightGBM), iteration 1 explores `max_depth`/`n_estimators` first instead of learning rate.
 - **Training budget options**: Phase 0 offers two budget modes: `fixed_time_budget` (seconds) for wall-clock-normalized comparison, or `fixed_epoch_budget` (integer) for deterministic reproducibility. When set, both baseline AND experiments use the same budget. The baseline skill (Step 2.2) wraps training with `timeout` when `fixed_time_budget` is set, ensuring fair baseline-vs-experiment comparisons. Framework-native time limits (Lightning `--max_time`, HuggingFace `timeout` in TrainingArguments) are preferred when available. Results include `time_budget_seconds` for downstream analysis. HP-tune adjusts proposals for the budget (shorter convergence schedules, appropriate LR scaling). Makes experiment metrics directly comparable without duration normalization.
 - **Small dataset awareness**: The research skill checks dataset size. For datasets under 5K samples, it shifts search toward low-data techniques (transfer learning, fine-tuning, few-shot learning, adapters, prompt tuning, synthetic data, semi-supervised methods) instead of heavy augmentation and regularization which underperform on small data.
-- **Evolutionary code refinement**: When HP tuning shows diminishing returns, the analyze skill can recommend `pivot_type: "code_refinement"`. The orchestrator dispatches the implement-agent with the evolve skill (`Skill("ml-optimizer:evolve")`), which orchestrates the full ShinkaEvolve pipeline internally: `shinka-convert` (create task from best branch) → `shinka-run` (run evolution with file-based handoff, `SHINKA_PROVIDER=claude_code`) → `shinka-inspect` (extract best mutation) → commit as `ml-opt/evolved-<slug>`. Evolve HPs (`num_generations`, `population_size`) are tuning-agent-driven: the orchestrator dispatches the tuning agent to propose evolve HPs before dispatching the implement agent, based on prior evolution outcomes stored in `learned-behaviors.json` under category `evolve_hp`. Defaults: 10 generations, population 2. If ShinkaEvolve is unavailable, the evolve skill reports `shinkaevolve_unavailable` and the orchestrator falls back to the research → implement path. Setup: run `bash scripts/setup_evolve.sh` to init the submodule and create symlinks (`skills/shinka-*` → `skills/evolve/ShinkaEvolve/skills/shinka-*`). The symlinks are required for Claude Code's skill auto-discovery.
+- **Evolutionary code refinement**: When HP tuning shows diminishing returns, the analyze skill can recommend `pivot_type: "code_evolution"`. The orchestrator dispatches the implement-agent with the evolve skill (`Skill("ml-optimizer:evolve")`), which orchestrates the full ShinkaEvolve pipeline internally: `shinka-convert` (create task from best branch) → `shinka-run` (run evolution with file-based handoff, `SHINKA_PROVIDER=claude_code`) → `shinka-inspect` (extract best mutation) → commit as `ml-opt/evolved-<slug>`. Evolve HPs (`num_generations`, `population_size`) are tuning-agent-driven: the orchestrator dispatches the tuning agent to propose evolve HPs before dispatching the implement agent, based on prior evolution outcomes stored in `learned-behaviors.json` under category `evolve_hp`. Defaults: 10 generations, population 2. If ShinkaEvolve is unavailable, the evolve skill reports `shinkaevolve_unavailable` and the orchestrator falls back to the research → implement path. Setup: run `bash scripts/setup_evolve.sh` to init the submodule and create symlinks (`skills/shinka-*` → `skills/evolve/ShinkaEvolve/skills/shinka-*`). The symlinks are required for Claude Code's skill auto-discovery.
 - **Auto-repair loop**: When training or evaluation commands fail during baseline establishment or experiment execution, the agent captures stderr, diagnoses the error, applies a fix (install package, adjust path, reduce batch size), and retries up to 3 times. OOM errors are not retried (deterministic). SyntaxErrors are not retried (code bugs). Identical errors on consecutive attempts skip further retries (loop detection). Each retry is logged to the error tracker. This is intra-agent retry, separate from the orchestrator's Phase 3 retry logic.
-- **Goal anchoring & behavioral memory**: `scripts/goal_memory.py` maintains two project-scoped files: `optimization-goals.json` (goal anchor, written once at Phase 0) and `learned-behaviors.json` (accumulated behavioral memory). The orchestrator calls `validate-output` after hp-tune, research, and analyze dispatches to catch drift (frozen param changes, scope breaches, dead-end re-proposals, metric mismatches). Each agent also reads a compact `summary` combining goals + constraints + dead-ends before acting. All 9 agents have `memory: local` for persistent role-specific memory at `.claude/agent-memory-local/<agent-name>/` in the target project.
+- **Goal anchoring & behavioral memory**: `scripts/goal_memory.py` maintains two project-scoped files: `optimization-goals.json` (goal anchor, written once at Phase 0) and `learned-behaviors.json` (accumulated behavioral memory). The orchestrator calls `validate-output` after hp-tune, research, and analyze dispatches to catch drift (frozen param changes, scope breaches, dead-end re-proposals, metric mismatches). Each agent also reads a compact `summary` combining goals + constraints + dead-ends before acting. All 10 agents have `memory: local` for persistent role-specific memory at `.claude/agent-memory-local/<agent-name>/` in the target project.
 - **Immutable baseline**: After baseline is established (Phase 3), a SHA-256 checksum of the baseline metrics dict is stored in `pipeline-state.json`. Before each experiment batch (Phase 7) and on pipeline resumption, the checksum is verified against `baseline.json`. If the metrics have changed (accidental modification, file corruption, or tampering), the pipeline halts with a critical error. Prevents invalid experiment comparisons during long optimization runs.
-- **Stuck protocol**: When 3 consecutive stop recommendations occur, the orchestrator triggers a structured recovery instead of exiting. It reads error patterns, success metrics, dead ends, and the research agenda, then dispatches the research agent with full failure context. If new proposals are found, the loop resumes with `consecutive_stop_count` reset. Triggers once per session (`stuck_protocol_triggered` in pipeline state) to prevent infinite loops. If the protocol finds no new approaches, the loop exits normally.
+- **Stuck protocol**: When analysis advises stop, the hyperagent tries other operators (research, LLM patches, ShinkaEvolve, meta-improvement) before giving up. It reads error patterns, dead ends, and the research agenda to inform the choice. The loop is autonomous — only the user or target achievement stops it.
 - **Research agenda as living document**: `scripts/error_tracker.py` maintains `research-agenda.json` — a prioritized list of optimization ideas that evolves over the session. The research skill initializes it from proposals (Phase 5). The analyze skill updates it after each batch: marking ideas as tried/improved/dead-end, adjusting priorities based on evidence, and adding new ideas suggested by experimental results. The hp-tune skill reads it to understand which untried techniques are high-priority. The report skill includes a summary in the final report.
 - **Overfitting detection**: `scripts/detect_divergence.py` provides `check_overfitting(train_values, val_values)` that compares train vs val metric trajectories. Detects when val metric worsens for N consecutive steps while train improves. Severity classified as mild/moderate/severe. Default patience=5 steps; model-category overrides: RL patience=10, generative patience=8. CLI: `--check-overfitting '<train_json>' '<val_json>'`.
 - **HP interaction detection**: `scripts/result_analyzer.py` provides `detect_hp_interactions()` that computes 2-way interaction terms using product of centered ranks. Reports interactions stronger than either individual HP correlation. Integrated into `analyze()` output.
@@ -232,7 +282,7 @@ The orchestrator can be stopped and resumed. On restart it reads `pipeline-state
 - **Baseline eval auto-fallback**: If no eval command is found, baseline uses training output metrics instead of blocking on user input.
 - **Pre-flight file validation**: The implement skill validates all `files_to_modify` exist before creating branches or starting implementation. Missing-file proposals are marked `preflight_failed`.
 - **Tabular ML adaptive timeout**: For non-iterative frameworks, experiment timeout is computed from `fit_duration * (max_iters / profiling_iters) * 2` instead of a generic 4-hour fallback.
-- **Method stacking (Phase 8)**: After independent method testing identifies ≥5 methods that improve over baseline, the orchestrator sequentially merges them in descending order of improvement. Each stack step creates `ml-opt/stack-<N>` by merging the next method into the current best stack. Clean merges proceed directly; conflicts are resolved by the implement-agent. If a combination degrades performance, that method is skipped. After each successful stack step, the analysis agent assesses the stacked result — if the stacked gain is less than the best individual method's gain (indicating method interference), it recommends `code_refinement` and the evolve skill (`Skill("ml-optimizer:evolve")`) optimizes code-level interactions via ShinkaEvolve (5 generations, population 2). This mirrors Phase 7's pattern where the analysis agent is always the decision-maker for evolution. If the evolved code improves over the pre-evolution stack, it becomes the new stack base; otherwise it's discarded. Optional HP-tuning (1-2 iterations, narrowed scope) follows on the (potentially evolved) code when the combo shows >1% improvement. Stacking state persists in `pipeline-state.json` (including `evolved_methods` tracking) for resumption. Requires git branch strategy — skipped for `file_backup` projects.
+- **Method stacking (Phase 8)**: After independent method testing identifies ≥5 methods that improve over baseline, the orchestrator sequentially merges them in descending order of improvement. Each stack step creates `ml-opt/stack-<N>` by merging the next method into the current best stack. Clean merges proceed directly; conflicts are resolved by the implement-agent. If a combination degrades performance, that method is skipped. After each successful stack step, the analysis agent assesses the stacked result — if the stacked gain is less than the best individual method's gain (indicating method interference), it recommends `code_evolution` and the evolve skill (`Skill("ml-optimizer:evolve")`) optimizes code-level interactions via ShinkaEvolve (5 generations, population 2). This mirrors Phase 7's pattern where the analysis agent is always the decision-maker for evolution. If the evolved code improves over the pre-evolution stack, it becomes the new stack base; otherwise it's discarded. Optional HP-tuning (1-2 iterations, narrowed scope) follows on the (potentially evolved) code when the combo shows >1% improvement. Stacking state persists in `pipeline-state.json` (including `evolved_methods` tracking) for resumption. Requires git branch strategy — skipped for `file_backup` projects.
 - **Structured ideation for knowledge mode**: The research skill's knowledge-based proposal generation (Phase 7 method proposals) uses a structured diverge-converge-refine process with 6 ideation lenses (Problem-First, Analogical Reasoning, What Changed Recently, Constraint Manipulation, Negation/Inversion, Composition/Decomposition). Generates 10-15 candidates, filters via scope/dead-end/two-sentence-test, refines survivors with implementation details.
 - **Statistical confidence assessment**: The analyze skill (Step 2.2) computes effect sizes (Cohen's d) for HP impact when ≥5 experiments exist, and labels findings by confidence level (high/medium/low). Method attribution distinguishes whether improvements came from the code change, HP tuning, or their compound effect.
 - **Reproducibility metadata**: The experiment skill (Step 1.3) captures random seeds, pip freeze snapshots, git SHA, and framework versions. Stored under `"reproducibility"` key in result JSONs. Enables exact reproduction of best experiments.
@@ -254,3 +304,9 @@ The orchestrator can be stopped and resumed. On restart it reads `pipeline-state
 - **`agent_registry` is session-scoped**: Agent IDs in `pipeline-state.json` under `agent_registry` are only valid within the same Claude conversation session. On pipeline resumption in a new session, the registry must be cleared (`agent_registry = {}`) because subagent transcripts don't survive across sessions. The orchestrator clears it automatically on load. Don't rely on agent_registry for cross-session state — use `memory: local` and shared files for that.
 - **Tabular ML frameworks skip divergence monitoring**: When the detected framework is scikit-learn, XGBoost, or LightGBM, the orchestrator sets `divergence_metric` to `null` and skips the monitor skill. The baseline skill skips GPU profiling and throughput estimation for these frameworks.
 - **Research findings files can be multiple**: `research-findings.md` (Phase 5 web search), `research-findings-method-proposals.md` (Phase 7 pre-loop), `research-findings-method-proposals-iter<N>.md` (Phase 7 mid-loop triggers). The research skill's deduplication checks all of these to avoid re-proposing tried techniques.
+- **Hyperagent mode is always on**: `hyperagent_state.enabled` defaults to `true`. The hyperagent enables self-improvement and drives Phase 7 ↔ Phase 8 in a loop from the start. It naturally starts with HP tuning (cheapest) and escalates to code mutations, stacking, and self-improvement as needed.
+- **`hyperagent_adapter.py` uses fcntl.flock()**: Concurrent-safe archive access. Multiple agents can call the adapter simultaneously. But `_increment_children` does a full file rewrite under lock — avoid calling from many parallel agents.
+- **Hyperagent archive is separate from experiment results**: `code-archive.jsonl` tracks code variants with lineage. `exp-*.json` tracks experiment results. They link via the `genid` field. Don't confuse them.
+- **Meta-patches are session-scoped**: Files in `experiments/meta-patches/` only affect the current session. They're instructions overlaid on top of default skills. Promotion to the plugin repo requires user approval at Phase 9.
+- **Hyperagents submodule is CC BY-NC-SA 4.0**: NonCommercial + ShareAlike license. The adapter script reimplements the core algorithms in stdlib Python, so the submodule is a reference, not a runtime dependency.
+- **ShinkaEvolve branch naming in Hyperagent mode**: When ShinkaEvolve is used as a mutation operator within the Hyperagent loop, the evolve skill creates `ml-opt/evolved-<slug>` branches. The hyperagent must rename these to `ml-opt/gen-<N>-evolved-<slug>` for archive consistency.

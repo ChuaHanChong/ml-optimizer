@@ -21,15 +21,15 @@ How would you like to proceed?
 
 ## Phase 4, Option 1: Full Autonomous Optimization (default)
 
-If the user selects option 1 (or doesn't specify a preference): Set `scope_level = "full"`. Proceed to Phase 5 (research) with `source: "web"`. The analysis agent will use all available tools: research, HP tuning, code_refinement via ShinkaEvolve. The pipeline runs fully autonomously until the goal is reached.
+If the user selects option 1 (or doesn't specify a preference): Set `scope_level = "full"`. Proceed to Phase 5 (research) with `source: "web"`. The analysis agent will use all available tools: research, HP tuning, code_evolution via ShinkaEvolve. The pipeline runs fully autonomously until the goal is reached.
 
 ## Phase 4, Option 2: HP Tuning Only
 
-If the user selects option 2: Set `scope_level = "training"`. Skip Phases 5-6 (no research, no code changes). Proceed directly to Phase 7 (experiment loop) with HP tuning on the baseline code branch only. The analysis agent will NOT recommend research or code_refinement pivots.
+If the user selects option 2: Set `scope_level = "training"`. Skip Phases 5-6 (no research, no code changes). Proceed directly to Phase 7 (experiment loop) with HP tuning on the baseline code branch only. The analysis agent will NOT recommend research or code_evolution pivots.
 
 ## Phase 4, Option 3: Research First
 
-If the user selects option 3: Set `scope_level = "architecture"`. Proceed to Phase 5 (research) with `source: "web"`. The analysis agent can recommend research pivots but NOT code_refinement via ShinkaEvolve.
+If the user selects option 3: Set `scope_level = "architecture"`. Proceed to Phase 5 (research) with `source: "web"`. The analysis agent can recommend research pivots but NOT code_evolution via ShinkaEvolve.
 
 ## Phase 4, Option 4: User-Provided Papers
 

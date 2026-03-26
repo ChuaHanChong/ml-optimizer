@@ -31,7 +31,7 @@ from result_analyzer import (
     detect_hp_interactions, compute_branch_scores,
     compare_experiments,
 )
-from pipeline_state import save_state, load_state, validate_phase_requirements, cleanup_stale
+from pipeline_state import save_state, load_state, validate_phase_requirements, cleanup_stale, init_hyperagent_state
 from schema_validator import validate_result, validate_result_strict, validate_baseline, validate_manifest, validate_file, validate_prerequisites
 import plot_results
 from plot_results import plot_metric_comparison, plot_improvement_timeline, plot_hp_sensitivity, plot_progress_chart
@@ -2116,14 +2116,14 @@ class TestEvolveE2E:
         # EVOLVE-BLOCK format
         assert "EVOLVE-BLOCK" in content
 
-    def test_code_refinement_in_analyze_pivot(self):
-        """Analyze skill includes code_refinement as a valid pivot type."""
+    def test_code_evolution_in_analyze_pivot(self):
+        """Analyze skill includes code_evolution as a valid pivot type."""
         analyze_path = _EVOLVE_PLUGIN_ROOT / "skills" / "analyze" / "SKILL.md"
         content = analyze_path.read_text()
-        assert "code_refinement" in content
+        assert "code_evolution" in content
         assert "pivot_type" in content
         # Verify it's in the pivot type enum
-        assert "code_refinement>" in content or "code_refinement\"" in content
+        assert "code_evolution|" in content or 'code_evolution"' in content
 
     def test_implement_agent_has_evolve_instructions(self):
         """Implement-agent has explicit Skill() invocation instructions for evolve."""
@@ -2134,12 +2134,12 @@ class TestEvolveE2E:
         assert 'Skill("ml-optimizer:shinka-run")' in content
         assert 'Skill("ml-optimizer:shinka-inspect")' in content
 
-    def test_phase7_has_code_refinement_dispatch(self):
-        """Phase 7 dispatches tuning → evolve → tuning → experiment for code_refinement."""
+    def test_phase7_has_code_evolution_dispatch(self):
+        """Phase 7 dispatches tuning → evolve → tuning → experiment for code_evolution."""
         phase7_path = (_EVOLVE_PLUGIN_ROOT / "skills" / "orchestrate" / "references"
                       / "phase-7-experiment-loop.md")
         content = phase7_path.read_text()
-        assert "code_refinement" in content
+        assert "code_evolution" in content
         # Tuning agent proposes evolve HPs, then implement agent executes
         assert 'Skill("ml-optimizer:evolve")' in content
         assert "Tune evolve HPs" in content
@@ -2235,16 +2235,14 @@ class TestEvolveE2E:
         # Unrelated technique should NOT match
         assert not is_dead_end(exp_root, "mixup augmentation")
 
-    def test_code_refinement_pivot_conditions(self):
-        """Analyze SKILL.md documents conditions and scope gating for code_refinement."""
+    def test_code_evolution_pivot_conditions(self):
+        """Analyze SKILL.md documents conditions and scope gating for code_evolution."""
         analyze_path = _EVOLVE_PLUGIN_ROOT / "skills" / "analyze" / "SKILL.md"
         content = analyze_path.read_text()
-        # code_refinement conditions documented
-        assert "code_refinement" in content
-        assert "method branch improved" in content or "branch improved" in content
-        assert "rho" in content or "correlation" in content
-        assert "0.3" in content
-        # Scope gating: code_refinement only for scope_level "full"
+        # code_evolution conditions documented
+        assert "code_evolution" in content
+        assert "correlation" in content.lower()
+        # Scope gating: code_evolution only for scope_level "full"
         assert "scope_level" in content
         # Research pivots gated on scope
         assert "training" in content and "skip" in content.lower()
@@ -2258,8 +2256,8 @@ class TestEvolveE2E:
         content = phase8_path.read_text()
         # Analysis agent dispatched to assess stacked result
         assert "Analyze stacked" in content
-        # Analysis recommends code_refinement → evolve
-        assert "code_refinement" in content
+        # Analysis recommends code_evolution → evolve
+        assert "code_evolution" in content
         assert 'Skill("ml-optimizer:evolve")' in content or "ml-optimizer:evolve" in content
         # Compares stacked vs best individual (interference detection)
         assert "best individual" in content or "best_individual" in content
@@ -2291,9 +2289,9 @@ class TestEvolveE2E:
         """Analyze SKILL.md does NOT set evolve HPs — tuning agent does."""
         analyze_path = _EVOLVE_PLUGIN_ROOT / "skills" / "analyze" / "SKILL.md"
         content = analyze_path.read_text()
-        # Analyze recommends code_refinement but delegates HP tuning
-        assert "code_refinement" in content
-        assert "tuning agent" in content.lower()
+        # Analyze recommends code_evolution but delegates HP tuning
+        assert "code_evolution" in content
+        assert "tuning" in content.lower() and "agent" in content.lower()
 
     def test_phase7_dispatches_tuning_before_evolve(self):
         """Phase 7 dispatches tuning agent for evolve HPs before implement agent."""
@@ -2315,3 +2313,269 @@ class TestEvolveE2E:
         assert "ml-opt/stack-<order-1>" not in content
         # HP-tune dispatch uses stack_base_branch (not hardcoded)
         assert "{stack_base_branch}]" in content
+
+
+# ---------------------------------------------------------------------------
+# Hyperagent E2E tests
+# ---------------------------------------------------------------------------
+
+_ADAPTER = str(Path(__file__).resolve().parent.parent / "scripts" / "hyperagent_adapter.py")
+
+
+def _run_adapter(exp_root, *args):
+    """Run hyperagent_adapter.py and return parsed JSON."""
+    cmd = [sys.executable, _ADAPTER, str(exp_root)] + list(args)
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+    assert r.returncode == 0, f"Adapter failed: {r.stderr}"
+    return json.loads(r.stdout.strip())
+
+
+class TestHyperagentE2E:
+    """End-to-end tests for the hyperagent evolutionary workflow."""
+
+    @pytest.fixture
+    def ha_exp(self, tmp_path):
+        """Create experiments dir with baseline + manifest for hyperagent e2e."""
+        exp = tmp_path / "experiments"
+        results = exp / "results"
+        results.mkdir(parents=True)
+        # Baseline
+        baseline = {"metrics": {"accuracy": 0.823, "loss": 0.45}, "config": {"lr": 0.001}}
+        (results / "baseline.json").write_text(json.dumps(baseline))
+        # Pipeline state with primary_metric
+        state = {"user_choices": {"primary_metric": "accuracy", "lower_is_better": False}}
+        (exp / "pipeline-state.json").write_text(json.dumps(state))
+        # Implementation manifest with 2 validated proposals
+        manifest = {
+            "original_branch": "main",
+            "strategy": "git_branch",
+            "proposals": [
+                {"name": "Label Smoothing", "slug": "label-smoothing",
+                 "branch": "ml-opt/label-smoothing", "status": "validated",
+                 "proposal_source": "paper"},
+                {"name": "Cosine Scheduler", "slug": "cosine-sched",
+                 "branch": "ml-opt/cosine-sched", "status": "validated",
+                 "proposal_source": "llm_knowledge"},
+                {"name": "Failed Prop", "slug": "failed",
+                 "branch": "ml-opt/failed", "status": "validation_failed"},
+            ],
+        }
+        (results / "implementation-manifest.json").write_text(json.dumps(manifest))
+        return str(exp)
+
+    def test_full_hyperagent_workflow(self, ha_exp):
+        """Archive init → add variants → select parent → lineage → operator stats → prune."""
+        # Init: seeds baseline + 2 validated proposals
+        out = _run_adapter(ha_exp, "init")
+        assert out["status"] == "initialized"
+        assert out["entries"] == 3  # gen-000 + 2 validated
+
+        # Add a code variant (LLM patch on gen-001)
+        _run_adapter(ha_exp, "add", json.dumps({
+            "code_branch": "ml-opt/gen-003-attention",
+            "mutation_type": "llm_patch",
+            "mutation_description": "Added attention",
+            "fitness_score": 0.867,
+            "parent_genid": "gen-001",
+            "status": "evaluated",
+        }))
+
+        # Add a ShinkaEvolve variant
+        _run_adapter(ha_exp, "add", json.dumps({
+            "code_branch": "ml-opt/gen-004-evolved",
+            "mutation_type": "shinka_evolve",
+            "mutation_description": "Evolved attention params",
+            "fitness_score": 0.871,
+            "parent_genid": "gen-003",
+            "status": "evaluated",
+        }))
+
+        # Add a filtered variant
+        _run_adapter(ha_exp, "add", json.dumps({
+            "code_branch": "ml-opt/gen-005-failed",
+            "mutation_type": "llm_patch",
+            "mutation_description": "Bad change",
+            "fitness_score": None,
+            "parent_genid": "gen-003",
+            "status": "filtered",
+        }))
+
+        # Stats
+        stats = _run_adapter(ha_exp, "stats")
+        assert stats["total_entries"] == 6
+        assert stats["evaluated"] >= 3  # gen-000 + gen-003 + gen-004 (pending gen-001, gen-002)
+        assert stats["filtered"] == 1
+
+        # Select parent — best should be gen-004 (0.871)
+        best = _run_adapter(ha_exp, "select-parent", "best")
+        assert best["genid"] == "gen-004"
+        assert best["fitness_score"] == 0.871
+
+        # Lineage — gen-004 should trace: gen-000 → gen-001 → gen-003 → gen-004
+        lineage = _run_adapter(ha_exp, "lineage", "gen-004")
+        genids = [e["genid"] for e in lineage["lineage"]]
+        assert genids == ["gen-000", "gen-001", "gen-003", "gen-004"]
+
+        # Operator stats
+        ops = _run_adapter(ha_exp, "operator-stats")
+        assert ops["llm_patch"]["attempts"] == 2  # gen-003 + gen-005
+        assert ops["shinka_evolve"]["attempts"] == 1
+        assert ops["research_implement"]["attempts"] == 2  # gen-001 + gen-002
+
+        # Best N
+        top = _run_adapter(ha_exp, "best", "3")
+        assert len(top) == 3
+        assert top[0]["genid"] == "gen-004"  # highest
+
+        # Prune — gen-005 (filtered, no evaluated descendants) should be pruned
+        prune = _run_adapter(ha_exp, "prune")
+        assert "gen-005" in prune["pruned"]
+
+    def test_hyperagent_state_lifecycle(self, ha_exp):
+        """Phase 0 init → Phase 7 update → verify persistence."""
+
+
+        # Phase 0: init
+        ha = init_hyperagent_state()
+        assert ha["enabled"] is True
+        save_state(0, 0, [], ha_exp, hyperagent_state=ha)
+        loaded = load_state(ha_exp)
+        assert loaded["hyperagent_state"]["enabled"] is True
+        assert loaded["hyperagent_state"]["archive_generation"] == 0
+
+        # Phase 7: update after iterations
+        ha["archive_generation"] = 5
+        ha["operator_stats"]["llm_patch"]["attempts"] = 3
+        ha["operator_stats"]["llm_patch"]["improvements"] = 2
+        ha["strategy_history"] = [
+            {"iteration": 1, "action": "hp_tune"},
+            {"iteration": 2, "action": "research_implement"},
+            {"iteration": 3, "action": "llm_patch", "genid": "gen-003"},
+        ]
+        save_state(7, 5, [], ha_exp, hyperagent_state=ha)
+        loaded = load_state(ha_exp)
+        assert loaded["hyperagent_state"]["archive_generation"] == 5
+        assert loaded["hyperagent_state"]["operator_stats"]["llm_patch"]["improvements"] == 2
+        assert len(loaded["hyperagent_state"]["strategy_history"]) == 3
+
+        # Phase 9: meta-patches
+        ha["meta_improvement_count"] = 1
+        ha["active_meta_patches"] = ["hp-tune-SKILL.md"]
+        save_state(9, 0, [], ha_exp, hyperagent_state=ha)
+        loaded = load_state(ha_exp)
+        assert loaded["hyperagent_state"]["active_meta_patches"] == ["hp-tune-SKILL.md"]
+        assert loaded["hyperagent_state"]["meta_improvement_count"] == 1
+
+    def test_archive_seeds_from_manifest(self, ha_exp):
+        """Phase 6 branches seed into archive as gen-001, gen-002."""
+        out = _run_adapter(ha_exp, "init")
+        assert out["entries"] == 3  # gen-000 + 2 validated proposals
+
+        stats = _run_adapter(ha_exp, "stats")
+        assert stats["mutation_types"].get("research_implement", 0) == 2
+        assert stats["pending"] == 2  # proposals seeded as pending (no fitness yet)
+
+    def test_staged_eval_filter_and_archive(self, ha_exp):
+        """Filtered variants archived with status='filtered'."""
+        _run_adapter(ha_exp, "init")
+        _run_adapter(ha_exp, "add", json.dumps({
+            "code_branch": "ml-opt/gen-003-bad",
+            "mutation_type": "llm_patch",
+            "fitness_score": None,
+            "parent_genid": "gen-000",
+            "status": "filtered",
+        }))
+        stats = _run_adapter(ha_exp, "stats")
+        assert stats["filtered"] == 1
+        # Filtered entry should not be selected by 'best'
+        best = _run_adapter(ha_exp, "select-parent", "best")
+        assert best["genid"] == "gen-000"  # only evaluated entry
+
+    def test_operator_stats_tracking(self, ha_exp):
+        """Operator stats reflect mutation types correctly."""
+        _run_adapter(ha_exp, "init")
+        for i, (mt, score) in enumerate([
+            ("llm_patch", 0.85), ("llm_patch", 0.86), ("shinka_evolve", 0.84),
+            ("research_implement", 0.88), ("llm_patch", 0.82),
+        ], start=3):
+            _run_adapter(ha_exp, "add", json.dumps({
+                "code_branch": f"ml-opt/gen-{i:03d}",
+                "mutation_type": mt,
+                "fitness_score": score,
+                "parent_genid": "gen-000",
+                "status": "evaluated",
+            }))
+        ops = _run_adapter(ha_exp, "operator-stats")
+        assert ops["llm_patch"]["attempts"] == 3
+        assert ops["shinka_evolve"]["attempts"] == 1
+        # research_implement: 2 from manifest + 1 added = 3
+        assert ops["research_implement"]["attempts"] == 3
+        # All above baseline (0.823)
+        assert ops["llm_patch"]["improvements"] == 2  # 0.85, 0.86 > 0.823; 0.82 < 0.823
+        assert ops["research_implement"]["improvements"] == 1  # 0.88 > 0.823
+
+    def test_meta_patch_lifecycle(self, ha_exp):
+        """Meta-patches created → tracked in hyperagent_state."""
+
+
+        ha = init_hyperagent_state()
+        save_state(7, 0, [], ha_exp, hyperagent_state=ha)
+
+        # Simulate meta-improvement: create patch files
+        patches_dir = Path(ha_exp) / "meta-patches"
+        patches_dir.mkdir(exist_ok=True)
+        (patches_dir / "hp-tune-SKILL.md").write_text("# Patched HP-tune skill")
+        changelog = {
+            "patches": [{"skill": "hp-tune", "change": "Lower LR range",
+                         "reason": "Evidence from archive", "expected_impact": "Better convergence"}],
+            "generation_triggered": 10,
+        }
+        (patches_dir / "meta-changelog.json").write_text(json.dumps(changelog))
+
+        # Update state
+        ha["meta_improvement_count"] = 1
+        ha["active_meta_patches"] = ["hp-tune-SKILL.md"]
+        save_state(7, 10, [], ha_exp, hyperagent_state=ha)
+
+        # Verify
+        loaded = load_state(ha_exp)
+        assert loaded["hyperagent_state"]["active_meta_patches"] == ["hp-tune-SKILL.md"]
+        assert (patches_dir / "hp-tune-SKILL.md").exists()
+        cl = json.loads((patches_dir / "meta-changelog.json").read_text())
+        assert cl["patches"][0]["skill"] == "hp-tune"
+
+    def test_cross_session_patch_lifecycle(self, tmp_path):
+        """Promote patch → mark with [meta-improvement] → new session detects it."""
+        # Simulate plugin skill directory
+        plugin_skills = tmp_path / "plugin" / "skills" / "hp-tune"
+        plugin_skills.mkdir(parents=True)
+        original = "---\nname: hp-tune\n---\n# HP-Tune Skill\nOriginal content."
+        (plugin_skills / "SKILL.md").write_text(original)
+
+        # Simulate Phase 9 promotion: prepend marker
+        patched = "# [meta-improvement] Lower LR range for transformers. Session 2026-03-26.\n" + original
+        (plugin_skills / "SKILL.md").write_text(patched)
+
+        # Simulate new session Phase 0: scan for markers
+        import subprocess
+        result = subprocess.run(
+            ["grep", "-rl", "# \\[meta-improvement\\]", str(tmp_path / "plugin" / "skills")],
+            capture_output=True, text=True,
+        )
+        found_files = [f.strip() for f in result.stdout.strip().split("\n") if f.strip()]
+        assert len(found_files) == 1
+        assert "hp-tune" in found_files[0]
+
+        # Extract skill names from found files for active_meta_patches
+        active_patches = []
+        for f in found_files:
+            parts = Path(f).parts
+            # Find skill name (parent of SKILL.md)
+            skill_name = Path(f).parent.name
+            active_patches.append(f"{skill_name}-SKILL.md")
+        assert active_patches == ["hp-tune-SKILL.md"]
+
+        # Verify the marker content is readable
+        content = (plugin_skills / "SKILL.md").read_text()
+        assert "# [meta-improvement]" in content
+        assert "Lower LR range" in content

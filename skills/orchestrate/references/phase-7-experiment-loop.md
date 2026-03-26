@@ -43,6 +43,34 @@ python3 scripts/goal_memory.py <exp_root> sync-from-errors
 ```
 This populates `experiments/learned-behaviors.json` with OOM limits, divergence patterns, and dead-end outcomes from the error tracker. All agents will read this via the `summary` command.
 
+## Pre-Loop: Initialize Code Archive
+
+Initialize the evolutionary archive from baseline and existing branches:
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/hyperagent_adapter.py <exp_root> init
+```
+
+This creates gen-000 from baseline and seeds any validated implementation branches from Phase 6 as gen-001, gen-002, etc. Every experiment result from this point forward updates the archive.
+
+**Standing on the shoulders of giants:** Phase 5 (research) and Phase 6 (implement) are dedicated pre-loop phases that remain critical. They seed the archive with proven techniques from papers BEFORE the experiment loop starts. The hyperagent benefits enormously from this foundation — Phase 6 branches give it diverse starting points to build upon. User-provided papers (from Phase 0) flow through Phase 5 with highest priority. During the loop, the hyperagent can dispatch additional research-implement rounds, building FROM the best parent in the archive (not baseline).
+
+## Pre-Loop: Load Meta-Patches (if meta-improvement has run)
+
+If `hyperagent_state.active_meta_patches` is non-empty in pipeline state, the hyperagent has modified skill instructions for this session. Before every subsequent agent dispatch (hp-tune, analyze, research), prepend to the dispatch prompt:
+
+```
+META-PATCHES ACTIVE: The hyperagent has modified skill instructions for this session.
+For the following skills, read the patched version INSTEAD of your default skill instructions:
+<for each patch in active_meta_patches>
+  - <skill_name>: Read experiments/meta-patches/<skill_name>-SKILL.md
+    Change summary: <from meta-changelog.json patches[].change>
+</for each>
+```
+
+To build this context, read `experiments/meta-patches/meta-changelog.json` and extract the `patches` array. Each entry has `skill`, `change`, `reason`, and `expected_impact`.
+
+This enables the self-referential loop: the hyperagent's strategy improvements are applied to future agent dispatches within the same session.
+
 ## Pre-Loop: Load Implementation Manifest
 
 If `experiments/results/implementation-manifest.json` exists:
@@ -198,7 +226,7 @@ When the implementation manifest contains multiple code branches:
 
 - **Iteration 1:** Test each branch with baseline HPs (one experiment per branch). This determines which code changes show promise.
 - **Iteration 2:** Prune branches that performed worse than baseline. Focus experiments on surviving branches + baseline.
-- **Iterations 3+:** Focus on the best branch + HP tuning. Only keep branches whose best metric is within 5% relative of the overall best: `abs(branch_best - overall_best) / abs(overall_best) <= 0.05`. If `overall_best` is zero, keep all branches.
+- **Iterations 3+:** Focus on the best branch + HP tuning. The analysis agent judges which branches are competitive with the overall best and which should be dropped — no fixed percentage cutoff.
 
 ## Loop Iteration:
 
@@ -410,53 +438,57 @@ When the implementation manifest contains multiple code branches:
      - `"method_proposal"`, `"qualitative_change"`: Route to step 7 (existing handling).
      - **Unknown pivot_type:** Treat as `"hp_expand"` (safest default). Log to error tracker.
    - If analyze says **stop**:
-     - Log the stop recommendation. Increment `consecutive_stop_count` in pipeline state (reset to 0 on "continue" or "pivot"). Persist via `save_state()` at the end of each iteration. On pipeline resume, read from state (default 0).
-       - **On 3 consecutive stops → Stuck Protocol** (instead of immediate exit):
-         If `consecutive_stop_count >= 3` AND `stuck_protocol_triggered` is false:
-         1. Set `stuck_protocol_triggered = true` in pipeline state
-         2. Read error patterns: `python3 scripts/error_tracker.py <exp_root> patterns`
-         3. Read success metrics: `python3 scripts/error_tracker.py <exp_root> success <primary_metric> <lower_is_better>`
-         4. Read dead-end catalog: `python3 scripts/error_tracker.py <exp_root> dead-end list`
-         5. Read research agenda: `python3 scripts/error_tracker.py <exp_root> agenda list`
-         6. Dispatch the research agent with all failure context (resume-or-dispatch pattern):
+     - **Do NOT exit the loop.** The loop is autonomous — only the user or target achievement stops it.
+     - Log the stop recommendation. The hyperagent decides what to do next based on evidence.
 
-            **IF `agent_registry["research"]` is not null** (agent exists from a previous research round):
-            ```
-            SendMessage(
-              to: agent_registry["research"],
-              message: "Stuck protocol — find new approaches. The optimization is stuck — 3 consecutive batches showed no improvement.
-                CONTEXT FROM OTHER AGENTS:
-                - Error patterns: {patterns}
-                - Success metrics: {success}
-                - Dead ends (DO NOT re-propose): {dead_ends}
-                - Research agenda: {agenda}
-                Parameters: source: both, model_type: {model_type}, task: {task}, current_metrics: {best_metrics}, problem_description: {problem_description}, exp_root: {exp_root}, scope_level: {method_proposal_scope or 'architecture'}. Focus on techniques NOT in the dead-end catalog."
-            )
-            ```
-            → If `SendMessage` fails: fall back to the `Agent()` dispatch below, update `agent_registry["research"]` with the new agentId.
+     **Options the hyperagent can choose from:**
+     - Switch to an operator it hasn't tried recently (e.g., research-implement if only HP tuning was done, ShinkaEvolve if only LLM patches were tried)
+     - Invoke the **Stuck Protocol** (below) to systematically search for new approaches
+     - Try meta-improvement to change the optimization strategy itself
+     - The hyperagent reads operator stats, archive trends, and error patterns to decide which option is best
 
-            **ELSE** (first dispatch — no existing agent):
-            ```
-            Agent(
-              description: "Stuck protocol — find new approaches",
-              prompt: "Ultrathink. The optimization is stuck — 3 consecutive batches showed no improvement. Find new approaches that haven't been tried. Parameters: source: both, model_type: {model_type}, task: {task}, current_metrics: {best_metrics}, problem_description: {problem_description}, exp_root: {exp_root}, scope_level: {method_proposal_scope or 'architecture'}. CONTEXT: Error patterns: {patterns}. Success metrics: {success}. Dead ends (DO NOT re-propose): {dead_ends}. Research agenda: {agenda}. Focus on techniques NOT in the dead-end catalog.",
-              subagent_type: "ml-optimizer:research-agent"
-            )
-            ```
-            → Save returned `agentId` to `agent_registry["research"]`
-            → Persist registry: `save_state(..., agent_registry=agent_registry)`
-         7. If research returns new proposals (not all deduplicated against dead ends):
-            - Route to step 7 (mid-loop method proposal trigger) for implementation
-            - Reset `consecutive_stop_count` to 0
-            - Log: "Stuck protocol succeeded — {N} new proposals found. Resuming loop."
-            - Continue loop
-         8. If research returns no new proposals: exit loop. Log: "Stuck protocol exhausted — no new proposals found."
-       - **On 3 consecutive stops after stuck protocol already triggered:** Exit loop immediately (prevents infinite recovery loops).
+     **Stuck Protocol** (available when the hyperagent judges the optimization is stuck):
+
+     The hyperagent can invoke this when it has evidence that current approaches are exhausted — for example, multiple operators tried with no improvement, or the archive shows a clear plateau. This is a tool the hyperagent chooses to use, not an automatic trigger.
+
+       1. Read error patterns: `python3 scripts/error_tracker.py <exp_root> patterns`
+       2. Read success metrics: `python3 scripts/error_tracker.py <exp_root> success <primary_metric> <lower_is_better>`
+       3. Read dead-end catalog: `python3 scripts/error_tracker.py <exp_root> dead-end list`
+       4. Read research agenda: `python3 scripts/error_tracker.py <exp_root> agenda list`
+       5. Dispatch the research agent with all failure context (resume-or-dispatch pattern):
+
+          **IF `agent_registry["research"]` is not null** (agent exists from a previous research round):
+          ```
+          SendMessage(
+            to: agent_registry["research"],
+            message: "Stuck protocol — find new approaches. The optimization is stuck.
+              CONTEXT FROM OTHER AGENTS:
+              - Error patterns: {patterns}
+              - Success metrics: {success}
+              - Dead ends (DO NOT re-propose): {dead_ends}
+              - Research agenda: {agenda}
+              Parameters: source: both, model_type: {model_type}, task: {task}, current_metrics: {best_metrics}, problem_description: {problem_description}, exp_root: {exp_root}, scope_level: {method_proposal_scope or 'architecture'}. Focus on techniques NOT in the dead-end catalog."
+          )
+          ```
+          → If `SendMessage` fails: fall back to the `Agent()` dispatch below, update `agent_registry["research"]` with the new agentId.
+
+          **ELSE** (first dispatch — no existing agent):
+          ```
+          Agent(
+            description: "Stuck protocol — find new approaches",
+            prompt: "Ultrathink. The optimization is stuck. Find new approaches that haven't been tried. Parameters: source: both, model_type: {model_type}, task: {task}, current_metrics: {best_metrics}, problem_description: {problem_description}, exp_root: {exp_root}, scope_level: {method_proposal_scope or 'architecture'}. CONTEXT: Error patterns: {patterns}. Success metrics: {success}. Dead ends (DO NOT re-propose): {dead_ends}. Research agenda: {agenda}. Focus on techniques NOT in the dead-end catalog.",
+            subagent_type: "ml-optimizer:research-agent"
+          )
+          ```
+          → Save returned `agentId` to `agent_registry["research"]`
+          → Persist registry: `save_state(..., agent_registry=agent_registry)`
+       6. If research returns new proposals → route to step 7 for implementation, continue loop
+       7. If no new proposals → try other operators (LLM patches, ShinkaEvolve, meta-improvement)
    - **If analyze output is malformed or contains an unexpected action:** Treat as `agent_failure`. Log to error tracker. Retry analyze once with a simplified prompt: "Based on the experiment results, should we continue, pivot, or stop? Respond with exactly one of: continue, pivot, stop." If retry also fails, default to `continue`.
-   - **Loop exit conditions:** The experiment loop exits when:
+   - **Loop exit conditions:** The experiment loop is **autonomous by default** — it runs non-stop until:
      1. Target metric achieved (from Phase 0)
-     2. Analysis agent recommends "stop" 3 consecutive times (triggers stuck protocol, then exits if no new proposals)
-     3. User manually stops
+     2. User manually stops
+     The loop does NOT auto-stop on plateaus. Even when the analysis agent recommends "stop", the hyperagent should try different operators (research, LLM patches, ShinkaEvolve, meta-improvement) before giving up. The stuck protocol dispatches research for fresh ideas. Only the user can truly end the run — breakthroughs can come after plateaus.
 
 7. **Mid-loop method proposal trigger** (when analyze recommends new methods):
 
@@ -541,7 +573,7 @@ When the implementation manifest contains multiple code branches:
 
    e. **Merge into experiment loop:** Add the new validated branches to `code_branches`. Reset the iteration counter for these new branches only (they start at iteration 1 = `method_default_hp` tier). Existing branches keep their iteration count.
 
-   **If `pivot_type == "code_refinement"` (evolutionary code improvement):**
+   **If `pivot_type == "code_evolution"` (evolutionary code improvement):**
 
    Instead of research → implement, the flow is: **tuning agent → implement agent → tuning agent → experiment agent**. The analysis agent's own conditions (|rho| < 0.3 + method improved) prevent unnecessary evolution — no artificial cooldown needed.
 
@@ -549,7 +581,7 @@ When the implementation manifest contains multiple code branches:
       ```
       SendMessage(to: agent_registry["tuning"]) OR Agent(subagent_type="ml-optimizer:tuning-agent")
       ```
-      Prompt: "Propose ShinkaEvolve evolution HPs for code_refinement. Read `learned-behaviors.json` category `evolve_hp` for prior evolution outcomes. Consider: how many generations produced the best mutation last time, whether more population diversity is needed, and the improvement trajectory. Return `evolve_recommendation: {num_generations, population_size, reasoning}`."
+      Prompt: "Propose ShinkaEvolve evolution HPs for code_evolution. Read `learned-behaviors.json` category `evolve_hp` for prior evolution outcomes. Consider: how many generations produced the best mutation last time, whether more population diversity is needed, and the improvement trajectory. Return `evolve_recommendation: {num_generations, population_size, reasoning}`."
 
    b. **Execute evolve:** Dispatch the implement-agent with the evolve skill (resume-or-dispatch pattern):
       ```
@@ -703,3 +735,95 @@ Agent(
   subagent_type: "ml-optimizer:analysis-agent"
 )
 ```
+
+---
+
+## Hyperagent Driven Loop
+
+The hyperagent helps Phase 7 by deciding what action to take at each iteration — HP tuning, code mutation, research, or self-improvement. The analysis agent advises after each batch (continue, pivot direction, or stacking), and the hyperagent decides the specific action based on the advice + archive state + operator effectiveness. It also enables the plugin to self-improve by modifying skill instructions mid-session. When the analysis agent advises stacking, the hyperagent decides whether to proceed and transitions to Phase 8, then returns to Phase 7 on the stacked code.
+
+### Hyperagent Dispatch (Loop Entry)
+
+At the start of Phase 7, dispatch the hyperagent with the orchestrating hyperagent skill:
+
+```
+Agent(
+  description: "Hyperagent optimization",
+  prompt: "Ultrathink. Invoke Skill('ml-optimizer:hyperagent'). Run the optimization.
+  Parameters: project_root: {project_root}. exp_root: {exp_root}. primary_metric: {primary_metric}. lower_is_better: {lower_is_better}. scope_level: {scope_level}. target_value: {target_value or null}.
+  CONTEXT FROM OTHER AGENTS:
+  - ANALYZE: {last_analyze_summary}
+  - ARCHIVE STATS: {archive_stats_json}
+  - DEAD ENDS: {dead_ends_summary}
+  - BEHAVIORAL MEMORY: {learned_behaviors_summary}",
+  subagent_type: "ml-optimizer:hyperagent"
+)
+```
+
+Save the hyperagent's ID to `agent_registry["hyperagent"]`. For subsequent iterations, resume via SendMessage with updated context from analyze and other agents.
+
+The hyperagent invokes `Skill("ml-optimizer:hyperagent")` which guides its decisions within Phase 7: read context → choose operator → generate variant → staged eval → HP tune → archive. The analysis agent advises after each batch, and the orchestrator relays context between agents and tracks pipeline state.
+
+### Per-Iteration Flow
+
+Each iteration follows the same pattern regardless of what the hyperagent chose:
+
+**1. Hyperagent chooses action** (from SendMessage above)
+
+The hyperagent states its decision in natural language: which action, which parent (for code mutations), and why.
+
+**2. Execute the action:**
+
+| Action | Execution |
+|---|---|
+| `hp_tune` | Orchestrator dispatches tuning-agent (existing Step 1 flow), then experiment-agents |
+| `llm_patch` | Hyperagent invokes `Skill("ml-optimizer:hyperagent-select")` then `Skill("ml-optimizer:hyperagent-generate")` with operator `llm_patch` |
+| `shinka_evolve` | Hyperagent invokes `Skill("ml-optimizer:hyperagent-select")` then `Skill("ml-optimizer:hyperagent-generate")` with operator `shinka_evolve` (internally dispatches evolve skill) |
+| `research_implement` | **Agent coordination:** (1) Hyperagent states it wants research-implement on a selected parent. (2) Orchestrator dispatches research-agent → produces research-findings. (3) Orchestrator dispatches implement-agent → implements FROM the selected parent branch (not baseline), creates `ml-opt/gen-<N>-<technique>`. (4) Hyperagent archives the result. The hyperagent does NOT do research/implementation itself — it coordinates through the orchestrator relay. |
+| `meta_improve` | Hyperagent invokes `Skill("ml-optimizer:hyperagent-generate")` with `meta_improvement_mode: true`. Max 3 per session. |
+
+**3. Staged eval** (for code mutations: llm_patch, shinka_evolve, research_implement):
+
+Hyperagent invokes `Skill("ml-optimizer:hyperagent-eval")`:
+- Stage 1: Quick eval (10% budget), adaptive threshold
+- If PASS → full training (warm-start from staged checkpoint)
+- If FAIL → archive as `status: "filtered"`, skip full training
+
+For `hp_tune` actions: standard experiment execution (existing flow), no staged eval.
+
+**4. Archive results:**
+
+Hyperagent invokes `Skill("ml-optimizer:hyperagent-archive")` to update the archive with the iteration's results. Update `hyperagent_state.archive_generation` and `operator_stats`.
+
+Log to `hyperagent_state.strategy_history`:
+```json
+{"iteration": N, "action": "llm_patch", "genid": "gen-007", "fitness_score": 0.87, "improved": true}
+```
+
+**5. Analyze:**
+
+Orchestrator dispatches analysis-agent (existing Step 5 flow). The analyze skill receives archive stats and returns `continue/pivot/stop`.
+
+**6. Decision:**
+
+- `continue` → resume hyperagent for next iteration
+- `pivot` with `code_evolution` → resume hyperagent (it will choose code mutation next)
+- `pivot` with HP-focused type (`hp_expand`, `narrow_space`, etc.) → resume hyperagent with the pivot context (it will choose `hp_tune` next)
+- `stop` → apply stuck protocol or exit (existing logic)
+
+### Meta-Improvement (Self-Referential)
+
+When the hyperagent chooses `meta_improve` (or analyze returns `pivot_type: "meta_improvement"`):
+
+1. Hyperagent reads current skill files (hp-tune, analyze, research) + archive + operator stats
+2. Generates patched skill files to `experiments/meta-patches/`
+3. Writes `experiments/meta-patches/meta-changelog.json`
+4. Orchestrator records patches in `hyperagent_state.active_meta_patches`
+5. Subsequent agent dispatches include meta-patch context (see "Pre-Loop: Load Meta-Patches")
+6. Hyperagent resumes with improved strategy
+
+**Constraints:** Max 3 meta-improvements per session. Cannot modify orchestrator or its own skill.
+
+### End-of-Session Promotion (Phase 9)
+
+See `references/phase-9-report.md` Phase 9 Step 3 for the full meta-patch promotion flow.

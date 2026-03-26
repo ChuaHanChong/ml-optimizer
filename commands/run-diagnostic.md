@@ -1,12 +1,12 @@
 ---
 name: run-diagnostic
-description: "Run end-to-end diagnostics — validates plugin structure, dispatches all 9 agents, and runs a full optimization pipeline on the test fixture via live Agent() dispatch."
+description: "Run end-to-end diagnostics — validates plugin structure, dispatches all 10 agents (including hyperagent), tests hyperagent archive + evolutionary workflow, and runs a full optimization pipeline on the test fixture via live Agent() dispatch."
 allowed-tools: "Bash, Read, Write, Edit, Glob, Grep, Agent, Skill, WebSearch, WebFetch"
 ---
 
 # ML Optimizer End-to-End Diagnostic
 
-You are running a comprehensive diagnostic of the ml-optimizer plugin. This validates plugin structure via pytest, exercises all 14 script CLIs, tests hook security boundaries, validates the resumable subagent infrastructure (agent registry, SendMessage patterns, context relay), confirms all 9 agents dispatch correctly, and runs the full Phase 2→9 pipeline via live Agent() dispatch — the only way to test the multi-agent orchestration end-to-end.
+You are running a comprehensive diagnostic of the ml-optimizer plugin. This validates plugin structure via pytest, exercises all 16 script CLIs (including hyperagent_adapter), tests hook security boundaries, validates the resumable subagent infrastructure (agent registry, SendMessage patterns, context relay), confirms all 10 agents dispatch correctly (including hyperagent), tests the hyperagent evolutionary archive workflow, and runs the full Phase 2→9 pipeline via live Agent() dispatch — the only way to test the multi-agent orchestration end-to-end.
 
 ## Step 1: Run full test suite (pytest)
 
@@ -126,6 +126,25 @@ python3 $SCRIPTS/result_analyzer.py /tmp/ml-opt-cli-test/results loss 2>/dev/nul
 python3 -c "import matplotlib" 2>/dev/null && \
   python3 $SCRIPTS/plot_results.py /tmp/ml-opt-cli-test/results loss comparison 2>/dev/null \
   && echo "✓ plot_results" || echo "— plot_results (matplotlib missing or empty, OK)"
+
+# 16. hyperagent_adapter.py — full archive workflow (8 subcommands)
+mkdir -p /tmp/ml-opt-cli-test/results
+echo '{"metrics":{"accuracy":0.82},"config":{}}' > /tmp/ml-opt-cli-test/results/baseline.json
+echo '{"user_choices":{"primary_metric":"accuracy"}}' > /tmp/ml-opt-cli-test/pipeline-state.json
+python3 $SCRIPTS/hyperagent_adapter.py /tmp/ml-opt-cli-test init \
+  && python3 $SCRIPTS/hyperagent_adapter.py /tmp/ml-opt-cli-test add \
+    '{"code_branch":"ml-opt/t1","mutation_type":"llm_patch","fitness_score":0.85,"parent_genid":"gen-000","status":"evaluated"}' \
+  && python3 $SCRIPTS/hyperagent_adapter.py /tmp/ml-opt-cli-test select-parent score_child_prop > /dev/null \
+  && python3 $SCRIPTS/hyperagent_adapter.py /tmp/ml-opt-cli-test lineage gen-001 > /dev/null \
+  && python3 $SCRIPTS/hyperagent_adapter.py /tmp/ml-opt-cli-test stats > /dev/null \
+  && python3 $SCRIPTS/hyperagent_adapter.py /tmp/ml-opt-cli-test best 1 > /dev/null \
+  && python3 $SCRIPTS/hyperagent_adapter.py /tmp/ml-opt-cli-test operator-stats > /dev/null \
+  && python3 $SCRIPTS/hyperagent_adapter.py /tmp/ml-opt-cli-test prune > /dev/null \
+  && echo "✓ hyperagent_adapter (8 subcommands)" || echo "✗ hyperagent_adapter FAILED"
+
+# 17. setup_hyperagent.sh
+bash $PLUGIN_ROOT/scripts/setup_hyperagent.sh > /dev/null 2>&1 \
+  && echo "✓ setup_hyperagent" || echo "✗ setup_hyperagent FAILED"
 
 rm -rf /tmp/ml-opt-cli-test
 echo "=== Script CLI Tests Done ==="
@@ -284,7 +303,7 @@ print('agent_registry: all 4 checks passed')
 
 ```bash
 # Verify persistent agents have "Resumable Agent" section
-for agent in research implement tuning analysis monitor; do
+for agent in research implement tuning analysis monitor hyperagent; do
   if grep -q "Resumable Agent" "$PLUGIN_ROOT/agents/${agent}-agent.md"; then
     echo "PASS: ${agent}-agent has Resumable Agent section"
   else
@@ -424,6 +443,7 @@ For each, dispatch with: "This is a smoke test. List your tools and confirm you 
 3. `ml-optimizer:tuning-agent`
 4. `ml-optimizer:analysis-agent`
 5. `ml-optimizer:report-agent`
+6. `ml-optimizer:hyperagent`
 
 For each agent, verify:
 
@@ -434,6 +454,8 @@ For each agent, verify:
 - **research-agent**: Confirm it can see `claude-mem:mem-search` (or reports it unavailable gracefully)
 
 **Special case — implement-agent:** Use this prompt instead: "This is a smoke test. List your tools. Confirm you can see these skills: ml-optimizer:implement, ml-optimizer:evolve, ml-optimizer:shinka-setup, ml-optimizer:shinka-convert, ml-optimizer:shinka-run, ml-optimizer:shinka-inspect. Confirm persistent agent memory. Respond in 2-3 sentences."
+
+**Special case — hyperagent:** Use this prompt instead: "This is a smoke test. List your tools. Confirm you can see these skills: ml-optimizer:hyperagent-generate, ml-optimizer:hyperagent-select, ml-optimizer:hyperagent-eval, ml-optimizer:hyperagent-archive, ml-optimizer:hyperagent-init, ml-optimizer:evolve. Confirm persistent agent memory (memory: local). Respond in 2-3 sentences."
 
 Report results in a table.
 
@@ -536,6 +558,44 @@ python3 $SCRIPTS/pipeline_state.py /tmp/ml-opt-diagnostic/experiments verify-bas
 ```
 
 If exit code is non-zero, log Phase 3 as FAILED.
+
+### 6.3b: Initialize Hyperagent Archive
+
+After baseline is established, initialize the evolutionary archive:
+
+```bash
+EXP=/tmp/ml-opt-diagnostic/experiments
+python3 $SCRIPTS/hyperagent_adapter.py $EXP init
+```
+
+**Verify:**
+- `experiments/code-archive.jsonl` exists
+- Contains gen-000 with fitness from baseline
+
+```bash
+python3 -c "
+import json
+with open('$EXP/code-archive.jsonl') as f:
+    entry = json.loads(f.readline())
+ok = entry.get('genid') == 'gen-000' and entry.get('fitness_score') is not None
+print('✓ Hyperagent archive: initialized with gen-000') if ok else print('✗ Hyperagent archive: FAILED')
+"
+```
+
+Also initialize hyperagent_state in pipeline state:
+```bash
+python3 -c "
+import sys, json
+sys.path.insert(0, '$SCRIPTS')
+from pipeline_state import init_hyperagent_state, save_state, load_state
+ha = init_hyperagent_state()
+state = load_state('$EXP')
+phase = state.get('phase', 3)
+iteration = state.get('iteration', 0)
+save_state(phase, iteration, [], '$EXP', hyperagent_state=ha)
+print('✓ Hyperagent state: initialized (enabled=True)')
+"
+```
 
 ### 6.4: Phase 5 — Research (all 3 source modes)
 
@@ -799,57 +859,83 @@ python3 $SCRIPTS/result_analyzer.py \
 
 Verify the output includes ranking information.
 
-#### Live Evolve Skill Dispatch (Phase 7 code_refinement flow)
+#### Live Evolve Skill Dispatch (via Hyperagent)
 
-Tests the full Phase 7 evolve chain: **tuning agent → implement agent → experiment agent**.
+Tests the full Phase 7 code evolution chain through the hyperagent: select parent → tune evolve HPs → evolve (shinka-convert → shinka-run → shinka-inspect) → tune training HPs → experiment on evolved code → archive.
 
-**Step 1: Tune evolve HPs.** Dispatch tuning agent to propose ShinkaEvolve hyperparameters:
-
-```text
-Agent(
-  description: "Diagnostic: tune evolve HPs",
-  prompt: "Propose ShinkaEvolve evolution HPs for code_refinement. Read learned-behaviors.json category evolve_hp for prior evolution outcomes (if any). Return evolve_recommendation: {num_generations, population_size, reasoning}. Default to num_generations: 5, population_size: 2 if no prior data.",
-  subagent_type: "ml-optimizer:tuning-agent"
-)
-```
-
-**Step 2: Execute evolve.** Dispatch implement-agent with evolve skill and tuning agent's recommendation:
+**Step 1: Dispatch hyperagent to evolve the best branch.**
 
 ```text
 Agent(
-  description: "Diagnostic: evolve skill live test",
-  prompt: "Use the evolve skill via Skill('ml-optimizer:evolve'). Run the full ShinkaEvolve pipeline on the best method branch. Parameters: project_root: /tmp/ml-opt-diagnostic, parent_branch: <BEST_BRANCH>, parent_metrics: {loss: <BEST_LOSS>, accuracy: <BEST_ACC>}, primary_metric: loss, lower_is_better: true, scope_level: full, exp_root: /tmp/ml-opt-diagnostic/experiments, evolve_recommendation: <FROM_TUNING_AGENT>, feedback_context: {batch_analysis: 'Nesterov momentum improved loss by 18.6% vs baseline. Model still converging at 30s cutoff.', error_patterns: [], dead_ends: [], learned_behaviors: []}.",
-  subagent_type: "ml-optimizer:implement-agent"
+  description: "Diagnostic: hyperagent code evolution (ShinkaEvolve)",
+  prompt: "Ultrathink. Invoke Skill('ml-optimizer:hyperagent'). Run ONE iteration using `shinka_evolve` as the mutation operator.
+
+  Follow the full chain:
+  1. Select the best parent from the archive via Skill('ml-optimizer:hyperagent-select')
+  2. Invoke Skill('ml-optimizer:hyperagent-generate') with mutation_operator: shinka_evolve
+     — Tune evolve HPs (num_generations, population_size) based on learned-behaviors.json
+     — Invoke Skill('ml-optimizer:evolve') which runs: shinka-convert → shinka-run → shinka-inspect
+     — Commit evolved branch as ml-opt/gen-<N>-evolved-<slug>
+  3. Run staged eval via Skill('ml-optimizer:hyperagent-eval') on the evolved branch
+  4. If staged eval passes: HP-tune the evolved code (1 iteration via tuning-agent)
+  5. Run experiment on the evolved branch with tuned HPs
+  6. Archive result via Skill('ml-optimizer:hyperagent-archive')
+  7. Update fitness via hyperagent_adapter.py update-fitness if HP tuning improved the score
+
+  Parameters: project_root: /tmp/ml-opt-diagnostic, exp_root: /tmp/ml-opt-diagnostic/experiments, primary_metric: loss, lower_is_better: true, scope_level: full, target_value: null.
+  If ShinkaEvolve is unavailable, report shinkaevolve_unavailable and skip.",
+  subagent_type: "ml-optimizer:hyperagent"
 )
 ```
 
-**Step 3: Tune training HPs for evolved branch.** Verify the tuning agent can propose training HPs for evolved code:
+**Verify Phase 7 evolve chain (all steps via hyperagent):**
 
-```text
-Agent(
-  description: "Diagnostic: tune training HPs for evolved branch",
-  prompt: "Ultrathink. Propose HP configs for the evolved method branch. Parameters: project_root: /tmp/ml-opt-diagnostic, num_gpus: 1, primary_metric: loss, lower_is_better: true, code_branches: [<EVOLVED_BRANCH>], iteration: 1, exp_root: /tmp/ml-opt-diagnostic/experiments.",
-  subagent_type: "ml-optimizer:tuning-agent"
-)
+```bash
+python3 -c "
+import subprocess, json, sys, os
+
+# Check evolved branch exists
+r = subprocess.run(['git', '-C', '/tmp/ml-opt-diagnostic', 'branch', '--list', 'ml-opt/*evolved*'],
+                   capture_output=True, text=True)
+branches = [b.strip() for b in r.stdout.strip().split('\n') if b.strip()]
+if branches:
+    print(f'✓ Evolved branch created: {branches[0]}')
+else:
+    print('— No evolved branch (ShinkaEvolve may be unavailable)')
+
+# Check archive has shinka_evolve entry
+r2 = subprocess.run([sys.executable, '$SCRIPTS/hyperagent_adapter.py', '$EXP', 'operator-stats'],
+                    capture_output=True, text=True)
+ops = json.loads(r2.stdout)
+shinka = ops.get('shinka_evolve', {})
+if shinka.get('attempts', 0) > 0:
+    print(f'✓ ShinkaEvolve via hyperagent: {shinka[\"attempts\"]} attempts, {shinka.get(\"improvements\", 0)} improvements')
+else:
+    print('— ShinkaEvolve: not in archive (may have reported unavailable)')
+
+# Check experiment result on evolved branch
+import glob
+evolved_results = [f for f in glob.glob('$EXP/results/exp-*.json')
+                   if 'evolved' in open(f).read().lower() or 'shinka' in open(f).read().lower()]
+if evolved_results:
+    print(f'✓ Experiment on evolved code: {len(evolved_results)} results')
+else:
+    print('— No experiment results on evolved code')
+"
 ```
 
-**Step 4: Run experiment on evolved branch with tuned HPs.**
-
-```text
-Agent(
-  description: "Diagnostic: experiment on evolved branch",
-  prompt: "Run experiment. Parameters: exp_id: exp-evolved, config: <FROM_TUNING_AGENT>, gpu_id: 0, project_root: /tmp/ml-opt-diagnostic, train_command: python train.py --epochs 2, code_branch: <EVOLVED_BRANCH>, iteration: 1, method_tier: method_tuned_hp, exp_root: /tmp/ml-opt-diagnostic/experiments.",
-  subagent_type: "ml-optimizer:experiment-agent"
-)
 ```
-
-**Verify Phase 7 evolve chain (all 4 steps):**
-- Tuning agent proposed evolve HPs (num_generations, population_size)
-- Implement agent invoked the evolve skill (output mentions "evolve" or "shinka")
-- A `ml-opt/evolved-*` branch was created (or `shinkaevolve_unavailable` — acceptable)
-- Tuning agent proposed training HPs for evolved branch
-- Experiment ran on the evolved branch with tuned HPs
-- If ShinkaEvolve unavailable: log as SKIPPED (optional integration)
+Phase 7 Evolve via Hyperagent:
+  1. Parent selection:     [passed/failed]
+  2. Evolve HPs tuned:    [passed/failed/skipped]
+  3. ShinkaEvolve ran:     [passed/failed/skipped]
+  4. Evolved branch:       [passed/failed/skipped]
+  5. Staged eval:          [passed/failed/skipped]
+  6. HP tuning evolved:    [passed/failed/skipped]
+  7. Experiment evolved:   [passed/failed/skipped]
+  8. Archive updated:      [passed/failed]
+  If ShinkaEvolve unavailable: log as SKIPPED
+```
 
 #### Iteration 2: OOM + Divergence Triggers
 
@@ -922,7 +1008,7 @@ else:
 
 #### Stuck Protocol Trigger
 
-After iteration 2, set `consecutive_stop_count=3` to trigger the stuck protocol. Verify the trigger condition fires and that the data it reads (patterns, dead-ends, agenda) is available from the real pipeline state.
+After iteration 2, verify the stuck protocol data is readable. In the hyperagent architecture, the loop is autonomous (no hardcoded "3 consecutive stops" threshold) — the hyperagent decides when to try alternative operators. But the stuck protocol data (error patterns, dead-ends, research agenda) must be available for the hyperagent to read.
 
 ```bash
 python3 -c "
@@ -956,7 +1042,7 @@ print('  patterns/dead-ends/agenda: all readable') if all_ok else print('  ✗ s
 
 #### Method Stacking Ranking (Phase 8 logic)
 
-Test `rank_methods_for_stacking()` using the real baseline from the pipeline plus additional method results to reach 5+ methods. This verifies the ranking logic that Phase 8 uses to decide stacking order.
+Test `rank_methods_for_stacking()` using the real baseline from the pipeline plus additional method results. This verifies the ranking logic that Phase 8 uses. The hyperagent decides whether to stack (no fixed minimum) — but the ranking function must work correctly with any number of methods.
 
 ```bash
 python3 -c "
@@ -994,18 +1080,153 @@ for f in results_dir.glob('exp-*.json'):
 
 results = load_results(str(results_dir))
 ranked = rank_methods_for_stacking(results, 'loss', lower_is_better=True)
-if len(ranked) >= 5:
+if len(ranked) >= 2:
     print(f'✓ Method stacking: {len(ranked)} methods ranked for stacking')
     for m in ranked[:3]:
         print(f'  - {m[\"code_branch\"]}: {m[\"improvement_pct\"]:.1f}% improvement')
 else:
-    print(f'✗ Method stacking: only {len(ranked)} methods (need 5+)')
+    print(f'— Method stacking: {len(ranked)} methods (analysis advises, hyperagent decides if stacking is worth it)')
 "
 ```
 
-### 6.6b: Phase 8 — Method Stacking (Sequential Merge)
+### 6.6b: Hyperagent Archive Workflow (post-experiment)
 
-This tests the full Phase 8 loop: create branches with real code changes, merge them sequentially, run stacked experiments, and verify the compound result.
+After experiments, test the full hyperagent archive workflow — simulating what the hyperagent does during Phase 7:
+
+```bash
+EXP=/tmp/ml-opt-diagnostic/experiments
+
+echo "=== Hyperagent Archive Workflow ==="
+
+# Add experiment results to archive (simulating different mutation operators)
+python3 $SCRIPTS/hyperagent_adapter.py $EXP add \
+  '{"code_branch":"ml-opt/gen-001-research","mutation_type":"research_implement","mutation_description":"Label smoothing from paper","fitness_score":0.84,"parent_genid":"gen-000","status":"evaluated"}'
+
+python3 $SCRIPTS/hyperagent_adapter.py $EXP add \
+  '{"code_branch":"ml-opt/gen-002-llm-patch","mutation_type":"llm_patch","mutation_description":"Added cosine scheduler","fitness_score":0.86,"parent_genid":"gen-000","status":"evaluated"}'
+
+python3 $SCRIPTS/hyperagent_adapter.py $EXP add \
+  '{"code_branch":"ml-opt/gen-003-evolved","mutation_type":"shinka_evolve","mutation_description":"Evolved LR schedule","fitness_score":0.87,"parent_genid":"gen-002","status":"evaluated"}'
+
+python3 $SCRIPTS/hyperagent_adapter.py $EXP add \
+  '{"code_branch":"ml-opt/gen-004-filtered","mutation_type":"llm_patch","mutation_description":"Failed variant","fitness_score":null,"parent_genid":"gen-002","status":"filtered"}'
+
+# Select parent — should pick gen-003 (best score)
+python3 -c "
+import subprocess, json, sys
+r = subprocess.run([sys.executable, '$SCRIPTS/hyperagent_adapter.py', '$EXP', 'select-parent', 'best'], capture_output=True, text=True)
+data = json.loads(r.stdout)
+print(f'✓ Parent selection: {data[\"genid\"]} (score={data[\"fitness_score\"]})') if data.get('genid') == 'gen-003' else print(f'✗ Parent selection: expected gen-003, got {data}')
+"
+
+# Verify lineage — gen-003 should trace: gen-000 → gen-002 → gen-003
+python3 -c "
+import subprocess, json, sys
+r = subprocess.run([sys.executable, '$SCRIPTS/hyperagent_adapter.py', '$EXP', 'lineage', 'gen-003'], capture_output=True, text=True)
+data = json.loads(r.stdout)
+genids = [e['genid'] for e in data['lineage']]
+expected = ['gen-000', 'gen-002', 'gen-003']
+print(f'✓ Lineage: {\" → \".join(genids)}') if genids == expected else print(f'✗ Lineage: expected {expected}, got {genids}')
+"
+
+# Operator stats
+python3 -c "
+import subprocess, json, sys
+r = subprocess.run([sys.executable, '$SCRIPTS/hyperagent_adapter.py', '$EXP', 'operator-stats'], capture_output=True, text=True)
+data = json.loads(r.stdout)
+ok = data.get('llm_patch', {}).get('attempts', 0) == 2 and data.get('shinka_evolve', {}).get('attempts', 0) == 1 and data.get('research_implement', {}).get('attempts', 0) == 1
+print(f'✓ Operator stats: llm={data[\"llm_patch\"][\"attempts\"]}, shinka={data[\"shinka_evolve\"][\"attempts\"]}, research={data[\"research_implement\"][\"attempts\"]}') if ok else print(f'✗ Operator stats: unexpected counts')
+"
+
+# Stats summary
+python3 -c "
+import subprocess, json, sys
+r = subprocess.run([sys.executable, '$SCRIPTS/hyperagent_adapter.py', '$EXP', 'stats'], capture_output=True, text=True)
+data = json.loads(r.stdout)
+print(f'✓ Archive stats: {data[\"total_entries\"]} entries, {data[\"evaluated\"]} evaluated, {data[\"filtered\"]} filtered, best={data[\"best_score\"]}')
+"
+
+# Prune — gen-004 (filtered, no descendants) should be pruned
+python3 -c "
+import subprocess, json, sys
+r = subprocess.run([sys.executable, '$SCRIPTS/hyperagent_adapter.py', '$EXP', 'prune'], capture_output=True, text=True)
+data = json.loads(r.stdout)
+print(f'✓ Prune: removed {data[\"pruned\"]}, {data[\"remaining\"]} remaining') if 'gen-004' in data.get('pruned', []) else print(f'✗ Prune: gen-004 should have been pruned')
+"
+
+echo "=== Hyperagent Archive Workflow Done ==="
+```
+
+### 6.6c: Live Hyperagent Skill Dispatch (free choice)
+
+Dispatch the hyperagent with `Skill("ml-optimizer:hyperagent")` — the same invocation the real orchestrator uses in Phase 7. The hyperagent reads the archive and picks the best operator.
+
+```text
+Agent(
+  description: "Diagnostic: hyperagent free choice iteration",
+  prompt: "Ultrathink. Invoke Skill('ml-optimizer:hyperagent'). Run ONE iteration of the optimization, then stop and report what you did.
+  Parameters: project_root: /tmp/ml-opt-diagnostic, exp_root: /tmp/ml-opt-diagnostic/experiments, primary_metric: loss, lower_is_better: true, scope_level: full, target_value: null.
+  IMPORTANT: Run only 1 iteration — choose the best operator based on archive state, execute it, archive the result, then return your decision and outcome.",
+  subagent_type: "ml-optimizer:hyperagent"
+)
+```
+
+**Verify the full chain (7 steps):**
+
+1. Parent selected from archive (hyperagent-select)
+2. ShinkaEvolve invoked (evolve skill ran shinka-convert → shinka-run → shinka-inspect)
+3. Evolved branch created: `ml-opt/evolved-*` or `ml-opt/gen-*-evolved-*`
+4. Staged eval ran on evolved branch (hyperagent-eval)
+5. HP tuning proposed configs for evolved code (tuning-agent)
+6. Experiment ran on evolved branch with tuned HPs (experiment-agent)
+7. Archive updated with evolved variant (hyperagent-archive)
+- If ShinkaEvolve unavailable: log as SKIPPED (optional integration)
+
+```bash
+python3 -c "
+import subprocess, json, sys
+
+# Check archive grew
+r = subprocess.run([sys.executable, '$SCRIPTS/hyperagent_adapter.py', '$EXP', 'stats'], capture_output=True, text=True)
+data = json.loads(r.stdout)
+initial = 5
+new = data['total_entries'] - initial
+print(f'✓ Hyperagent dispatch: {new} new entries from 2 iterations (total: {data[\"total_entries\"]})') if new > 0 else print(f'— Hyperagent dispatch: archive unchanged at {data[\"total_entries\"]}')
+
+# Check shinka_evolve was attempted
+r2 = subprocess.run([sys.executable, '$SCRIPTS/hyperagent_adapter.py', '$EXP', 'operator-stats'], capture_output=True, text=True)
+ops = json.loads(r2.stdout)
+shinka = ops.get('shinka_evolve', {})
+if shinka.get('attempts', 0) > 0:
+    print(f'✓ ShinkaEvolve via hyperagent: {shinka[\"attempts\"]} attempts, {shinka.get(\"improvements\", 0)} improvements')
+else:
+    print('— ShinkaEvolve: not in archive (may have reported unavailable)')
+
+# Check evolved branch exists
+import os
+r3 = subprocess.run(['git', '-C', '/tmp/ml-opt-diagnostic', 'branch', '--list', 'ml-opt/*evolved*'],
+                     capture_output=True, text=True)
+branches = [b.strip() for b in r3.stdout.strip().split('\n') if b.strip()]
+if branches:
+    print(f'✓ Evolved branch: {branches[0]}')
+else:
+    print('— No evolved branch (ShinkaEvolve may be unavailable)')
+"
+```
+
+Report:
+- Iteration 1 (free choice): [passed/failed], operator: [hp_tune/llm_patch/shinka_evolve/research_implement]
+- Iteration 2 (code evolution via hyperagent):
+  1. Parent selection:     [passed/failed]
+  2. ShinkaEvolve:         [passed/failed/skipped]
+  3. Staged eval:          [passed/failed/skipped]
+  4. HP tuning evolved:    [passed/failed/skipped]
+  5. Experiment evolved:   [passed/failed/skipped]
+  6. Archive updated:      [passed/failed]
+
+### 6.6d: Phase 8 — Method Stacking (via Hyperagent)
+
+Tests Phase 8 method stacking. Phase 7 and Phase 8 are in a loop — the analysis agent advises stacking, the hyperagent decides whether to proceed (no fixed threshold). After stacking, the loop returns to Phase 7 to continue optimizing on the stacked code.
 
 #### Create method branches
 
@@ -1045,7 +1266,7 @@ git branch --list "ml-opt/*"
 
 #### Sequential merge: stack-1 and stack-2
 
-Following the Phase 8 spec: best method → stack-1, then merge next method → stack-2.
+Following the stacking spec: best method → stack-1, then merge next method → stack-2.
 
 ```bash
 cd /tmp/ml-opt-diagnostic
@@ -1133,80 +1354,165 @@ else:
 "
 ```
 
-#### Phase 8 — Evolve on Stacked Code (Component Test)
+#### Phase 8 — Evolve on Stacked Code (via Hyperagent)
 
-Test the full Phase 8 evolve chain: analysis → tuning (evolve HPs) → evolve → tuning (training HPs) → experiment. Each step is dispatched unconditionally to verify the component works — the diagnostic tests capabilities, not decision logic.
+Tests the full Phase 8 evolve chain through the hyperagent: analyze stacked result → detect interference → tune evolve HPs → evolve stacked code → tune training HPs → experiment on evolved stack → archive.
 
-**Step 1: Analyze stacked result.** Verify the analysis agent can assess stacked experiments:
-
-```text
-Agent(
-  description: "Phase 8: analyze stacked result",
-  prompt: "Analyze stacked experiment result. Compare the stacked gain to the best individual method gain. Stacked experiment: exp-stack-live on ml-opt/stack-2 (weight-decay + label-smoothing). Best individual method gain: <BEST_INDIVIDUAL_GAIN>%. Parameters: project_root: /tmp/ml-opt-diagnostic, primary_metric: loss, lower_is_better: true, scope_level: full, exp_root: /tmp/ml-opt-diagnostic/experiments.",
-  subagent_type: "ml-optimizer:analysis-agent"
-)
-```
-
-**Step 2: Tune evolve HPs.** Verify the tuning agent can propose ShinkaEvolve HPs:
+**Step 1: Analyze stacked result.** Dispatch hyperagent to assess whether methods interfere:
 
 ```text
 Agent(
-  description: "Phase 8: tune evolve HPs for stacked code",
-  prompt: "Propose ShinkaEvolve evolution HPs for stacking code_refinement. Stacked methods: weight-decay + label-smoothing. Read learned-behaviors.json category evolve_hp for prior outcomes. Return evolve_recommendation: {num_generations, population_size, reasoning}.",
-  subagent_type: "ml-optimizer:tuning-agent"
+  description: "Phase 8: hyperagent analyze stacked result",
+  prompt: "Ultrathink. Invoke Skill('ml-optimizer:hyperagent'). Phase 8 stacking mode.
+
+  Step 1: Analyze the stacked experiment result on ml-opt/stack-2 (weight-decay + label-smoothing).
+  Compare the stacked gain to the best individual method gain.
+  If stacked gain < best individual gain → methods interfere → proceed to Step 2.
+  If stacked gain >= best individual gain → clean stack → report no interference.
+
+  Parameters: project_root: /tmp/ml-opt-diagnostic, exp_root: /tmp/ml-opt-diagnostic/experiments, primary_metric: loss, lower_is_better: true, scope_level: full.",
+  subagent_type: "ml-optimizer:hyperagent"
 )
 ```
 
-**Step 3: Execute evolve on stacked branch.** Verify the implement agent can run evolve on a stacked branch:
+**Step 2: Evolve stacked code (if interference detected).** Resume the hyperagent to resolve interference via ShinkaEvolve:
+
+```text
+SendMessage(
+  to: agent_registry["hyperagent"],
+  message: "Ultrathink. Methods interfere on ml-opt/stack-2. Resolve via code evolution.
+
+  Follow the full chain:
+  1. Tune evolve HPs (num_generations, population_size) based on learned-behaviors.json
+  2. Invoke Skill('ml-optimizer:evolve') on ml-opt/stack-2 to resolve code conflicts
+     — shinka-convert → shinka-run → shinka-inspect
+  3. Tune training HPs for the evolved stacked branch (1 iteration via tuning-agent)
+  4. Run experiment on the evolved stacked branch with tuned HPs
+  5. Archive result — compare evolved stack vs pre-evolution stack
+
+  Parameters: project_root: /tmp/ml-opt-diagnostic, exp_root: /tmp/ml-opt-diagnostic/experiments, primary_metric: loss, lower_is_better: true, scope_level: full.
+  If ShinkaEvolve unavailable: use original stack branch, report shinkaevolve_unavailable."
+)
+```
+
+**Verify Phase 8 evolve chain (all steps via hyperagent):**
+
+```bash
+python3 -c "
+import subprocess, json, sys
+
+# Check evolved stack branch
+r = subprocess.run(['git', '-C', '/tmp/ml-opt-diagnostic', 'branch', '--list', 'ml-opt/*evolved*stack*'],
+                   capture_output=True, text=True)
+branches = [b.strip() for b in r.stdout.strip().split('\n') if b.strip()]
+if branches:
+    print(f'✓ Evolved stack branch: {branches[0]}')
+else:
+    print('— No evolved stack branch (ShinkaEvolve may be unavailable or no interference)')
+
+# Check experiment on evolved stack
+import glob
+evolved_stack = [f for f in glob.glob('$EXP/results/exp-*stack*evolved*.json')]
+if evolved_stack:
+    data = json.loads(open(evolved_stack[0]).read())
+    print(f'✓ Experiment on evolved stack: status={data.get(\"status\")}, tier={data.get(\"method_tier\")}')
+else:
+    print('— No evolved stack experiment (may not have been needed)')
+"
+```
+
+```
+Phase 8 Evolve via Hyperagent:
+  1. Analysis of stack:        [passed/failed]
+  2. Interference detected:    [yes/no]
+  3. Evolve HPs tuned:         [passed/failed/skipped]
+  4. ShinkaEvolve on stack:    [passed/failed/skipped]
+  5. Evolved stack branch:     [passed/failed/skipped]
+  6. HP tuning evolved stack:  [passed/failed/skipped]
+  7. Experiment on evolved:    [passed/failed/skipped]
+  8. Archive updated:          [passed/failed]
+  If no interference: Steps 3-7 skipped (clean stack)
+  If ShinkaEvolve unavailable: Steps 4-7 use original stack
+```
+
+### 6.6e: Meta-Improvement (Self-Referential — via Hyperagent)
+
+Tests the hyperagent's self-referential capability — meta-improvement is an action the hyperagent takes DURING Phase 7's autonomous loop. The hyperagent analyzes what strategies worked/failed, then modifies the plugin's own skill instructions. Step 5 loads patches immediately for subsequent iterations.
 
 ```text
 Agent(
-  description: "Phase 8: evolve stacked code",
-  prompt: "Use the evolve skill via Skill('ml-optimizer:evolve'). Parameters: project_root: /tmp/ml-opt-diagnostic, parent_branch: ml-opt/stack-2, parent_metrics: {loss: <STACKED_LOSS>}, primary_metric: loss, lower_is_better: true, scope_level: full, exp_root: /tmp/ml-opt-diagnostic/experiments, evolve_recommendation: <FROM_TUNING_AGENT>, feedback_context: {batch_analysis: 'Stacked methods: weight-decay + label-smoothing. Diagnostic: testing evolve on stacked code.', error_patterns: [], dead_ends: [], learned_behaviors: []}.",
-  subagent_type: "ml-optimizer:implement-agent"
+  description: "Diagnostic: hyperagent meta-improvement (during Phase 7)",
+  prompt: "Ultrathink. Invoke Skill('ml-optimizer:hyperagent'). Run ONE iteration using `meta_improve` as the action.
+
+  You have evidence from the optimization so far.
+
+  Follow the full chain:
+  1. Read current skill files (hp-tune, analyze, research) from ${CLAUDE_PLUGIN_ROOT}/skills/
+  2. Read archive stats, operator stats, error patterns, dead-ends
+  3. Analyze: which skill instructions led to good decisions? Which led to dead ends?
+  4. Generate patched skill files to experiments/meta-patches/
+     — At least one patch (e.g., hp-tune-SKILL.md with an improvement)
+  5. Write experiments/meta-patches/meta-changelog.json with: skill, change, reason, expected_impact
+  6. Report what you changed and why
+
+  Parameters: project_root: /tmp/ml-opt-diagnostic, exp_root: /tmp/ml-opt-diagnostic/experiments, primary_metric: loss, lower_is_better: true, scope_level: full.
+  Constraints: Cannot modify orchestrate skill. Cannot modify your own skill (hyperagent).",
+  subagent_type: "ml-optimizer:hyperagent"
 )
 ```
 
-**Step 4: Tune training HPs for evolved stacked code.** Verify the tuning agent can propose training HPs for the evolved branch:
+**Verify meta-improvement outputs:**
 
-```text
-Agent(
-  description: "Phase 8: tune training HPs for evolved stack",
-  prompt: "Ultrathink. Propose HP configs for the evolved stacked method. Parameters: project_root: /tmp/ml-opt-diagnostic, num_gpus: 1, primary_metric: loss, lower_is_better: true, code_branches: [<EVOLVED_BRANCH_OR_STACK_2>], iteration: 1, exp_root: /tmp/ml-opt-diagnostic/experiments.",
-  subagent_type: "ml-optimizer:tuning-agent"
-)
+```bash
+python3 -c "
+import json, os
+from pathlib import Path
+
+EXP = Path('/tmp/ml-opt-diagnostic/experiments')
+patches_dir = EXP / 'meta-patches'
+
+# Check meta-patches directory exists
+if not patches_dir.exists():
+    print('✗ Meta-improvement: no meta-patches directory created')
+else:
+    # Check changelog
+    changelog = patches_dir / 'meta-changelog.json'
+    if changelog.exists():
+        cl = json.loads(changelog.read_text())
+        patches = cl.get('patches', [])
+        print(f'✓ Meta-changelog: {len(patches)} patches')
+        for p in patches:
+            print(f'  - {p.get(\"skill\")}: {p.get(\"change\")}')
+    else:
+        print('✗ Meta-improvement: meta-changelog.json missing')
+
+    # Check at least one patched skill file
+    skill_files = list(patches_dir.glob('*-SKILL.md'))
+    if skill_files:
+        print(f'✓ Patched skills: {[f.name for f in skill_files]}')
+    else:
+        print('✗ Meta-improvement: no patched skill files generated')
+
+    # Verify patches don't modify orchestrate or hyperagent
+    forbidden = [f for f in skill_files if 'orchestrate' in f.name or f.name == 'hyperagent-SKILL.md']
+    if forbidden:
+        print(f'✗ Meta-improvement: VIOLATED constraint — modified forbidden skills: {[f.name for f in forbidden]}')
+    else:
+        print('✓ Meta-improvement: constraints respected (no orchestrate/hyperagent patches)')
+"
 ```
 
-**Step 5: Run experiment on evolved stacked code with tuned HPs.**
-
-```text
-Agent(
-  description: "Phase 8: experiment on evolved stacked code",
-  prompt: "Run experiment. Parameters: exp_id: exp-stack-evolved, config: <FROM_TUNING_AGENT>, gpu_id: 0, project_root: /tmp/ml-opt-diagnostic, train_command: python train.py --epochs 2, code_branch: <EVOLVED_BRANCH_OR_STACK_2>, iteration: 1, method_tier: stacked_tuned_hp, exp_root: /tmp/ml-opt-diagnostic/experiments.",
-  subagent_type: "ml-optimizer:experiment-agent"
-)
 ```
-
-**Verify Phase 8 evolve chain (all 5 steps):**
-- Analysis agent assessed stacked result (compared vs best individual)
-- Tuning agent proposed evolve HPs
-- Implement agent ran evolve skill on stacked branch
-- Tuning agent proposed training HPs for evolved code
-- Experiment agent ran training with tuned HPs
-- If ShinkaEvolve unavailable: Steps 3-5 use original stack branch instead
-
-```
-Phase 8 Evolve (Component Test — full chain):
-  1. Analysis dispatch:        [passed/failed]
-  2. Tuning (evolve HPs):     [passed/failed]
-  3. Evolve execution:        [passed/failed/skipped]
-  4. Tuning (training HPs):   [passed/failed]
-  5. Experiment on evolved:   [passed/failed]
+Meta-Improvement via Hyperagent (during Phase 7):
+  1. Meta-patches dir created:  [passed/failed]
+  2. Meta-changelog written:    [passed/failed] — N patches
+  3. Patched skill files:       [passed/failed] — names
+  4. Constraints respected:     [passed/failed] — no orchestrate/hyperagent
 ```
 
 ### 6.7: Phase 9 — Report + Review
 
-#### Report agent
+#### Step 1: Report (final report generation)
 
 ```text
 Agent(
@@ -1262,14 +1568,67 @@ print(f'✓ Excalidraw: {len(elems)} elements') if elems else print('✗ Excalid
 "
 ```
 
-#### Review agent (self-improvement)
+#### Step 2: Review (session analysis — what worked, what didn't)
 
 ```text
 Agent(
-  description: "Diagnostic: self-improvement review",
-  prompt: "Ultrathink. Run self-improvement review. Parameters: project_root: /tmp/ml-opt-diagnostic, exp_root: /tmp/ml-opt-diagnostic/experiments, primary_metric: loss, lower_is_better: true, scope: session. After completing, update your agent memory with optimization anti-patterns observed and self-improvement suggestions for this project.",
+  description: "Diagnostic: session review",
+  prompt: "Ultrathink. Run session review. Parameters: project_root: /tmp/ml-opt-diagnostic, exp_root: /tmp/ml-opt-diagnostic/experiments, primary_metric: loss, lower_is_better: true, scope: session. After completing, update your agent memory with optimization anti-patterns observed and actionable suggestions for this project.",
   subagent_type: "ml-optimizer:analysis-agent"
 )
+```
+
+#### Step 3: Meta-Patch Promotion (persist self-improvement across sessions)
+
+If meta-patches were generated in step 6.6e, verify the promotion flow works. This tests that skill improvements can persist across sessions.
+
+```bash
+python3 -c "
+from pathlib import Path
+import json
+
+EXP = Path('/tmp/ml-opt-diagnostic/experiments')
+patches_dir = EXP / 'meta-patches'
+
+if not patches_dir.exists() or not list(patches_dir.glob('*-SKILL.md')):
+    print('— Phase 9 Step 3: No meta-patches to promote (6.6e may not have generated any)')
+else:
+    # Verify changelog exists
+    changelog = patches_dir / 'meta-changelog.json'
+    if not changelog.exists():
+        print('✗ Phase 9 Step 3: meta-changelog.json missing')
+    else:
+        cl = json.loads(changelog.read_text())
+        patches = cl.get('patches', [])
+        print(f'✓ Phase 9 Step 3: {len(patches)} patches available for promotion')
+
+        # Simulate promotion: prepend marker and write to a temp skill dir
+        for p in patches:
+            skill = p.get('skill', 'unknown')
+            patched = patches_dir / f'{skill}-SKILL.md'
+            if patched.exists():
+                content = patched.read_text()
+                marker = f\"# [meta-improvement] {p.get('change', 'improvement')}. Session diagnostic.\"
+                promoted = marker + '\n' + content
+                # Write to temp dir to verify marker format
+                promo_dir = EXP / 'promotion-test'
+                promo_dir.mkdir(exist_ok=True)
+                (promo_dir / f'{skill}-SKILL.md').write_text(promoted)
+                # Verify marker is scannable
+                if '# [meta-improvement]' in promoted:
+                    print(f'  ✓ {skill}: marker prepended, scannable by Phase 0')
+                else:
+                    print(f'  ✗ {skill}: marker NOT found after prepend')
+
+        print('✓ Phase 9 Step 3: Promotion flow verified (markers scannable for cross-session)')
+"
+```
+
+```
+Phase 9 Step 3 Meta-Patch Promotion:
+  Patches available:          [N or none]
+  Marker prepended:           [passed/skipped]
+  Scannable by Phase 0 grep:  [passed/skipped]
 ```
 
 ### 6.8: Feature verification checklist
@@ -1280,12 +1639,12 @@ Run these checks and report pass/fail for each:
 EXP=/tmp/ml-opt-diagnostic/experiments
 SCRIPTS=$PLUGIN_ROOT/scripts
 
-echo "=== Feature Verification (25 items) ==="
+echo "=== Feature Verification (31 items) ==="
 
 # 1. Immutable baseline
 python3 $SCRIPTS/pipeline_state.py $EXP verify-baseline 2>/dev/null \
-  && echo "✓ [1/25] Immutable baseline: checksum valid" \
-  || echo "✗ [1/25] Immutable baseline: FAILED"
+  && echo "✓ [1/31] Immutable baseline: checksum valid" \
+  || echo "✗ [1/31] Immutable baseline: FAILED"
 
 # 2. Research agenda
 python3 -c "
@@ -1294,35 +1653,35 @@ if os.path.exists('$EXP/reports/research-agenda.json'):
     agenda = json.loads(open('$EXP/reports/research-agenda.json').read()).get('ideas', [])
     tried = sum(1 for i in agenda if i.get('status') == 'tried')
     untried = sum(1 for i in agenda if i.get('status') == 'untried')
-    print(f'✓ [2/25] Research agenda: {len(agenda)} ideas ({tried} tried, {untried} untried)')
+    print(f'✓ [2/31] Research agenda: {len(agenda)} ideas ({tried} tried, {untried} untried)')
 else:
-    print('✗ [2/25] Research agenda: file missing')
+    print('✗ [2/31] Research agenda: file missing')
 "
 
 # 3. Dead-end catalog
 python3 -c "
 from pathlib import Path
 p = Path('$EXP/reports/dead-ends.json')
-print('✓ [3/25] Dead-end catalog: exists') if p.exists() else print('— [3/25] Dead-end catalog: not triggered (OK)')
+print('✓ [3/31] Dead-end catalog: exists') if p.exists() else print('— [3/31] Dead-end catalog: not triggered (OK)')
 "
 
 # 4. Dashboard (structural check)
 python3 -c "
 html = open('$EXP/reports/dashboard.html').read()
 ok = '<table' in html and '<tr' in html
-print('✓ [4/25] Dashboard: structural check passed') if ok else print('✗ [4/25] Dashboard: missing structural elements')
+print('✓ [4/31] Dashboard: structural check passed') if ok else print('✗ [4/31] Dashboard: missing structural elements')
 "
 
 # 5. Excalidraw
 test -f $EXP/artifacts/pipeline-overview.excalidraw \
-  && echo "✓ [5/25] Excalidraw: pipeline diagram exists" \
-  || echo "✗ [5/25] Excalidraw: missing"
+  && echo "✓ [5/31] Excalidraw: pipeline diagram exists" \
+  || echo "✗ [5/31] Excalidraw: missing"
 
 # 6. Baseline checksum in state
 python3 -c "
 import json
 state = json.loads(open('$EXP/pipeline-state.json').read())
-print('✓ [6/25] Baseline checksum: stored') if 'baseline_checksum' in state else print('✗ [6/25] Baseline checksum: missing')
+print('✓ [6/31] Baseline checksum: stored') if 'baseline_checksum' in state else print('✗ [6/31] Baseline checksum: missing')
 "
 
 # 7. Error tracking
@@ -1332,9 +1691,9 @@ r = subprocess.run(['python3', '$SCRIPTS/error_tracker.py', '$EXP', 'summary'], 
 if r.returncode == 0:
     data = json.loads(r.stdout)
     n = data.get('total_events', 0)
-    print(f'✓ [7/25] Error tracking: {n} events logged')
+    print(f'✓ [7/31] Error tracking: {n} events logged')
 else:
-    print('✗ [7/25] Error tracking: summary command failed')
+    print('✗ [7/31] Error tracking: summary command failed')
 "
 
 # 8. Schema validation (all output types)
@@ -1349,7 +1708,7 @@ for f in $EXP/results/exp-*.json; do
   [ -f "$f" ] && python3 $SCRIPTS/schema_validator.py "$f" result 2>/dev/null \
     && echo "  ✓ $(basename $f) valid" || echo "  ✗ $(basename $f) invalid"
 done
-echo "✓ [8/25] Schema validation: complete"
+echo "✓ [8/31] Schema validation: complete"
 
 # 9. Result metadata (placeholder verification)
 python3 -c "
@@ -1365,9 +1724,9 @@ for f in results:
         if field not in data:
             issues.append(f'{eid}: missing {field}')
 if issues:
-    print('✗ [9/25] Result metadata: ' + '; '.join(issues))
+    print('✗ [9/31] Result metadata: ' + '; '.join(issues))
 else:
-    print(f'✓ [9/25] Result metadata: all {len(results)} results complete')
+    print(f'✓ [9/31] Result metadata: all {len(results)} results complete')
 "
 
 # 10. Pipeline state
@@ -1378,7 +1737,7 @@ has_phase = 'phase' in state
 has_iter = 'iteration' in state
 has_choices = 'user_choices' in state
 ok = has_phase and has_iter and has_choices
-print(f'✓ [10/25] Pipeline state: phase={state.get(\"phase\")}, iteration={state.get(\"iteration\")}') if ok else print('✗ [10/25] Pipeline state: missing fields')
+print(f'✓ [10/31] Pipeline state: phase={state.get(\"phase\")}, iteration={state.get(\"iteration\")}') if ok else print('✗ [10/31] Pipeline state: missing fields')
 "
 
 # 11. Error tracker CLI subcommands
@@ -1390,16 +1749,16 @@ python3 $SCRIPTS/error_tracker.py $EXP proposals loss true > /dev/null 2>&1 && e
 python3 $SCRIPTS/error_tracker.py $EXP dead-end list > /dev/null 2>&1 && echo "  ✓ dead-end list" || echo "  ✗ dead-end list"
 python3 $SCRIPTS/error_tracker.py $EXP suggestion-history > /dev/null 2>&1 && echo "  ✓ suggestion-history" || echo "  ✗ suggestion-history"
 python3 $SCRIPTS/error_tracker.py $EXP agenda list > /dev/null 2>&1 && echo "  ✓ agenda list" || echo "  ✗ agenda list"
-echo "✓ [11/25] Error tracker CLI: subcommands verified"
+echo "✓ [11/31] Error tracker CLI: subcommands verified"
 
 # 12. Worktree cleanup
 python3 -c "
 from pathlib import Path
 wt = Path('$EXP/worktrees')
 if wt.exists() and list(wt.iterdir()):
-    print('✗ [12/25] Worktree cleanup: leftover worktrees found')
+    print('✗ [12/31] Worktree cleanup: leftover worktrees found')
 else:
-    print('✓ [12/25] Worktree cleanup: no leftover worktrees')
+    print('✓ [12/31] Worktree cleanup: no leftover worktrees')
 "
 
 # 13. Goal memory
@@ -1409,12 +1768,12 @@ import subprocess
 goals = Path('$EXP/optimization-goals.json')
 r = subprocess.run(['python3', '$SCRIPTS/goal_memory.py', '$EXP', 'summary'], capture_output=True, text=True)
 if goals.exists() and r.returncode == 0 and 'OPTIMIZATION GOALS' in r.stdout:
-    print('✓ [13/25] Goal memory: goals created, summary works')
+    print('✓ [13/31] Goal memory: goals created, summary works')
 else:
     missing = []
     if not goals.exists(): missing.append('goals missing')
     if r.returncode != 0: missing.append('summary failed')
-    print('✗ [13/25] Goal memory: ' + ', '.join(missing))
+    print('✗ [13/31] Goal memory: ' + ', '.join(missing))
 "
 
 # 14. Overfitting detection
@@ -1426,9 +1785,9 @@ train = [0.5, 0.4, 0.3, 0.2, 0.15, 0.1]
 val = [0.5, 0.55, 0.6, 0.65, 0.7, 0.75]
 r = check_overfitting(train, val, patience=5)
 if r['overfitting']:
-    print('✓ [14/25] Overfitting detection: works (severity=' + r['severity'] + ')')
+    print('✓ [14/31] Overfitting detection: works (severity=' + r['severity'] + ')')
 else:
-    print('✗ [14/25] Overfitting detection: FAILED to detect')
+    print('✗ [14/31] Overfitting detection: FAILED to detect')
 "
 
 # 15. HP interaction detection
@@ -1438,7 +1797,7 @@ sys.path.insert(0, '$SCRIPTS')
 from result_analyzer import detect_hp_interactions, load_results
 results = load_results('$EXP/results')
 out = detect_hp_interactions(results, 'loss', lower_is_better=True)
-print(f'✓ [15/25] HP interactions: {len(out.get(\"interactions\", []))} detected') if 'interactions' in out else print('✗ [15/25] HP interactions: FAILED')
+print(f'✓ [15/31] HP interactions: {len(out.get(\"interactions\", []))} detected') if 'interactions' in out else print('✗ [15/31] HP interactions: FAILED')
 "
 
 # 16. Branch scores
@@ -1448,7 +1807,7 @@ sys.path.insert(0, '$SCRIPTS')
 from result_analyzer import compute_branch_scores, load_results
 results = load_results('$EXP/results')
 scores = compute_branch_scores(results, 'loss', lower_is_better=True)
-print(f'✓ [16/25] Branch scores: {len(scores)} branches scored') if isinstance(scores, dict) else print('✗ [16/25] Branch scores: FAILED')
+print(f'✓ [16/31] Branch scores: {len(scores)} branches scored') if isinstance(scores, dict) else print('✗ [16/31] Branch scores: FAILED')
 "
 
 # 17. Checkpoint warm-starting
@@ -1460,7 +1819,7 @@ from pathlib import Path
 with tempfile.TemporaryDirectory() as td:
     p = generate_train_script(td, 'ckpt-test', 'python train.py', checkpoint_path='/tmp/ckpt.pt')
     ok = 'CHECKPOINT_PATH' in Path(p).read_text()
-    print('✓ [17/25] Checkpoint warm-start: script includes CHECKPOINT_PATH') if ok else print('✗ [17/25] Checkpoint warm-start: FAILED')
+    print('✓ [17/31] Checkpoint warm-start: script includes CHECKPOINT_PATH') if ok else print('✗ [17/31] Checkpoint warm-start: FAILED')
 "
 
 # 18. Experiment comparison
@@ -1473,9 +1832,9 @@ ids = [k for k in results if k.startswith('exp-')][:2]
 if len(ids) >= 2:
     cmp = compare_experiments('$EXP/results', ids, 'loss')
     ok = 'config_diff' in cmp and 'metrics_comparison' in cmp and 'winner' in cmp
-    print(f'✓ [18/25] Experiment comparison: {ids[0]} vs {ids[1]}') if ok else print('✗ [18/25] Experiment comparison: FAILED')
+    print(f'✓ [18/31] Experiment comparison: {ids[0]} vs {ids[1]}') if ok else print('✗ [18/31] Experiment comparison: FAILED')
 else:
-    print('— [18/25] Experiment comparison: need 2+ experiments')
+    print('— [18/31] Experiment comparison: need 2+ experiments')
 "
 
 # 19. Results table (Markdown)
@@ -1487,7 +1846,7 @@ from pathlib import Path
 path = generate_results_table('$EXP')
 content = Path(path).read_text()
 ok = '# ML Optimization Results' in content and '## Results' in content
-print(f'✓ [19/25] Results table: {path}') if ok else print('✗ [19/25] Results table: FAILED')
+print(f'✓ [19/31] Results table: {path}') if ok else print('✗ [19/31] Results table: FAILED')
 "
 
 # 20. Completeness enforcement (--strict mode)
@@ -1499,9 +1858,9 @@ incomplete = {'exp_id': 'test', 'status': 'completed', 'config': {}, 'metrics': 
 normal = validate_result(incomplete)
 strict = validate_result_strict(incomplete)
 if normal['valid'] and not strict['valid'] and len(normal.get('warnings', [])) > 0:
-    print(f'✓ [20/25] Completeness enforcement: {len(strict[\"errors\"])} issues caught in strict mode')
+    print(f'✓ [20/31] Completeness enforcement: {len(strict[\"errors\"])} issues caught in strict mode')
 else:
-    print('✗ [20/25] Completeness enforcement: FAILED')
+    print('✗ [20/31] Completeness enforcement: FAILED')
 "
 
 # 21. Status line
@@ -1517,11 +1876,11 @@ r2 = subprocess.run(['bash', hook], input=stdin_without, capture_output=True, te
 has_output = '[ml-opt]' in r1.stdout
 is_silent = r2.stdout.strip() == ''
 if has_output and is_silent:
-    print('✓ [21/25] Status line: active with state, silent without')
+    print('✓ [21/31] Status line: active with state, silent without')
 elif has_output:
-    print('✗ [21/25] Status line: not silent without state')
+    print('✗ [21/31] Status line: not silent without state')
 else:
-    print('✗ [21/25] Status line: no output with state')
+    print('✗ [21/31] Status line: no output with state')
 "
 
 # 22. Resumable subagents
@@ -1529,7 +1888,7 @@ python3 -c "
 import json
 state = json.loads(open('$EXP/pipeline-state.json').read())
 has_registry = 'agent_registry' in state
-print('✓ [22/25] Resumable subagents: agent_registry in pipeline state') if has_registry else print('✗ [22/25] Resumable subagents: agent_registry missing')
+print('✓ [22/31] Resumable subagents: agent_registry in pipeline state') if has_registry else print('✗ [22/31] Resumable subagents: agent_registry missing')
 "
 
 # 23. Inter-agent relay
@@ -1537,14 +1896,14 @@ python3 -c "
 content = open('$PLUGIN_ROOT/skills/orchestrate/references/phase-7-experiment-loop.md').read()
 relay_count = content.count('CONTEXT FROM OTHER AGENTS')
 ok = relay_count >= 5
-print(f'✓ [23/25] Inter-agent relay: {relay_count} context relay sections') if ok else print(f'✗ [23/25] Inter-agent relay: only {relay_count} (need ≥5)')
+print(f'✓ [23/31] Inter-agent relay: {relay_count} context relay sections') if ok else print(f'✗ [23/31] Inter-agent relay: only {relay_count} (need ≥5)')
 "
 
 # 24. Persistent/ephemeral classification
 python3 -c "
 from pathlib import Path
 agents_dir = Path('$PLUGIN_ROOT/agents')
-persistent = ['research', 'implement', 'tuning', 'analysis', 'monitor']
+persistent = ['research', 'implement', 'tuning', 'analysis', 'monitor', 'hyperagent']
 ephemeral = ['prerequisites', 'baseline', 'experiment', 'report']
 issues = []
 for a in persistent:
@@ -1556,9 +1915,9 @@ for a in ephemeral:
     if 'Resumable Agent' in content:
         issues.append(f'{a} should NOT have Resumable Agent')
 if issues:
-    print('✗ [24/25] Persistent/ephemeral: ' + '; '.join(issues))
+    print('✗ [24/31] Persistent/ephemeral: ' + '; '.join(issues))
 else:
-    print('✓ [24/25] Persistent/ephemeral: 5 persistent + 4 ephemeral correctly classified')
+    print('✓ [24/31] Persistent/ephemeral: 6 persistent + 4 ephemeral correctly classified')
 "
 
 # 25. Evolve file handoff (ShinkaEvolve integration)
@@ -1590,9 +1949,58 @@ with tempfile.TemporaryDirectory() as td:
     t.join()
 
     if result['content'] == 'evolved code':
-        print('✓ [25/25] Evolve file handoff: round-trip works')
+        print('✓ [25/31] Evolve file handoff: round-trip works')
     else:
-        print('✗ [25/25] Evolve file handoff: FAILED')
+        print('✗ [25/31] Evolve file handoff: FAILED')
+"
+
+# 26. Hyperagent archive
+python3 $SCRIPTS/hyperagent_adapter.py $EXP stats > /dev/null 2>&1 \
+  && echo "✓ [26/31] Hyperagent archive: operational" || echo "✗ [26/31] Hyperagent archive: FAILED"
+
+# 27. Parent selection (sigmoid + diversity)
+python3 -c "
+import subprocess, json, sys
+r = subprocess.run([sys.executable, '$SCRIPTS/hyperagent_adapter.py', '$EXP', 'select-parent', 'score_child_prop'], capture_output=True, text=True)
+data = json.loads(r.stdout)
+ok = 'genid' in data and 'strategy' in data and data['strategy'] == 'score_child_prop'
+print('✓ [27/31] Parent selection: score_child_prop works') if ok else print('✗ [27/31] Parent selection: FAILED')
+"
+
+# 28. Lineage tracking
+python3 -c "
+import subprocess, json, sys
+r = subprocess.run([sys.executable, '$SCRIPTS/hyperagent_adapter.py', '$EXP', 'lineage', 'gen-000'], capture_output=True, text=True)
+data = json.loads(r.stdout)
+ok = len(data.get('lineage', [])) >= 1
+print(f'✓ [28/31] Lineage tracking: {len(data[\"lineage\"])} entries') if ok else print('✗ [28/31] Lineage tracking: FAILED')
+"
+
+# 29. Operator stats tracking
+python3 -c "
+import subprocess, json, sys
+r = subprocess.run([sys.executable, '$SCRIPTS/hyperagent_adapter.py', '$EXP', 'operator-stats'], capture_output=True, text=True)
+data = json.loads(r.stdout)
+ok = isinstance(data, dict)
+print(f'✓ [29/31] Operator stats: {len(data)} operators tracked') if ok else print('✗ [29/31] Operator stats: FAILED')
+"
+
+# 30. init_hyperagent_state
+python3 -c "
+import sys
+sys.path.insert(0, '$SCRIPTS')
+from pipeline_state import init_hyperagent_state
+s = init_hyperagent_state()
+ok = s['enabled'] is True and 'operator_stats' in s and 'strategy_history' in s
+print('✓ [30/31] init_hyperagent_state: defaults correct') if ok else print('✗ [30/31] init_hyperagent_state: FAILED')
+"
+
+# 31. hyperagent_state persistence
+python3 -c "
+import json
+state = json.loads(open('$EXP/pipeline-state.json').read())
+ok = 'hyperagent_state' in state and state['hyperagent_state'].get('enabled') is True
+print('✓ [31/31] Hyperagent state: persisted in pipeline state') if ok else print('✗ [31/31] Hyperagent state: missing')
 "
 
 echo "=== Feature Verification Done ==="
@@ -1612,10 +2020,10 @@ Summarize all results:
 ML Optimizer End-to-End Diagnostic Results
 ==========================================
 Structural tests (pytest):  X/Y passed (full suite — 10 test files)
-Script CLI smoke tests:     X/18 passed (14 scripts, some multi-subcommand)
+Script CLI smoke tests:     X/20 passed (16 scripts, some multi-subcommand)
 Hook functional tests:      X/19 passed (8 hooks)
 Resumable subagent infra:   X/Y checks passed (registry, patterns, docs)
-Agent smoke tests:          9/9 dispatched (memory: local confirmed)
+Agent smoke tests:          10/10 dispatched (memory: local confirmed)
 
 Full Pipeline (live Agent() dispatch):
   Phase 2 Prerequisites:    [passed/failed] — schema [valid/invalid]
@@ -1631,11 +2039,14 @@ Full Pipeline (live Agent() dispatch):
     - Monitor:              [passed/failed]
     - Analyze:              [passed/failed]
     - Result analyzer CLI:  [passed/failed]
-  Phase 7 Evolve:           [passed/failed/skipped] — tuning → evolve → experiment chain
-  Phase 8 Stacking:         [passed/failed] — N branches merged, stacked experiment, state persisted
-  Phase 8 Evolve:           [passed/failed/skipped] — analysis → tuning → evolve for interference
+  Phase 7 Hyperagent:       [passed/failed] — free choice iteration
+  Phase 7 Evolve (Hyperagent): [passed/failed/skipped] — full chain via hyperagent (select → evolve HPs → ShinkaEvolve → train HPs → experiment → archive)
+  Meta-Improvement (Hyperagent): [passed/failed] — self-referential: hyperagent modifies skill files, generates meta-patches
+  Phase 8 Stacking (Hyperagent): [passed/failed] — analysis agent triggered, N branches merged, interference resolved
+  Phase 8 Evolve (Hyperagent): [passed/failed/skipped] — interference detection → ShinkaEvolve → re-experiment
   Phase 9 Report:           [passed/failed]
   Phase 9 Review:           [passed/failed]
+  Phase 9 Step 3 Promotion:       [passed/skipped] — meta-patch markers scannable for cross-session
 
 Phase 7 Advanced Features (in-pipeline):
   OOM feedback loop:          [✓/✗] — OOM logged → sync → oversized batch rejected
@@ -1643,7 +2054,7 @@ Phase 7 Advanced Features (in-pipeline):
   Stuck protocol trigger:     [✓/✗] — consecutive_stop_count=3, data readable
   Method stacking ranking:    [✓/✗] — 5+ methods ranked for stacking
 
-Feature Verification (17 items):
+Feature Verification (31 items):
    1. Immutable baseline:     [✓/✗]
    2. Research agenda:        [✓/✗] — N ideas tracked
    3. Dead-end catalog:       [✓/—] — triggered if branches pruned
@@ -1667,14 +2078,29 @@ Feature Verification (17 items):
   21. Status line:            [✓/✗] — active with state, silent without
   22. Resumable subagents:    [✓/✗] — agent_registry in pipeline state, SendMessage patterns in phase refs
   23. Inter-agent relay:      [✓/✗] — CONTEXT FROM OTHER AGENTS in phase-7 dispatches
-  24. Persistent/ephemeral:   [✓/✗] — 5 persistent + 4 ephemeral correctly classified
+  24. Persistent/ephemeral:   [✓/✗] — 6 persistent + 4 ephemeral correctly classified
   25. Evolve file handoff:    [✓/✗] — ShinkaEvolve round-trip works
+  26. Hyperagent archive:     [✓/✗] — archive operational (init, add, stats)
+  27. Parent selection:       [✓/✗] — score_child_prop (sigmoid + diversity)
+  28. Lineage tracking:       [✓/✗] — parent-child chain traced
+  29. Operator stats:         [✓/✗] — mutation type effectiveness tracked
+  30. init_hyperagent_state:  [✓/✗] — defaults correct (enabled=True)
+  31. Hyperagent state:       [✓/✗] — persisted in pipeline state
+
+Hyperagent Integration (full workflow):
+  Archive init:             [✓/✗] — gen-000 from baseline
+  Archive add + select:     [✓/✗] — 4 variants added, parent selected
+  Lineage chain:            [✓/✗] — gen-000 → gen-002 → gen-003
+  Operator stats:           [✓/✗] — llm=2, shinka=1, research=1
+  Prune:                    [✓/✗] — filtered variant pruned
+  Hyperagent dispatch:      [✓/✗] — agent resolves, skills visible
+  Hyperagent skill invoke:  [✓/✗] — Skill("ml-optimizer:hyperagent") runs 1 iteration
 
 Skipped phases (by design):
   Phase 0 Discovery:    Interactive (requires user Q&A) — goals simulated via scripts/goal_memory.py init-goals
   Phase 1 Understand:   Could partially test — deferred
   Phase 4 Checkpoint:   Interactive (user direction choice)
-  Phase 8 Stacking:     [passed/failed] — N branches merged, stacked experiment run, evolve integration, state persisted
+  Phase 8 Stacking:     [passed/failed] — analysis triggered, branches merged, evolve for interference, state persisted
 
 Issues found: [none or list]
 ```

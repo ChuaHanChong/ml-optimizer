@@ -1,6 +1,6 @@
 """Comprehensive plugin structure validation.
 
-Validates all 9 agents, 10 skills, hooks, and scripts are correctly
+Validates all 10 agents, 16 skills, hooks, and scripts are correctly
 configured for the agent-based dispatch architecture. Run anytime:
 
     python -m pytest tests/test_plugin_structure.py -v
@@ -135,16 +135,24 @@ EXPECTED_AGENTS = {
         "model": "opus", "skill": "ml-optimizer:hp-tune",
         "required_tools": {"Read", "Write", "Bash", "Glob", "Grep"},
         "forbidden_tools": {"Edit"}, "color": "red", "background": False,
+        "external_skills": ["claude-mem:mem-search"],
     },
     "analysis-agent": {
         "model": "opus", "skill": "ml-optimizer:analyze",
         "required_tools": {"Read", "Write", "Bash", "Glob", "Grep", "Skill"},
         "forbidden_tools": {"Edit"}, "color": "cyan", "background": False,
+        "external_skills": ["claude-mem:mem-search"],
     },
     "report-agent": {
         "model": "opus", "skill": "ml-optimizer:report",
         "required_tools": {"Read", "Write", "Bash", "Glob", "Grep", "Skill"},
         "forbidden_tools": {"Edit"}, "color": "blue", "background": False,
+    },
+    "hyperagent": {
+        "model": "opus", "skill": "ml-optimizer:hyperagent",
+        "required_tools": {"Read", "Write", "Edit", "Bash", "Glob", "Grep", "Skill"},
+        "forbidden_tools": set(), "color": "red", "background": False,
+        "external_skills": ["ml-optimizer:hyperagent-generate", "ml-optimizer:hyperagent-select", "ml-optimizer:hyperagent-eval", "ml-optimizer:hyperagent-archive", "ml-optimizer:hyperagent-init", "ml-optimizer:hyperagent-setup", "ml-optimizer:evolve", "ml-optimizer:shinka-setup", "ml-optimizer:shinka-convert", "ml-optimizer:shinka-run", "ml-optimizer:shinka-inspect", "claude-mem:mem-search", "superpowers:systematic-debugging", "feature-dev:code-explorer"],
     },
 }
 
@@ -152,6 +160,8 @@ EXPECTED_SKILLS = [
     "orchestrate", "prerequisites", "baseline", "experiment", "monitor",
     "research", "implement", "hp-tune", "analyze", "report",
     "evolve", "shinka-setup", "shinka-convert", "shinka-run", "shinka-inspect",
+    "hyperagent", "hyperagent-setup", "hyperagent-init", "hyperagent-select",
+    "hyperagent-generate", "hyperagent-eval", "hyperagent-archive",
 ]
 
 NON_ORCHESTRATE_SKILLS = [s for s in EXPECTED_SKILLS if s != "orchestrate"]
@@ -162,10 +172,10 @@ NON_ORCHESTRATE_SKILLS = [s for s in EXPECTED_SKILLS if s != "orchestrate"]
 # ---------------------------------------------------------------------------
 
 class TestAgentFiles:
-    """Validate all 9 agent definition files."""
+    """Validate all 10 agent definition files."""
 
     def test_all_9_agents_exist_and_no_extra(self):
-        """All 9 expected agent files exist and no unexpected ones."""
+        """All 10 expected agent files exist and no unexpected ones."""
         for name in EXPECTED_AGENTS:
             assert (AGENTS_DIR / f"{name}.md").exists(), f"Missing: {name}"
         actual = {f.stem for f in AGENTS_DIR.glob("*.md")}
@@ -228,7 +238,9 @@ class TestSkillFiles:
 
     # ShinkaEvolve skills are third-party (symlinked from submodule) —
     # they have different frontmatter conventions, so only check name + existence
-    _THIRD_PARTY_SKILLS = {"shinka-setup", "shinka-convert", "shinka-run", "shinka-inspect"}
+    _THIRD_PARTY_SKILLS = {"shinka-setup", "shinka-convert", "shinka-run", "shinka-inspect",
+                           "hyperagent-setup", "hyperagent-init", "hyperagent-select",
+                           "hyperagent-generate", "hyperagent-eval", "hyperagent-archive"}
 
     # orchestrate is the user-facing entry point — it must be invocable
     # (no disable-model-invocation, no user-invocable: false)
@@ -280,9 +292,15 @@ class TestSkillAgentMapping:
                 skill_name = skill.replace("ml-optimizer:", "")
                 if skill_name in skill_to_agents:
                     skill_to_agents[skill_name].append(agent_file.stem)
+        # Some skills are intentionally shared between agents (e.g., evolve, shinka-*)
+        shared_skills = {"evolve", "shinka-setup", "shinka-convert", "shinka-run", "shinka-inspect"}
         for skill_name, agents in skill_to_agents.items():
-            assert len(agents) == 1, (
-                f"Skill '{skill_name}' loaded by {len(agents)} agents: {agents} (expected 1)")
+            if skill_name in shared_skills:
+                assert len(agents) >= 1, (
+                    f"Shared skill '{skill_name}' has no agents: {agents}")
+            else:
+                assert len(agents) == 1, (
+                    f"Skill '{skill_name}' loaded by {len(agents)} agents: {agents} (expected 1)")
 
 
 # ---------------------------------------------------------------------------
@@ -369,11 +387,37 @@ class TestPluginManifest:
 
 
 # ---------------------------------------------------------------------------
+# Skill symlink resolution
+# ---------------------------------------------------------------------------
+
+class TestSkillSymlinks:
+    """Verify symlinked skills resolve to actual SKILL.md files."""
+
+    _SYMLINKED_SKILLS = [
+        "shinka-setup", "shinka-convert", "shinka-run", "shinka-inspect",
+        "hyperagent-setup", "hyperagent-init", "hyperagent-select",
+        "hyperagent-generate", "hyperagent-eval", "hyperagent-archive",
+    ]
+
+    @pytest.mark.parametrize("skill_name", _SYMLINKED_SKILLS)
+    def test_symlink_resolves(self, skill_name):
+        """Symlinked skill directories resolve to SKILL.md files."""
+        skill_path = SKILLS_DIR / skill_name
+        if not skill_path.exists():
+            pytest.skip(f"Symlink {skill_name} not created (run setup script)")
+        assert skill_path.is_symlink() or skill_path.is_dir()
+        skill_md = skill_path / "SKILL.md"
+        assert skill_md.exists(), f"{skill_name}/SKILL.md not found via symlink"
+        content = skill_md.read_text()
+        assert "name:" in content, f"{skill_name}/SKILL.md missing name frontmatter"
+
+
+# ---------------------------------------------------------------------------
 # Orchestrate dispatch points
 # ---------------------------------------------------------------------------
 
 class TestOrchestrateDispatch:
-    """Verify the orchestrate skill references all 9 agents correctly."""
+    """Verify the orchestrate skill references all 10 agents correctly."""
 
     @staticmethod
     def _orchestrate_full_text():
@@ -386,7 +430,7 @@ class TestOrchestrateDispatch:
         return "\n".join(parts)
 
     def test_dispatch_patterns(self):
-        """Named agent dispatch, no bare skill invocations, all 9 agents referenced."""
+        """Named agent dispatch, no bare skill invocations, all 10 agents referenced."""
         text = self._orchestrate_full_text()
         named_dispatches = re.findall(r'subagent_type.*ml-optimizer:', text)
         assert len(named_dispatches) >= 5
@@ -570,7 +614,7 @@ class TestDocumentation:
     """Verify docs reflect 9-agent architecture and key features."""
 
     @pytest.mark.parametrize("keyword", [
-        "9 subagent definitions", 'Agent(subagent_type="ml-optimizer:',
+        "10 agents", 'Agent(subagent_type="ml-optimizer:',
         "stuck protocol", "dead-end", "research agenda",
         "immutable baseline", "disable-model-invocation",
     ])
@@ -827,12 +871,12 @@ def test_monitor_and_analyze_contracts():
     updated = {"lr": [1e-5, 1e-3]}
     assert updated["lr"] == [1e-5, 1e-3]
 
-    # Analyze pivot types include code_refinement
+    # Analyze pivot types include code_evolution
     valid_pivots = {
         "branch_test", "hp_expand", "research", "method_proposal",
-        "narrow_space", "qualitative_change", "regularization", "code_refinement",
+        "narrow_space", "qualitative_change", "regularization", "code_evolution",
     }
-    assert "code_refinement" in valid_pivots
+    assert "code_evolution" in valid_pivots
 
 
 

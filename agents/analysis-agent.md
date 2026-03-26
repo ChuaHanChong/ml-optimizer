@@ -6,6 +6,7 @@ model: opus
 color: cyan
 skills:
   - ml-optimizer:analyze
+  - claude-mem:mem-search
 memory: local
 ---
 
@@ -29,7 +30,7 @@ You are a specialized experiment analysis agent. Your job is to analyze complete
 2. **Load and compare results** — Run `scripts/result_analyzer.py` to get rankings, deltas vs baseline, HP correlations
 3. **Branch-aware analysis** — Group results by `code_branch` before computing correlations. Do NOT mix HP correlations across branches.
 4. **Deep analysis** — Reason about performance trends, failure patterns, HP impact (using relative thresholds: >5% high, 1-5% medium, <1% low), interaction effects
-5. **Tier-aware analysis** — If experiments have `method_tier` fields, compute isolated method effects, recommend branch pruning (>5% worse → prune, >2% better → prioritize)
+5. **Tier-aware analysis** — If experiments have `method_tier` fields, compute isolated method effects, recommend branch pruning based on judgment (substantially worse → prune, clearly better → prioritize)
 6. **Decide next action** — Apply the pivot decision tree in order: budget check → branch coverage → research status → method proposals → failure patterns → default
 7. **Log inefficiencies** — Log notable issues to error tracker (all-diverge batches, diminishing returns, underperforming branches)
 8. **Write batch analysis report** — Write to `experiments/reports/batch-<N>-analysis.md`

@@ -92,29 +92,73 @@ Read `references/phase-6-implement.md` for the full workflow.
 
 Dispatch `ml-optimizer:implement-agent`. Check manifest results. Handle dependencies, license warnings, conflicts. Post-implementation code review.
 
-## Phase 7: Experiment Loop (Autonomous)
+## Phase 7: Experiment Loop (Hyperagent Driven)
 
 Read `references/phase-7-experiment-loop.md` for the full workflow.
 
-Pre-loop: validate state, load manifest, generate method proposals, route hp_only proposals, initialize research cadence, save state.
+Pre-loop: validate state, initialize code archive (hyperagent-init), load manifest, load meta-patches, save state.
 
-Loop: hp-tune → experiment → monitor → analyze → decision (continue/pivot/stop) → mid-loop method proposals → research round check → loop back.
+Dispatch the hyperagent with `Skill("ml-optimizer:hyperagent")` — the orchestrating skill that controls the full optimization. The hyperagent runs Phase 7 experiments and Phase 8 stacking in a loop, choosing the best strategy at each iteration. The orchestrator relays context between agents and tracks state.
 
-3 consecutive stop recommendations trigger a **Stuck Protocol** (structured recovery) before exiting. The stuck protocol reads error patterns, dead ends, and research agenda, then dispatches the research agent for new approaches. If new proposals are found, the loop resumes. Triggers once per session to prevent infinite loops.
+```
+Agent(
+  description: "Hyperagent optimization",
+  prompt: "Ultrathink. Invoke Skill('ml-optimizer:hyperagent'). Parameters: project_root: {project_root}, exp_root: {exp_root}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, scope_level: {scope_level}, target_value: {target_value}.",
+  subagent_type: "ml-optimizer:hyperagent"
+)
+```
+Save the hyperagent's ID to `agent_registry["hyperagent"]` for SendMessage resumption.
 
-After each batch, the live dashboard is regenerated (`scripts/dashboard.py --live`) so users can monitor progress in real-time. Baseline integrity is verified before each batch.
+**Autonomous by default:** The loop runs non-stop until the target is reached or the user manually stops. It never auto-stops on plateaus — the hyperagent tries different operators before giving up. When the analysis agent recommends stop, the stuck protocol dispatches research for fresh ideas. Only the user can truly end the run.
 
-## Phase 8: Method Stacking (Sequential Accumulation)
+After each batch, the live dashboard is regenerated (`scripts/dashboard.py --live`). Baseline integrity is verified before each batch.
+
+**Pivot type relay to hyperagent:**
+
+| Pivot Type | Hyperagent action |
+|---|---|
+| `branch_test`, `hp_expand`, `narrow_space`, `regularization` | Delegates to tuning-agent with adjusted search space |
+| `code_evolution` | Chooses mutation operator (LLM patch, ShinkaEvolve, or research-implement) |
+| `code_evolution` + `meta_improvement_recommended` | May modify skill files (max 3 per session) |
+| `method_stacking` | Merges improved methods sequentially (largest improvement first), resolves interference via ShinkaEvolve, then continues Phase 7 on stacked code |
+
+**State updates:** After each iteration, save pipeline state with updated `hyperagent_state`:
+```
+save_state(phase=7, iteration=N, running_exp_ids=[], exp_root=exp_root,
+           hyperagent_state=updated_hyperagent_state)
+```
+
+## Phase 8: Method Stacking
 
 Read `references/phase-8-stacking.md` for the full workflow.
 
-Triggered when experiment loop ends AND ≥5 methods improved over baseline. Requires git branch strategy. Sequential merge with conflict resolution, skip-on-failure, optional HP-tuning per stack step.
+Phase 7 and Phase 8 are in a loop. The analysis agent advises when stacking may be beneficial (pivot_type: `method_stacking`). The hyperagent decides whether to stack, which methods, and in what order. No fixed method count — decisions are evidence-based.
+
+```
+Phase 7 (experiment loop) ←→ Phase 8 (method stacking)
+  Analysis says "method_stacking" → enter Phase 8
+  After stacking → return to Phase 7 on stacked code
+  Loop continues until goal or user stops
+```
+
+The hyperagent merges methods sequentially (largest improvement first), resolves interference via ShinkaEvolve if needed. Requires git branch strategy.
 
 ## Phase 9: Report
 
 Read `references/phase-9-report.md` for the full workflow.
 
-Dispatch `ml-optimizer:report-agent`. Sync errors. Optional self-improvement review via `ml-optimizer:analysis-agent` (review mode). Present summary.
+Dispatch `ml-optimizer:report-agent`. Sync errors. Optional session review via `ml-optimizer:analysis-agent` (review mode). Present summary.
+
+### Phase 9 Step 3: Meta-Patch Promotion
+
+If `hyperagent_state.active_meta_patches` is non-empty:
+
+1. Dispatch `ml-optimizer:analysis-agent` with `scope: "meta_patches"` to evaluate each patch against experimental outcomes
+2. Present validated patches to user via `AskUserQuestion`: "The hyperagent discovered N strategy improvements this session. Promote these to the plugin?"
+3. If approved: read patched skill files, prepend `# [meta-improvement]` marker, write to plugin's skill directory, commit to current branch (immediately available next session)
+4. If declined: log to behavioral memory for reference
+
+Read `references/phase-9-report.md` for the full meta-patch promotion flow.
 
 ## Error Handling
 

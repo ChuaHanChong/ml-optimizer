@@ -6,6 +6,7 @@ model: opus
 color: red
 skills:
   - ml-optimizer:hp-tune
+  - claude-mem:mem-search
 memory: local
 ---
 

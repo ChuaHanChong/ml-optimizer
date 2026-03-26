@@ -81,6 +81,30 @@
    ```
    This file persists in `experiments/optimization-goals.json` and is read by all agents before acting.
 
-4. **Exit plan mode:**
+4. **Initialize Hyperagent state:**
+
+   The plugin operates as a self-referential hyperagent by default. Initialize state:
+   ```python
+   from pipeline_state import init_hyperagent_state
+   save_state(..., hyperagent_state=init_hyperagent_state())
+   ```
+   Run `bash ${CLAUDE_PLUGIN_ROOT}/scripts/setup_hyperagent.sh` to verify the Hyperagents submodule and symlinks are ready.
+
+   **Cross-session learning:** Check if prior meta-improvement patches exist in the plugin and load them:
+   ```bash
+   # Scan for promoted patches
+   grep -rl "# \[meta-improvement\]" ${CLAUDE_PLUGIN_ROOT}/skills/*/SKILL.md 2>/dev/null
+   ```
+   - For each skill file containing `# [meta-improvement]` markers: add the skill name to `hyperagent_state.active_meta_patches` so Phase 7's pre-loop meta-patch loading will include them in agent dispatch context.
+   - If `claude-mem` MCP is available, query for prior hyperagent sessions: `mcp__plugin_claude-mem_mcp-search__search("hyperagent session meta-improvement")`
+   - Inform the user: "Found {N} strategy improvements from prior sessions. These are active for this session."
+   - Update hyperagent_state:
+     ```python
+     ha = init_hyperagent_state()
+     ha["active_meta_patches"] = ["hp-tune-SKILL.md", ...]  # from grep results
+     save_state(..., hyperagent_state=ha)
+     ```
+
+5. **Exit plan mode:**
    - Use `ExitPlanMode` once you have enough information to proceed
    - Summarize your understanding back to the user before moving on

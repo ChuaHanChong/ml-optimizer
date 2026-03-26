@@ -1,3 +1,6 @@
 [submodule "skills/evolve/ShinkaEvolve"]
 	path = skills/evolve/ShinkaEvolve
 	url = git@github.com:ChuaHanChong/ShinkaEvolve.git
+[submodule "skills/hyperagent/Hyperagents"]
+	path = skills/hyperagent/Hyperagents
+	url = git@github.com:ChuaHanChong/HyperAgents.git

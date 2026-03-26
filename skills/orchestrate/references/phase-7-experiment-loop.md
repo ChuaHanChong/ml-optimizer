@@ -573,7 +573,7 @@ When the implementation manifest contains multiple code branches:
 
    e. **Merge into experiment loop:** Add the new validated branches to `code_branches`. Reset the iteration counter for these new branches only (they start at iteration 1 = `method_default_hp` tier). Existing branches keep their iteration count.
 
-   **If `pivot_type == "code_refinement"` (evolutionary code improvement):**
+   **If `pivot_type == "code_evolution"` (evolutionary code improvement):**
 
    Instead of research → implement, the flow is: **tuning agent → implement agent → tuning agent → experiment agent**. The analysis agent's own conditions (|rho| < 0.3 + method improved) prevent unnecessary evolution — no artificial cooldown needed.
 
@@ -581,7 +581,7 @@ When the implementation manifest contains multiple code branches:
       ```
       SendMessage(to: agent_registry["tuning"]) OR Agent(subagent_type="ml-optimizer:tuning-agent")
       ```
-      Prompt: "Propose ShinkaEvolve evolution HPs for code_refinement. Read `learned-behaviors.json` category `evolve_hp` for prior evolution outcomes. Consider: how many generations produced the best mutation last time, whether more population diversity is needed, and the improvement trajectory. Return `evolve_recommendation: {num_generations, population_size, reasoning}`."
+      Prompt: "Propose ShinkaEvolve evolution HPs for code_evolution. Read `learned-behaviors.json` category `evolve_hp` for prior evolution outcomes. Consider: how many generations produced the best mutation last time, whether more population diversity is needed, and the improvement trajectory. Return `evolve_recommendation: {num_generations, population_size, reasoning}`."
 
    b. **Execute evolve:** Dispatch the implement-agent with the evolve skill (resume-or-dispatch pattern):
       ```

@@ -114,7 +114,7 @@ Dispatch hyperagent:
               primary_metric: {primary_metric}, lower_is_better: {lower_is_better},
               exp_root: {exp_root}.
               Compare the stacked gain to the best individual method gain. If the stack underperforms
-              the best individual (methods interfering), recommend code_refinement. Otherwise recommend continue."
+              the best individual (methods interfering), recommend code_evolution. Otherwise recommend continue."
           )
           ```
           → If `SendMessage` fails: fall back to `Agent()` dispatch below, update `agent_registry["analysis"]`.
@@ -130,13 +130,13 @@ Dispatch hyperagent:
           → Save returned `agentId` to `agent_registry["analysis"]`
           → Persist registry: `save_state(..., agent_registry=agent_registry)`
 
-        - **If analysis recommends `pivot_type: "code_refinement"`:**
+        - **If analysis recommends `pivot_type: "code_evolution"`:**
 
           **Step 1: Tune evolve HPs.** Dispatch tuning agent (resume-or-dispatch):
           ```
           SendMessage(to: agent_registry["tuning"]) OR Agent(subagent_type="ml-optimizer:tuning-agent")
           ```
-          Prompt: "Propose ShinkaEvolve evolution HPs for stacking code_refinement. Stacked methods: {stacked_methods}. Read `learned-behaviors.json` category `evolve_hp` for prior outcomes. Return `evolve_recommendation: {num_generations, population_size, reasoning}`."
+          Prompt: "Propose ShinkaEvolve evolution HPs for stacking code_evolution. Stacked methods: {stacked_methods}. Read `learned-behaviors.json` category `evolve_hp` for prior outcomes. Return `evolve_recommendation: {num_generations, population_size, reasoning}`."
 
           **Step 2: Execute evolve.** Dispatch implement-agent with evolve skill (resume-or-dispatch):
           ```
@@ -166,7 +166,7 @@ Dispatch hyperagent:
           Run experiments with proposed configs. If HP-tune improves, record as `method_tier: "stacked_tuned_hp"`.
 
         - **Re-analyze:** After evolve + HP-tune, dispatch the analysis agent again on the updated result:
-          - If analysis recommends `code_refinement` again → loop back to the tuning + evolve step above (with new HPs from tuning agent)
+          - If analysis recommends `code_evolution` again → loop back to the tuning + evolve step above (with new HPs from tuning agent)
           - If analysis recommends `continue` → improvement achieved, proceed to next stack step
           - If analysis recommends `stop` → skip this method, the combination can't be fixed
 

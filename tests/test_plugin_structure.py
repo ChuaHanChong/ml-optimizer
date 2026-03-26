@@ -292,9 +292,15 @@ class TestSkillAgentMapping:
                 skill_name = skill.replace("ml-optimizer:", "")
                 if skill_name in skill_to_agents:
                     skill_to_agents[skill_name].append(agent_file.stem)
+        # Some skills are intentionally shared between agents (e.g., evolve, shinka-*)
+        shared_skills = {"evolve", "shinka-setup", "shinka-convert", "shinka-run", "shinka-inspect"}
         for skill_name, agents in skill_to_agents.items():
-            assert len(agents) == 1, (
-                f"Skill '{skill_name}' loaded by {len(agents)} agents: {agents} (expected 1)")
+            if skill_name in shared_skills:
+                assert len(agents) >= 1, (
+                    f"Shared skill '{skill_name}' has no agents: {agents}")
+            else:
+                assert len(agents) == 1, (
+                    f"Skill '{skill_name}' loaded by {len(agents)} agents: {agents} (expected 1)")
 
 
 # ---------------------------------------------------------------------------
@@ -608,7 +614,7 @@ class TestDocumentation:
     """Verify docs reflect 9-agent architecture and key features."""
 
     @pytest.mark.parametrize("keyword", [
-        "9 subagent definitions", 'Agent(subagent_type="ml-optimizer:',
+        "10 agents", 'Agent(subagent_type="ml-optimizer:',
         "stuck protocol", "dead-end", "research agenda",
         "immutable baseline", "disable-model-invocation",
     ])
@@ -865,12 +871,12 @@ def test_monitor_and_analyze_contracts():
     updated = {"lr": [1e-5, 1e-3]}
     assert updated["lr"] == [1e-5, 1e-3]
 
-    # Analyze pivot types include code_refinement
+    # Analyze pivot types include code_evolution
     valid_pivots = {
         "branch_test", "hp_expand", "research", "method_proposal",
-        "narrow_space", "qualitative_change", "regularization", "code_refinement",
+        "narrow_space", "qualitative_change", "regularization", "code_evolution",
     }
-    assert "code_refinement" in valid_pivots
+    assert "code_evolution" in valid_pivots
 
 
 

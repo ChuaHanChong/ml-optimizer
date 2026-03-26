@@ -19,6 +19,7 @@ def init_hyperagent_state(enabled: bool = True) -> dict:
     """
     return {
         "enabled": enabled,
+        "current_phase": "hp_tuning",
         "archive_generation": 0,
         "strategy_history": [],
         "meta_improvement_count": 0,

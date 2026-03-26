@@ -89,16 +89,16 @@ If alphaxiv tools are unavailable, fall back to:
 
 ## Evolutionary Code Refinement (ShinkaEvolve)
 
-When the orchestrator dispatches you for `code_refinement` tasks, invoke:
+When the orchestrator dispatches you for `code_evolution` tasks, invoke:
 
 - `Skill("ml-optimizer:evolve")` — **Full evolution pipeline.** Internally invokes `shinka-convert` → `shinka-run` → `shinka-inspect` and you act as the LLM backend via file handoff. Returns a committed branch with the best evolved code. If ShinkaEvolve is unavailable, returns `status: "shinkaevolve_unavailable"` — the orchestrator handles the fallback.
 
-The evolve skill orchestrates these sub-skills automatically — do not invoke them individually for code_refinement tasks:
+The evolve skill orchestrates these sub-skills automatically — do not invoke them individually for code_evolution tasks:
 - `Skill("ml-optimizer:shinka-convert")` — Convert existing code to ShinkaEvolve format
 - `Skill("ml-optimizer:shinka-run")` — Run ShinkaEvolve evolution batches
 - `Skill("ml-optimizer:shinka-inspect")` — Inspect top-performing evolved programs
 
-For standalone ShinkaEvolve tasks (user requests, not code_refinement pivots):
+For standalone ShinkaEvolve tasks (user requests, not code_evolution pivots):
 - `Skill("ml-optimizer:shinka-setup")` — Create new ShinkaEvolve task scaffolds from scratch
 
 ## Your Workflow

@@ -147,7 +147,7 @@ The hyperagent merges methods sequentially (largest improvement first), resolves
 
 Read `references/phase-9-report.md` for the full workflow.
 
-Dispatch `ml-optimizer:report-agent`. Sync errors. Optional self-improvement review via `ml-optimizer:analysis-agent` (review mode). Present summary.
+Dispatch `ml-optimizer:report-agent`. Sync errors. Optional session review via `ml-optimizer:analysis-agent` (review mode). Present summary.
 
 ### Phase 9 Step 3: Meta-Patch Promotion
 

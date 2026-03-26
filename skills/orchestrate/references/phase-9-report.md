@@ -42,7 +42,7 @@ Full report: experiments/reports/final-report.md
 Dashboard: experiments/reports/dashboard.html
 ```
 
-## Step 2: Self-Improvement Review
+## Step 2: Session Review
 
 The analysis agent reviews the entire session to identify what worked, what didn't, and how to improve.
 
@@ -53,7 +53,7 @@ Dispatch the analysis agent in review mode (resume-or-dispatch pattern):
 ```
 SendMessage(
   to: agent_registry["analysis"],
-  message: "Ultrathink. End-of-session self-improvement review. You have context from batch analyses.
+  message: "Ultrathink. End-of-session review. You have context from batch analyses.
     CONTEXT FROM OTHER AGENTS:
     - ANALYZE: final analysis across all batches
     - RESEARCH: all proposals attempted, {N_successful}/{N_total} improved
@@ -68,8 +68,8 @@ SendMessage(
 
 ```
 Agent(
-  description: "Self-improvement review",
-  prompt: "Ultrathink. Run self-improvement review. Parameters: project_root: {project_root}, exp_root: {exp_root}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, scope: session.",
+  description: "Session review",
+  prompt: "Ultrathink. Run session review. Parameters: project_root: {project_root}, exp_root: {exp_root}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, scope: session.",
   subagent_type: "ml-optimizer:analysis-agent"
 )
 ```

@@ -1512,7 +1512,7 @@ Meta-Improvement via Hyperagent (during Phase 7):
 
 ### 6.7: Phase 9 — Report + Review
 
-#### Report agent
+#### Step 1: Report (final report generation)
 
 ```text
 Agent(
@@ -1568,19 +1568,19 @@ print(f'✓ Excalidraw: {len(elems)} elements') if elems else print('✗ Excalid
 "
 ```
 
-#### Review agent (self-improvement)
+#### Step 2: Review (session analysis — what worked, what didn't)
 
 ```text
 Agent(
-  description: "Diagnostic: self-improvement review",
-  prompt: "Ultrathink. Run self-improvement review. Parameters: project_root: /tmp/ml-opt-diagnostic, exp_root: /tmp/ml-opt-diagnostic/experiments, primary_metric: loss, lower_is_better: true, scope: session. After completing, update your agent memory with optimization anti-patterns observed and self-improvement suggestions for this project.",
+  description: "Diagnostic: session review",
+  prompt: "Ultrathink. Run session review. Parameters: project_root: /tmp/ml-opt-diagnostic, exp_root: /tmp/ml-opt-diagnostic/experiments, primary_metric: loss, lower_is_better: true, scope: session. After completing, update your agent memory with optimization anti-patterns observed and actionable suggestions for this project.",
   subagent_type: "ml-optimizer:analysis-agent"
 )
 ```
 
-#### Phase 9 Step 3: Meta-Patch Promotion (self-improvement persistence)
+#### Step 3: Meta-Patch Promotion (persist self-improvement across sessions)
 
-If meta-patches were generated in step 6.6e, verify the promotion flow works. This tests that the self-improvement can persist across sessions.
+If meta-patches were generated in step 6.6e, verify the promotion flow works. This tests that skill improvements can persist across sessions.
 
 ```bash
 python3 -c "

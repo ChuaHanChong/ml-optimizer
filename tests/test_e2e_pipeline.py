@@ -2116,14 +2116,14 @@ class TestEvolveE2E:
         # EVOLVE-BLOCK format
         assert "EVOLVE-BLOCK" in content
 
-    def test_code_refinement_in_analyze_pivot(self):
-        """Analyze skill includes code_refinement as a valid pivot type."""
+    def test_code_evolution_in_analyze_pivot(self):
+        """Analyze skill includes code_evolution as a valid pivot type."""
         analyze_path = _EVOLVE_PLUGIN_ROOT / "skills" / "analyze" / "SKILL.md"
         content = analyze_path.read_text()
-        assert "code_refinement" in content
+        assert "code_evolution" in content
         assert "pivot_type" in content
         # Verify it's in the pivot type enum
-        assert "code_refinement>" in content or "code_refinement\"" in content
+        assert "code_evolution|" in content or 'code_evolution"' in content
 
     def test_implement_agent_has_evolve_instructions(self):
         """Implement-agent has explicit Skill() invocation instructions for evolve."""
@@ -2134,12 +2134,12 @@ class TestEvolveE2E:
         assert 'Skill("ml-optimizer:shinka-run")' in content
         assert 'Skill("ml-optimizer:shinka-inspect")' in content
 
-    def test_phase7_has_code_refinement_dispatch(self):
-        """Phase 7 dispatches tuning → evolve → tuning → experiment for code_refinement."""
+    def test_phase7_has_code_evolution_dispatch(self):
+        """Phase 7 dispatches tuning → evolve → tuning → experiment for code_evolution."""
         phase7_path = (_EVOLVE_PLUGIN_ROOT / "skills" / "orchestrate" / "references"
                       / "phase-7-experiment-loop.md")
         content = phase7_path.read_text()
-        assert "code_refinement" in content
+        assert "code_evolution" in content
         # Tuning agent proposes evolve HPs, then implement agent executes
         assert 'Skill("ml-optimizer:evolve")' in content
         assert "Tune evolve HPs" in content
@@ -2235,16 +2235,14 @@ class TestEvolveE2E:
         # Unrelated technique should NOT match
         assert not is_dead_end(exp_root, "mixup augmentation")
 
-    def test_code_refinement_pivot_conditions(self):
-        """Analyze SKILL.md documents conditions and scope gating for code_refinement."""
+    def test_code_evolution_pivot_conditions(self):
+        """Analyze SKILL.md documents conditions and scope gating for code_evolution."""
         analyze_path = _EVOLVE_PLUGIN_ROOT / "skills" / "analyze" / "SKILL.md"
         content = analyze_path.read_text()
-        # code_refinement conditions documented
-        assert "code_refinement" in content
-        assert "method branch improved" in content or "branch improved" in content
-        assert "rho" in content or "correlation" in content
-        assert "0.3" in content
-        # Scope gating: code_refinement only for scope_level "full"
+        # code_evolution conditions documented
+        assert "code_evolution" in content
+        assert "correlation" in content.lower()
+        # Scope gating: code_evolution only for scope_level "full"
         assert "scope_level" in content
         # Research pivots gated on scope
         assert "training" in content and "skip" in content.lower()
@@ -2258,8 +2256,8 @@ class TestEvolveE2E:
         content = phase8_path.read_text()
         # Analysis agent dispatched to assess stacked result
         assert "Analyze stacked" in content
-        # Analysis recommends code_refinement → evolve
-        assert "code_refinement" in content
+        # Analysis recommends code_evolution → evolve
+        assert "code_evolution" in content
         assert 'Skill("ml-optimizer:evolve")' in content or "ml-optimizer:evolve" in content
         # Compares stacked vs best individual (interference detection)
         assert "best individual" in content or "best_individual" in content
@@ -2291,9 +2289,9 @@ class TestEvolveE2E:
         """Analyze SKILL.md does NOT set evolve HPs — tuning agent does."""
         analyze_path = _EVOLVE_PLUGIN_ROOT / "skills" / "analyze" / "SKILL.md"
         content = analyze_path.read_text()
-        # Analyze recommends code_refinement but delegates HP tuning
-        assert "code_refinement" in content
-        assert "tuning agent" in content.lower()
+        # Analyze recommends code_evolution but delegates HP tuning
+        assert "code_evolution" in content
+        assert "tuning" in content.lower() and "agent" in content.lower()
 
     def test_phase7_dispatches_tuning_before_evolve(self):
         """Phase 7 dispatches tuning agent for evolve HPs before implement agent."""

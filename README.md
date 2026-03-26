@@ -190,7 +190,7 @@ Only `orchestrate` is directly invocable. All other skills have `disable-model-i
    -> Analysis agent loops evolve + HP-tune until improvement or stop
 9. Generate final report                                                 [ephemeral]
    -> Meta-patch promotion gate (if meta-improvements were made)
-   -> Optional self-improvement review                                   [persistent]
+   -> Optional session review                                            [persistent]
 ```
 
 ## Project Directory Structure
@@ -212,7 +212,7 @@ The plugin creates this structure in your project:
   reports/                              # Markdown reports (analysis, research, final)
   reports/error-log.json                # Structured error event log
   reports/suggestion-history.json       # Suggestion feedback loop
-  reports/session-review.md             # Self-improvement review
+  reports/session-review.md             # Session review
   results-table.md                      # Auto-generated Markdown results summary
   prepared-data/                        # Prepared dataset (if preprocessing needed)
   code-archive.jsonl                    # Hyperagent evolutionary archive (lineage + fitness)

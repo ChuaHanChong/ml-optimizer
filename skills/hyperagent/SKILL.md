@@ -39,7 +39,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/setup_hyperagent.sh
 
 If the archive doesn't exist yet:
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/hyperagent_adapter.py <exp_root> init
+python3 ${CLAUDE_PLUGIN_ROOT}/skills/hyperagent-init/scripts/init_archive.py --output-dir <exp_root>/hyperagent
 ```
 This creates gen-000 from baseline and seeds validated branches from Phase 6.
 
@@ -50,10 +50,10 @@ Phase 7 ↔ Phase 8 in a loop. Each iteration:
 ### Step 1: Read Context
 
 ```bash
-python3 scripts/goal_memory.py <exp_root> summary
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/hyperagent_adapter.py <exp_root> stats
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/hyperagent_adapter.py <exp_root> operator-stats
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/hyperagent_adapter.py <exp_root> best 5
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py <exp_root> summary
+python3 ${CLAUDE_PLUGIN_ROOT}/skills/hyperagent-archive/scripts/archive_utils.py stats --output-dir <exp_root>/hyperagent
+python3 ${CLAUDE_PLUGIN_ROOT}/skills/hyperagent-archive/scripts/archive_utils.py operator-stats --output-dir <exp_root>/hyperagent
+python3 ${CLAUDE_PLUGIN_ROOT}/skills/hyperagent-archive/scripts/archive_utils.py best --output-dir <exp_root>/hyperagent -n 5
 ```
 
 Also read the latest analysis output (from the orchestrator's context relay).
@@ -64,16 +64,16 @@ Based on the context + analysis advice, decide ONE action. State your decision c
 
 **Decision guidance (analysis advises, you decide):**
 
-| Operator | When | Who executes |
-|---|---|---|
-| `hp_tune` | Default start, after code mutations, analysis says continue/hp_expand/narrow_space | Orchestrator dispatches tuning-agent + experiment-agents |
-| `research_implement` | User papers available, no research yet, fresh ideas needed | Orchestrator dispatches research-agent + implement-agent FROM selected parent |
-| `llm_patch` | HP plateaued, research explored, structural changes needed | You execute directly via `Skill("ml-optimizer:hyperagent-generate")` |
-| `shinka_evolve` | Fine-grained tuning needed on a good variant | You execute via `Skill("ml-optimizer:hyperagent-generate")` which invokes `Skill("ml-optimizer:evolve")` |
-| `meta_improve` | All approaches stalling, strategy needs change (max 3/session) | You execute via `Skill("ml-optimizer:hyperagent-generate")` with `meta_improvement_mode: true` |
-| `method_stacking` | Analysis advises stacking, multiple methods improved | Orchestrator runs Phase 8 stacking flow |
+| Operator | When | Who executes | Generate skill operator |
+|---|---|---|---|
+| `hp_tune` | Default start, after code mutations, analysis says continue/hp_expand/narrow_space | Orchestrator dispatches tuning-agent + experiment-agents | N/A (orchestrator) |
+| `research_implement` | User papers available, no research yet, fresh ideas needed | Orchestrator dispatches research-agent + implement-agent FROM selected parent | N/A (orchestrator) |
+| `llm_patch` | HP plateaued, research explored, structural changes needed | You execute via `Skill("ml-optimizer:hyperagent-generate")` | `llm_patch` |
+| `shinka_evolve` | Fine-grained tuning needed on a good variant | You execute via `Skill("ml-optimizer:hyperagent-generate")` which invokes `Skill("ml-optimizer:evolve")` | `external_tool` |
+| `meta_improve` | All approaches stalling, strategy needs change (max 3/session) | You execute via `Skill("ml-optimizer:hyperagent-generate")` with `meta_improvement_mode: true` | `meta_improve` |
+| `method_stacking` | Analysis advises stacking, multiple methods improved | Orchestrator runs Phase 8 stacking flow | N/A (orchestrator) |
 
-**Key distinction:** For `hp_tune`, `research_implement`, and `method_stacking`, you return the decision and the orchestrator dispatches the worker agents. For `llm_patch`, `shinka_evolve`, and `meta_improve`, you execute directly using your skills.
+**Key distinction:** For `hp_tune`, `research_implement`, and `method_stacking`, you return the decision and the orchestrator dispatches the worker agents. For `llm_patch`, `shinka_evolve`, and `meta_improve`, you execute directly using your skills. When invoking `Skill("ml-optimizer:hyperagent-generate")`, pass the **Generate skill operator** column value as `mutation_operator`.
 
 ### Step 3: Execute (for actions you handle directly)
 
@@ -94,7 +94,7 @@ After execution, report what you did: which action, the genid, branch name, fitn
 
 After HP tuning improves a variant:
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/hyperagent_adapter.py <exp_root> update-fitness <genid> <new_score> [best_exp_id]
+python3 ${CLAUDE_PLUGIN_ROOT}/skills/hyperagent-archive/scripts/archive_utils.py update-fitness --output-dir <exp_root>/hyperagent <genid> <new_score> [--exp-id <best_exp_id>]
 ```
 
 ### Step 5: Report Meta-Patches (if meta-improve was used)
@@ -116,12 +116,12 @@ The orchestrator dispatches the analysis-agent (with meta-patches if active). Th
 
 Do not invoke these directly — this skill orchestrates them:
 
-- `Skill("ml-optimizer:hyperagent-setup")` — Initialize submodule and verify environment
 - `Skill("ml-optimizer:hyperagent-init")` — Create archive from baseline + existing branches
 - `Skill("ml-optimizer:hyperagent-select")` — Select parent (5 strategies: sigmoid + diversity)
 - `Skill("ml-optimizer:hyperagent-generate")` — Core mutation (3 operators + meta-improvement)
 - `Skill("ml-optimizer:hyperagent-eval")` — Two-stage evaluation (staged → full with warm-start)
 - `Skill("ml-optimizer:hyperagent-archive")` — Update archive with results
+- `Skill("ml-optimizer:hyperagent-inspect")` — Extract top variants as Markdown context bundle
 
 ## ShinkaEvolve Integration
 

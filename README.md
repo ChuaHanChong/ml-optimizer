@@ -155,7 +155,7 @@ Only `orchestrate` is directly invocable. All other skills have `disable-model-i
 | `analyze` | Post-batch analysis — ranks results, recommends next action | Internal |
 | `report` | Generates comprehensive final optimization report | Internal |
 | `evolve` | Orchestrates evolutionary code refinement via full ShinkaEvolve pipeline (convert → run → inspect) | Internal |
-| `hyperagent-setup` | Initialize Hyperagents submodule and verify environment | Internal |
+| `hyperagent-inspect` | Extract best archive entries as Markdown context bundle | Internal |
 | `hyperagent-init` | Create evolutionary archive from baseline + existing branches | Internal |
 | `hyperagent-select` | Select parent from archive (5 strategies: sigmoid + diversity) | Internal |
 | `hyperagent-generate` | Core mutation — LLM patch / ShinkaEvolve / research-implement + self-referential improvement | Internal |
@@ -178,7 +178,7 @@ Only `orchestrate` is directly invocable. All other skills have `disable-model-i
    -> Initialize code archive (baseline + implementation branches)
    -> Each iteration, the hyperagent decides:
       a. HP tuning (delegates to tuning-agent)                           [persistent]
-      b. LLM code patch (hyperagent modifies code directly)             [persistent]
+      b. LLM code patch (hyperagent modifies code directly)              [persistent]
       c. ShinkaEvolve mutation (delegates to evolve skill)
       d. Research-implement (delegates to research + implement agents)
       e. Meta-improvement (modifies skill files, max 3/session)
@@ -188,9 +188,10 @@ Only `orchestrate` is directly invocable. All other skills have `disable-model-i
    -> Analysis advises stacking, hyperagent decides
    -> Sequentially merges best methods, skip-on-failure
    -> Analysis agent loops evolve + HP-tune until improvement or stop
-9. Generate final report                                                 [ephemeral]
-   -> Meta-patch promotion gate (if meta-improvements were made)
-   -> Optional session review                                            [persistent]
+9. Report, Review & Promotion:
+   -> Generate final report                                              [ephemeral]
+   -> Session review (what worked, what didn't, how to improve)          [persistent]
+   -> Meta-patch promotion (if hyperagent generated skill patches)
 ```
 
 ## Project Directory Structure
@@ -241,7 +242,7 @@ All scripts in `scripts/` use only the standard library and work as both importa
 | `scripts/dashboard.py` | `python3 scripts/dashboard.py <exp_root> [--live] [--table] [--serve --port 8080]` — HTML dashboard + Markdown results table |
 | `scripts/excalidraw_gen.py` | `python3 scripts/excalidraw_gen.py <exp_root> pipeline\|comparison\|hp-landscape\|architecture <args>` — Excalidraw JSON diagrams |
 | `scripts/goal_memory.py` | `python3 scripts/goal_memory.py <exp_root> init-goals\|read-goals\|log-behavior\|query-behaviors\|validate-output\|summary\|sync-from-errors` — goal anchoring, behavioral memory, agent output validation |
-| `scripts/hyperagent_adapter.py` | `python3 scripts/hyperagent_adapter.py <exp_root> init\|select-parent\|add\|lineage\|stats\|best\|operator-stats\|prune` — archive management + parent selection (Hyperagents' exact algorithms) |
+| `skills/hyperagent/Hyperagents/skills/*/scripts/*.py` | Per-skill helper scripts (init\_archive.py, select\_parent.py, run\_eval.py, archive\_utils.py, inspect\_best.py). Import `gl_utils.py` directly from the Hyperagents submodule. |
 | `scripts/setup_hyperagent.sh` | `bash scripts/setup_hyperagent.sh` — initialize Hyperagents submodule and create skill symlinks for auto-discovery |
 
 ## Running Tests
@@ -344,12 +345,12 @@ skills/hyperagent/
   Hyperagents/                              # Git submodule (ChuaHanChong/HyperAgents)
     utils/gl_utils.py                       # Archive + parent selection algorithms
     skills/hyperagent-*/                    # Claude Code skills (in the submodule)
-  hyperagent-setup → hyperagent/Hyperagents/skills/hyperagent-setup   # Symlinks
-  hyperagent-init → hyperagent/Hyperagents/skills/hyperagent-init
+  hyperagent-init → hyperagent/Hyperagents/skills/hyperagent-init       # Symlinks
   hyperagent-select → hyperagent/Hyperagents/skills/hyperagent-select
   hyperagent-generate → hyperagent/Hyperagents/skills/hyperagent-generate
   hyperagent-eval → hyperagent/Hyperagents/skills/hyperagent-eval
   hyperagent-archive → hyperagent/Hyperagents/skills/hyperagent-archive
+  hyperagent-inspect → hyperagent/Hyperagents/skills/hyperagent-inspect
 ```
 
 ### ShinkaEvolve (SakanaAI)

@@ -98,13 +98,15 @@ Read `references/phase-7-experiment-loop.md` for the full workflow.
 
 Pre-loop: validate state, initialize code archive (hyperagent-init), load manifest, load meta-patches, save state.
 
+**MANDATORY: You MUST dispatch the hyperagent-agent for Phase 7. Do NOT fall back to a simpler HP-tune → experiment → analyze loop. The hyperagent IS the loop driver — it selects operators (HP tuning, LLM patches, ShinkaEvolve, research-implement, meta-improvement), manages the archive, and decides strategy. Running Phase 7 without the hyperagent is a bug. If ShinkaEvolve setup fails, the hyperagent will fall back to other operators — but the hyperagent itself must always be dispatched.**
+
 Dispatch the hyperagent with `Skill("ml-optimizer:hyperagent")` — the orchestrating skill that controls the full optimization. The hyperagent runs Phase 7 experiments and Phase 8 stacking in a loop, choosing the best strategy at each iteration. The orchestrator relays context between agents and tracks state.
 
 ```
 Agent(
   description: "Hyperagent optimization",
   prompt: "Ultrathink. Invoke Skill('ml-optimizer:hyperagent'). Parameters: project_root: {project_root}, exp_root: {exp_root}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, scope_level: {scope_level}, target_value: {target_value}.",
-  subagent_type: "ml-optimizer:hyperagent"
+  subagent_type: "ml-optimizer:hyperagent-agent"
 )
 ```
 Save the hyperagent's ID to `agent_registry["hyperagent"]` for SendMessage resumption.
@@ -128,11 +130,13 @@ save_state(phase=7, iteration=N, running_exp_ids=[], exp_root=exp_root,
            hyperagent_state=updated_hyperagent_state)
 ```
 
-## Phase 8: Method Stacking
+## Phase 8: Method Stacking (Hyperagent Driven)
 
 Read `references/phase-8-stacking.md` for the full workflow.
 
-Phase 7 and Phase 8 are in a loop. The analysis agent advises when stacking may be beneficial (pivot_type: `method_stacking`). The hyperagent decides whether to stack, which methods, and in what order. No fixed method count — decisions are evidence-based.
+**MANDATORY: Phase 8 is driven by the hyperagent, same as Phase 7. Resume the hyperagent via `SendMessage(to: agent_registry["hyperagent"])` with the stacking context. Do NOT implement stacking logic directly in the orchestrator — the hyperagent decides which methods to stack, in what order, when to evolve for interference resolution, and when to stop. Phase 7 ↔ Phase 8 is one continuous hyperagent-driven loop.**
+
+The analysis agent advises when stacking may be beneficial (pivot_type: `method_stacking`). The hyperagent decides whether to stack, which methods, and in what order. No fixed method count — decisions are evidence-based.
 
 ```
 Phase 7 (experiment loop) ←→ Phase 8 (method stacking)
@@ -143,13 +147,16 @@ Phase 7 (experiment loop) ←→ Phase 8 (method stacking)
 
 The hyperagent merges methods sequentially (largest improvement first), resolves interference via ShinkaEvolve if needed. Requires git branch strategy.
 
-## Phase 9: Report
+## Phase 9: Report, Review & Promotion
 
 Read `references/phase-9-report.md` for the full workflow.
 
-Dispatch `ml-optimizer:report-agent`. Sync errors. Optional session review via `ml-optimizer:analysis-agent` (review mode). Present summary.
+Three steps:
+1. **Report:** Dispatch `ml-optimizer:report-agent`. Sync errors. Generate dashboard. Present summary.
+2. **Session review:** Dispatch `ml-optimizer:analysis-agent` (review mode) — analyzes what worked, what didn't, and how to improve. Not optional.
+3. **Meta-patch promotion:** If `hyperagent_state.active_meta_patches` is non-empty, evaluate patches via analysis-agent, present to user for promotion to the plugin branch.
 
-### Phase 9 Step 3: Meta-Patch Promotion
+### Phase 9 Meta-Patch Promotion
 
 If `hyperagent_state.active_meta_patches` is non-empty:
 

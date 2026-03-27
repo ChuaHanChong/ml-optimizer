@@ -1,5 +1,7 @@
 # Phase 1: Understand the Model
 
+**This phase runs within plan mode (entered in Phase 0). Do NOT exit plan mode here — Phase 0's planning loop (Step 6) handles plan presentation, user refinement, and ExitPlanMode.**
+
 0. **Cross-session memory lookup** (optional but recommended):
    Before analyzing the codebase, use `claude-mem:mem-search` to search for past optimization sessions involving similar model types, tasks, or frameworks. This may surface:
    - HP ranges that worked well for similar models
@@ -71,23 +73,5 @@
    - Show the user: estimated total GPU-hours and wall-clock time
    - If the estimate exceeds the user's max training time constraint from Phase 0, warn and adjust
 
-8. **Confirm plan with user:**
-   Use AskUserQuestion to confirm the plan aligns with their Phase 0 answers:
-   ```
-   Based on your goals and my analysis, here is the optimization plan:
-   [plan summary]
-
-   Key decisions:
-   - Primary metric: [metric from Phase 0]
-   - Target: [target from Phase 0]
-   - Search space: [summary]
-   - Estimated experiments: [N]
-   - Estimated total GPU-hours: [X]
-   - Scope: [HP-only / HP + research, per Phase 0]
-
-   How many HP tuning batches between research rounds? (default: 3)
-
-   Does this match your expectations? Any adjustments?
-   ```
-
-   Store `hp_batches_per_round` (default: 3) in user_choices. This controls how often the orchestrator auto-triggers a full research → implement cycle. Set to a higher value (e.g., 5-10) for slower research cadence.
+8. **Return to Phase 0 planning loop:**
+   After Steps 1-7, return to Phase 0 Step 6 which presents the full optimization plan to the user and handles the multi-round refinement loop. The user can adjust scope, constraints, or budget and the plan will be re-generated. Plan mode is exited only when the user approves.

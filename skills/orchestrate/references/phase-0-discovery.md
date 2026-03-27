@@ -47,10 +47,6 @@
 3. **Record user responses:**
    - Store the user's answers — they will guide every subsequent phase
    - If the user is unsure about some answers, note those as areas to investigate in Phase 1
-   - **Complex optimization scenarios:** If the user's problem has multiple potential improvement
-     vectors (e.g., training instability AND poor generalization AND slow convergence) or they're
-     unsure about approach, consider using `superpowers:brainstorming` to systematically explore
-     optimization strategies before committing to a plan.
 
 3.5. **Write optimization goals:**
    After recording user responses, create the goal anchor file:
@@ -81,6 +77,36 @@
    ```
    This file persists in `experiments/optimization-goals.json` and is read by all agents before acting.
 
+3.6. **Brainstorm optimization strategy:**
+   Use `Skill("superpowers:brainstorming")` to explore the optimization space with the user. This helps surface non-obvious approaches, trade-offs, and priorities before committing to a plan. The brainstorming skill structures the conversation to explore:
+   - What are the most likely bottlenecks? (data, model capacity, training recipe, regularization)
+   - What trade-offs matter? (speed vs accuracy, simplicity vs performance)
+   - What's the risk appetite? (conservative HP tuning vs aggressive code mutations)
+   - Are there domain-specific techniques worth prioritizing?
+
+   The brainstorming output informs the scope, search space, and strategy for the optimization plan.
+
+3.7. **Present understanding and invite refinement:**
+   Summarize what you understood back to the user:
+   ```
+   Here's what I understood:
+   - Metric: {primary_metric} ({direction}), target: {target_value}
+   - Scope: {scope_level} ({explanation})
+   - Budget: {budget_description}
+   - Constraints: {frozen_params, time limits, etc.}
+   - Dataset: {location}
+   - Environment: {env_manager} ({env_name})
+   - Strategy insights from brainstorming: {key_insights}
+
+   Would you like to adjust anything before I analyze the codebase?
+   ```
+   Use `AskUserQuestion` for this. If the user wants changes:
+   - Update the relevant user_choices
+   - Re-write `optimization-goals.json` via `goal_memory.py init-goals` with updated values
+   - Re-run brainstorming if the user wants to explore a different direction
+   - Re-present the summary
+   - Repeat until the user is satisfied
+
 4. **Initialize Hyperagent state:**
 
    The plugin operates as a self-referential hyperagent by default. Initialize state:
@@ -105,6 +131,48 @@
      save_state(..., hyperagent_state=ha)
      ```
 
-5. **Exit plan mode:**
-   - Use `ExitPlanMode` once you have enough information to proceed
-   - Summarize your understanding back to the user before moving on
+5. **Analyze codebase (still in plan mode):**
+
+   **Do NOT exit plan mode yet.** Stay in plan mode and run Phase 1 steps 1-7 (read-only analysis):
+   - Locate model code, training config, training script
+   - Check GPU availability
+   - Synthesize model understanding
+   - Create optimization plan from `references/plan-template.md`
+   - Estimate cost/time budget
+
+   See `references/phase-1-understand.md` for the full workflow.
+
+6. **Present full optimization plan to user:**
+
+   Use `AskUserQuestion` to present the plan and offer choices:
+   ```
+   Here's my optimization plan based on your goals and the codebase analysis:
+
+   **Model:** {model_type} ({framework})
+   **Task:** {task_description}
+   **HP search space:** {summary}
+   **Estimated experiments:** {N} (across {gpu_count} GPUs)
+   **Estimated GPU-hours:** {X}
+   **Scope:** {scope_level}
+
+   How many HP tuning batches between research rounds? (default: 3)
+
+   Would you like to:
+   1. Proceed with this plan
+   2. Adjust scope, constraints, or budget (returns to discovery)
+   3. Re-brainstorm strategy (explore different optimization directions)
+   4. Ask questions about the approach
+   ```
+
+   - **Option 1 (proceed):** Continue to Step 7.
+   - **Option 2 (adjust):** Go back to Step 3.7 — user refines answers, goals are re-written, codebase is re-analyzed if needed, plan is re-generated and re-presented.
+   - **Option 3 (re-brainstorm):** Re-run `Skill("superpowers:brainstorming")` with the user's new direction, then re-generate the plan and re-present.
+   - **Option 4 (questions):** Answer the user's questions, then re-present the same options.
+
+   Store `hp_batches_per_round` (default: 3) in user_choices.
+
+   **The user can loop through options 2, 3, and 4 as many times as they want.** Only option 1 advances the pipeline.
+
+7. **Exit plan mode:**
+   - Use `ExitPlanMode` only after the user chooses to proceed (option 1)
+   - Proceed to Phase 2 (prerequisites)

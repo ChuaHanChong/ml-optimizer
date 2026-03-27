@@ -50,17 +50,11 @@ Each phase has a dedicated reference file with the full workflow. Read the refer
 | 8 | `references/phase-8-stacking.md` | experiment, implement, tuning agents |
 | 9 | `references/phase-9-report.md` | `ml-optimizer:report-agent`, `ml-optimizer:analysis-agent` (review mode) |
 
-## Phase 0: Discovery & Planning (MANDATORY)
+## Phase 0 + 1: Discovery, Planning & Codebase Analysis (MANDATORY)
 
-Read `references/phase-0-discovery.md` for the full workflow.
+Read `references/phase-0-discovery.md` for the full workflow. Phase 1 details in `references/phase-1-understand.md`.
 
-Enter plan mode, ask discovery questions (metric target, constraints, data paths, environment, scope), record responses, exit plan mode.
-
-## Phase 1: Understand the Model
-
-Read `references/phase-1-understand.md` for the full workflow.
-
-Locate model code, training config, and training script. Check GPUs. Synthesize understanding (framework, task, architecture). Detect tabular ML, RL, or generative models. Create optimization plan. Confirm with user.
+Enter plan mode. Ask discovery questions (metric, target, constraints, data paths, environment, scope). Record responses. Write optimization goals. **Stay in plan mode through Phase 1** — analyze codebase, create optimization plan, estimate cost. Present full plan to user. **The user can do multiple rounds of refinement** — adjusting scope, constraints, or budget — before approving. Exit plan mode only when the user chooses to proceed.
 
 ## Phase 2: Prerequisites Check
 

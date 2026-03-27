@@ -167,8 +167,8 @@ Only `orchestrate` is directly invocable. All other skills have `disable-model-i
 6 agents are **persistent** (resumed via `SendMessage` with accumulated context), 4 are **ephemeral** (fresh spawn). The hyperagent enables self-improvement and drives Phase 7 ↔ Phase 8 in a loop. The orchestrator relays findings between agents.
 
 ```
-0. Discovery (plan mode, user Q&A — data paths, env manager)
-1. Understand model (read code + config, check GPUs)
+0+1. Discovery & Planning (plan mode — multi-round refinement until user approves)
+     Q&A → write goals → analyze codebase → present plan → user refines → repeat
 2. Prerequisites (validate dataset, prepare data, install deps)          [ephemeral]
 3. Establish baseline                                                    [ephemeral]
 4. User checkpoint: review baseline, choose direction

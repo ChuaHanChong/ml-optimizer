@@ -26,10 +26,10 @@ ENTRY POINT
   User types:  /optimize <model-path-or-description>
                     |
                     v
-          +-------------------+
-          |  commands/        |
-          |  optimize.md      |  <-- slash command definition
-          +-------------------+
+        +---------------------+
+        |  commands/          |
+        |  optimize.md        |  <-- slash command definition
+        +---------------------+
                     |
                     v
     +-------------------------------+
@@ -136,52 +136,82 @@ ENTRY POINT
 ================================================================================
 
 
-  PHASE 0: DISCOVERY
-  ===================
-  Mode: Plan Mode (read-only, user Q&A)
+  PHASE 0+1: DISCOVERY & PLANNING (multi-round)
+  ================================================
+  Mode: Plan Mode throughout (read-only until user approves)
   Agent: orchestrator (no subagent dispatch)
 
-  User answers 8+ questions:
-    Q1: Model path or description
-    Q2: Primary metric (accuracy, loss, PSNR, F1, etc.)
-    Q3: Lower is better? (for primary metric)
-    Q4: Target value (optional)
-    Q5: Training command
-    Q6: Eval command (if separate)
-    Q7: Divergence metric (default: loss)
-    Q7a: Divergence lower_is_better? (default: True)
-    Q8: Data paths (train, val)
-    Q9: Environment manager (conda/venv/none)
-    Q10: Model category (supervised/RL/generative)
-    Q11: User papers (optional, for research)
-
-  +-- RL polarity validation -------------------------------------------+
-  | If divergence_metric contains "reward"/"return"/"score"             |
-  | AND divergence_lower_is_better = True (default):                    |
-  |   WARN: "For reward-like metrics, divergence means dropping —       |
-  |          confirming lower_is_better=False?"                         |
-  +---------------------------------------------------------------------+
-
-  Complex optimization: superpowers:brainstorming (multi-objective scenarios)
-  Saves: pipeline-state.json (user_choices), user-choices-backup.json
-         optimization-goals.json (goal anchor — via goal_memory.py init-goals)
-
+    +--------------------------------------------------------------+
+    |  STEP A — DISCOVERY (ask questions)                          |
+    |                                                              |
+    |  User answers 12 questions:                                  |
+    |    Q1:  Optimization target metric                           |
+    |    Q2:  Current performance (if known)                       |
+    |    Q3:  Target performance                                   |
+    |    Q4:  Constraints (time, GPU memory, frozen params)        |
+    |    Q5:  Prior attempts                                       |
+    |    Q6:  Scope (HP-only / HP+research / full autonomous)      |
+    |    Q7:  Divergence metric (default: loss)                    |
+    |    Q7a: Divergence polarity (auto-inferred)                  |
+    |    Q8:  Optimization type (training vs inference)            |
+    |    Q9:  Training budget (time / epochs / default)            |
+    |    Q10: Anything else?                                       |
+    |    Q11: Dataset location                                     |
+    |    Q12: Environment manager                                  |
+    |                                                              |
+    |  RL polarity validation:                                     |
+    |    If metric contains "reward"/"return"/"score"              |
+    |    AND lower_is_better = True → WARN and confirm             |
+    +--------------------------------------------------------------+
                     |
                     v
+    +--------------------------------------------------------------+
+    |  STEP B — BRAINSTORM + WRITE GOALS                           |
+    |                                                              |
+    |  1. Skill("superpowers:brainstorming")                       |
+    |     - Explore bottlenecks, trade-offs, risk appetite         |
+    |     - Surface domain-specific techniques                     |
+    |  2. Write optimization-goals.json (goal anchor)              |
+    |  3. Save pipeline-state.json (user_choices)                  |
+    |  4. Present summary to user → invite refinement              |
+    |                                                              |
+    |  If user wants changes:                                      |
+    |    → update goals → re-brainstorm if needed → re-present     |  <--+
+    |    → repeat until user is satisfied                          |     |
+    +--------------------------------------------------------------+     |
+                    |                                                    |
+                    v                                                    |
+    +--------------------------------------------------------------+     |
+    |  STEP C — ANALYZE CODEBASE (still in plan mode)              |     |
+    |                                                              |     |
+    |  - Read model files, config files                            |     |
+    |  - python3 gpu_check.py  -->  GPU count, VRAM                |     |
+    |  - Detect framework (PyTorch/TF/JAX/sklearn/XGBoost)         |     |
+    |  - Determine model_category if not set                       |     |
+    |  - claude-mem:mem-search (recall past projects)              |     |
+    |  - Create optimization plan from plan-template.md            |     |
+    |  - Estimate cost/time budget                                 |     |
+    +--------------------------------------------------------------+     |
+                    |                                                    |
+                    v                                                    |
+    +--------------------------------------------------------------+     |
+    |  STEP D — PRESENT FULL PLAN (user can loop)                  |     |
+    |                                                              |     |
+    |  Present plan with options:                                  |     |
+    |    1. Proceed        → ExitPlanMode → Phase 2                |     |
+    |    2. Adjust         → back to Step B  --------------------------->+
+    |    3. Re-brainstorm  → back to Step B  --------------------------->+
+    |    4. Ask questions  → answer → re-present Step D            |
+    |                                                              |
+    |  The user can loop as many times as they want.               |
+    |  Only option 1 exits plan mode.                              |
+    +--------------------------------------------------------------+
 
-  PHASE 1: UNDERSTAND MODEL
-  ==========================
-  Agent: orchestrator reads code directly
-  External: claude-mem:mem-search (recall past projects)
-
-    - Read model files, config files
-    - python3 gpu_check.py  -->  GPU count, VRAM
-    - Detect framework (PyTorch/TF/JAX/sklearn/XGBoost/LightGBM)
-    - Determine model_category if not set
-
-  Writes: dev_notes.md (session log starts)
+  Writes: optimization-goals.json, pipeline-state.json,
+          user-choices-backup.json, dev_notes.md
 
                     |
+      (user chose "Proceed" → ExitPlanMode)
                     v
 
   PHASE 2: PREREQUISITES
@@ -256,29 +286,29 @@ ENTRY POINT
   ==================
   Agent: research-agent --> ml-optimizer:research skill
 
-    +--------------------------------------------------------------+
-    |  Source modes:                                               |
-    |    "web"       — WebSearch + alphaxiv MCP (parallel)         |
-    |    "knowledge" — Structured ideation (6 lenses: Problem-First,|
-    |                  Analogical, What Changed, Constraint,        |
-    |                  Inversion, Composition). Diverge→converge→   |
-    |                  refine. Confidence cap 7/10.                 |
-    |    "both"      — LLM proposals + web/alphaxiv validation     |
-    |                                                              |
-    |  Scope levels:                                               |
-    |    "training"      — HPs, schedulers, augmentation (safest)  |
-    |    "architecture"  — model changes, loss functions           |
-    |    "full"          — any change including data pipeline      |
-    |                                                              |
-    |  Fuzzy deduplication (NEW):                                  |
-    |    - Normalize: lowercase, strip suffixes                    |
-    |    - Substring containment check                             |
-    |    - Common abbreviation matching (lr↔learning rate, etc.)   |
-    |    - >70% word overlap → treat as duplicate                  |
-    |                                                              |
-    |  Priority scoring:                                           |
-    |    score = (impact × confidence) / (11 - feasibility)        |
-    +--------------------------------------------------------------+
+    +----------------------------------------------------------------+
+    |  Source modes:                                                 |
+    |    "web"       — WebSearch + alphaxiv MCP (parallel)           |
+    |    "knowledge" — Structured ideation (6 lenses: Problem-First, |
+    |                  Analogical, What Changed, Constraint,         |
+    |                  Inversion, Composition). Diverge→converge→    |
+    |                  refine. Confidence cap 7/10.                  |
+    |    "both"      — LLM proposals + web/alphaxiv validation       |
+    |                                                                |
+    |  Scope levels:                                                 |
+    |    "training"      — HPs, schedulers, augmentation (safest)    |
+    |    "architecture"  — model changes, loss functions             |
+    |    "full"          — any change including data pipeline        |
+    |                                                                |
+    |  Fuzzy deduplication (NEW):                                    |
+    |    - Normalize: lowercase, strip suffixes                      |
+    |    - Substring containment check                               |
+    |    - Common abbreviation matching (lr↔learning rate, etc.)     |
+    |    - >70% word overlap → treat as duplicate                    |
+    |                                                                |
+    |  Priority scoring:                                             |
+    |    score = (impact × confidence) / (11 - feasibility)          |
+    +----------------------------------------------------------------+
 
   Reads: baseline.json, user_choices, existing findings files, dead-ends.json
   Writes: experiments/reports/research-findings.md
@@ -295,26 +325,26 @@ ENTRY POINT
   Code analysis: feature-dev:code-explorer (dependency tracing)
   Quality gate: feature-dev:code-reviewer (Step 4e.5, advisory)
 
-    +---------------------------------------------------------------+
-    |  Strategy A — Git Branch (default):                           |
-    |    Parallel via git worktrees (one Agent per proposal):       |
-    |      1. git checkout -b ml-opt/<slug> from base branch        |
-    |      2. Apply code changes                                    |
-    |      3. Validate syntax (py_compile)                          |
-    |      4. Run dry-run test                                      |
-    |      5. Record in implementation-manifest.json                |
-    |                                                               |
-    |  Strategy B — File Backup (non-git fallback):                 |
-    |    Restore-before-apply pattern (prevents cross-contamination)|
-    |      1. Create baseline backup (_baseline/)                   |
-    |      2. For EACH proposal:                                    |
-    |         a. Restore ALL files from _baseline/ (clean slate)    |
-    |         b. Apply this proposal's changes                      |
-    |         c. Validate syntax                                    |
-    |         d. If pass: backup to backups/<slug>/                 |
-    |         e. Restore from _baseline/ (clean for next)           |
-    |      3. Experiments run SEQUENTIALLY (not parallel)           |
-    +---------------------------------------------------------------+
+    +--------------------------------------------------------------+
+    |  Strategy A — Git Branch (default):                          |
+    |    Parallel via git worktrees (one Agent per proposal):      |
+    |      1. git checkout -b ml-opt/<slug> from base branch       |
+    |      2. Apply code changes                                   |
+    |      3. Validate syntax (py_compile)                         |
+    |      4. Run dry-run test                                     |
+    |      5. Record in implementation-manifest.json               |
+    |                                                              |
+    |  Strategy B — File Backup (non-git fallback):                |
+    |    Restore-before-apply pattern (no cross-contamination)     |
+    |      1. Create baseline backup (_baseline/)                  |
+    |      2. For EACH proposal:                                   |
+    |         a. Restore ALL files from _baseline/ (clean slate)   |
+    |         b. Apply this proposal's changes                     |
+    |         c. Validate syntax                                   |
+    |         d. If pass: backup to backups/<slug>/                |
+    |         e. Restore from _baseline/ (clean for next)          |
+    |      3. Experiments run SEQUENTIALLY (not parallel)          |
+    +--------------------------------------------------------------+
 
   Reads: research-findings.md, user-confirmed proposal indices
   Writes: experiments/results/implementation-manifest.json
@@ -334,100 +364,96 @@ ENTRY POINT
   Autonomous — never auto-stops on plateaus. Hyperagent tries different
   operators. Analysis advises, hyperagent decides.
 
-  +==========================================================================+
-  |                                                                          |
-  |  PRE-LOOP SETUP                                                          |
-  |    - Validate pipeline state, verify baseline integrity                  |
-  |    - Initialize code archive: hyperagent-init (gen-000 from baseline)    |
-  |    - Load meta-patches (if meta-improvement has run previously)          |
-  |    - Load implementation manifest, sync behavioral memory                |
-  |                                                                          |
-  |  ITERATION START                                                         |
-  |  +--------------------------------------------------------------------+  |
-  |  |  7.1  HYPERAGENT DECIDES ACTION                                    |  |
-  |  |  Agent: hyperagent (PERSISTENT, resumed via SendMessage)           |  |
-  |  |                                                                    |  |
-  |  |  Reads: archive stats, analysis insights, operator stats,          |  |
-  |  |         dead-end catalog, behavioral memory                        |  |
-  |  |                                                                    |  |
-  |  |  Chooses ONE action:                                               |  |
-  |  |    a. HP tuning      → delegates to tuning-agent                   |  |
-  |  |    b. LLM code patch → modifies code directly (select parent,      |  |
-  |  |                        create branch, edit code, validate)         |  |
-  |  |    c. ShinkaEvolve   → dispatches evolve skill for fine-grained    |  |
-  |  |                        mutations on selected parent branch         |  |
-  |  |    d. Research       → dispatches research + implement agents      |  |
-  |  |                        (from selected parent, not baseline)        |  |
-  |  |    e. Meta-improve   → modifies skill instructions (max 3/session) |  |
-  |  +--------------------------------------------------------------------+  |
-  |                    |                                                     |
-  |         +----------+----------+----------+----------+                    |
-  |         |          |          |          |          |                    |
-  |      hp_tune   llm_patch  shinka    research  meta_improve              |
-  |         |          |      _evolve      |          |                     |
-  |         v          v          v        v          v                     |
-  |  +--------------------------------------------------------------------+  |
-  |  |  7.2  EXECUTE ACTION                                               |  |
-  |  |                                                                    |  |
-  |  |  hp_tune:                                                          |  |
-  |  |    tuning-agent proposes configs → experiment-agents run parallel   |  |
-  |  |    monitor-agent watches for divergence (concurrent)               |  |
-  |  |                                                                    |  |
-  |  |  llm_patch / shinka_evolve / research_implement:                   |  |
-  |  |    1. hyperagent-select → pick parent from archive                 |  |
-  |  |    2. hyperagent-generate → create code variant                    |  |
-  |  |       (ShinkaEvolve: evolve skill handles convert→run→inspect)     |  |
-  |  |    3. hyperagent-eval → staged eval (10% budget, adaptive          |  |
-  |  |       threshold). If FAIL → archive as filtered, skip full.        |  |
-  |  |    4. If PASS → HP-tune (1-2 iters) + full experiment              |  |
-  |  |                                                                    |  |
-  |  |  meta_improve:                                                     |  |
-  |  |    hyperagent-generate (meta_improvement_mode: true)               |  |
-  |  |    → reads skill files + archive + operator stats                  |  |
-  |  |    → writes patched skills to experiments/meta-patches/            |  |
-  |  |    → writes meta-changelog.json (skill, change, reason, impact)   |  |
-  |  |    → Step 5: IMMEDIATELY loads patches into subsequent dispatches  |  |
-  |  |       "META-PATCHES ACTIVE: Read patched version instead"          |  |
-  |  |    → tuning/analysis/research agents use improved instructions     |  |
-  |  |       for ALL remaining iterations in this session                 |  |
-  |  +--------------------------------------------------------------------+  |
-  |                    |                                                     |
-  |                    v                                                     |
-  |  +--------------------------------------------------------------------+  |
-  |  |  7.3  ARCHIVE RESULTS                                              |  |
-  |  |  hyperagent-archive → update code-archive.jsonl                    |  |
-  |  |    - Track genid, parent, lineage, fitness, mutation operator      |  |
-  |  |    - Log to behavioral memory + research agenda                    |  |
-  |  |    - Update operator_stats in hyperagent_state                     |  |
-  |  +--------------------------------------------------------------------+  |
-  |                    |                                                     |
-  |                    v                                                     |
-  |  +--------------------------------------------------------------------+  |
-  |  |  7.4  ANALYZE                                                      |  |
-  |  |  Agent: analysis-agent --> ml-optimizer:analyze skill              |  |
-  |  |                                                                    |  |
-  |  |  Decision tree:                                                    |  |
-  |  |    "continue"         → resume hyperagent for next iteration       |  |
-  |  |    "code_evolution"   → resume hyperagent (code mutation next)     |  |
-  |  |    "hp_expand" etc    → resume hyperagent (HP tuning next)         |  |
-  |  |    "stop"             → hyperagent tries other operators first       |  |
-  |  |    "method_stacking"  → Phase 8 (merge methods, resolve interference)|  |
-  |  |  If meta_improvement_recommended: true                             |  |
-  |  |    → hyperagent may choose meta_improve next iteration             |  |
-  |  |                                                                    |  |
-  |  |  Analysis ADVISES direction, hyperagent DECIDES specific action.   |  |
-  |  +--------------------------------------------------------------------+  |
-  |         |                                                                |
-  |         +-- Loop back to 7.1 HYPERAGENT DECIDES -->                       |
-  |                                                                          |
-  |  +--------------------------------------------------------------------+  |
-  |  |  7.5  METHOD STACKING (when analysis recommends)                  |  |
-  |  |  Triggered by: analyze returns pivot_type: "method_stacking"      |  |
-  |  |  (multiple improved methods from different papers/code changes)    |  |
-  |  |  Requires: git branch strategy                                    |  |
-  |  |                                                                    |  |
-  |  |  The hyperagent merges best methods sequentially:                  |  |
-  +============================ END LOOP ====================================+
+  +========================================================================+
+  |                                                                        |
+  |  PRE-LOOP SETUP                                                        |
+  |    - Validate pipeline state, verify baseline integrity                |
+  |    - Initialize code archive: hyperagent-init (gen-000 from baseline)  |
+  |    - Load meta-patches (if meta-improvement has run previously)        |
+  |    - Load implementation manifest, sync behavioral memory              |
+  |                                                                        |
+  |  ITERATION START                                                       |
+  |  +------------------------------------------------------------------+  |
+  |  |  7.1  HYPERAGENT DECIDES ACTION                                  |  |
+  |  |  Agent: hyperagent (PERSISTENT, resumed via SendMessage)         |  |
+  |  |                                                                  |  |
+  |  |  Reads: archive stats, analysis insights, operator stats,        |  |
+  |  |         dead-end catalog, behavioral memory                      |  |
+  |  |                                                                  |  |
+  |  |  Chooses ONE action:                                             |  |
+  |  |    a. HP tuning      → delegates to tuning-agent                 |  |
+  |  |    b. LLM code patch → modifies code directly                    |  |
+  |  |    c. ShinkaEvolve   → dispatches evolve skill                   |  |
+  |  |    d. Research       → dispatches research + implement agents    |  |
+  |  |    e. Meta-improve   → modifies skill instructions (max 3/ses)   |  |
+  |  +------------------------------------------------------------------+  |
+  |                    |                                                   |
+  |       +------------+----------+-----------+-----------+                |
+  |       |            |          |           |           |                |
+  |    hp_tune    llm_patch  shinka_evolve research  meta_improve          |
+  |       |            |          |           |           |                |
+  |       v            v          v           v           v                |
+  |  +------------------------------------------------------------------+  |
+  |  |  7.2  EXECUTE ACTION                                             |  |
+  |  |                                                                  |  |
+  |  |  hp_tune:                                                        |  |
+  |  |    tuning-agent proposes configs → experiment-agents parallel    |  |
+  |  |    monitor-agent watches for divergence (concurrent)             |  |
+  |  |                                                                  |  |
+  |  |  llm_patch / shinka_evolve / research_implement:                 |  |
+  |  |    1. hyperagent-select → pick parent from archive               |  |
+  |  |    2. hyperagent-generate → create code variant                  |  |
+  |  |       (ShinkaEvolve: evolve skill does convert→run→inspect)      |  |
+  |  |    3. hyperagent-eval → staged eval (10% budget, adaptive        |  |
+  |  |       threshold). If FAIL → archive as filtered, skip full.      |  |
+  |  |    4. If PASS → HP-tune (1-2 iters) + full experiment            |  |
+  |  |                                                                  |  |
+  |  |  meta_improve:                                                   |  |
+  |  |    hyperagent-generate (meta_improvement_mode: true)             |  |
+  |  |    → reads skill files + archive + operator stats                |  |
+  |  |    → writes patched skills to experiments/meta-patches/          |  |
+  |  |    → writes meta-changelog.json (skill, change, reason, impact)  |  |
+  |  |    → IMMEDIATELY loads patches into subsequent dispatches        |  |
+  |  |    → tuning/analysis/research use improved instructions          |  |
+  |  +------------------------------------------------------------------+  |
+  |                    |                                                   |
+  |                    v                                                   |
+  |  +------------------------------------------------------------------+  |
+  |  |  7.3  ARCHIVE RESULTS                                            |  |
+  |  |  hyperagent-archive → update code-archive.jsonl                  |  |
+  |  |    - Track genid, parent, lineage, fitness, mutation operator    |  |
+  |  |    - Log to behavioral memory + research agenda                  |  |
+  |  |    - Update operator_stats in hyperagent_state                   |  |
+  |  +------------------------------------------------------------------+  |
+  |                    |                                                   |
+  |                    v                                                   |
+  |  +------------------------------------------------------------------+  |
+  |  |  7.4  ANALYZE                                                    |  |
+  |  |  Agent: analysis-agent --> ml-optimizer:analyze skill            |  |
+  |  |                                                                  |  |
+  |  |  Decision tree:                                                  |  |
+  |  |    "continue"        → resume hyperagent for next iteration      |  |
+  |  |    "code_evolution"  → resume hyperagent (code mutation next)    |  |
+  |  |    "hp_expand" etc   → resume hyperagent (HP tuning next)        |  |
+  |  |    "stop"            → hyperagent tries other operators first    |  |
+  |  |    "method_stacking" → Phase 8 (merge methods, resolve conflict) |  |
+  |  |  If meta_improvement_recommended: true                           |  |
+  |  |    → hyperagent may choose meta_improve next iteration           |  |
+  |  |                                                                  |  |
+  |  |  Analysis ADVISES direction, hyperagent DECIDES specific action. |  |
+  |  +------------------------------------------------------------------+  |
+  |       |                                                                |
+  |       +-- Loop back to 7.1 HYPERAGENT DECIDES                          |
+  |                                                                        |
+  |  +------------------------------------------------------------------+  |
+  |  |  7.5  METHOD STACKING (when analysis recommends)                 |  |
+  |  |  Triggered by: pivot_type: "method_stacking"                     |  |
+  |  |  (multiple improved methods from different papers/code changes)  |  |
+  |  |  Requires: git branch strategy                                   |  |
+  |  |                                                                  |  |
+  |  |  The hyperagent merges best methods sequentially:                |  |
+  |  +------------------------------------------------------------------+  |
+  +=============================== END LOOP ================================+
 
                     |
       (target achieved or user manually stops)
@@ -565,11 +591,11 @@ ENTRY POINT
 
   Phase  | Reads                          | Writes
   -------|--------------------------------|-----------------------------
-  0      | (user input)                   | pipeline-state.json (user_choices + agent_registry
-         |                                |   + hyperagent_state)
+  0+1    | (user input), model files,     | pipeline-state.json (user_choices + agent_registry
+         | config, gpu_check.py           |   + hyperagent_state)
          |                                | user-choices-backup.json
          |                                | optimization-goals.json
-  1      | model files, config            | dev_notes.md
+         |                                | dev_notes.md
   2      | user_choices                   | results/prerequisites.json
          |                                | prepared-data/
   3      | prerequisites.json             | results/baseline.json

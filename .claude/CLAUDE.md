@@ -64,8 +64,8 @@ tests/                           — pytest test suite
 The `orchestrate` skill coordinates a 10-phase pipeline. Each phase dispatches a named agent via `Agent(subagent_type="ml-optimizer:<name>-agent")`. Persistent agents (research, implement, tuning, analysis, monitor) are resumed via `SendMessage(to: agentId)` for subsequent dispatches; ephemeral agents (prerequisites, baseline, experiment, report) get fresh spawns:
 
 ```
-Phase 0: Discovery (plan mode, user Q&A — includes data paths and env manager)
-Phase 1: Understand model (read code, check GPUs)
+Phase 0+1: Discovery & Planning (plan mode throughout — multi-round refinement until user approves)
+         Discovery Q&A → write goals → analyze codebase → present plan → user refines → repeat
 Phase 2: prerequisites → Validate dataset format, prepare data, install dependencies
 Phase 3: baseline → Establish baseline metrics
 Phase 4: User checkpoint

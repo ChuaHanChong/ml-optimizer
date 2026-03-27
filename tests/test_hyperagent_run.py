@@ -290,3 +290,158 @@ class TestPipelineStateInit:
     def test_init_hyperagent_state_can_disable(self):
         result = init_hyperagent_state(enabled=False)
         assert result["enabled"] is False
+
+
+# ---------------------------------------------------------------------------
+# UCB1 Selection + Backpropagation
+# ---------------------------------------------------------------------------
+
+
+class TestUCB1:
+    """Tests for UCB1 parent selection and MCTS backpropagation."""
+
+    def test_select_ucb(self, initialized_dir):
+        """UCB strategy returns valid selection."""
+        out = run_select(initialized_dir, "--strategy", "ucb",
+                         env={"HYPERAGENT_METRIC": "accuracy"})
+        assert out["strategy"] == "ucb"
+        assert out["genid"] == "initial"
+
+    def test_backpropagate_creates_metadata(self, initialized_dir):
+        """Backpropagate updates visit_count and value_sum in metadata."""
+        # Add a child node with fitness
+        entry = {
+            "genid": 1, "code_branch": "ml-opt/test", "mutation_type": "llm_patch",
+            "fitness_score": 0.9, "parent_genid": "initial", "status": "evaluated",
+        }
+        run_archive(initialized_dir, "add", json.dumps(entry),
+                    env={"HYPERAGENT_METRIC": "accuracy"})
+
+        # Backpropagate score for gen_1
+        out = run_archive(initialized_dir, "backpropagate", "1", "0.9",
+                          env={"HYPERAGENT_METRIC": "accuracy"})
+        assert out["status"] == "backpropagated"
+        assert out["normalized_score"] >= 0.0
+        assert out["normalized_score"] <= 1.0
+        # Lineage should include both initial and 1
+        assert "initial" in out["lineage"]
+        assert "1" in out["lineage"]
+
+    def test_backpropagate_eval_count_only_on_node(self, initialized_dir):
+        """eval_count only incremented on evaluated node, not ancestors."""
+        entry = {
+            "genid": 1, "code_branch": "ml-opt/a", "mutation_type": "hp_tune",
+            "fitness_score": 0.85, "parent_genid": "initial", "status": "evaluated",
+        }
+        run_archive(initialized_dir, "add", json.dumps(entry),
+                    env={"HYPERAGENT_METRIC": "accuracy"})
+        run_archive(initialized_dir, "backpropagate", "1", "0.85",
+                    env={"HYPERAGENT_METRIC": "accuracy"})
+
+        # Check metadata directly
+        meta_1 = os.path.join(initialized_dir, "gen_1", "metadata.json")
+        meta_init = os.path.join(initialized_dir, "gen_initial", "metadata.json")
+        with open(meta_1) as f:
+            m1 = json.load(f)
+        with open(meta_init) as f:
+            mi = json.load(f)
+
+        # gen_1: eval_count=1, visit_count=1
+        assert m1.get("eval_count", 0) == 1
+        assert m1.get("visit_count", 0) == 1
+        # gen_initial: eval_count=0, visit_count=1 (ancestor only)
+        assert mi.get("eval_count", 0) == 0
+        assert mi.get("visit_count", 0) == 1
+
+    def test_normalization_lower_is_better(self, tmp_path):
+        """For loss (lower=better), low loss should normalize to HIGH value."""
+        exp = tmp_path / "experiments"
+        results = exp / "results"
+        results.mkdir(parents=True)
+        baseline = {"metrics": {"loss": 1.0}, "config": {}}
+        (results / "baseline.json").write_text(json.dumps(baseline))
+        state = {"user_choices": {"primary_metric": "loss", "lower_is_better": True}}
+        (exp / "pipeline-state.json").write_text(json.dumps(state))
+        h_dir = exp / "hyperagent"
+        h_dir.mkdir()
+
+        run_init(str(h_dir), env={"HYPERAGENT_METRIC": "loss"})
+        entry = {
+            "genid": 1, "code_branch": "ml-opt/good", "mutation_type": "hp_tune",
+            "fitness_score": 0.3, "parent_genid": "initial", "status": "evaluated",
+        }
+        run_archive(str(h_dir), "add", json.dumps(entry),
+                    env={"HYPERAGENT_METRIC": "loss"})
+        out = run_archive(str(h_dir), "backpropagate", "1", "0.3",
+                          env={"HYPERAGENT_METRIC": "loss"})
+
+        # loss=0.3 is GOOD (lower is better) — should normalize to HIGH value (close to 1.0)
+        assert out["normalized_score"] > 0.5, (
+            f"Low loss should normalize high, got {out['normalized_score']}")
+
+    def test_normalization_higher_is_better(self, tmp_path):
+        """For accuracy (higher=better), high accuracy normalizes to HIGH value."""
+        exp = tmp_path / "experiments"
+        results = exp / "results"
+        results.mkdir(parents=True)
+        baseline = {"metrics": {"accuracy": 0.5}, "config": {}}
+        (results / "baseline.json").write_text(json.dumps(baseline))
+        state = {"user_choices": {"primary_metric": "accuracy", "lower_is_better": False}}
+        (exp / "pipeline-state.json").write_text(json.dumps(state))
+        h_dir = exp / "hyperagent"
+        h_dir.mkdir()
+
+        run_init(str(h_dir), env={"HYPERAGENT_METRIC": "accuracy"})
+        entry = {
+            "genid": 1, "code_branch": "ml-opt/good", "mutation_type": "hp_tune",
+            "fitness_score": 0.9, "parent_genid": "initial", "status": "evaluated",
+        }
+        run_archive(str(h_dir), "add", json.dumps(entry),
+                    env={"HYPERAGENT_METRIC": "accuracy"})
+        out = run_archive(str(h_dir), "backpropagate", "1", "0.9",
+                          env={"HYPERAGENT_METRIC": "accuracy"})
+
+        # accuracy=0.9 is GOOD (higher is better) — should normalize to HIGH value
+        assert out["normalized_score"] > 0.5, (
+            f"High accuracy should normalize high, got {out['normalized_score']}")
+
+    def test_ucb_prefers_lower_loss(self, tmp_path):
+        """End-to-end: with loss metric, UCB must prefer the node with lower loss."""
+        exp = tmp_path / "experiments"
+        results = exp / "results"
+        results.mkdir(parents=True)
+        baseline = {"metrics": {"loss": 1.0}, "config": {}}
+        (results / "baseline.json").write_text(json.dumps(baseline))
+        state = {"user_choices": {"primary_metric": "loss", "lower_is_better": True}}
+        (exp / "pipeline-state.json").write_text(json.dumps(state))
+        h_dir = exp / "hyperagent"
+        h_dir.mkdir()
+
+        env = {"HYPERAGENT_METRIC": "loss"}
+        run_init(str(h_dir), env=env)
+
+        # Add good node (low loss) and bad node (high loss)
+        run_archive(str(h_dir), "add", json.dumps({
+            "genid": 1, "code_branch": "ml-opt/good", "mutation_type": "hp_tune",
+            "fitness_score": 0.3, "parent_genid": "initial", "status": "evaluated",
+        }), env=env)
+        run_archive(str(h_dir), "add", json.dumps({
+            "genid": 2, "code_branch": "ml-opt/bad", "mutation_type": "hp_tune",
+            "fitness_score": 0.9, "parent_genid": "initial", "status": "evaluated",
+        }), env=env)
+
+        # Backpropagate both — this gives nodes visit_count so UCB uses exploitation
+        run_archive(str(h_dir), "backpropagate", "1", "0.3", env=env)
+        run_archive(str(h_dir), "backpropagate", "2", "0.9", env=env)
+
+        # UCB should prefer gen_1 (low loss=0.3) over gen_2 (high loss=0.9)
+        # Run multiple times to account for any randomness
+        selections = set()
+        for _ in range(5):
+            out = run_select(str(h_dir), "--strategy", "ucb", env=env)
+            selections.add(out["genid"])
+
+        # gen_1 should dominate (higher normalized value = better exploitation)
+        # initial has 2 visits but lower value_sum, gen_1 has 1 visit + high value
+        assert "1" in selections, (
+            f"UCB should prefer low-loss gen_1, but selected: {selections}")

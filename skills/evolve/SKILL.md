@@ -17,12 +17,12 @@ ShinkaEvolve provides population management, island model, novelty detection, an
 
 ## Prerequisites
 
-ShinkaEvolve must be available. If not installed, install it:
+ShinkaEvolve is available via git submodule at `${CLAUDE_PLUGIN_ROOT}/skills/evolve/ShinkaEvolve/`. If not initialized, run:
 ```bash
-pip install shinkaevolve
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/setup_evolve.sh
 ```
 
-If installation fails, report `status: "shinkaevolve_unavailable"` and return immediately. The orchestrator will fall back to the research → implement path.
+If the submodule is missing or imports fail, report `status: "shinkaevolve_unavailable"` and return immediately. The orchestrator will fall back to the research → implement path.
 
 ## Input Parameters
 
@@ -50,7 +50,7 @@ The tuning agent sets evolve HPs via `evolve_recommendation`. Resolve in priorit
 
 After evolution completes, log the outcome to learned-behaviors for future runs:
 ```bash
-python3 scripts/goal_memory.py <exp_root> log-behavior evolve_hp \
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py <exp_root> log-behavior evolve_hp \
   '{"num_generations": <actual>, "population_size": <actual>, "mutations_evaluated": <N>, "best_improvement_pct": <X>, "insight": "<what happened>"}'
 ```
 
@@ -85,22 +85,12 @@ Then invoke via `Skill("ml-optimizer:shinka-convert")`.
 
 Invoke via `Skill("ml-optimizer:shinka-run")`.
 
-Start `shinka-run` as a background process with file-based LLM handoff:
-
-```bash
-export SHINKA_PROVIDER=claude_code
-export SHINKA_HANDOFF_DIR=<exp_root>
-shinka_run \
-  --task-dir <exp_root>/artifacts/shinka-task \
-  --results_dir <exp_root>/artifacts/shinka-results \
-  --num_generations <num_generations> \
-  --max-evaluation-jobs 1 \
-  --max-proposal-jobs 2 \
-  --max-db-workers 2 \
-  --set db.num_islands=2 \
-  --set evo.max_patch_resamples=2 &
-SHINKA_PID=$!
-```
+**Overrides for evolve context:**
+- Set env vars `SHINKA_PROVIDER=claude_code` and `SHINKA_HANDOFF_DIR=<exp_root>` before launching — this enables file-based LLM handoff (Step 3)
+- Run in background (`&`) and capture PID — needed for the handoff polling loop
+- Autonomous execution — this is the "explicitly autonomous" exception in shinka-run's batch control policy, no user confirmation between batches
+- Use `--task-dir <exp_root>/artifacts/shinka-task`, `--results_dir <exp_root>/artifacts/shinka-results`
+- Use `--num_generations` and `--max-proposal-jobs` from Step 0's resolved evolve HPs
 
 ## Step 3: Fulfill Mutation Requests (File Handoff Loop)
 

@@ -47,7 +47,7 @@ This populates `experiments/learned-behaviors.json` with OOM limits, divergence 
 
 Initialize the evolutionary archive from baseline and existing branches:
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/hyperagent_adapter.py <exp_root> init
+python3 ${CLAUDE_PLUGIN_ROOT}/skills/hyperagent-init/scripts/init_archive.py --output-dir <exp_root>/hyperagent
 ```
 
 This creates gen-000 from baseline and seeds any validated implementation branches from Phase 6 as gen-001, gen-002, etc. Every experiment result from this point forward updates the archive.
@@ -740,7 +740,9 @@ Agent(
 
 ## Hyperagent Driven Loop
 
-The hyperagent helps Phase 7 by deciding what action to take at each iteration — HP tuning, code mutation, research, or self-improvement. The analysis agent advises after each batch (continue, pivot direction, or stacking), and the hyperagent decides the specific action based on the advice + archive state + operator effectiveness. It also enables the plugin to self-improve by modifying skill instructions mid-session. When the analysis agent advises stacking, the hyperagent decides whether to proceed and transitions to Phase 8, then returns to Phase 7 on the stacked code.
+**MANDATORY: The hyperagent MUST be dispatched for Phase 7. It is the loop driver, not an optional enhancement. Do NOT implement a simplified HP-tune → experiment → analyze loop that bypasses the hyperagent. Do NOT skip the hyperagent dispatch for any reason — cost, complexity, or "simplicity". The hyperagent chooses operators (HP tuning, LLM patches, ShinkaEvolve, research-implement, meta-improvement), manages the evolutionary archive, and drives strategy. Without it, the plugin loses self-improvement, archive-based selection, and operator adaptation. If ShinkaEvolve is unavailable, the hyperagent falls back to other operators automatically — but the hyperagent itself is never optional.**
+
+The hyperagent decides what action to take at each iteration — HP tuning, code mutation, research, or self-improvement. The analysis agent advises after each batch (continue, pivot direction, or stacking), and the hyperagent decides the specific action based on the advice + archive state + operator effectiveness. It also enables the plugin to self-improve by modifying skill instructions mid-session. When the analysis agent advises stacking, the hyperagent decides whether to proceed and transitions to Phase 8, then returns to Phase 7 on the stacked code.
 
 ### Hyperagent Dispatch (Loop Entry)
 
@@ -756,7 +758,7 @@ Agent(
   - ARCHIVE STATS: {archive_stats_json}
   - DEAD ENDS: {dead_ends_summary}
   - BEHAVIORAL MEMORY: {learned_behaviors_summary}",
-  subagent_type: "ml-optimizer:hyperagent"
+  subagent_type: "ml-optimizer:hyperagent-agent"
 )
 ```
 

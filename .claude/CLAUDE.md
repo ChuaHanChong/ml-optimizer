@@ -79,13 +79,14 @@ Phase 7: Experiment loop (autonomous, pipelined):
          [method_proposal] → mid-loop research + implement
          [code_evolution] → tuning (evolve HPs) → evolve → tuning (training HPs) → experiment (scope_level=full only)
          [research_round] → cadence-based research (when method proposals enabled)
-Phase 8: Method stacking (if 5+ methods improved):
+Phase 8: Method stacking (hyperagent driven, when analysis advises):
          Sequential accumulation — merge best methods one by one
          LLM conflict resolution, skip-on-failure
          Per step: analyze → tuning (evolve HPs) → evolve → tuning (training HPs) → experiment
          Analysis agent loops until improvement or recommends stop
 Phase 9: report → Final optimization report
-         review → Self-improvement analysis (optional, end-of-session)
+         review → Session review (what worked, what didn't, how to improve)
+         promotion → Meta-patch promotion (if hyperagent generated skill patches)
 ```
 
 ### Metric Routing Rule
@@ -115,7 +116,7 @@ Ten subagent types, each with a preloaded skill and specified tool access. Skill
 - **tuning-agent** *(persistent)*: Read, Write, Bash, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:hp-tune, claude-mem:mem-search]`
 - **implement-agent** *(persistent)*: Bash, Read, Write, Edit, Glob, Grep, Skill, WebSearch, WebFetch, alphaxiv MCP tools (2: repo reader, PDF Q&A) — skills: `[ml-optimizer:implement, ml-optimizer:evolve, ml-optimizer:shinka-setup, ml-optimizer:shinka-convert, ml-optimizer:shinka-run, ml-optimizer:shinka-inspect, superpowers:systematic-debugging, feature-dev:code-explorer, feature-dev:code-reviewer]`
 - **analysis-agent** *(persistent)*: Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:analyze, claude-mem:mem-search]` (includes session review mode)
-- **hyperagent** *(persistent)*: Read, Write, Edit, Bash, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:hyperagent, ml-optimizer:hyperagent-generate, ml-optimizer:hyperagent-select, ml-optimizer:hyperagent-eval, ml-optimizer:hyperagent-archive, ml-optimizer:hyperagent-init, ml-optimizer:hyperagent-setup, ml-optimizer:evolve, ml-optimizer:shinka-*, claude-mem:mem-search, superpowers:systematic-debugging, feature-dev:code-explorer]` — enables self-improvement, drives Phase 7 experiments and Phase 8 stacking in a loop
+- **hyperagent-agent** *(persistent)*: Read, Write, Edit, Bash, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:hyperagent, ml-optimizer:hyperagent-generate, ml-optimizer:hyperagent-select, ml-optimizer:hyperagent-eval, ml-optimizer:hyperagent-archive, ml-optimizer:hyperagent-init, ml-optimizer:hyperagent-inspect, ml-optimizer:evolve, ml-optimizer:shinka-*, claude-mem:mem-search, superpowers:systematic-debugging, feature-dev:code-explorer]` — enables self-improvement, drives Phase 7 experiments and Phase 8 stacking in a loop
 - **report-agent** *(ephemeral)*: Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:report]`
 
 For parallel execution, use `run_in_background: true`. External skills are also available:
@@ -138,16 +139,14 @@ The hyperagent learns which operators are effective and adapts its strategy. The
 **Submodule:** `skills/hyperagent/Hyperagents/` (CC BY-NC-SA 4.0 license). Skills at `skills/hyperagent/skills/hyperagent-*/`, symlinked to `skills/hyperagent-*/` for auto-discovery. Setup: `bash scripts/setup_hyperagent.sh` (inits submodule + creates symlinks, same pattern as `setup_evolve.sh`).
 
 **6 Hyperagent skills:**
-- `hyperagent-setup` — Initialize submodule and verify environment
 - `hyperagent-init` — Create archive from baseline + existing branches
+- `hyperagent-inspect` — Inspect archive state, lineage, operator stats, and generation history
 - `hyperagent-select` — Parent selection (5 strategies: best, latest, random, score_prop, score_child_prop). Uses Hyperagents' exact math: `sigmoid(10(s - μ)) × exp(-(children/8)³)`
 - `hyperagent-generate` — Hyperagent generates code variant (replaces Hyperagents' litellm hyperagent with Claude Code Opus agent). Can dispatch ShinkaEvolve as mutation operator.
 - `hyperagent-eval` — Two-stage evaluation: cheap staged eval (10% budget) → adaptive threshold → full training if passes. Warm-starts from staged checkpoint.
 - `hyperagent-archive` — Update archive with results, track lineage and operator effectiveness
 
-**Archive file:** `experiments/code-archive.jsonl` — JSONL format with genid, parent_genid, code_branch, mutation_type, fitness_score, lineage, status.
-
-**Adapter CLI:** `python3 scripts/hyperagent_adapter.py <exp_root> <command>` — wraps Hyperagents' gl_utils.py functions for archive management and parent selection. Concurrent-safe via `fcntl.flock()`.
+**Archive:** `experiments/hyperagent/archive.jsonl` — Hyperagents-native JSONL format with `gen_X/` directories for metadata and eval reports. Managed by `gl_utils.py` directly.
 
 **ShinkaEvolve + Hyperagent collaboration:** ShinkaEvolve is one mutation operator within the experiment loop. When the hyperagent needs fine-grained code tuning (numerical constants, local optimizations), it dispatches ShinkaEvolve via `Skill("ml-optimizer:evolve")`. When it needs structural/architectural changes, it generates LLM patches directly.
 
@@ -179,7 +178,6 @@ All scripts work as both importable modules and CLI tools:
 | `scripts/goal_memory.py` | `python3 scripts/goal_memory.py <exp_root> init-goals\|read-goals\|log-behavior <category> <json>\|query-behaviors [category]\|validate-output <agent> <json>\|summary\|sync-from-errors` — goal anchoring, behavioral memory, agent output validation, compact briefings |
 | `scripts/setup_evolve.sh` | `bash scripts/setup_evolve.sh` — initialize ShinkaEvolve submodule and create skill symlinks for auto-discovery |
 | `scripts/setup_hyperagent.sh` | `bash scripts/setup_hyperagent.sh` — initialize Hyperagents submodule and verify environment |
-| `scripts/hyperagent_adapter.py` | `python3 scripts/hyperagent_adapter.py <exp_root> init\|select-parent\|add\|lineage\|stats\|best\|operator-stats\|prune` — archive management and parent selection CLI. Uses Hyperagents' exact algorithms (sigmoid + diversity penalty). Concurrent-safe. |
 
 ### State & Output (in target project)
 
@@ -209,7 +207,7 @@ experiments/
   artifacts/                         — Model checkpoints, intermediate files, images, plots
   artifacts/<exp-id>/                — Per-experiment artifacts (checkpoints, visualizations)
   artifacts/*.excalidraw             — Excalidraw diagrams (pipeline, comparison, HP landscape, architecture)
-  code-archive.jsonl                 — Hyperagent evolutionary archive (JSONL, lineage + fitness)
+  hyperagent/                         — Hyperagent engine directory (gen_X/ layout, archive.jsonl)
   meta-patches/                      — Session-scoped meta-improvement skill patches
   dev_notes.md                       — Running session log
 ```
@@ -304,9 +302,8 @@ The orchestrator can be stopped and resumed. On restart it reads `pipeline-state
 - **`agent_registry` is session-scoped**: Agent IDs in `pipeline-state.json` under `agent_registry` are only valid within the same Claude conversation session. On pipeline resumption in a new session, the registry must be cleared (`agent_registry = {}`) because subagent transcripts don't survive across sessions. The orchestrator clears it automatically on load. Don't rely on agent_registry for cross-session state — use `memory: local` and shared files for that.
 - **Tabular ML frameworks skip divergence monitoring**: When the detected framework is scikit-learn, XGBoost, or LightGBM, the orchestrator sets `divergence_metric` to `null` and skips the monitor skill. The baseline skill skips GPU profiling and throughput estimation for these frameworks.
 - **Research findings files can be multiple**: `research-findings.md` (Phase 5 web search), `research-findings-method-proposals.md` (Phase 7 pre-loop), `research-findings-method-proposals-iter<N>.md` (Phase 7 mid-loop triggers). The research skill's deduplication checks all of these to avoid re-proposing tried techniques.
-- **Hyperagent mode is always on**: `hyperagent_state.enabled` defaults to `true`. The hyperagent enables self-improvement and drives Phase 7 ↔ Phase 8 in a loop from the start. It naturally starts with HP tuning (cheapest) and escalates to code mutations, stacking, and self-improvement as needed.
-- **`hyperagent_adapter.py` uses fcntl.flock()**: Concurrent-safe archive access. Multiple agents can call the adapter simultaneously. But `_increment_children` does a full file rewrite under lock — avoid calling from many parallel agents.
-- **Hyperagent archive is separate from experiment results**: `code-archive.jsonl` tracks code variants with lineage. `exp-*.json` tracks experiment results. They link via the `genid` field. Don't confuse them.
+- **Hyperagent mode is always on — NEVER skip it**: `hyperagent_state.enabled` defaults to `true`. The hyperagent MUST be dispatched in Phase 7 — it is the loop driver, not optional. Do NOT fall back to a simpler HP-tune → experiment → analyze loop that bypasses the hyperagent. The hyperagent drives Phase 7 ↔ Phase 8 in a loop from the start. It naturally starts with HP tuning (cheapest) and escalates to code mutations (LLM patches, ShinkaEvolve), research-implement, stacking, and self-improvement as needed. If ShinkaEvolve is unavailable, the hyperagent falls back to other operators — but the hyperagent itself is never optional.
+- **Hyperagent archive is separate from experiment results**: `hyperagent/archive.jsonl` tracks code variants with lineage (Hyperagents-native format). `exp-*.json` tracks experiment results. They link via the `genid` field. Don't confuse them.
 - **Meta-patches are session-scoped**: Files in `experiments/meta-patches/` only affect the current session. They're instructions overlaid on top of default skills. Promotion to the plugin repo requires user approval at Phase 9.
 - **Hyperagents submodule is CC BY-NC-SA 4.0**: NonCommercial + ShareAlike license. The adapter script reimplements the core algorithms in stdlib Python, so the submodule is a reference, not a runtime dependency.
 - **ShinkaEvolve branch naming in Hyperagent mode**: When ShinkaEvolve is used as a mutation operator within the Hyperagent loop, the evolve skill creates `ml-opt/evolved-<slug>` branches. The hyperagent must rename these to `ml-opt/gen-<N>-evolved-<slug>` for archive consistency.

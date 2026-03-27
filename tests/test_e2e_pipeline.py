@@ -2319,13 +2319,35 @@ class TestEvolveE2E:
 # Hyperagent E2E tests
 # ---------------------------------------------------------------------------
 
-_ADAPTER = str(Path(__file__).resolve().parent.parent / "scripts" / "hyperagent_adapter.py")
+_HA_SKILLS = Path(__file__).resolve().parent.parent / "skills" / "hyperagent" / "Hyperagents" / "skills"
+_INIT_SCRIPT = str(_HA_SKILLS / "hyperagent-init" / "scripts" / "init_archive.py")
+_SELECT_SCRIPT = str(_HA_SKILLS / "hyperagent-select" / "scripts" / "select_parent.py")
+_ARCHIVE_SCRIPT = str(_HA_SKILLS / "hyperagent-archive" / "scripts" / "archive_utils.py")
 
 
 def _run_adapter(exp_root, *args):
-    """Run hyperagent_adapter.py and return parsed JSON."""
-    cmd = [sys.executable, _ADAPTER, str(exp_root)] + list(args)
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+    """Run hyperagent per-skill scripts and return parsed JSON."""
+    args = list(args)
+    subcmd = args[0] if args else ""
+    output_dir = str(exp_root) + "/hyperagent"
+    if subcmd == "init":
+        cmd = [sys.executable, _INIT_SCRIPT, "--output-dir", output_dir]
+    elif subcmd == "select-parent":
+        # select_parent.py takes --output-dir and --strategy directly (no subcommand)
+        cmd = [sys.executable, _SELECT_SCRIPT] + args[1:] + ["--output-dir", output_dir]
+    else:
+        # archive_utils.py: subcommand is first positional arg
+        cmd = [sys.executable, _ARCHIVE_SCRIPT] + args + ["--output-dir", output_dir]
+    # Read primary_metric from pipeline-state.json to set HYPERAGENT_METRIC
+    env = os.environ.copy()
+    state_path = os.path.join(exp_root, "pipeline-state.json")
+    if os.path.exists(state_path):
+        with open(state_path) as f:
+            state = json.load(f)
+        metric = state.get("user_choices", {}).get("primary_metric")
+        if metric:
+            env["HYPERAGENT_METRIC"] = metric
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=10, env=env)
     assert r.returncode == 0, f"Adapter failed: {r.stderr}"
     return json.loads(r.stdout.strip())
 
@@ -2370,13 +2392,14 @@ class TestHyperagentE2E:
         assert out["status"] == "initialized"
         assert out["entries"] == 3  # gen-000 + 2 validated
 
-        # Add a code variant (LLM patch on gen-001)
+        # Add a code variant (LLM patch on proposal 1)
+        # Archive: initial(0), 1(proposal), 2(proposal), 3(this), 4(next), 5(filtered)
         _run_adapter(ha_exp, "add", json.dumps({
             "code_branch": "ml-opt/gen-003-attention",
             "mutation_type": "llm_patch",
             "mutation_description": "Added attention",
             "fitness_score": 0.867,
-            "parent_genid": "gen-001",
+            "parent_genid": 1,
             "status": "evaluated",
         }))
 
@@ -2386,7 +2409,7 @@ class TestHyperagentE2E:
             "mutation_type": "shinka_evolve",
             "mutation_description": "Evolved attention params",
             "fitness_score": 0.871,
-            "parent_genid": "gen-003",
+            "parent_genid": 3,
             "status": "evaluated",
         }))
 
@@ -2396,40 +2419,40 @@ class TestHyperagentE2E:
             "mutation_type": "llm_patch",
             "mutation_description": "Bad change",
             "fitness_score": None,
-            "parent_genid": "gen-003",
+            "parent_genid": 3,
             "status": "filtered",
         }))
 
         # Stats
         stats = _run_adapter(ha_exp, "stats")
         assert stats["total_entries"] == 6
-        assert stats["evaluated"] >= 3  # gen-000 + gen-003 + gen-004 (pending gen-001, gen-002)
+        assert stats["evaluated"] >= 3  # initial + 3 + 4 (pending 1, 2)
         assert stats["filtered"] == 1
 
-        # Select parent — best should be gen-004 (0.871)
-        best = _run_adapter(ha_exp, "select-parent", "best")
-        assert best["genid"] == "gen-004"
+        # Select parent — best should be 4 (0.871)
+        best = _run_adapter(ha_exp, "select-parent", "--strategy", "best")
+        assert best["genid"] == "4"
         assert best["fitness_score"] == 0.871
 
-        # Lineage — gen-004 should trace: gen-000 → gen-001 → gen-003 → gen-004
-        lineage = _run_adapter(ha_exp, "lineage", "gen-004")
+        # Lineage — 4 should trace: initial → 1 → 3 → 4
+        lineage = _run_adapter(ha_exp, "lineage", "4")
         genids = [e["genid"] for e in lineage["lineage"]]
-        assert genids == ["gen-000", "gen-001", "gen-003", "gen-004"]
+        assert genids == ["initial", "1", "3", "4"]
 
         # Operator stats
         ops = _run_adapter(ha_exp, "operator-stats")
-        assert ops["llm_patch"]["attempts"] == 2  # gen-003 + gen-005
+        assert ops["llm_patch"]["attempts"] == 2  # 3 + 5
         assert ops["shinka_evolve"]["attempts"] == 1
-        assert ops["research_implement"]["attempts"] == 2  # gen-001 + gen-002
+        assert ops["research_implement"]["attempts"] == 2  # 1 + 2
 
         # Best N
-        top = _run_adapter(ha_exp, "best", "3")
+        top = _run_adapter(ha_exp, "best", "-n", "3")
         assert len(top) == 3
-        assert top[0]["genid"] == "gen-004"  # highest
+        assert top[0]["genid"] == "4"  # highest
 
-        # Prune — gen-005 (filtered, no evaluated descendants) should be pruned
+        # Prune — 5 (filtered, no evaluated descendants) should be pruned
         prune = _run_adapter(ha_exp, "prune")
-        assert "gen-005" in prune["pruned"]
+        assert "5" in prune["pruned"]
 
     def test_hyperagent_state_lifecycle(self, ha_exp):
         """Phase 0 init → Phase 7 update → verify persistence."""
@@ -2482,14 +2505,14 @@ class TestHyperagentE2E:
             "code_branch": "ml-opt/gen-003-bad",
             "mutation_type": "llm_patch",
             "fitness_score": None,
-            "parent_genid": "gen-000",
+            "parent_genid": "initial",
             "status": "filtered",
         }))
         stats = _run_adapter(ha_exp, "stats")
         assert stats["filtered"] == 1
         # Filtered entry should not be selected by 'best'
-        best = _run_adapter(ha_exp, "select-parent", "best")
-        assert best["genid"] == "gen-000"  # only evaluated entry
+        best = _run_adapter(ha_exp, "select-parent", "--strategy", "best")
+        assert best["genid"] == "initial"  # only evaluated entry
 
     def test_operator_stats_tracking(self, ha_exp):
         """Operator stats reflect mutation types correctly."""
@@ -2502,7 +2525,7 @@ class TestHyperagentE2E:
                 "code_branch": f"ml-opt/gen-{i:03d}",
                 "mutation_type": mt,
                 "fitness_score": score,
-                "parent_genid": "gen-000",
+                "parent_genid": "initial",
                 "status": "evaluated",
             }))
         ops = _run_adapter(ha_exp, "operator-stats")

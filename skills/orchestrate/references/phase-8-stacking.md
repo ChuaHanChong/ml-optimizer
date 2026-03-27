@@ -11,7 +11,9 @@ After stacking completes, the hyperagent returns to Phase 7 to continue optimizi
 
 ## Hyperagent Driven Stacking
 
-The hyperagent helps Phase 8 by deciding which methods to stack, in what order, when to evolve for interference resolution, and when to stop. It also enables self-improvement — skill patches from Phase 7's meta-improve actions are active during stacking. The orchestrator resumes the hyperagent per stack step.
+**MANDATORY: Phase 8 stacking MUST be driven by the hyperagent. Resume the hyperagent via `SendMessage(to: agent_registry["hyperagent"])` — do NOT implement stacking logic directly in the orchestrator. The hyperagent decides which methods to stack, in what order, when to evolve for interference resolution, and when to stop. Phase 7 ↔ Phase 8 is one continuous hyperagent-driven loop.**
+
+The hyperagent also enables self-improvement — skill patches from Phase 7's meta-improve actions are active during stacking. The orchestrator resumes the hyperagent per stack step.
 
 ```
 Dispatch hyperagent:

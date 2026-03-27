@@ -433,8 +433,12 @@ ENTRY POINT
       (target achieved or user manually stops)
                     v
 
-  PHASE 8: METHOD STACKING (in loop with Phase 7)
-  =================================================
+  PHASE 8: METHOD STACKING (Hyperagent Driven, in loop with Phase 7)
+  ====================================================================
+  MANDATORY: Phase 8 is driven by the hyperagent, same as Phase 7.
+  Resume via SendMessage(to: agent_registry["hyperagent"]).
+  Do NOT implement stacking logic directly in the orchestrator.
+
   Phase 7 ↔ Phase 8 loop. Analysis advises stacking, hyperagent decides.
   No fixed method count. After stacking → back to Phase 7 on stacked code.
   Agent: hyperagent drives stacking decisions
@@ -482,8 +486,11 @@ ENTRY POINT
     Meta-improvement inside Phase 7 (one of 5 actions)
     Loop until goal or user stops
 
-  PHASE 9: REPORT
-  ================
+  PHASE 9: REPORT, REVIEW & PROMOTION
+  =====================================
+
+  Step 1: REPORT
+  ---------------
   Agent: report-agent --> ml-optimizer:report skill
 
     +--------------------------------------------------------------+
@@ -526,8 +533,21 @@ ENTRY POINT
                     |
                     v
 
-  PHASE 9b: META-PATCH PROMOTION (if meta-improvements were made)
-  ================================================================
+  Step 2: SESSION REVIEW (not optional)
+  --------------------------------------
+  Agent: analysis-agent --> ml-optimizer:analyze skill (review mode)
+
+    - What worked, what didn't, how to improve
+    - Anti-patterns observed
+    - Actionable suggestions for next session
+
+  Writes: experiments/reports/session-review.md
+
+                    |
+                    v
+
+  Step 3: META-PATCH PROMOTION (if meta-improvements were made)
+  ==============================================================
   Agent: analysis-agent (meta_patches scope) + orchestrator
 
     1. analysis-agent evaluates each meta-patch:
@@ -537,16 +557,6 @@ ENTRY POINT
     3. If approved → commit patched skills to plugin's current branch
        (immediately available next session, no merge needed)
     4. Log to behavioral memory + claude-mem for cross-session recall
-
-  OPTIONAL: END-OF-SESSION REVIEW
-  ================================
-  Agent: analysis-agent --> ml-optimizer:analyze skill (review mode)
-
-    - Self-improvement analysis
-    - What worked, what didn't
-    - Suggestions for future sessions
-
-  Writes: experiments/reports/session-review.md
 
 
 ================================================================================

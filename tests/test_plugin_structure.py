@@ -148,11 +148,11 @@ EXPECTED_AGENTS = {
         "required_tools": {"Read", "Write", "Bash", "Glob", "Grep", "Skill"},
         "forbidden_tools": {"Edit"}, "color": "blue", "background": False,
     },
-    "hyperagent": {
+    "hyperagent-agent": {
         "model": "opus", "skill": "ml-optimizer:hyperagent",
         "required_tools": {"Read", "Write", "Edit", "Bash", "Glob", "Grep", "Skill"},
         "forbidden_tools": set(), "color": "red", "background": False,
-        "external_skills": ["ml-optimizer:hyperagent-generate", "ml-optimizer:hyperagent-select", "ml-optimizer:hyperagent-eval", "ml-optimizer:hyperagent-archive", "ml-optimizer:hyperagent-init", "ml-optimizer:hyperagent-setup", "ml-optimizer:evolve", "ml-optimizer:shinka-setup", "ml-optimizer:shinka-convert", "ml-optimizer:shinka-run", "ml-optimizer:shinka-inspect", "claude-mem:mem-search", "superpowers:systematic-debugging", "feature-dev:code-explorer"],
+        "external_skills": ["ml-optimizer:hyperagent-generate", "ml-optimizer:hyperagent-select", "ml-optimizer:hyperagent-eval", "ml-optimizer:hyperagent-archive", "ml-optimizer:hyperagent-init", "ml-optimizer:hyperagent-inspect", "ml-optimizer:evolve", "ml-optimizer:shinka-setup", "ml-optimizer:shinka-convert", "ml-optimizer:shinka-run", "ml-optimizer:shinka-inspect", "claude-mem:mem-search", "superpowers:systematic-debugging", "feature-dev:code-explorer"],
     },
 }
 
@@ -160,8 +160,8 @@ EXPECTED_SKILLS = [
     "orchestrate", "prerequisites", "baseline", "experiment", "monitor",
     "research", "implement", "hp-tune", "analyze", "report",
     "evolve", "shinka-setup", "shinka-convert", "shinka-run", "shinka-inspect",
-    "hyperagent", "hyperagent-setup", "hyperagent-init", "hyperagent-select",
-    "hyperagent-generate", "hyperagent-eval", "hyperagent-archive",
+    "hyperagent", "hyperagent-init", "hyperagent-select",
+    "hyperagent-generate", "hyperagent-eval", "hyperagent-archive", "hyperagent-inspect",
 ]
 
 NON_ORCHESTRATE_SKILLS = [s for s in EXPECTED_SKILLS if s != "orchestrate"]
@@ -236,11 +236,12 @@ class TestAgentFiles:
 class TestSkillFiles:
     """Validate all 10 skill definition files."""
 
-    # ShinkaEvolve skills are third-party (symlinked from submodule) —
+    # ShinkaEvolve and Hyperagent skills are symlinked from submodules —
     # they have different frontmatter conventions, so only check name + existence
     _THIRD_PARTY_SKILLS = {"shinka-setup", "shinka-convert", "shinka-run", "shinka-inspect",
-                           "hyperagent-setup", "hyperagent-init", "hyperagent-select",
-                           "hyperagent-generate", "hyperagent-eval", "hyperagent-archive"}
+                           "hyperagent-init", "hyperagent-select",
+                           "hyperagent-generate", "hyperagent-eval", "hyperagent-archive",
+                           "hyperagent-inspect"}
 
     # orchestrate is the user-facing entry point — it must be invocable
     # (no disable-model-invocation, no user-invocable: false)
@@ -395,8 +396,9 @@ class TestSkillSymlinks:
 
     _SYMLINKED_SKILLS = [
         "shinka-setup", "shinka-convert", "shinka-run", "shinka-inspect",
-        "hyperagent-setup", "hyperagent-init", "hyperagent-select",
+        "hyperagent-init", "hyperagent-select",
         "hyperagent-generate", "hyperagent-eval", "hyperagent-archive",
+        "hyperagent-inspect",
     ]
 
     @pytest.mark.parametrize("skill_name", _SYMLINKED_SKILLS)

@@ -6,7 +6,7 @@ allowed-tools: "Bash, Read, Write, Edit, Glob, Grep, Agent, Skill, WebSearch, We
 
 # ML Optimizer End-to-End Diagnostic
 
-You are running a comprehensive diagnostic of the ml-optimizer plugin. This validates plugin structure via pytest, exercises all 16 script CLIs (including hyperagent_adapter), tests hook security boundaries, validates the resumable subagent infrastructure (agent registry, SendMessage patterns, context relay), confirms all 10 agents dispatch correctly (including hyperagent), tests the hyperagent evolutionary archive workflow, and runs the full Phase 2→9 pipeline via live Agent() dispatch — the only way to test the multi-agent orchestration end-to-end.
+You are running a comprehensive diagnostic of the ml-optimizer plugin. This validates plugin structure via pytest, exercises all 16 script CLIs (including hyperagent per-skill scripts), tests hook security boundaries, validates the resumable subagent infrastructure (agent registry, SendMessage patterns, context relay), confirms all 10 agents dispatch correctly (including hyperagent), tests the hyperagent evolutionary archive workflow, and runs the full Phase 2→9 pipeline via live Agent() dispatch — the only way to test the multi-agent orchestration end-to-end.
 
 ## Step 1: Run full test suite (pytest)
 
@@ -127,20 +127,23 @@ python3 -c "import matplotlib" 2>/dev/null && \
   python3 $SCRIPTS/plot_results.py /tmp/ml-opt-cli-test/results loss comparison 2>/dev/null \
   && echo "✓ plot_results" || echo "— plot_results (matplotlib missing or empty, OK)"
 
-# 16. hyperagent_adapter.py — full archive workflow (8 subcommands)
+# 16. hyperagent per-skill scripts — full archive workflow (8 subcommands)
+INIT_SCRIPT=$PLUGIN_ROOT/skills/hyperagent/Hyperagents/skills/hyperagent-init/scripts/init_archive.py
+SELECT_SCRIPT=$PLUGIN_ROOT/skills/hyperagent/Hyperagents/skills/hyperagent-select/scripts/select_parent.py
+ARCHIVE_SCRIPT=$PLUGIN_ROOT/skills/hyperagent/Hyperagents/skills/hyperagent-archive/scripts/archive_utils.py
 mkdir -p /tmp/ml-opt-cli-test/results
 echo '{"metrics":{"accuracy":0.82},"config":{}}' > /tmp/ml-opt-cli-test/results/baseline.json
 echo '{"user_choices":{"primary_metric":"accuracy"}}' > /tmp/ml-opt-cli-test/pipeline-state.json
-python3 $SCRIPTS/hyperagent_adapter.py /tmp/ml-opt-cli-test init \
-  && python3 $SCRIPTS/hyperagent_adapter.py /tmp/ml-opt-cli-test add \
+python3 $INIT_SCRIPT --output-dir /tmp/ml-opt-cli-test/hyperagent \
+  && python3 $ARCHIVE_SCRIPT add --output-dir /tmp/ml-opt-cli-test/hyperagent \
     '{"code_branch":"ml-opt/t1","mutation_type":"llm_patch","fitness_score":0.85,"parent_genid":"gen-000","status":"evaluated"}' \
-  && python3 $SCRIPTS/hyperagent_adapter.py /tmp/ml-opt-cli-test select-parent score_child_prop > /dev/null \
-  && python3 $SCRIPTS/hyperagent_adapter.py /tmp/ml-opt-cli-test lineage gen-001 > /dev/null \
-  && python3 $SCRIPTS/hyperagent_adapter.py /tmp/ml-opt-cli-test stats > /dev/null \
-  && python3 $SCRIPTS/hyperagent_adapter.py /tmp/ml-opt-cli-test best 1 > /dev/null \
-  && python3 $SCRIPTS/hyperagent_adapter.py /tmp/ml-opt-cli-test operator-stats > /dev/null \
-  && python3 $SCRIPTS/hyperagent_adapter.py /tmp/ml-opt-cli-test prune > /dev/null \
-  && echo "✓ hyperagent_adapter (8 subcommands)" || echo "✗ hyperagent_adapter FAILED"
+  && python3 $SELECT_SCRIPT --output-dir /tmp/ml-opt-cli-test/hyperagent --strategy score_child_prop > /dev/null \
+  && python3 $ARCHIVE_SCRIPT lineage --output-dir /tmp/ml-opt-cli-test/hyperagent gen-001 > /dev/null \
+  && python3 $ARCHIVE_SCRIPT stats --output-dir /tmp/ml-opt-cli-test/hyperagent > /dev/null \
+  && python3 $ARCHIVE_SCRIPT best --output-dir /tmp/ml-opt-cli-test/hyperagent -n 1 > /dev/null \
+  && python3 $ARCHIVE_SCRIPT operator-stats --output-dir /tmp/ml-opt-cli-test/hyperagent > /dev/null \
+  && python3 $ARCHIVE_SCRIPT prune --output-dir /tmp/ml-opt-cli-test/hyperagent > /dev/null \
+  && echo "✓ hyperagent per-skill scripts (8 subcommands)" || echo "✗ hyperagent per-skill scripts FAILED"
 
 # 17. setup_hyperagent.sh
 bash $PLUGIN_ROOT/scripts/setup_hyperagent.sh > /dev/null 2>&1 \
@@ -565,7 +568,8 @@ After baseline is established, initialize the evolutionary archive:
 
 ```bash
 EXP=/tmp/ml-opt-diagnostic/experiments
-python3 $SCRIPTS/hyperagent_adapter.py $EXP init
+INIT_SCRIPT=$PLUGIN_ROOT/skills/hyperagent/Hyperagents/skills/hyperagent-init/scripts/init_archive.py
+python3 $INIT_SCRIPT --output-dir $EXP/hyperagent
 ```
 
 **Verify:**
@@ -880,11 +884,11 @@ Agent(
   4. If staged eval passes: HP-tune the evolved code (1 iteration via tuning-agent)
   5. Run experiment on the evolved branch with tuned HPs
   6. Archive result via Skill('ml-optimizer:hyperagent-archive')
-  7. Update fitness via hyperagent_adapter.py update-fitness if HP tuning improved the score
+  7. Update fitness via archive_utils.py update-fitness if HP tuning improved the score
 
   Parameters: project_root: /tmp/ml-opt-diagnostic, exp_root: /tmp/ml-opt-diagnostic/experiments, primary_metric: loss, lower_is_better: true, scope_level: full, target_value: null.
   If ShinkaEvolve is unavailable, report shinkaevolve_unavailable and skip.",
-  subagent_type: "ml-optimizer:hyperagent"
+  subagent_type: "ml-optimizer:hyperagent-agent"
 )
 ```
 
@@ -904,7 +908,7 @@ else:
     print('— No evolved branch (ShinkaEvolve may be unavailable)')
 
 # Check archive has shinka_evolve entry
-r2 = subprocess.run([sys.executable, '$SCRIPTS/hyperagent_adapter.py', '$EXP', 'operator-stats'],
+r2 = subprocess.run([sys.executable, '$PLUGIN_ROOT/skills/hyperagent/Hyperagents/skills/hyperagent-archive/scripts/archive_utils.py', 'operator-stats', '--output-dir', '$EXP/hyperagent'],
                     capture_output=True, text=True)
 ops = json.loads(r2.stdout)
 shinka = ops.get('shinka_evolve', {})
@@ -1096,25 +1100,28 @@ After experiments, test the full hyperagent archive workflow — simulating what
 ```bash
 EXP=/tmp/ml-opt-diagnostic/experiments
 
+INIT_SCRIPT=$PLUGIN_ROOT/skills/hyperagent/Hyperagents/skills/hyperagent-init/scripts/init_archive.py
+SELECT_SCRIPT=$PLUGIN_ROOT/skills/hyperagent/Hyperagents/skills/hyperagent-select/scripts/select_parent.py
+ARCHIVE_SCRIPT=$PLUGIN_ROOT/skills/hyperagent/Hyperagents/skills/hyperagent-archive/scripts/archive_utils.py
 echo "=== Hyperagent Archive Workflow ==="
 
 # Add experiment results to archive (simulating different mutation operators)
-python3 $SCRIPTS/hyperagent_adapter.py $EXP add \
+python3 $ARCHIVE_SCRIPT add --output-dir $EXP/hyperagent \
   '{"code_branch":"ml-opt/gen-001-research","mutation_type":"research_implement","mutation_description":"Label smoothing from paper","fitness_score":0.84,"parent_genid":"gen-000","status":"evaluated"}'
 
-python3 $SCRIPTS/hyperagent_adapter.py $EXP add \
+python3 $ARCHIVE_SCRIPT add --output-dir $EXP/hyperagent \
   '{"code_branch":"ml-opt/gen-002-llm-patch","mutation_type":"llm_patch","mutation_description":"Added cosine scheduler","fitness_score":0.86,"parent_genid":"gen-000","status":"evaluated"}'
 
-python3 $SCRIPTS/hyperagent_adapter.py $EXP add \
+python3 $ARCHIVE_SCRIPT add --output-dir $EXP/hyperagent \
   '{"code_branch":"ml-opt/gen-003-evolved","mutation_type":"shinka_evolve","mutation_description":"Evolved LR schedule","fitness_score":0.87,"parent_genid":"gen-002","status":"evaluated"}'
 
-python3 $SCRIPTS/hyperagent_adapter.py $EXP add \
+python3 $ARCHIVE_SCRIPT add --output-dir $EXP/hyperagent \
   '{"code_branch":"ml-opt/gen-004-filtered","mutation_type":"llm_patch","mutation_description":"Failed variant","fitness_score":null,"parent_genid":"gen-002","status":"filtered"}'
 
 # Select parent — should pick gen-003 (best score)
 python3 -c "
 import subprocess, json, sys
-r = subprocess.run([sys.executable, '$SCRIPTS/hyperagent_adapter.py', '$EXP', 'select-parent', 'best'], capture_output=True, text=True)
+r = subprocess.run([sys.executable, '$PLUGIN_ROOT/skills/hyperagent/Hyperagents/skills/hyperagent-select/scripts/select_parent.py', '--output-dir', '$EXP/hyperagent', '--strategy', 'best'], capture_output=True, text=True)
 data = json.loads(r.stdout)
 print(f'✓ Parent selection: {data[\"genid\"]} (score={data[\"fitness_score\"]})') if data.get('genid') == 'gen-003' else print(f'✗ Parent selection: expected gen-003, got {data}')
 "
@@ -1122,7 +1129,7 @@ print(f'✓ Parent selection: {data[\"genid\"]} (score={data[\"fitness_score\"]}
 # Verify lineage — gen-003 should trace: gen-000 → gen-002 → gen-003
 python3 -c "
 import subprocess, json, sys
-r = subprocess.run([sys.executable, '$SCRIPTS/hyperagent_adapter.py', '$EXP', 'lineage', 'gen-003'], capture_output=True, text=True)
+r = subprocess.run([sys.executable, '$PLUGIN_ROOT/skills/hyperagent/Hyperagents/skills/hyperagent-archive/scripts/archive_utils.py', 'lineage', '--output-dir', '$EXP/hyperagent', 'gen-003'], capture_output=True, text=True)
 data = json.loads(r.stdout)
 genids = [e['genid'] for e in data['lineage']]
 expected = ['gen-000', 'gen-002', 'gen-003']
@@ -1132,7 +1139,7 @@ print(f'✓ Lineage: {\" → \".join(genids)}') if genids == expected else print
 # Operator stats
 python3 -c "
 import subprocess, json, sys
-r = subprocess.run([sys.executable, '$SCRIPTS/hyperagent_adapter.py', '$EXP', 'operator-stats'], capture_output=True, text=True)
+r = subprocess.run([sys.executable, '$PLUGIN_ROOT/skills/hyperagent/Hyperagents/skills/hyperagent-archive/scripts/archive_utils.py', 'operator-stats', '--output-dir', '$EXP/hyperagent'], capture_output=True, text=True)
 data = json.loads(r.stdout)
 ok = data.get('llm_patch', {}).get('attempts', 0) == 2 and data.get('shinka_evolve', {}).get('attempts', 0) == 1 and data.get('research_implement', {}).get('attempts', 0) == 1
 print(f'✓ Operator stats: llm={data[\"llm_patch\"][\"attempts\"]}, shinka={data[\"shinka_evolve\"][\"attempts\"]}, research={data[\"research_implement\"][\"attempts\"]}') if ok else print(f'✗ Operator stats: unexpected counts')
@@ -1141,7 +1148,7 @@ print(f'✓ Operator stats: llm={data[\"llm_patch\"][\"attempts\"]}, shinka={dat
 # Stats summary
 python3 -c "
 import subprocess, json, sys
-r = subprocess.run([sys.executable, '$SCRIPTS/hyperagent_adapter.py', '$EXP', 'stats'], capture_output=True, text=True)
+r = subprocess.run([sys.executable, '$PLUGIN_ROOT/skills/hyperagent/Hyperagents/skills/hyperagent-archive/scripts/archive_utils.py', 'stats', '--output-dir', '$EXP/hyperagent'], capture_output=True, text=True)
 data = json.loads(r.stdout)
 print(f'✓ Archive stats: {data[\"total_entries\"]} entries, {data[\"evaluated\"]} evaluated, {data[\"filtered\"]} filtered, best={data[\"best_score\"]}')
 "
@@ -1149,7 +1156,7 @@ print(f'✓ Archive stats: {data[\"total_entries\"]} entries, {data[\"evaluated\
 # Prune — gen-004 (filtered, no descendants) should be pruned
 python3 -c "
 import subprocess, json, sys
-r = subprocess.run([sys.executable, '$SCRIPTS/hyperagent_adapter.py', '$EXP', 'prune'], capture_output=True, text=True)
+r = subprocess.run([sys.executable, '$PLUGIN_ROOT/skills/hyperagent/Hyperagents/skills/hyperagent-archive/scripts/archive_utils.py', 'prune', '--output-dir', '$EXP/hyperagent'], capture_output=True, text=True)
 data = json.loads(r.stdout)
 print(f'✓ Prune: removed {data[\"pruned\"]}, {data[\"remaining\"]} remaining') if 'gen-004' in data.get('pruned', []) else print(f'✗ Prune: gen-004 should have been pruned')
 "
@@ -1167,7 +1174,7 @@ Agent(
   prompt: "Ultrathink. Invoke Skill('ml-optimizer:hyperagent'). Run ONE iteration of the optimization, then stop and report what you did.
   Parameters: project_root: /tmp/ml-opt-diagnostic, exp_root: /tmp/ml-opt-diagnostic/experiments, primary_metric: loss, lower_is_better: true, scope_level: full, target_value: null.
   IMPORTANT: Run only 1 iteration — choose the best operator based on archive state, execute it, archive the result, then return your decision and outcome.",
-  subagent_type: "ml-optimizer:hyperagent"
+  subagent_type: "ml-optimizer:hyperagent-agent"
 )
 ```
 
@@ -1187,14 +1194,14 @@ python3 -c "
 import subprocess, json, sys
 
 # Check archive grew
-r = subprocess.run([sys.executable, '$SCRIPTS/hyperagent_adapter.py', '$EXP', 'stats'], capture_output=True, text=True)
+r = subprocess.run([sys.executable, '$PLUGIN_ROOT/skills/hyperagent/Hyperagents/skills/hyperagent-archive/scripts/archive_utils.py', 'stats', '--output-dir', '$EXP/hyperagent'], capture_output=True, text=True)
 data = json.loads(r.stdout)
 initial = 5
 new = data['total_entries'] - initial
 print(f'✓ Hyperagent dispatch: {new} new entries from 2 iterations (total: {data[\"total_entries\"]})') if new > 0 else print(f'— Hyperagent dispatch: archive unchanged at {data[\"total_entries\"]}')
 
 # Check shinka_evolve was attempted
-r2 = subprocess.run([sys.executable, '$SCRIPTS/hyperagent_adapter.py', '$EXP', 'operator-stats'], capture_output=True, text=True)
+r2 = subprocess.run([sys.executable, '$PLUGIN_ROOT/skills/hyperagent/Hyperagents/skills/hyperagent-archive/scripts/archive_utils.py', 'operator-stats', '--output-dir', '$EXP/hyperagent'], capture_output=True, text=True)
 ops = json.loads(r2.stdout)
 shinka = ops.get('shinka_evolve', {})
 if shinka.get('attempts', 0) > 0:
@@ -1371,7 +1378,7 @@ Agent(
   If stacked gain >= best individual gain → clean stack → report no interference.
 
   Parameters: project_root: /tmp/ml-opt-diagnostic, exp_root: /tmp/ml-opt-diagnostic/experiments, primary_metric: loss, lower_is_better: true, scope_level: full.",
-  subagent_type: "ml-optimizer:hyperagent"
+  subagent_type: "ml-optimizer:hyperagent-agent"
 )
 ```
 
@@ -1457,7 +1464,7 @@ Agent(
 
   Parameters: project_root: /tmp/ml-opt-diagnostic, exp_root: /tmp/ml-opt-diagnostic/experiments, primary_metric: loss, lower_is_better: true, scope_level: full.
   Constraints: Cannot modify orchestrate skill. Cannot modify your own skill (hyperagent).",
-  subagent_type: "ml-optimizer:hyperagent"
+  subagent_type: "ml-optimizer:hyperagent-agent"
 )
 ```
 
@@ -1955,13 +1962,15 @@ with tempfile.TemporaryDirectory() as td:
 "
 
 # 26. Hyperagent archive
-python3 $SCRIPTS/hyperagent_adapter.py $EXP stats > /dev/null 2>&1 \
+ARCHIVE_SCRIPT=$PLUGIN_ROOT/skills/hyperagent/Hyperagents/skills/hyperagent-archive/scripts/archive_utils.py
+SELECT_SCRIPT=$PLUGIN_ROOT/skills/hyperagent/Hyperagents/skills/hyperagent-select/scripts/select_parent.py
+python3 $ARCHIVE_SCRIPT stats --output-dir $EXP/hyperagent > /dev/null 2>&1 \
   && echo "✓ [26/31] Hyperagent archive: operational" || echo "✗ [26/31] Hyperagent archive: FAILED"
 
 # 27. Parent selection (sigmoid + diversity)
 python3 -c "
 import subprocess, json, sys
-r = subprocess.run([sys.executable, '$SCRIPTS/hyperagent_adapter.py', '$EXP', 'select-parent', 'score_child_prop'], capture_output=True, text=True)
+r = subprocess.run([sys.executable, '$PLUGIN_ROOT/skills/hyperagent/Hyperagents/skills/hyperagent-select/scripts/select_parent.py', '--output-dir', '$EXP/hyperagent', '--strategy', 'score_child_prop'], capture_output=True, text=True)
 data = json.loads(r.stdout)
 ok = 'genid' in data and 'strategy' in data and data['strategy'] == 'score_child_prop'
 print('✓ [27/31] Parent selection: score_child_prop works') if ok else print('✗ [27/31] Parent selection: FAILED')
@@ -1970,7 +1979,7 @@ print('✓ [27/31] Parent selection: score_child_prop works') if ok else print('
 # 28. Lineage tracking
 python3 -c "
 import subprocess, json, sys
-r = subprocess.run([sys.executable, '$SCRIPTS/hyperagent_adapter.py', '$EXP', 'lineage', 'gen-000'], capture_output=True, text=True)
+r = subprocess.run([sys.executable, '$PLUGIN_ROOT/skills/hyperagent/Hyperagents/skills/hyperagent-archive/scripts/archive_utils.py', 'lineage', '--output-dir', '$EXP/hyperagent', 'gen-000'], capture_output=True, text=True)
 data = json.loads(r.stdout)
 ok = len(data.get('lineage', [])) >= 1
 print(f'✓ [28/31] Lineage tracking: {len(data[\"lineage\"])} entries') if ok else print('✗ [28/31] Lineage tracking: FAILED')
@@ -1979,7 +1988,7 @@ print(f'✓ [28/31] Lineage tracking: {len(data[\"lineage\"])} entries') if ok e
 # 29. Operator stats tracking
 python3 -c "
 import subprocess, json, sys
-r = subprocess.run([sys.executable, '$SCRIPTS/hyperagent_adapter.py', '$EXP', 'operator-stats'], capture_output=True, text=True)
+r = subprocess.run([sys.executable, '$PLUGIN_ROOT/skills/hyperagent/Hyperagents/skills/hyperagent-archive/scripts/archive_utils.py', 'operator-stats', '--output-dir', '$EXP/hyperagent'], capture_output=True, text=True)
 data = json.loads(r.stdout)
 ok = isinstance(data, dict)
 print(f'✓ [29/31] Operator stats: {len(data)} operators tracked') if ok else print('✗ [29/31] Operator stats: FAILED')

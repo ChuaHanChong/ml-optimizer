@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Setup script for the Hyperagent integration.
 # Initializes the git submodule and creates symlinks for skill auto-discovery.
+# Same pattern as setup_evolve.sh — skills live in the submodule, symlinks at top level.
 #
 # Usage:
 #   bash scripts/setup_hyperagent.sh
@@ -26,8 +27,8 @@ fi
 
 # Step 2: Create symlinks for Claude Code skill auto-discovery
 # Claude Code discovers skills at skills/*/SKILL.md — the hyperagent skills
-# are nested inside skills/hyperagent/skills/ and need symlinks at the top level.
-for skill in hyperagent-setup hyperagent-init hyperagent-select hyperagent-generate hyperagent-eval hyperagent-archive; do
+# are nested inside the submodule and need symlinks at the top level.
+for skill in hyperagent-init hyperagent-select hyperagent-generate hyperagent-eval hyperagent-archive hyperagent-inspect; do
     target="$SKILLS_DIR/$skill"
     source="hyperagent/Hyperagents/skills/$skill"
     if [ -L "$target" ]; then
@@ -40,34 +41,28 @@ for skill in hyperagent-setup hyperagent-init hyperagent-select hyperagent-gener
     fi
 done
 
-# Step 3: Verify Python can import from the submodule
-echo ""
-echo "Verifying Python imports..."
-if python3 -c "
-import sys
-sys.path.insert(0, '$HYPERAGENT_DIR')
-from utils.gl_utils import select_parent, load_archive_data, update_and_save_archive
-print('Done: gl_utils imports successful')
-" 2>/dev/null; then
-    :
-else
-    echo "Warning: Could not import gl_utils.py — numpy may be missing"
-    echo "  Try: pip install numpy"
-    echo "  The adapter script has a stdlib fallback, so this is not blocking."
-fi
-
-# Step 4: Verify adapter script exists and runs
-ADAPTER="$PLUGIN_ROOT/scripts/hyperagent_adapter.py"
-if [ -f "$ADAPTER" ]; then
-    if python3 "$ADAPTER" --help 2>/dev/null | head -1 | grep -q "hyperagent_adapter"; then
-        echo "Done: Adapter script works"
+# Step 3: Install required dependencies (numpy for gl_utils.py)
+_pip_install() {
+    if command -v pip >/dev/null 2>&1; then
+        pip install "$@"
+    elif python3 -m pip --version >/dev/null 2>&1; then
+        python3 -m pip install "$@"
+    elif command -v conda >/dev/null 2>&1; then
+        conda install -y "$@"
     else
-        echo "Done: Adapter script exists (run 'python3 $ADAPTER --help' to verify)"
+        echo "ERROR: No pip or conda found. Install manually: pip install $*" >&2
+        return 1
     fi
+}
+
+if python3 -c "import numpy" 2>/dev/null; then
+    echo "Done: numpy already installed"
 else
-    echo "Warning: Adapter script not found at $ADAPTER"
+    echo "Installing numpy (required by Hyperagents gl_utils.py)..."
+    _pip_install numpy 2>&1 | tail -3
+    echo "Done: numpy installed"
 fi
 
 echo ""
-echo "Hyperagent setup complete."
-echo "The meta-agent now has access to: hyperagent-setup, hyperagent-init, hyperagent-select, hyperagent-generate, hyperagent-eval, hyperagent-archive"
+echo "Hyperagents setup complete."
+echo "The hyperagent-agent now has access to: hyperagent, hyperagent-init, hyperagent-select, hyperagent-generate, hyperagent-eval, hyperagent-archive, hyperagent-inspect"

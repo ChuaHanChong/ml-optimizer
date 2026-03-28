@@ -130,6 +130,7 @@ ShinkaEvolve is one mutation operator. When the hyperagent chooses `shinka_evolv
 1. `Skill("ml-optimizer:hyperagent-select")` picks the parent
 2. `Skill("ml-optimizer:hyperagent-generate")` invokes `Skill("ml-optimizer:evolve")` internally
 3. The evolve skill runs the full ShinkaEvolve pipeline: `shinka-convert` → `shinka-run` → `shinka-inspect`
+   **CRITICAL:** Set `SHINKA_PROVIDER=claude_code` and `SHINKA_HANDOFF_DIR=<exp_root>` before launching shinka-run. This enables file-based LLM handoff where YOU act as the LLM backend by polling `<exp_root>/evolve/pending/` and writing responses to `<exp_root>/evolve/completed/`. Without these env vars, shinka-run will try external API keys and fail.
 4. The result branch is renamed to `ml-opt/gen-<N>-evolved-<slug>` for archive consistency
 
 ## Output

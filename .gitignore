@@ -3,6 +3,7 @@ __pycache__/
 .coverage
 *.egg-info/
 docs/superpowers/
+docs/plans/
 data/
 .claude/agent-memory-local/
 TODO.md

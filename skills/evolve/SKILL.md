@@ -74,6 +74,16 @@ Then invoke via `Skill("ml-optimizer:shinka-convert")`.
   **Important:** The evaluator must construct the model the same way `initial.py` does — import model construction from the candidate program, not hardcode parameters. If the evolved code changes model architecture (e.g., `base_channels`, layer count, hidden dimensions), `evaluate.py` must pick up those changes. Use dynamic imports or read architecture params from the candidate code.
 - `shinka.yaml` — Evolution config
 
+**EVOLVE-BLOCK placement rule:** The EVOLVE-BLOCK must wrap the **call sites where hyperparameters and config values are assigned**, not just function definitions with default parameters. If `run_experiment()` calls `train(lr=0.01)` with a hardcoded value, the block must contain `lr=0.01` — otherwise ShinkaEvolve mutates unused defaults and every mutation has zero effect. The correct pattern:
+```python
+# EVOLVE-BLOCK-START
+lr = 0.01           # ← ShinkaEvolve can mutate this
+batch_size = 64     # ← and this
+model = build_model(channels=16)  # ← and this
+score = train(model, lr=lr, batch_size=batch_size)
+# EVOLVE-BLOCK-END
+```
+
 **Scope enforcement:** Only wrap code sections allowed by `scope_level` in EVOLVE-BLOCK markers:
 - `"training"`: optimizer, scheduler, loss function, augmentation, regularization
 - `"architecture"`: + model layers, attention mechanisms, normalization

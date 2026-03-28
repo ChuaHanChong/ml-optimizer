@@ -163,6 +163,7 @@ Only `orchestrate` is directly invocable. All other skills have `disable-model-i
 | `analyze` | Post-batch analysis — ranks results, recommends next action | Internal |
 | `report` | Generates comprehensive final optimization report | Internal |
 | `evolve` | Orchestrates evolutionary code refinement via full ShinkaEvolve pipeline (convert → run → inspect) | Internal |
+| `hyperagent` | Orchestrates the self-referential optimization — Phase 7 experiments, Phase 8 stacking, meta-improvement | Internal |
 | `hyperagent-inspect` | Extract best archive entries as Markdown context bundle | Internal |
 | `hyperagent-init` | Create evolutionary archive from baseline + existing branches | Internal |
 | `hyperagent-select` | Select parent from archive (6 strategies: sigmoid + diversity, UCB1 tree search) | Internal |

@@ -81,30 +81,12 @@
     ],
     "SessionStart": [
       {
-        "hooks": [
-          {
-            "type": "prompt",
-            "prompt": "The ml-optimizer plugin is installed. When users ask to optimize, improve, or tune an ML model, you MUST use Skill('ml-optimizer:orchestrate') or the /optimize command. Do NOT attempt to handle ML optimization manually — the plugin has 9 specialized agents for research, HP tuning, experiments, analysis, and evolutionary code refinement."
-          }
-        ]
-      },
-      {
         "matcher": "compact",
         "hooks": [
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/post-compact-context.sh",
             "timeout": 10
-          }
-        ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "prompt",
-            "prompt": "If the user is asking about ML model optimization, training improvement, hyperparameter tuning, or model performance — you MUST use Skill('ml-optimizer:orchestrate') or the /optimize command. Do NOT attempt to optimize, tune, or train models manually."
           }
         ]
       }

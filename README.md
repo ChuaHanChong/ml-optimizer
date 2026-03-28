@@ -84,10 +84,17 @@ Run `/reload-plugin` or restart Claude Code. The `/optimize` command and all 11 
 
 ### Development / local testing
 
-Load the plugin directly from source without installing:
+Clone the repo into your project's `.claude/plugins/` directory:
 
 ```bash
-claude --plugin-dir <path-to-ml-optimizer> --dangerously-skip-permissions
+mkdir -p .claude/plugins
+git clone https://github.com/ChuaHanChong/ml-optimizer.git .claude/plugins/ml-optimizer
+```
+
+Then load the plugin directly:
+
+```bash
+claude --plugin-dir .claude/plugins/ml-optimizer --dangerously-skip-permissions
 ```
 
 ## Prerequisites
@@ -115,7 +122,7 @@ These MCP servers enhance the plugin's capabilities. The plugin works without th
 
 | MCP Server | What it enables | Used by |
 |------------|-----------------|---------|
-| **alphaxiv** | Academic paper search (2.5M+ arXiv papers), paper content extraction, PDF Q&A, GitHub repo exploration | research-agent (6 tools), implement-agent (2 tools) |
+| **alphaxiv** | arXiv paper search, paper content extraction, PDF Q&A, GitHub repo exploration | research-agent (6 tools), implement-agent (2 tools) |
 | **context7** | Framework API documentation lookup (PyTorch, TensorFlow, etc.) | research-agent, implement-agent |
 | **claude-mem** | Cross-session memory — recalls past optimization sessions, avoids re-proposing failed techniques | research-agent, orchestrator |
 

@@ -23,7 +23,7 @@ The ml-optimizer understands your ML model, establishes baselines, researches im
 **Key design decisions:**
 - **Hyperagent architecture**: Enables self-improvement and drives Phase 7 (experiments) ↔ Phase 8 (stacking) in a loop, choosing between HP tuning, LLM code patches, ShinkaEvolve, research-implement, stacking, and meta-improvement at each iteration
 - **Self-referential improvement**: The hyperagent can modify the plugin's own skill instructions to evolve the optimization strategy (session-scoped with end-of-session promotion)
-- **Archive-based evolutionary search**: Population archive with lineage tracking and parent selection (Hyperagents' DGM framework, sigmoid + diversity penalty)
+- **Archive-based evolutionary search**: Population archive with lineage tracking and parent selection (Hyperagents' DGM framework, sigmoid + diversity penalty, UCB1 tree search with MCTS backpropagation)
 - **Staged evaluation**: Two-stage eval (10% budget cheap filter → full training if promising) saves 50-80% compute
 - LLM-driven hyperparameter tuning (Claude reasons about results — no Optuna/grid search)
 - Research via web search + alphaxiv academic paper search + user-provided papers
@@ -37,7 +37,7 @@ Inspired by [Facebook Research Hyperagents](https://github.com/facebookresearch/
 | Feature | What it does |
 |---------|-------------|
 | **Hyperagent** | Opus agent that enables self-improvement and helps Phase 7 ↔ Phase 8 in a loop. Analysis advises direction, hyperagent decides specific action |
-| **Evolutionary Code Archive** | JSONL archive tracking code variants with parent-child lineage, fitness scores, and mutation operators. Parent selection uses Hyperagents' sigmoid + diversity penalty math |
+| **Evolutionary Code Archive** | JSONL archive tracking code variants with parent-child lineage, fitness scores, and mutation operators. 6 parent selection strategies including UCB1 (Auer et al. 2002) with MCTS-style backpropagation for balanced explore/exploit |
 | **Staged Evaluation** | Two-stage eval: 10% budget cheap filter with adaptive threshold → full training only if promising. Warm-starts from staged checkpoint |
 | **Three Mutation Operators** | LLM patches (structural), ShinkaEvolve (fine-grained AST), research-implement (paper-informed). Hyperagent learns which operator is most effective |
 | **Self-Referential Improvement** | Hyperagent modifies the plugin's own skill instructions (hp-tune, analyze, research). Session-scoped with end-of-session promotion gate |
@@ -157,7 +157,7 @@ Only `orchestrate` is directly invocable. All other skills have `disable-model-i
 | `evolve` | Orchestrates evolutionary code refinement via full ShinkaEvolve pipeline (convert → run → inspect) | Internal |
 | `hyperagent-inspect` | Extract best archive entries as Markdown context bundle | Internal |
 | `hyperagent-init` | Create evolutionary archive from baseline + existing branches | Internal |
-| `hyperagent-select` | Select parent from archive (5 strategies: sigmoid + diversity) | Internal |
+| `hyperagent-select` | Select parent from archive (6 strategies: sigmoid + diversity, UCB1 tree search) | Internal |
 | `hyperagent-generate` | Core mutation — LLM patch / ShinkaEvolve / research-implement + self-referential improvement | Internal |
 | `hyperagent-eval` | Two-stage evaluation: staged filter → full training with warm-start | Internal |
 | `hyperagent-archive` | Update archive with results, track lineage and operator effectiveness | Internal |
@@ -334,7 +334,7 @@ The plugin integrates two evolutionary frameworks as git submodules:
 
 ### Hyperagents (Facebook Research)
 
-[Hyperagents](https://github.com/facebookresearch/Hyperagents) provides the archive management and parent selection algorithms for the evolutionary code search loop. The hyperagent uses these to maintain a population of code variants with lineage tracking.
+[Hyperagents](https://github.com/facebookresearch/Hyperagents) provides the archive management and parent selection algorithms for the evolutionary code search loop. The hyperagent uses these to maintain a population of code variants with lineage tracking. Parent selection supports 6 strategies including UCB1 (Auer et al. 2002) with MCTS-style backpropagation — scores are min-max normalized to [0,1] with metric direction awareness (lower-is-better inversion), and `eval_count` tracks true evaluations separately from `visit_count` (inflated by ancestor backprop) to ensure correct explore/exploit balance.
 
 ```bash
 bash scripts/setup_hyperagent.sh

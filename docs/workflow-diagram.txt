@@ -402,6 +402,9 @@ ENTRY POINT
   |  |                                                                  |  |
   |  |  llm_patch / shinka_evolve / research_implement:                 |  |
   |  |    1. hyperagent-select → pick parent from archive               |  |
+  |  |       (6 strategies: best, score_child_prop, ucb, ...)           |  |
+  |  |       UCB1: value/visits + C×sqrt(ln(N)/visits)                  |  |
+  |  |       MCTS backprop: ancestors get visit_count++, value_sum+=    |  |
   |  |    2. hyperagent-generate → create code variant                  |  |
   |  |       (ShinkaEvolve: evolve skill does convert→run→inspect)      |  |
   |  |    3. hyperagent-eval → staged eval (10% budget, adaptive        |  |
@@ -422,6 +425,7 @@ ENTRY POINT
   |  |  7.3  ARCHIVE RESULTS                                            |  |
   |  |  hyperagent-archive → update code-archive.jsonl                  |  |
   |  |    - Track genid, parent, lineage, fitness, mutation operator    |  |
+  |  |    - Backpropagate UCB score (normalized) through lineage        |  |
   |  |    - Log to behavioral memory + research agenda                  |  |
   |  |    - Update operator_stats in hyperagent_state                   |  |
   |  +------------------------------------------------------------------+  |
@@ -665,7 +669,10 @@ ENTRY POINT
   Agent registry: pipeline-state.json → agent_registry (session-scoped, cleared on new session)
   Hyperagent state: pipeline-state.json → hyperagent_state (enabled, archive_generation,
                     strategy_history, meta_improvement_count, operator_stats)
-  Code archive: code-archive.jsonl (JSONL — genid, parent, lineage, fitness, mutation_type)
+  Code archive: hyperagent/archive.jsonl (JSONL — genid, parent, lineage, fitness, mutation_type)
+  UCB1 tree search: 6 parent selection strategies (best, score_child_prop, ucb, ...)
+                    UCB1 backprop: visit_count (all ancestors), eval_count (node only), value_sum
+                    Scores min-max normalized to [0,1] with metric direction inversion
   Meta-patches: experiments/meta-patches/ (session-scoped skill modifications)
   Goal anchor: optimization-goals.json (Phase 0, read by all agents)
   Behavioral memory: learned-behaviors.json (accumulated, project-scoped)

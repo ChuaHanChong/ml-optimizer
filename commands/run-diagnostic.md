@@ -138,12 +138,14 @@ python3 $INIT_SCRIPT --output-dir /tmp/ml-opt-cli-test/hyperagent \
   && python3 $ARCHIVE_SCRIPT add --output-dir /tmp/ml-opt-cli-test/hyperagent \
     '{"code_branch":"ml-opt/t1","mutation_type":"llm_patch","fitness_score":0.85,"parent_genid":"gen-000","status":"evaluated"}' \
   && python3 $SELECT_SCRIPT --output-dir /tmp/ml-opt-cli-test/hyperagent --strategy score_child_prop > /dev/null \
+  && python3 $SELECT_SCRIPT --output-dir /tmp/ml-opt-cli-test/hyperagent --strategy ucb > /dev/null \
+  && python3 $ARCHIVE_SCRIPT backpropagate --output-dir /tmp/ml-opt-cli-test/hyperagent initial 0.82 > /dev/null \
   && python3 $ARCHIVE_SCRIPT lineage --output-dir /tmp/ml-opt-cli-test/hyperagent gen-001 > /dev/null \
   && python3 $ARCHIVE_SCRIPT stats --output-dir /tmp/ml-opt-cli-test/hyperagent > /dev/null \
   && python3 $ARCHIVE_SCRIPT best --output-dir /tmp/ml-opt-cli-test/hyperagent -n 1 > /dev/null \
   && python3 $ARCHIVE_SCRIPT operator-stats --output-dir /tmp/ml-opt-cli-test/hyperagent > /dev/null \
   && python3 $ARCHIVE_SCRIPT prune --output-dir /tmp/ml-opt-cli-test/hyperagent > /dev/null \
-  && echo "✓ hyperagent per-skill scripts (8 subcommands)" || echo "✗ hyperagent per-skill scripts FAILED"
+  && echo "✓ hyperagent per-skill scripts (10 subcommands)" || echo "✗ hyperagent per-skill scripts FAILED"
 
 # 17. setup_hyperagent.sh
 bash $PLUGIN_ROOT/scripts/setup_hyperagent.sh > /dev/null 2>&1 \
@@ -1161,6 +1163,28 @@ data = json.loads(r.stdout)
 print(f'✓ Prune: removed {data[\"pruned\"]}, {data[\"remaining\"]} remaining') if 'gen-004' in data.get('pruned', []) else print(f'✗ Prune: gen-004 should have been pruned')
 "
 
+# UCB1 select — backpropagate scores then select with UCB strategy
+echo "--- UCB1 Tree Search ---"
+python3 -c "
+import subprocess, json, sys, os
+SELECT = '$PLUGIN_ROOT/skills/hyperagent/Hyperagents/skills/hyperagent-select/scripts/select_parent.py'
+ARCHIVE = '$PLUGIN_ROOT/skills/hyperagent/Hyperagents/skills/hyperagent-archive/scripts/archive_utils.py'
+EXP = '$EXP'
+env = {**os.environ, 'HYPERAGENT_METRIC': 'accuracy'}
+
+# Backpropagate scores for evaluated nodes
+for genid, score in [('1', 0.84), ('2', 0.86), ('3', 0.87)]:
+    r = subprocess.run([sys.executable, ARCHIVE, 'backpropagate', '--output-dir', f'{EXP}/hyperagent', genid, str(score)], capture_output=True, text=True, env=env)
+    data = json.loads(r.stdout)
+    print(f'  Backprop gen-{genid}: norm={data[\"normalized_score\"]}')
+
+# UCB select — should pick a node (with backprop data, not just random)
+r = subprocess.run([sys.executable, SELECT, '--output-dir', f'{EXP}/hyperagent', '--strategy', 'ucb'], capture_output=True, text=True, env=env)
+data = json.loads(r.stdout)
+ok = data.get('strategy') == 'ucb' and 'genid' in data
+print(f'✓ UCB1 select: {data[\"genid\"]} (strategy=ucb)') if ok else print(f'✗ UCB1 select: FAILED {data}')
+"
+
 echo "=== Hyperagent Archive Workflow Done ==="
 ```
 
@@ -1230,6 +1254,76 @@ Report:
   4. HP tuning evolved:    [passed/failed/skipped]
   5. Experiment evolved:   [passed/failed/skipped]
   6. Archive updated:      [passed/failed]
+
+### 6.6c2: Live Hyperagent UCB1 Dispatch (forced UCB strategy)
+
+Tests that the hyperagent can use UCB1 parent selection with MCTS backpropagation during Phase 7. Unlike 6.6c (free choice), this explicitly instructs the hyperagent to use `--strategy ucb` for parent selection and backpropagate the result.
+
+```text
+Agent(
+  description: "Diagnostic: hyperagent UCB1 iteration",
+  prompt: "Ultrathink. Invoke Skill('ml-optimizer:hyperagent'). Run ONE iteration using UCB1 parent selection.
+
+  Follow these steps exactly:
+  1. Select parent using Skill('ml-optimizer:hyperagent-select') with strategy: ucb
+     — Run: python3 ${CLAUDE_PLUGIN_ROOT}/skills/hyperagent/Hyperagents/skills/hyperagent-select/scripts/select_parent.py --output-dir <exp_root>/hyperagent --strategy ucb
+     — Report which node was selected and its UCB score
+  2. Generate a code variant (LLM patch or HP change) based on the selected parent
+  3. Run experiment on the variant
+  4. Archive the result via Skill('ml-optimizer:hyperagent-archive')
+  5. Backpropagate the score through the lineage:
+     — Run: python3 ${CLAUDE_PLUGIN_ROOT}/skills/hyperagent/Hyperagents/skills/hyperagent-archive/scripts/archive_utils.py backpropagate --output-dir <exp_root>/hyperagent <genid> <score>
+     — Report the normalized score and which ancestors were updated
+  6. Report: which parent was selected, what UCB score it had, what variant was generated, what the result was, and what the backpropagated normalized score was.
+
+  Parameters: project_root: /tmp/ml-opt-diagnostic, exp_root: /tmp/ml-opt-diagnostic/experiments, primary_metric: loss, lower_is_better: true, scope_level: full, target_value: null.",
+  subagent_type: "ml-optimizer:hyperagent-agent"
+)
+```
+
+**Verify UCB1 was actually used:**
+
+```bash
+python3 -c "
+import subprocess, json, sys, os
+ARCHIVE = '$PLUGIN_ROOT/skills/hyperagent/Hyperagents/skills/hyperagent-archive/scripts/archive_utils.py'
+EXP = '$EXP'
+env = {**os.environ, 'HYPERAGENT_METRIC': 'loss'}
+
+# Check that backpropagation happened (visit_count > 0 on at least one node)
+import glob
+meta_files = glob.glob(f'{EXP}/hyperagent/gen_*/metadata.json')
+nodes_with_visits = 0
+for mf in meta_files:
+    with open(mf) as f:
+        meta = json.load(f)
+    if meta.get('visit_count', 0) > 0:
+        nodes_with_visits += 1
+if nodes_with_visits > 0:
+    print(f'✓ UCB1 backpropagation: {nodes_with_visits} nodes have visit_count > 0')
+else:
+    print('✗ UCB1 backpropagation: no nodes have visit_count (backprop not called)')
+
+# Verify UCB select still works after backprop
+SELECT = '$PLUGIN_ROOT/skills/hyperagent/Hyperagents/skills/hyperagent-select/scripts/select_parent.py'
+r = subprocess.run([sys.executable, SELECT, '--output-dir', f'{EXP}/hyperagent', '--strategy', 'ucb'], capture_output=True, text=True, env=env)
+if r.returncode == 0:
+    data = json.loads(r.stdout)
+    print(f'✓ UCB1 post-backprop select: {data[\"genid\"]} (strategy=ucb)')
+else:
+    print(f'✗ UCB1 select failed: {r.stderr[:100]}')
+"
+```
+
+```
+Phase 7 UCB1 via Hyperagent:
+  1. UCB1 parent selected:    [passed/failed]
+  2. Variant generated:       [passed/failed]
+  3. Experiment ran:           [passed/failed]
+  4. Archive updated:          [passed/failed]
+  5. Backpropagation ran:      [passed/failed] — normalized score, ancestors updated
+  6. Post-backprop UCB select: [passed/failed] — visit_count > 0 on nodes
+```
 
 ### 6.6d: Phase 8 — Method Stacking (via Hyperagent)
 
@@ -1967,13 +2061,19 @@ SELECT_SCRIPT=$PLUGIN_ROOT/skills/hyperagent/Hyperagents/skills/hyperagent-selec
 python3 $ARCHIVE_SCRIPT stats --output-dir $EXP/hyperagent > /dev/null 2>&1 \
   && echo "✓ [26/31] Hyperagent archive: operational" || echo "✗ [26/31] Hyperagent archive: FAILED"
 
-# 27. Parent selection (sigmoid + diversity)
+# 27. Parent selection (UCB1 + score_child_prop)
 python3 -c "
-import subprocess, json, sys
-r = subprocess.run([sys.executable, '$PLUGIN_ROOT/skills/hyperagent/Hyperagents/skills/hyperagent-select/scripts/select_parent.py', '--output-dir', '$EXP/hyperagent', '--strategy', 'score_child_prop'], capture_output=True, text=True)
-data = json.loads(r.stdout)
-ok = 'genid' in data and 'strategy' in data and data['strategy'] == 'score_child_prop'
-print('✓ [27/31] Parent selection: score_child_prop works') if ok else print('✗ [27/31] Parent selection: FAILED')
+import subprocess, json, sys, os
+SELECT = '$PLUGIN_ROOT/skills/hyperagent/Hyperagents/skills/hyperagent-select/scripts/select_parent.py'
+env = {**os.environ, 'HYPERAGENT_METRIC': 'accuracy'}
+# Test score_child_prop
+r1 = subprocess.run([sys.executable, SELECT, '--output-dir', '$EXP/hyperagent', '--strategy', 'score_child_prop'], capture_output=True, text=True, env=env)
+d1 = json.loads(r1.stdout)
+# Test UCB1
+r2 = subprocess.run([sys.executable, SELECT, '--output-dir', '$EXP/hyperagent', '--strategy', 'ucb'], capture_output=True, text=True, env=env)
+d2 = json.loads(r2.stdout)
+ok = d1.get('strategy') == 'score_child_prop' and d2.get('strategy') == 'ucb'
+print('✓ [27/31] Parent selection: score_child_prop + UCB1 both work') if ok else print('✗ [27/31] Parent selection: FAILED')
 "
 
 # 28. Lineage tracking
@@ -2049,6 +2149,7 @@ Full Pipeline (live Agent() dispatch):
     - Analyze:              [passed/failed]
     - Result analyzer CLI:  [passed/failed]
   Phase 7 Hyperagent:       [passed/failed] — free choice iteration
+  Phase 7 UCB1 (Hyperagent): [passed/failed] — forced UCB1 select → variant → experiment → backpropagate
   Phase 7 Evolve (Hyperagent): [passed/failed/skipped] — full chain via hyperagent (select → evolve HPs → ShinkaEvolve → train HPs → experiment → archive)
   Meta-Improvement (Hyperagent): [passed/failed] — self-referential: hyperagent modifies skill files, generates meta-patches
   Phase 8 Stacking (Hyperagent): [passed/failed] — analysis agent triggered, N branches merged, interference resolved
@@ -2090,7 +2191,7 @@ Feature Verification (31 items):
   24. Persistent/ephemeral:   [✓/✗] — 6 persistent + 4 ephemeral correctly classified
   25. Evolve file handoff:    [✓/✗] — ShinkaEvolve round-trip works
   26. Hyperagent archive:     [✓/✗] — archive operational (init, add, stats)
-  27. Parent selection:       [✓/✗] — score_child_prop (sigmoid + diversity)
+  27. Parent selection:       [✓/✗] — score_child_prop + UCB1 (6 strategies)
   28. Lineage tracking:       [✓/✗] — parent-child chain traced
   29. Operator stats:         [✓/✗] — mutation type effectiveness tracked
   30. init_hyperagent_state:  [✓/✗] — defaults correct (enabled=True)
@@ -2101,6 +2202,8 @@ Hyperagent Integration (full workflow):
   Archive add + select:     [✓/✗] — 4 variants added, parent selected
   Lineage chain:            [✓/✗] — gen-000 → gen-002 → gen-003
   Operator stats:           [✓/✗] — llm=2, shinka=1, research=1
+  UCB1 backpropagate:       [✓/✗] — normalized scores propagated through lineage
+  UCB1 select:              [✓/✗] — strategy=ucb returns valid selection
   Prune:                    [✓/✗] — filtered variant pruned
   Hyperagent dispatch:      [✓/✗] — agent resolves, skills visible
   Hyperagent skill invoke:  [✓/✗] — Skill("ml-optimizer:hyperagent") runs 1 iteration

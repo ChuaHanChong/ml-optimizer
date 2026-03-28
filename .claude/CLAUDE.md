@@ -141,7 +141,7 @@ The hyperagent learns which operators are effective and adapts its strategy. The
 **6 Hyperagent skills:**
 - `hyperagent-init` — Create archive from baseline + existing branches
 - `hyperagent-inspect` — Inspect archive state, lineage, operator stats, and generation history
-- `hyperagent-select` — Parent selection (5 strategies: best, latest, random, score_prop, score_child_prop). Uses Hyperagents' exact math: `sigmoid(10(s - μ)) × exp(-(children/8)³)`
+- `hyperagent-select` — Parent selection (6 strategies: best, latest, random, score_prop, score_child_prop, ucb). Uses Hyperagents' exact math: `sigmoid(10(s - μ)) × exp(-(children/8)³)`. UCB1 (Auer et al. 2002) adds balanced explore/exploit via `value/visits + C×sqrt(ln(N)/visits)` with MCTS-style backpropagation.
 - `hyperagent-generate` — Hyperagent generates code variant (replaces Hyperagents' litellm hyperagent with Claude Code Opus agent). Can dispatch ShinkaEvolve as mutation operator.
 - `hyperagent-eval` — Two-stage evaluation: cheap staged eval (10% budget) → adaptive threshold → full training if passes. Warm-starts from staged checkpoint.
 - `hyperagent-archive` — Update archive with results, track lineage and operator effectiveness

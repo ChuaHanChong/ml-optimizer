@@ -163,6 +163,10 @@ Only `orchestrate` is directly invocable. All other skills have `disable-model-i
 | `analyze` | Post-batch analysis — ranks results, recommends next action | Internal |
 | `report` | Generates comprehensive final optimization report | Internal |
 | `evolve` | Orchestrates evolutionary code refinement via full ShinkaEvolve pipeline (convert → run → inspect) | Internal |
+| `shinka-setup` | Initialize ShinkaEvolve environment and dependencies | Internal |
+| `shinka-convert` | Convert ML project into ShinkaEvolve task format with EVOLVE-BLOCK markers | Internal |
+| `shinka-run` | Run ShinkaEvolve evolution with file-based LLM handoff (`SHINKA_PROVIDER=claude_code`) | Internal |
+| `shinka-inspect` | Extract best mutation from ShinkaEvolve results and commit to branch | Internal |
 | `hyperagent` | Orchestrates the self-referential optimization — Phase 7 experiments, Phase 8 stacking, meta-improvement | Internal |
 | `hyperagent-inspect` | Extract best archive entries as Markdown context bundle | Internal |
 | `hyperagent-init` | Create evolutionary archive from baseline + existing branches | Internal |

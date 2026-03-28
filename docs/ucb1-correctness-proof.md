@@ -18,9 +18,9 @@ We have an evolutionary archive of code variants (nodes). Each node has a fitnes
 UCB(i) = value_sum(i)/visits(i) + C * sqrt(ln(N) / visits(i))
 ```
 
-where `C = sqrt(2) ~ 1.414`, `N` = total evaluations.
+where `C = sqrt(2) ~ 1.414`, `N` = `max(sum(eval_count), 1)` (floored at 1 to prevent `ln(0)`).
 
-Unvisited nodes get UCB = infinity (must try everything once first).
+Unvisited nodes get UCB = infinity (must try everything once first). When N=1, `ln(1)=0` so the exploration term is 0 — pure exploitation until the second evaluation.
 
 ## The Challenge
 

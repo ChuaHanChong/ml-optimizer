@@ -111,15 +111,22 @@ The plugin's orchestration scripts (`scripts/`) use **only the Python standard l
 
 ### MCP Servers (Recommended)
 
-These MCP servers enhance the plugin's capabilities. The plugin works without them but benefits significantly from their presence:
+These MCP servers enhance the plugin's capabilities. The plugin works without them but benefits significantly from their presence. Install them separately — they are **not** bundled with the plugin.
 
 | MCP Server | What it enables | Used by |
 |------------|-----------------|---------|
-| **alphaxiv** (`api.alphaxiv.org/mcp/v1`) | Academic paper search (2.5M+ arXiv papers), paper content extraction, PDF Q&A, GitHub repo exploration | research-agent (6 tools), implement-agent (2 tools) |
+| **alphaxiv** | Academic paper search (2.5M+ arXiv papers), paper content extraction, PDF Q&A, GitHub repo exploration | research-agent (6 tools), implement-agent (2 tools) |
+| **context7** | Framework API documentation lookup (PyTorch, TensorFlow, etc.) | research-agent, implement-agent |
 | **claude-mem** | Cross-session memory — recalls past optimization sessions, avoids re-proposing failed techniques | research-agent, orchestrator |
 
-To connect alphaxiv: Use `/mcp` in Claude Code and add the alphaxiv SSE endpoint with OAuth authentication.
-To connect claude-mem: Install the claude-mem plugin which provides the MCP server automatically.
+**Install alphaxiv:**
+```bash
+claude mcp add --transport http --scope user alphaxiv https://api.alphaxiv.org/mcp/v1
+```
+
+**Install context7:** Install from the official Claude Code marketplace via `/plugin` → Discover → search for "context7".
+
+**Install claude-mem:** Install the claude-mem plugin from the marketplace, which provides the MCP server automatically.
 
 ### Optional
 

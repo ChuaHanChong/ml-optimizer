@@ -34,11 +34,15 @@ No build step. No linter configured. Python 3.10+ required. The `scripts/` direc
 
 ## MCP Server Dependencies (Recommended)
 
+These are installed separately — not bundled with the plugin.
+
 | MCP Server | Purpose | Used by | Required? |
 |------------|---------|---------|-----------|
-| **alphaxiv** (`api.alphaxiv.org/mcp/v1`) | Academic paper search (2.5M+ arXiv papers), paper content extraction, PDF Q&A, GitHub repo exploration | research-agent (6 tools), implement-agent (2 tools) | No — falls back to WebSearch/WebFetch |
-| **claude-mem** | Cross-session memory — recalls past optimization sessions, avoids re-proposing failed techniques | research-agent, orchestrator (Phase 1) | No — works without but loses cross-session learning |
+| **alphaxiv** | Academic paper search (2.5M+ arXiv papers), paper content extraction, PDF Q&A, GitHub repo exploration | research-agent (6 tools), implement-agent (2 tools) | No — falls back to WebSearch/WebFetch |
 | **context7** | Framework API documentation lookup (PyTorch, TensorFlow, etc.) | research-agent, implement-agent | No — falls back to WebSearch |
+| **claude-mem** | Cross-session memory — recalls past optimization sessions, avoids re-proposing failed techniques | research-agent, orchestrator (Phase 1) | No — works without but loses cross-session learning |
+
+Install: `claude mcp add --transport http --scope user alphaxiv https://api.alphaxiv.org/mcp/v1`. For context7 and claude-mem, install from the Claude Code marketplace.
 
 The plugin works without any MCP servers but benefits significantly from alphaxiv (better paper discovery and analysis) and claude-mem (learning across optimization sessions).
 

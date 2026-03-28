@@ -1,6 +1,7 @@
 ---
 name: orchestrate
 description: "Core ML optimization orchestrator. Understands model problems, dispatches specialized agents for research, HP tuning, and experiments. Use when: user wants to optimize an ML model, improve training, tune hyperparameters, or run optimization experiments."
+paths: "*.py, *.yaml, *.yml, *.json, *.toml, *.cfg, *.ipynb"
 ---
 
 # ML Optimization Orchestrator
@@ -13,7 +14,7 @@ You are an ML optimization orchestrator. You coordinate the full optimization pi
 
 - Plan template: `references/plan-template.md` (in this skill's directory)
 - Log format specs: `references/log-formats.md` (in this skill's directory)
-- Python scripts: `scripts/` in the plugin directory (scripts/gpu_check.py, scripts/parse_logs.py, scripts/detect_divergence.py, scripts/result_analyzer.py, scripts/experiment_setup.py, scripts/implement_utils.py, scripts/pipeline_state.py, scripts/schema_validator.py, scripts/plot_results.py, scripts/error_tracker.py, scripts/prerequisites_check.py, scripts/goal_memory.py)
+- Python scripts: `${CLAUDE_PLUGIN_ROOT}/scripts/` (gpu_check.py, scripts/parse_logs.py, scripts/detect_divergence.py, scripts/result_analyzer.py, scripts/experiment_setup.py, scripts/implement_utils.py, scripts/pipeline_state.py, scripts/schema_validator.py, scripts/plot_results.py, scripts/error_tracker.py, scripts/prerequisites_check.py, scripts/goal_memory.py)
 
 ## Goal Anchoring & Behavioral Memory
 
@@ -23,7 +24,7 @@ The pipeline maintains two project-scoped files to prevent optimization drift:
 
 2. **`experiments/learned-behaviors.json`** — Accumulated behavioral memory. Agents write what they learn (HP constraints, method outcomes, divergence patterns, OOM limits) and later agents read it to avoid repeating mistakes.
 
-**Key script:** `scripts/goal_memory.py <exp_root> <action>` — manages both files:
+**Key script:** `${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py <exp_root> <action>` — manages both files:
 - `summary` — compact briefing combining goals + behaviors + dead-ends (~500 tokens, read by agents before acting)
 - `validate-output <agent> <output_json>` — post-dispatch validation (orchestrator calls after hp-tune, research, analyze)
 - `sync-from-errors` — pulls OOM/divergence patterns from error_tracker into behavioral memory
@@ -107,7 +108,7 @@ Save the hyperagent's ID to `agent_registry["hyperagent"]` for SendMessage resum
 
 **Autonomous by default:** The loop runs non-stop until the target is reached or the user manually stops. It never auto-stops on plateaus — the hyperagent tries different operators before giving up. When the analysis agent recommends stop, the stuck protocol dispatches research for fresh ideas. Only the user can truly end the run.
 
-After each batch, the live dashboard is regenerated (`scripts/dashboard.py --live`). Baseline integrity is verified before each batch.
+After each batch, the live dashboard is regenerated (`${CLAUDE_PLUGIN_ROOT}/scripts/dashboard.py --live`). Baseline integrity is verified before each batch.
 
 **Pivot type relay to hyperagent:**
 
@@ -147,7 +148,7 @@ Read `references/phase-9-report.md` for the full workflow.
 
 Three steps:
 1. **Report:** Dispatch `ml-optimizer:report-agent`. Sync errors. Generate dashboard. Present summary.
-2. **Session review:** Dispatch `ml-optimizer:analysis-agent` (review mode) — analyzes what worked, what didn't, and how to improve. Not optional.
+2. **Session review:** Dispatch `ml-optimizer:analysis-agent` (review mode) — analyzes what worked, what didn't, and how to improve.
 3. **Meta-patch promotion:** If `hyperagent_state.active_meta_patches` is non-empty, evaluate patches via analysis-agent, present to user for promotion to the plugin branch.
 
 ### Phase 9 Meta-Patch Promotion
@@ -181,23 +182,23 @@ At each of the following points, log an error event using the error tracker scri
 ### After agent failures (any phase):
 When an agent dispatch fails (crash, timeout, invalid output):
 ```bash
-python3 scripts/error_tracker.py <exp_root> log '{"category":"agent_failure","severity":"critical","source":"orchestrate","message":"<failure description>","agent":"<agent_type>","phase":<phase>,"iteration":<iteration>}'
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"category":"agent_failure","severity":"critical","source":"orchestrate","message":"<failure description>","agent":"<agent_type>","phase":<phase>,"iteration":<iteration>}'
 ```
 
 ### After analyze recommends stop or pivot (Phase 7):
 ```bash
-python3 scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"warning","source":"orchestrate","message":"<analyze recommendation and reason>","phase":7,"iteration":<iteration>,"context":{"action":"<continue|pivot|stop>","reason":"<from analyze>"}}'
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"warning","source":"orchestrate","message":"<analyze recommendation and reason>","phase":7,"iteration":<iteration>,"context":{"action":"<continue|pivot|stop>","reason":"<from analyze>"}}'
 ```
 
 ### On pipeline resumption from interrupted state:
 ```bash
-python3 scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"orchestrate","message":"Pipeline resumed from interrupted state","phase":<resumed_phase>}'
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"orchestrate","message":"Pipeline resumed from interrupted state","phase":<resumed_phase>}'
 ```
 
 ### After analysis review mode failure (Phase 9):
 If the analysis agent's review mode crashes or produces invalid output:
 ```bash
-python3 scripts/error_tracker.py <exp_root> log '{"category":"agent_failure","severity":"warning","source":"orchestrate","message":"Analysis review mode failed: <error description>","agent":"analysis","phase":<phase>}'
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"category":"agent_failure","severity":"warning","source":"orchestrate","message":"Analysis review mode failed: <error description>","agent":"analysis","phase":<phase>}'
 ```
 
 ## Directory Structure Created
@@ -264,7 +265,7 @@ For persistent agents:
 
 After updating the registry, persist it via:
 ```bash
-python3 scripts/pipeline_state.py <exp_root> save <phase> <iteration>
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/pipeline_state.py <exp_root> save <phase> <iteration>
 ```
 (The `save_state()` function preserves `agent_registry` automatically across calls.)
 

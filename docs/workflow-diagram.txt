@@ -563,8 +563,8 @@ ENTRY POINT
                     |
                     v
 
-  Step 2: SESSION REVIEW (not optional)
-  --------------------------------------
+  Step 2: SESSION REVIEW
+  -----------------------
   Agent: analysis-agent --> ml-optimizer:analyze skill (review mode)
 
     - What worked, what didn't, how to improve

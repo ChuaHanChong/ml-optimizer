@@ -24,12 +24,12 @@ If validation fails, stop and report the missing prerequisites to the user.
 
 Verify the baseline metrics haven't been modified since Phase 3:
 ```bash
-python3 scripts/pipeline_state.py <exp_root> verify-baseline
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/pipeline_state.py <exp_root> verify-baseline
 ```
 
 If exit code is non-zero (baseline checksum mismatch): **HALT the pipeline immediately.** Log to error tracker:
 ```bash
-python3 scripts/error_tracker.py <exp_root> log '{"category":"config_error","severity":"critical","source":"orchestrate","message":"Baseline integrity check FAILED — metrics may have been modified. Pipeline halted.","phase":7}'
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"category":"config_error","severity":"critical","source":"orchestrate","message":"Baseline integrity check FAILED — metrics may have been modified. Pipeline halted.","phase":7}'
 ```
 Report the error to the user. Do NOT continue — all experiment comparisons would be invalid.
 
@@ -39,7 +39,7 @@ If the verification returns a warning (legacy pipeline without checksum): log to
 
 Before starting experiments, sync behavioral patterns from the error tracker:
 ```bash
-python3 scripts/goal_memory.py <exp_root> sync-from-errors
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py <exp_root> sync-from-errors
 ```
 This populates `experiments/learned-behaviors.json` with OOM limits, divergence patterns, and dead-end outcomes from the error tracker. All agents will read this via the `summary` command.
 
@@ -277,11 +277,11 @@ When the implementation manifest contains multiple code branches:
 
    **Goal validation (post-dispatch):** After hp-tune returns proposed configs:
    ```bash
-   python3 scripts/goal_memory.py <exp_root> validate-output hp-tune '<proposed_configs_json>'
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py <exp_root> validate-output hp-tune '<proposed_configs_json>'
    ```
    If `valid` is false: remove violating configs from the batch. Log each violation:
    ```bash
-   python3 scripts/goal_memory.py <exp_root> log-behavior scope_violation '{"agent":"hp-tune","violation_type":"<type>","detail":"<detail>"}'
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py <exp_root> log-behavior scope_violation '{"agent":"hp-tune","violation_type":"<type>","detail":"<detail>"}'
    ```
    If ALL configs are removed, re-dispatch hp-tune with the violations as context ("Your previous proposals violated: [violations]. Please propose alternatives.").
 
@@ -342,7 +342,7 @@ When the implementation manifest contains multiple code branches:
      4. Continue with the remaining experiments in the batch
    - **Incremental dashboard updates:** As individual experiments complete, regenerate the live dashboard so users can monitor progress in real-time:
      ```bash
-     python3 scripts/dashboard.py <exp_root> --live
+     python3 ${CLAUDE_PLUGIN_ROOT}/scripts/dashboard.py <exp_root> --live
      ```
      Log to dev_notes: "Experiment {exp_id} completed mid-batch: {primary_metric}={value}"
    - Save pipeline state after each batch completes
@@ -394,11 +394,11 @@ When the implementation manifest contains multiple code branches:
      - It recommends: continue, pivot, or stop
    - **Live dashboard update:** After analyze completes, regenerate the dashboard so users can monitor progress in real-time:
      ```bash
-     python3 scripts/dashboard.py <exp_root> --live
+     python3 ${CLAUDE_PLUGIN_ROOT}/scripts/dashboard.py <exp_root> --live
      ```
    - **Goal validation (post-dispatch):** After analyze returns:
      ```bash
-     python3 scripts/goal_memory.py <exp_root> validate-output analyze '<analyze_output_json>'
+     python3 ${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py <exp_root> validate-output analyze '<analyze_output_json>'
      ```
      If metric mismatch detected: log a critical error to the error tracker. Do NOT trust the analysis — the metric confusion could cause wrong ranking of experiments.
 
@@ -409,7 +409,7 @@ When the implementation manifest contains multiple code branches:
    1. Parse the user's request into a goal update
    2. Apply via:
       ```bash
-      python3 scripts/goal_memory.py <exp_root> update-goals '<updates_json>'
+      python3 ${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py <exp_root> update-goals '<updates_json>'
       ```
       Example updates:
       - Target: `{"objective": {"target_value": 85.0}}`
@@ -451,10 +451,10 @@ When the implementation manifest contains multiple code branches:
 
      The hyperagent can invoke this when it has evidence that current approaches are exhausted — for example, multiple operators tried with no improvement, or the archive shows a clear plateau. This is a tool the hyperagent chooses to use, not an automatic trigger.
 
-       1. Read error patterns: `python3 scripts/error_tracker.py <exp_root> patterns`
-       2. Read success metrics: `python3 scripts/error_tracker.py <exp_root> success <primary_metric> <lower_is_better>`
-       3. Read dead-end catalog: `python3 scripts/error_tracker.py <exp_root> dead-end list`
-       4. Read research agenda: `python3 scripts/error_tracker.py <exp_root> agenda list`
+       1. Read error patterns: `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> patterns`
+       2. Read success metrics: `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> success <primary_metric> <lower_is_better>`
+       3. Read dead-end catalog: `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> dead-end list`
+       4. Read research agenda: `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> agenda list`
        5. Dispatch the research agent with all failure context (resume-or-dispatch pattern):
 
           **IF `agent_registry["research"]` is not null** (agent exists from a previous research round):
@@ -538,7 +538,7 @@ When the implementation manifest contains multiple code branches:
 
    **Goal validation (post-dispatch):** After research returns proposals:
    ```bash
-   python3 scripts/goal_memory.py <exp_root> validate-output research '<proposals_json>'
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py <exp_root> validate-output research '<proposals_json>'
    ```
    If `valid` is false: remove scope-violating and dead-end proposals before passing to implement. Log violations to behavioral memory.
 
@@ -622,7 +622,7 @@ When the implementation manifest contains multiple code branches:
 
    a. **Log the trigger:**
       ```bash
-      python3 scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"orchestrate","message":"Cadence-based research round triggered after <N> HP batches","phase":7,"iteration":<iteration>,"context":{"batches_since_last_research":<N>,"method_proposal_iterations":<M>}}'
+      python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"orchestrate","message":"Cadence-based research round triggered after <N> HP batches","phase":7,"iteration":<iteration>,"context":{"batches_since_last_research":<N>,"method_proposal_iterations":<M>}}'
       ```
 
    b. **Generate proposals:** Dispatch the research agent (resume-or-dispatch pattern):
@@ -656,7 +656,7 @@ When the implementation manifest contains multiple code branches:
       - If research returns new proposals (not all filtered by deduplication): proceed to implement
       - If research returns **no new proposals** (all deduplicated): skip implement, double `hp_batches_per_round` (exponential backoff), log:
         ```bash
-        python3 scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"orchestrate","message":"Research round yielded no new proposals — increasing cadence to <new_value> batches","phase":7,"iteration":<iteration>}'
+        python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"orchestrate","message":"Research round yielded no new proposals — increasing cadence to <new_value> batches","phase":7,"iteration":<iteration>}'
         ```
 
    d. **Implement proposals:** ALL returned proposals are implemented automatically. Dispatch the implement agent with the research findings (resume-or-dispatch pattern). This creates new `ml-opt/<slug>` branches.
@@ -698,7 +698,7 @@ When the implementation manifest contains multiple code branches:
 
     **End-of-iteration sync:** Keep behavioral memory current with the latest error events:
     ```bash
-    python3 scripts/goal_memory.py <exp_root> sync-from-errors
+    python3 ${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py <exp_root> sync-from-errors
     ```
 
     After steps 6/7/8, increment `batches_since_last_research` and return to step 1 (Get HP configs). The loop continues until the Decision step (6) forces an exit.

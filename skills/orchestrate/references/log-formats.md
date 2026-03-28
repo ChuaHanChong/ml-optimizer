@@ -159,7 +159,7 @@ experiments/artifacts/
   progress_chart.png                 — Optimization progress chart (from report skill)
 ```
 
-Created automatically by `scripts/experiment_setup.py`. The experiment skill creates per-experiment subdirectories before training and configures checkpoint save paths to point here.
+Created automatically by `${CLAUDE_PLUGIN_ROOT}/scripts/experiment_setup.py`. The experiment skill creates per-experiment subdirectories before training and configures checkpoint save paths to point here.
 
 ## Batch Analysis (`experiments/reports/batch-<N>-analysis.md`)
 ```markdown

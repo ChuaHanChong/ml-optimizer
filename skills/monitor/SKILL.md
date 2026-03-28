@@ -49,7 +49,7 @@ tail -100 experiments/logs/<exp_id>/train.log
 
 Parse the log content for the watched metric:
 ```bash
-python3 scripts/parse_logs.py experiments/logs/<exp_id>/train.log
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/parse_logs.py experiments/logs/<exp_id>/train.log
 ```
 
 Extract the metric trajectory (all values of the watched metric over time).
@@ -85,7 +85,7 @@ print(json.dumps(result))
 
 Alternatively, use the CLI with the `--model-category` flag:
 ```bash
-python3 scripts/detect_divergence.py '<json_values>' --model-category <model_category>
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/detect_divergence.py '<json_values>' --model-category <model_category>
 ```
 
 This applies category-specific thresholds automatically (e.g., RL uses `explosion_threshold=20.0` to avoid false positives on reward spikes).
@@ -100,13 +100,13 @@ If `overfitting_check` was provided in the inputs:
 
 2. Run overfitting detection:
    ```bash
-   python3 scripts/detect_divergence.py --check-overfitting '<train_json>' '<val_json>' [--model-category <category>]
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/detect_divergence.py --check-overfitting '<train_json>' '<val_json>' [--model-category <category>]
    ```
 
 3. If overfitting detected:
    - Report status `"overfitting_warning"` (do NOT kill the process — overfitting is a warning, not a hard failure)
    - Log to error tracker: `category: "overfitting", severity: "warning"`
-   - Log to behavioral memory: `scripts/goal_memory.py <exp_root> log-behavior training_insight '{"insight":"Overfitting detected: <severity> at step <step>","source":"monitor"}'`
+   - Log to behavioral memory: `${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py <exp_root> log-behavior training_insight '{"insight":"Overfitting detected: <severity> at step <step>","source":"monitor"}'`
 
 ### 2e: Take Action on Divergence
 
@@ -157,14 +157,14 @@ If divergence is detected:
 
 4. **Log to error tracker:**
    ```bash
-   python3 scripts/error_tracker.py <exp_root> log '{"category":"divergence","severity":"warning","source":"monitor","message":"<divergence reason>","exp_id":"<exp_id>","context":{"divergence_type":"<nan|explosion|plateau|drift>","step":<step>,"metric_to_watch":"<metric>"}}'
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"category":"divergence","severity":"warning","source":"monitor","message":"<divergence reason>","exp_id":"<exp_id>","context":{"divergence_type":"<nan|explosion|plateau|drift>","step":<step>,"metric_to_watch":"<metric>"}}'
    ```
 
 5. **Log divergence pattern to behavioral memory:**
 
    When an experiment is killed due to divergence, also log the pattern to behavioral memory:
    ```bash
-   python3 scripts/goal_memory.py <exp_root> log-behavior divergence_pattern '{"description":"<metric> diverged at step <N> with config <config>","affected_branches":["<branch>"],"threshold":{"parameter":"<hp>","value":<val>},"source":"monitor"}'
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py <exp_root> log-behavior divergence_pattern '{"description":"<metric> diverged at step <N> with config <config>","affected_branches":["<branch>"],"threshold":{"parameter":"<hp>","value":<val>},"source":"monitor"}'
    ```
    This helps future hp-tune iterations avoid configs that trigger divergence.
 

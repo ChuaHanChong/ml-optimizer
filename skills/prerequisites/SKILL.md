@@ -36,7 +36,7 @@ Read the training script and config file identified in Phase 1:
 
 Run the project-level format detection (follows imports to find data modules):
 ```bash
-python3 scripts/prerequisites_check.py detect-format-project <project_root> <training_script>
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/prerequisites_check.py detect-format-project <project_root> <training_script>
 ```
 
 This scans the training script AND any local modules it imports for data-loading patterns. It returns the expected format (image_folder, csv, hdf5, cifar, etc.), patterns found, data-related CLI arguments, and confidence level.
@@ -58,7 +58,7 @@ Please describe:
 For each data path provided by the user (training, validation):
 
 ```bash
-python3 scripts/prerequisites_check.py validate-data <path> <format>
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/prerequisites_check.py validate-data <path> <format>
 ```
 
 Check that:
@@ -98,7 +98,7 @@ Common preparations:
 
 Run environment detection to validate the user's Phase 0 answer:
 ```bash
-python3 scripts/prerequisites_check.py detect-env <project_root>
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/prerequisites_check.py detect-env <project_root>
 ```
 
 Compare the detected manager with the user's specified manager (`env_manager` from Phase 0):
@@ -133,12 +133,12 @@ Options:
 
 Scan the project for required packages:
 ```bash
-python3 scripts/prerequisites_check.py scan-imports <project_root>
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/prerequisites_check.py scan-imports <project_root>
 ```
 
 Then check which third-party packages are missing, using the user's Python executable:
 ```bash
-python3 scripts/prerequisites_check.py check-packages '<third_party_json>' <python_executable>
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/prerequisites_check.py check-packages '<third_party_json>' <python_executable>
 ```
 
 Where `<python_executable>` is:
@@ -150,7 +150,7 @@ Where `<python_executable>` is:
 
 Before installing packages individually, check if the project has a dependency specification:
 ```bash
-python3 scripts/prerequisites_check.py bulk-install-cmd <project_root> <env_manager> [env_name]
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/prerequisites_check.py bulk-install-cmd <project_root> <env_manager> [env_name]
 ```
 Pass `<env_name>` when using conda so the generated install command targets the correct environment.
 
@@ -167,7 +167,7 @@ If `has_deps_file` is `false`, skip to Step 6.
 
 Before installing `torch`, `torchvision`, `torchaudio`, `tensorflow`, `jax`, or `jaxlib`, detect the correct CUDA variant:
 ```bash
-python3 scripts/prerequisites_check.py gpu-install-cmd <package> [env_manager] [env_name]
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/prerequisites_check.py gpu-install-cmd <package> [env_manager] [env_name]
 ```
 Pass `<env_manager>` and `<env_name>` when using conda — the output command will be wrapped with `conda run --no-banner -n <env_name>` so the package installs into the correct environment. **Never use bare `pip install torch` or `pip install jax`** — these install CPU-only versions, causing silent performance failure on GPU machines.
 
@@ -180,11 +180,11 @@ For all other packages, install using the user's preferred manager:
 | pip     | `pip install <package>` (or use the command from `gpu-install-cmd` for GPU packages) |
 | poetry  | `poetry add <package>` |
 
-**Note:** Some import names differ from pip package names. Use the `IMPORT_TO_PACKAGE` mapping in `scripts/prerequisites_check.py` (e.g., `cv2` → `opencv-python`, `PIL` → `Pillow`, `yaml` → `PyYAML`).
+**Note:** Some import names differ from pip package names. Use the `IMPORT_TO_PACKAGE` mapping in `${CLAUDE_PLUGIN_ROOT}/scripts/prerequisites_check.py` (e.g., `cv2` → `opencv-python`, `PIL` → `Pillow`, `yaml` → `PyYAML`).
 
 After installation, re-run the package check to verify:
 ```bash
-python3 scripts/prerequisites_check.py check-packages '<still_missing_json>'
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/prerequisites_check.py check-packages '<still_missing_json>'
 ```
 
 **Classify failures:**
@@ -246,7 +246,7 @@ Write `experiments/results/prerequisites.json`:
 ## Step 7.1: Validate Output
 
 ```bash
-python3 scripts/schema_validator.py \
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/schema_validator.py \
   experiments/results/prerequisites.json prerequisites
 ```
 
@@ -284,20 +284,20 @@ At the following points, log an error event using the error tracker:
 
 ### When data path doesn't exist or validation fails:
 ```bash
-python3 scripts/error_tracker.py <exp_root> log '{"category":"resource_error","severity":"critical","source":"prerequisites","message":"Data path does not exist: <path>","phase":2,"context":{"path":"<path>","path_type":"<train|val>"}}'
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"category":"resource_error","severity":"critical","source":"prerequisites","message":"Data path does not exist: <path>","phase":2,"context":{"path":"<path>","path_type":"<train|val>"}}'
 ```
 
 ### When data format validation fails:
 ```bash
-python3 scripts/error_tracker.py <exp_root> log '{"category":"resource_error","severity":"warning","source":"prerequisites","message":"Data format validation failed: <reason>","phase":2,"context":{"format_detected":"<format>","validation_error":"<reason>"}}'
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"category":"resource_error","severity":"warning","source":"prerequisites","message":"Data format validation failed: <reason>","phase":2,"context":{"format_detected":"<format>","validation_error":"<reason>"}}'
 ```
 
 ### When package installation fails:
 ```bash
-python3 scripts/error_tracker.py <exp_root> log '{"category":"config_error","severity":"<critical|warning>","source":"prerequisites","message":"Package install failed: <package>","phase":2,"context":{"package":"<package>","manager":"<env_manager>","is_critical":<true|false>}}'
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"category":"config_error","severity":"<critical|warning>","source":"prerequisites","message":"Package install failed: <package>","phase":2,"context":{"package":"<package>","manager":"<env_manager>","is_critical":<true|false>}}'
 ```
 
 ### When environment detection or setup fails:
 ```bash
-python3 scripts/error_tracker.py <exp_root> log '{"category":"resource_error","severity":"warning","source":"prerequisites","message":"Environment detection failed: <error>","phase":2,"context":{"env_manager":"<env_manager>","env_name":"<env_name>"}}'
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"category":"resource_error","severity":"warning","source":"prerequisites","message":"Environment detection failed: <error>","phase":2,"context":{"env_manager":"<env_manager>","env_name":"<env_name>"}}'
 ```

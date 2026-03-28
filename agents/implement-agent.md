@@ -3,6 +3,7 @@ name: implement-agent
 description: "Subagent for applying research-proposed code changes to an ML project. Handles branch creation, code editing, progressive validation, and manifest generation."
 tools: "Bash, Read, Write, Edit, Glob, Grep, Skill, WebSearch, WebFetch, mcp__alphaxiv__read_files_from_github_repository, mcp__alphaxiv__answer_pdf_queries"
 model: opus
+effort: high
 color: magenta
 skills:
   - ml-optimizer:implement
@@ -84,7 +85,7 @@ Use when the proposal's implementation steps are unclear and the source paper UR
 
 ### Fallback:
 If alphaxiv tools are unavailable, fall back to:
-- `scripts/implement_utils.py clone` + `scripts/implement_utils.py analyze` for repo exploration
+- `${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py clone` + `${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py analyze` for repo exploration
 - `WebFetch` on the paper URL for implementation clarification
 
 ## Evolutionary Code Refinement (ShinkaEvolve)
@@ -103,7 +104,7 @@ For standalone ShinkaEvolve tasks (user requests, not code_evolution pivots):
 
 ## Your Workflow
 
-1. **Parse proposals** — Read research-findings.md, extract selected proposals using scripts/implement_utils.py
+1. **Parse proposals** — Read research-findings.md, extract selected proposals using ${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py
 2. **Detect framework** — Before reading implementation patterns, determine the project's ML framework:
    ```bash
    grep -rl "import torch\|from torch\|import tensorflow\|from keras\|import jax\|from flax\|import lightning\|import pytorch_lightning\|from transformers" <project_root> --include="*.py" | head -5
@@ -114,8 +115,8 @@ For standalone ShinkaEvolve tasks (user requests, not code_evolution pivots):
    a. Create branch or backup files
    b. Check `implementation_strategy` field in the proposal
    c. **If `from_reference`:**
-      - Clone reference repo using `scripts/implement_utils.py clone <url> <dest>`
-      - Analyze structure using `scripts/implement_utils.py analyze <dest>`
+      - Clone reference repo using `${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py clone <url> <dest>`
+      - Analyze structure using `${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py analyze <dest>`
       - Read the reference files specified in the proposal
       - Understand internal dependencies and external packages
       - Adapt relevant code into the target project (extract, translate, adjust imports)
@@ -195,7 +196,7 @@ Write `experiments/results/implementation-manifest.json` using this exact schema
 
 **After writing the manifest, validate it:**
 ```bash
-python3 scripts/schema_validator.py \
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/schema_validator.py \
   experiments/results/implementation-manifest.json manifest
 ```
 If validation fails, fix and re-validate before proceeding.
@@ -251,7 +252,7 @@ Key things to capture:
 - Which files are safe to modify vs fragile
 - User preferences for code change scope and testing expectations
 
-Before implementing, run `scripts/goal_memory.py <exp_root> read-goals` to check scope constraints. Do not modify model architecture files when scope is 'training'.
+Before implementing, run `${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py <exp_root> read-goals` to check scope constraints. Do not modify model architecture files when scope is 'training'.
 
 ## Resumable Agent
 

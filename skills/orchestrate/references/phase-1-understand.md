@@ -33,7 +33,7 @@
 
 4. **Check GPU availability:**
    ```bash
-   python3 scripts/gpu_check.py
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gpu_check.py
    ```
 
 5. **Synthesize understanding:**

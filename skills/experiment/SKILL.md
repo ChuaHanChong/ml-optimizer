@@ -165,7 +165,7 @@ If the training command produces checkpoint files (`*.pt`, `*.pth`, `*.ckpt`, `*
 
 Use the experiment setup script:
 ```bash
-python3 scripts/experiment_setup.py \
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/experiment_setup.py \
   <project_root> \
   "<full_train_command>" \
   <gpu_id> \
@@ -221,7 +221,7 @@ Write to: `experiments/results/<exp_id>.json`
 
 Validate the placeholder:
 ```bash
-python3 scripts/schema_validator.py \
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/schema_validator.py \
   experiments/results/<exp_id>.json result
 ```
 
@@ -247,7 +247,7 @@ After training starts, perform a fast sanity check on the first few log entries 
 1. Wait for the first 5-10 training steps to appear in the log (poll `experiments/logs/<exp_id>/train.log` briefly)
 2. Parse the initial loss values using:
    ```bash
-   python3 scripts/parse_logs.py experiments/logs/<exp_id>/train.log
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/parse_logs.py experiments/logs/<exp_id>/train.log
    ```
 3. **Abort immediately** if any of these conditions are met:
    - Loss is `NaN` or `Inf` in the first 10 steps
@@ -259,7 +259,7 @@ After training starts, perform a fast sanity check on the first few log entries 
    - Write results with `"status": "failed"` and note: `"Early abort: <reason> in first 10 steps"`
    - Log to error tracker:
      ```bash
-     python3 scripts/error_tracker.py <exp_root> log '{"category":"training_failure","severity":"warning","source":"experiment","message":"Early abort: <reason>","exp_id":"<exp_id>","config":<config_json>,"context":{"abort_step":<step>,"loss_value":<value>}}'
+     python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"category":"training_failure","severity":"warning","source":"experiment","message":"Early abort: <reason>","exp_id":"<exp_id>","config":<config_json>,"context":{"abort_step":<step>,"loss_value":<value>}}'
      ```
    - Skip to Step 6 (Write Results) — do not wait for full training
 
@@ -273,7 +273,7 @@ After training completes:
 
 1. Parse the training log:
    ```bash
-   python3 scripts/parse_logs.py experiments/logs/<exp_id>/train.log
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/parse_logs.py experiments/logs/<exp_id>/train.log
    ```
 
 2. **If an eval command was provided, run evaluation** (mandatory — the primary_metric often comes from eval output):
@@ -339,7 +339,7 @@ Write experiment results to `experiments/results/<exp_id>.json`:
 ## Step 6.1: Validate Output
 
 ```bash
-python3 scripts/schema_validator.py \
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/schema_validator.py \
   experiments/results/<exp_id>.json result
 ```
 
@@ -388,7 +388,7 @@ Retry time counts toward `duration_seconds` (single experiment, not separate ent
   - Write results with `"status": "failed"` and error message in notes
   - Log to error tracker:
     ```bash
-    python3 scripts/error_tracker.py <exp_root> log '{"category":"training_failure","severity":"critical","source":"experiment","message":"<error description>","exp_id":"<exp_id>","config":<config_json>,"stack_trace":"<last 20 lines of stderr>"}'
+    python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"category":"training_failure","severity":"critical","source":"experiment","message":"<error description>","exp_id":"<exp_id>","config":<config_json>,"stack_trace":"<last 20 lines of stderr>"}'
     ```
 
 - **Divergence detected (by monitor):**
@@ -401,7 +401,7 @@ Retry time counts toward `duration_seconds` (single experiment, not separate ent
   - The hp-tune skill will adjust batch size in next iteration
   - Log to error tracker:
     ```bash
-    python3 scripts/error_tracker.py <exp_root> log '{"category":"training_failure","severity":"critical","source":"experiment","message":"GPU OOM with batch_size=<batch_size>","exp_id":"<exp_id>","config":<config_json>,"context":{"error_type":"oom","batch_size":<batch_size>}}'
+    python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"category":"training_failure","severity":"critical","source":"experiment","message":"GPU OOM with batch_size=<batch_size>","exp_id":"<exp_id>","config":<config_json>,"context":{"error_type":"oom","batch_size":<batch_size>}}'
     ```
 
 - **Config override not working:**
@@ -409,7 +409,7 @@ Retry time counts toward `duration_seconds` (single experiment, not separate ent
   - If neither works, report the issue back to orchestrator
   - Log to error tracker:
     ```bash
-    python3 scripts/error_tracker.py <exp_root> log '{"category":"config_error","severity":"warning","source":"experiment","message":"Config override failed: <method tried>","exp_id":"<exp_id>"}'
+    python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"category":"config_error","severity":"warning","source":"experiment","message":"Config override failed: <method tried>","exp_id":"<exp_id>"}'
     ```
 
 - **Training timeout:**

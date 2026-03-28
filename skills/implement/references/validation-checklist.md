@@ -219,4 +219,4 @@ print(f"Peak GPU memory: {peak_mb:.0f} MiB")
 | Full validation before experiment | 1-7 |
 | Memory-sensitive changes | 1-8 |
 
-Levels 1-2 are mandatory and automated via `scripts/implement_utils.py`. Level 5 (unit tests) is written and run by the implement agent. Levels 3-4 and 6-8 require project-specific setup and are run as bash commands by the implement agent.
+Levels 1-2 are mandatory and automated via `${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py`. Level 5 (unit tests) is written and run by the implement agent. Levels 3-4 and 6-8 require project-specific setup and are run as bash commands by the implement agent.

@@ -53,7 +53,7 @@ Also load the baseline:
 
 Use the result analyzer:
 ```bash
-python3 scripts/result_analyzer.py \
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/result_analyzer.py \
   <project_root>/experiments/results \
   <primary_metric> \
   baseline \
@@ -64,13 +64,13 @@ python3 scripts/result_analyzer.py \
 
 **Check dead-end catalog:** Read techniques that were conclusively shown to be unpromising:
 ```bash
-python3 scripts/error_tracker.py <exp_root> dead-end list
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> dead-end list
 ```
 Avoid proposing HP configs for branches/methods listed as dead ends. Focus HP exploration on branches that still show potential.
 
 **Check research agenda:** Read the living research agenda for context on which untried techniques are high-priority:
 ```bash
-python3 scripts/error_tracker.py <exp_root> agenda list
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> agenda list
 ```
 If high-priority untried ideas exist, consider whether HP exploration should focus on branches related to those ideas (to maximize their potential) or on the current best branch.
 
@@ -191,7 +191,7 @@ Before finalizing, check each proposed config:
 
 ### If proposals duplicate previously tried configs (caught in step 4.3):
 ```bash
-python3 scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"hp-tune","message":"Regenerated <N> proposals due to duplication with past configs","phase":7,"iteration":<iteration>}'
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"hp-tune","message":"Regenerated <N> proposals due to duplication with past configs","phase":7,"iteration":<iteration>}'
 ```
 
 ## Step 5: Write Proposed Configs
@@ -243,7 +243,7 @@ For each proposed config, write a JSON file:
 - `"llm_knowledge"`: Proposal originated from LLM knowledge (Phase 7 method proposals)
 - `null`: For baseline experiments (no code change)
 
-Use `scripts/experiment_setup.py` to generate proper experiment IDs:
+Use `${CLAUDE_PLUGIN_ROOT}/scripts/experiment_setup.py` to generate proper experiment IDs:
 ```bash
 python3 -c "
 import sys

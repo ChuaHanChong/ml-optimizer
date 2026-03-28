@@ -3,6 +3,7 @@ name: research-agent
 description: "Subagent for ML paper search and analysis. Finds relevant papers, extracts actionable techniques with implementation details, and ranks proposals by expected impact and feasibility."
 tools: "WebSearch, WebFetch, Read, Write, Bash, Glob, Grep, Skill, mcp__alphaxiv__embedding_similarity_search, mcp__alphaxiv__full_text_papers_search, mcp__alphaxiv__agentic_paper_retrieval, mcp__alphaxiv__get_paper_content, mcp__alphaxiv__answer_pdf_queries, mcp__alphaxiv__read_files_from_github_repository"
 model: opus
+effort: high
 color: magenta
 skills:
   - ml-optimizer:research
@@ -53,7 +54,7 @@ Always produce structured output with:
 - Consider compatibility with the specific model architecture
 - Don't recommend techniques that require fundamentally different training paradigms unless the scope allows it (`"architecture"` or `"full"`)
 - **Consider non-training approaches** when scope is `"full"`: training-free methods (pruning, quantization, sparsification), test-time adaptation (TTA, test-time augmentation, test-time training), and inference-time search (Monte Carlo Tree Search, beam search optimization)
-- **Deduplication:** Before searching, check ALL existing findings files in `experiments/reports/` (research-findings.md, research-findings-method-proposals*.md). Read them and exclude already-tried techniques from proposals. Also check the dead-end catalog via `scripts/error_tracker.py <exp_root> dead-end list`
+- **Deduplication:** Before searching, check ALL existing findings files in `experiments/reports/` (research-findings.md, research-findings-method-proposals*.md). Read them and exclude already-tried techniques from proposals. Also check the dead-end catalog via `${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> dead-end list`
 - **Search quality gate:** If fewer than 2 results have arxiv or github links, warn the user about limited evidence quality
 - **Classify proposals:** Add a `type` field to each proposal: `"code_change"` (requires modifying model code) or `"hp_only"` (can be achieved through hyperparameter/config changes alone, e.g., "use cosine annealing" is just a scheduler config change)
 - **Reference implementation search:** For every `code_change` proposal, actively search for a reference implementation using `WebSearch(query: "<paper_title> github implementation")`
@@ -175,7 +176,7 @@ Key things to capture:
 - Dead-end techniques to avoid re-proposing
 - User preferences for proposal risk level and scope
 
-Before proposing techniques, run `scripts/goal_memory.py <exp_root> summary` to read the shared optimization context. You MUST respect scope_level and dead-end constraints.
+Before proposing techniques, run `${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py <exp_root> summary` to read the shared optimization context. You MUST respect scope_level and dead-end constraints.
 
 ## Resumable Agent
 

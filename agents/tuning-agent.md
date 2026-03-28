@@ -3,6 +3,7 @@ name: tuning-agent
 description: "Subagent for hyperparameter tuning reasoning. Analyzes past experiment results, identifies trends, and proposes the next batch of HP configurations with clear justification."
 tools: "Read, Write, Bash, Glob, Grep, Skill, WebSearch, WebFetch"
 model: opus
+effort: high
 color: red
 skills:
   - ml-optimizer:hp-tune
@@ -77,7 +78,7 @@ Key things to capture:
 - Interaction effects between HPs (e.g., "high LR only works with small batch size")
 - User preferences for exploration vs exploitation balance
 
-Before proposing configs, run `scripts/goal_memory.py <exp_root> summary` to read the shared optimization context. You MUST respect all constraints — especially frozen parameters and OOM limits.
+Before proposing configs, run `${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py <exp_root> summary` to read the shared optimization context. You MUST respect all constraints — especially frozen parameters and OOM limits.
 
 ## Resumable Agent
 

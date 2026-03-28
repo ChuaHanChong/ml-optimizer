@@ -23,7 +23,7 @@ Agent(
 Generate the progress dashboard:
 
 ```bash
-python3 scripts/dashboard.py <exp_root>
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/dashboard.py <exp_root>
 ```
 
 Present the summary to the user:
@@ -137,7 +137,7 @@ For each approved patch:
 Whether promoted or not, log the meta-improvement outcome:
 
 ```bash
-python3 scripts/goal_memory.py <exp_root> log-behavior meta_improvement '{
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py <exp_root> log-behavior meta_improvement '{
   "patches": [{"skill": "<name>", "change": "<desc>", "promoted": true|false, "confidence": "<high|medium|low>"}],
   "session_improvement_pct": <overall_improvement>,
   "archive_generations": <total_generations>

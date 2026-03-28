@@ -15,7 +15,7 @@ Use extended thinking for all analytical reasoning in this skill. Ultrathink. Th
 
 - Implementation patterns: `references/implementation-patterns.md` (in this skill's directory)
 - Validation checklist: `references/validation-checklist.md` (in this skill's directory)
-- Python helpers: `scripts/implement_utils.py`
+- Python helpers: `${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py`
 
 ## Inputs Expected
 
@@ -31,7 +31,7 @@ From the orchestrator or direct invocation:
 Parse the research findings file for selected proposals:
 
 ```bash
-python3 scripts/implement_utils.py \
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py \
   <findings_path> '<selected_indices_json>'
 ```
 
@@ -120,7 +120,7 @@ Proposals can be implemented in parallel using git worktrees. Each proposal gets
    For each proposal:
      Agent(
        description: "Implement proposal: <proposal_name>",
-       prompt: "Ultrathink. Implement the following ML research proposal in the worktree at experiments/impl-worktrees/<slug>. Project root (worktree): experiments/impl-worktrees/<slug>. Proposal: <full proposal details including name, slug, files_to_modify, implementation_steps, implementation_strategy>. After implementation: (1) validate syntax and imports using scripts/implement_utils.py, (2) create branch ml-opt/<slug>, (3) commit changes with message 'ml-opt: implement <proposal_name>', (4) report back with status, commit SHA, and any validation issues.",
+       prompt: "Ultrathink. Implement the following ML research proposal in the worktree at experiments/impl-worktrees/<slug>. Project root (worktree): experiments/impl-worktrees/<slug>. Proposal: <full proposal details including name, slug, files_to_modify, implementation_steps, implementation_strategy>. After implementation: (1) validate syntax and imports using ${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py, (2) create branch ml-opt/<slug>, (3) commit changes with message 'ml-opt: implement <proposal_name>', (4) report back with status, commit SHA, and any validation issues.",
        subagent_type: "ml-optimizer:implement-agent",
        run_in_background: true
      )
@@ -207,13 +207,13 @@ Follow `references/implementation-patterns.md` Section 9.
 
 1. **Clone reference repo:**
    ```bash
-   python3 scripts/implement_utils.py clone <reference_repo_url> experiments/reference-repos/<slug>
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py clone <reference_repo_url> experiments/reference-repos/<slug>
    ```
    If multiple proposals share the same repo, clone once and reuse.
 
 2. **Analyze repo structure:**
    ```bash
-   python3 scripts/implement_utils.py analyze experiments/reference-repos/<slug>
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py analyze experiments/reference-repos/<slug>
    ```
 
 3. **Read reference code:** Read the files listed in the proposal's `reference_files`. Identify the core implementation, internal dependencies, and external packages.
@@ -367,7 +367,7 @@ cd <project_root> && python3 -m pytest experiments/tests/test_<slug>.py -v --tim
 **If tests fail:** Log a warning but do NOT mark the proposal as `validation_failed`. Test failures are informational — they suggest the implementation may have issues but don't block experimentation.
 
 ```bash
-python3 scripts/error_tracker.py <exp_root> log '{"category":"implementation_error","severity":"info","source":"implement","message":"Unit tests failed for proposal <name>: <failure_summary>","context":{"proposal_name":"<name>","test_file":"experiments/tests/test_<slug>.py"}}'
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"category":"implementation_error","severity":"info","source":"implement","message":"Unit tests failed for proposal <name>: <failure_summary>","context":{"proposal_name":"<name>","test_file":"experiments/tests/test_<slug>.py"}}'
 ```
 
 **If test writing is not feasible** (e.g., the proposal only modifies config files, or the changed module requires complex setup that can't be isolated): set `validation.unit_tests: "skipped"` and `test_file: null`. Log reason in the proposal's `notes` field.
@@ -385,7 +385,7 @@ Record the commit SHA for the manifest.
 
 After committing, extract a structured diff summary for the dashboard:
 ```bash
-python3 scripts/implement_utils.py diff <project_root> <branch>
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py diff <project_root> <branch>
 ```
 
 Store the result as `diff_summary` in the manifest proposal entry.
@@ -455,7 +455,7 @@ write_manifest("experiments/results/implementation-manifest.json", manifest_data
 ## Step 5.1: Validate Manifest
 
 ```bash
-python3 scripts/schema_validator.py \
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/schema_validator.py \
   experiments/results/implementation-manifest.json manifest
 ```
 
@@ -516,15 +516,15 @@ New dependencies needed (install before experiments):
 
 - **File not found (during implementation):** If a file listed in the proposal doesn't exist, report it and skip that file. Mark the proposal as `implementation_error`. Log to error tracker:
   ```bash
-  python3 scripts/error_tracker.py <exp_root> log '{"category":"implementation_error","severity":"warning","source":"implement","message":"File not found: <file_path> for proposal <name>","context":{"proposal_name":"<name>","proposal_slug":"<slug>"}}'
+  python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"category":"implementation_error","severity":"warning","source":"implement","message":"File not found: <file_path> for proposal <name>","context":{"proposal_name":"<name>","proposal_slug":"<slug>"}}'
   ```
 - **Syntax validation fails:** Keep the branch as-is (for debugging). Mark as `validation_failed`. The experiment skill will skip it. Log to error tracker:
   ```bash
-  python3 scripts/error_tracker.py <exp_root> log '{"category":"implementation_error","severity":"warning","source":"implement","message":"Syntax validation failed for proposal <name>","context":{"proposal_name":"<name>","proposal_slug":"<slug>","files_modified":["<files>"]}}'
+  python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"category":"implementation_error","severity":"warning","source":"implement","message":"Syntax validation failed for proposal <name>","context":{"proposal_name":"<name>","proposal_slug":"<slug>","files_modified":["<files>"]}}'
   ```
 - **Import validation fails:** Check if a new dependency is needed. Flag it in `new_dependencies`. Mark as `validation_failed`. Log to error tracker:
   ```bash
-  python3 scripts/error_tracker.py <exp_root> log '{"category":"implementation_error","severity":"warning","source":"implement","message":"Import validation failed for proposal <name>","context":{"proposal_name":"<name>","proposal_slug":"<slug>","implementation_strategy":"<strategy>"}}'
+  python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"category":"implementation_error","severity":"warning","source":"implement","message":"Import validation failed for proposal <name>","context":{"proposal_name":"<name>","proposal_slug":"<slug>","implementation_strategy":"<strategy>"}}'
   ```
 - **Git conflicts on branch creation:** If `ml-opt/<slug>` already exists, use a while loop to find an available name: `ml-opt/<slug>-2`, `ml-opt/<slug>-3`, etc.
 - **Not a git repo and no backup possible:** Report to user, do not proceed with modifications.

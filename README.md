@@ -1,6 +1,6 @@
 # ml-optimizer
 
-A **self-referential, self-improving hyperagent** for autonomous ML model optimization. Powered by Claude Code.
+A **self-referential and self-improving hyperagent** for autonomous ML model optimization. Powered by Claude Code.
 
 > **The plugin IS the hyperagent.** It doesn't just optimize your ML model — it optimizes how it optimizes. The hyperagent controls the entire loop, learns which strategies work, and evolves its own approach with each session. No hardcoded thresholds. No fixed pipeline. Autonomous by default — runs until the goal is reached or you stop it.
 
@@ -78,9 +78,17 @@ bash scripts/setup_evolve.sh
 bash scripts/setup_hyperagent.sh
 ```
 
-Run `/reload-plugin` or restart Claude Code. The `/optimize` command and all 10 agents will be available automatically.
+Run `/reload-plugin` or restart Claude Code. The `/optimize` command and all 11 agents will be available automatically.
 
 > **Why local/project?** Agent memory (`memory: local`) stores learnings in `.claude/agent-memory-local/` within the project. Local or project-based installation keeps plugin code, agent memory, and experiment data together — scoped to your ML project, not polluting other workspaces.
+
+### Development / local testing
+
+Load the plugin directly from source without installing:
+
+```bash
+claude --plugin-dir <path-to-ml-optimizer> --dangerously-skip-permissions
+```
 
 ## Prerequisites
 
@@ -259,36 +267,42 @@ No build step. No linter. Python 3.10+ required. All scripts use only the standa
 
 ## Agent Definitions
 
-Ten subagent types in `agents/`. The orchestrate skill dispatches agents directly via `Agent(subagent_type="ml-optimizer:<name>-agent")`.
+Eleven agent types in `agents/`. The plugin ships `settings.json` with `"agent": "ml-optimizer:orchestrator-agent"` — when the plugin is enabled, the orchestrator agent becomes the main thread and auto-starts Phase 0.
 
-| Agent | Tools | Model | Preloaded Skill |
-|-------|-------|-------|-----------------|
-| **`hyperagent`** | Read, Write, Edit, Bash, Glob, Grep, Skill, WebSearch, WebFetch | **opus (ultrathink)** | `ml-optimizer:hyperagent` + all hyperagent-* + evolve + shinka-* + claude-mem |
-| `research-agent` | WebSearch, WebFetch, Read, Write, Bash, Glob, Grep, Skill + alphaxiv MCP (6) | opus (ultrathink) | `ml-optimizer:research` |
-| `implement-agent` | Bash, Read, Write, Edit, Glob, Grep, Skill, WebSearch, WebFetch + alphaxiv MCP (2) | opus (ultrathink) | `ml-optimizer:implement` + evolve + shinka-* |
-| `tuning-agent` | Read, Write, Bash, Glob, Grep, Skill, WebSearch, WebFetch | opus (ultrathink) | `ml-optimizer:hp-tune` |
-| `analysis-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | opus (ultrathink) | `ml-optimizer:analyze` |
-| `report-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | opus | `ml-optimizer:report` |
-| `baseline-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | sonnet | `ml-optimizer:baseline` |
-| `monitor-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | sonnet | `ml-optimizer:monitor` |
-| `experiment-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | sonnet | `ml-optimizer:experiment` |
-| `prerequisites-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | sonnet | `ml-optimizer:prerequisites` |
+| Agent | Tools | Model | Effort | Preloaded Skill |
+|-------|-------|-------|--------|-----------------|
+| **`orchestrator`** | Agent, Read, Write, Edit, Bash, Glob, Grep, Skill, WebSearch, WebFetch | **opus** | high | `ml-optimizer:orchestrate` (main thread) |
+| **`hyperagent`** | Read, Write, Edit, Bash, Glob, Grep, Skill, WebSearch, WebFetch | **opus** | high | `ml-optimizer:hyperagent` + all hyperagent-* + evolve + shinka-* + claude-mem |
+| `research-agent` | WebSearch, WebFetch, Read, Write, Bash, Glob, Grep, Skill + alphaxiv MCP (6) | opus | high | `ml-optimizer:research` |
+| `implement-agent` | Bash, Read, Write, Edit, Glob, Grep, Skill, WebSearch, WebFetch + alphaxiv MCP (2) | opus | high | `ml-optimizer:implement` + evolve + shinka-* |
+| `tuning-agent` | Read, Write, Bash, Glob, Grep, Skill, WebSearch, WebFetch | opus | high | `ml-optimizer:hp-tune` |
+| `analysis-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | opus | high | `ml-optimizer:analyze` |
+| `report-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | opus | high | `ml-optimizer:report` |
+| `baseline-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | sonnet | medium | `ml-optimizer:baseline` |
+| `monitor-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | sonnet | medium | `ml-optimizer:monitor` |
+| `experiment-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | sonnet | medium | `ml-optimizer:experiment` |
+| `prerequisites-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | sonnet | medium | `ml-optimizer:prerequisites` |
 
-The **hyperagent** is the primary loop driver — it decides the optimization strategy at each iteration. Other agents are specialized workers it coordinates through the orchestrator relay. Analytical agents use "ultrathink" prompting and `model: opus`. Procedural agents use Sonnet for lower cost/latency.
+The **orchestrator** is the main-thread agent (activated by `settings.json`). The **hyperagent** is the Phase 7/8 loop driver. Other agents are specialized workers coordinated through the orchestrator relay. Analytical agents use `effort: high` and `model: opus`. Procedural agents use `effort: medium` and `model: sonnet`.
 
 ## Hooks (Safety Guardrails)
 
 Lifecycle hooks in `hooks/` protect against common failure modes during autonomous operation:
 
-| Hook | Event | Purpose |
-|------|-------|---------|
-| `bash-safety.sh` | PreToolUse (Bash) | Blocks `rm -rf /`, `git push --force`, `curl\|bash`, `chmod 777`, etc. |
-| `file-guardrail.sh` | PreToolUse (Write/Edit) | Blocks writes to `.git/`, `.env`, credentials, lock files |
-| `detect-critical-errors.sh` | PostToolUse (Bash) | Detects CUDA OOM, segfault, disk full; logs to error tracker |
-| `pre-compact.sh` | PreCompact | Saves pipeline state snapshot to dev_notes before context compaction |
-| `post-compact-context.sh` | SessionStart | Re-injects phase/metric/budget context after compaction |
-| `subagent-stop-hook.sh` | SubagentStop | Reminds agent to validate outputs before stopping |
-| Stop prompt | Stop | Verifies final report exists before session ends |
+| Hook | Event | Type | Purpose |
+|------|-------|------|---------|
+| `bash-safety.sh` | PreToolUse (Bash) | command | Blocks `rm -rf /`, `git push --force`, `curl\|bash`, `chmod 777`, etc. |
+| `file-guardrail.sh` | PreToolUse (Write/Edit) | command | Blocks writes to `.git/`, `.env`, credentials, lock files |
+| `detect-critical-errors.sh` | PostToolUse + PostToolUseFailure (Bash) | command | Detects CUDA OOM, segfault, disk full; logs to error tracker |
+| `pre-compact.sh` | PreCompact | command | Saves pipeline state snapshot to dev_notes before context compaction |
+| `post-compact-context.sh` | SessionStart (compact) | command | Re-injects phase/metric/budget context after compaction |
+| SubagentStop | SubagentStop | prompt | LLM-based check: validates agent outputs and memory updates before stopping |
+| `subagent-start-inject-goals.sh` | SubagentStart | command | Injects goal memory summary when any agent starts |
+| `file-changed-pipeline-state.sh` | FileChanged (pipeline-state.json) | command | Detects external corruption of pipeline state |
+| `cwd-changed-detect-experiments.sh` | CwdChanged | command | Auto-detects existing `experiments/` and offers to resume |
+| Stop prompt | Stop | command | Verifies final report exists before session ends |
+| SessionStart prompt | SessionStart | prompt | Routes ML optimization requests to orchestrate skill |
+| UserPromptSubmit prompt | UserPromptSubmit | prompt | Routes ML optimization requests to orchestrate skill |
 
 Exit code `2` = block action. Exit code `0` = allow. Configured in `hooks/hooks.json`.
 

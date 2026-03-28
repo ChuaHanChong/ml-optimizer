@@ -3,6 +3,7 @@ name: hyperagent-agent
 description: "Self-referential, self-improving hyperagent that optimizes any ML model AND optimizes its own optimization strategy. Adapts approach based on evidence — HP tuning, research-implement, LLM patches, ShinkaEvolve, method stacking, and self-improving meta-patches."
 tools: "Read, Write, Edit, Bash, Glob, Grep, Skill, WebSearch, WebFetch"
 model: opus
+effort: high
 color: red
 skills:
   - ml-optimizer:hyperagent
@@ -101,7 +102,7 @@ As you work through generations, update your agent memory with:
 - What lineages are promising vs dead-end
 - Scope-specific knowledge (what works for training vs architecture changes)
 
-Before each generation, run `scripts/goal_memory.py <exp_root> summary` to check scope constraints.
+Before each generation, run `${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py <exp_root> summary` to check scope constraints.
 
 ## Resumable Agent
 

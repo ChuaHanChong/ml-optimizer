@@ -27,7 +27,7 @@ From the orchestrator:
 
 Run the result analyzer:
 ```bash
-python3 scripts/result_analyzer.py \
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/result_analyzer.py \
   <project_root>/experiments/results \
   <primary_metric> \
   baseline \
@@ -198,17 +198,17 @@ After each analysis, log notable inefficiencies to the error tracker:
 
 ### If all experiments in batch diverged or failed:
 ```bash
-python3 scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"warning","source":"analyze","message":"All <N> experiments in batch <batch> diverged/failed — wasted budget","phase":7,"iteration":<batch_number>,"context":{"experiments_wasted":<N>}}'
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"warning","source":"analyze","message":"All <N> experiments in batch <batch> diverged/failed — wasted budget","phase":7,"iteration":<batch_number>,"context":{"experiments_wasted":<N>}}'
 ```
 
 ### If observing diminishing returns (log for context, but do NOT recommend stop):
 ```bash
-python3 scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"analyze","message":"Diminishing returns observed: last <N> batches showed <X%> improvement — recommend pivot to different operator","phase":7,"context":{"total_experiments":<N>}}'
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"analyze","message":"Diminishing returns observed: last <N> batches showed <X%> improvement — recommend pivot to different operator","phase":7,"context":{"total_experiments":<N>}}'
 ```
 
 ### If a code branch consistently underperforms baseline:
 ```bash
-python3 scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"analyze","message":"Branch <branch> underperforms baseline across all HP configs","code_branch":"<branch>","context":{"experiments_on_branch":<N>,"best_vs_baseline":"<delta%>"}}'
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"analyze","message":"Branch <branch> underperforms baseline across all HP configs","code_branch":"<branch>","context":{"experiments_on_branch":<N>,"best_vs_baseline":"<delta%>"}}'
 ```
 
 ## Step 3.2: Log Dead Ends
@@ -221,7 +221,7 @@ When a technique is conclusively unpromising, log it to the dead-end catalog so 
 - Analyze recommends stop and a specific method showed no improvement after tuning
 
 ```bash
-python3 scripts/error_tracker.py <exp_root> dead-end add '{"technique":"<technique_name>","reason":"<why it failed>","branch":"<ml-opt/branch or null>","experiments_tried":<N>,"best_result":{"metric":"<primary_metric>","value":<best_value>,"baseline":<baseline_value>},"source":"analyze"}'
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> dead-end add '{"technique":"<technique_name>","reason":"<why it failed>","branch":"<ml-opt/branch or null>","experiments_tried":<N>,"best_result":{"metric":"<primary_metric>","value":<best_value>,"baseline":<baseline_value>},"source":"analyze"}'
 ```
 
 Do not log dead ends for techniques that showed mixed results (some improvement, some regression) — only for those conclusively worse.
@@ -268,13 +268,13 @@ If a research agenda exists (`experiments/reports/research-agenda.json`), update
 
 ```bash
 # Check if agenda exists
-python3 scripts/error_tracker.py <exp_root> agenda list
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> agenda list
 ```
 
 For each code branch tested in this batch, find the corresponding agenda item and update it:
 
 ```bash
-python3 scripts/error_tracker.py <exp_root> agenda update '<idea_id>' '{"status":"<tried|improved|dead-end>","priority":<new_priority>,"evidence":{"batch":<N>,"result":"<summary of results vs baseline>"},"lessons":"<what was learned>"}'
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> agenda update '<idea_id>' '{"status":"<tried|improved|dead-end>","priority":<new_priority>,"evidence":{"batch":<N>,"result":"<summary of results vs baseline>"},"lessons":"<what was learned>"}'
 ```
 
 **Priority adjustment rules:**
@@ -284,7 +284,7 @@ python3 scripts/error_tracker.py <exp_root> agenda update '<idea_id>' '{"status"
 
 **Add evidence-suggested ideas:** If the analysis reveals new optimization directions (e.g., LR sensitivity is very high → try cyclical LR), add them:
 ```bash
-python3 scripts/error_tracker.py <exp_root> agenda add '{"id":"evidence-<N>","name":"<new idea>","priority":<score>,"source":"experimental_evidence","scope":"training"}'
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> agenda add '{"id":"evidence-<N>","name":"<new idea>","priority":<score>,"source":"experimental_evidence","scope":"training"}'
 ```
 
 Skip this step if no agenda file exists (e.g., HP-only optimization without research phase).
@@ -322,14 +322,14 @@ Return to the orchestrator:
 ### Branch Allocation Data (for hp-tune)
 
 When multiple code branches are being tested, include in the analysis output:
-- `branch_scores`: Per-branch allocation scores from `scripts/result_analyzer.py` (run with `branch-scores` subcommand or use `compute_branch_scores()`)
+- `branch_scores`: Per-branch allocation scores from `${CLAUDE_PLUGIN_ROOT}/scripts/result_analyzer.py` (run with `branch-scores` subcommand or use `compute_branch_scores()`)
 - This data is passed to hp-tune for adaptive budget allocation in the next iteration
 
 ### Stacking Readiness
 
 Include in the analysis output:
 - `methods_with_improvement`: Count of unique code_branches whose best result beats baseline.
-  Compute using `rank_methods_for_stacking()` from `scripts/result_analyzer.py`.
+  Compute using `rank_methods_for_stacking()` from `${CLAUDE_PLUGIN_ROOT}/scripts/result_analyzer.py`.
 - `stacking_candidates`: List of method names (code_proposal values) that improved, ranked by improvement magnitude.
 
 ---
@@ -351,8 +351,8 @@ From the orchestrator:
 
 1. Run session summary and pattern detection:
 ```bash
-python3 scripts/error_tracker.py <exp_root> summary
-python3 scripts/error_tracker.py <exp_root> patterns
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> summary
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> patterns
 ```
 
 2. Read supporting files:
@@ -372,31 +372,31 @@ python3 scripts/error_tracker.py <exp_root> patterns
 
 1. Compute success metrics:
 ```bash
-python3 scripts/error_tracker.py <exp_root> success <primary_metric> <lower_is_better>
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> success <primary_metric> <lower_is_better>
 ```
 Returns success rate, improvement rate, best improvement, duration analysis, time wasted on failures.
 
 2. Compute proposal outcomes:
 ```bash
-python3 scripts/error_tracker.py <exp_root> proposals <primary_metric> <lower_is_better>
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> proposals <primary_metric> <lower_is_better>
 ```
 Returns research proposal outcomes, HP proposal stats, implementation stats.
 
 3. Load suggestion history to detect repeats:
 ```bash
-python3 scripts/error_tracker.py <exp_root> suggestion-history
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> suggestion-history
 ```
 
 4. Query scope violations from behavioral memory:
 ```bash
-python3 scripts/goal_memory.py <exp_root> query-behaviors scope_violation
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py <exp_root> query-behaviors scope_violation
 ```
 
 ### Review Step 3: Rank Patterns and Generate Recommendations
 
 1. Rank all detected patterns by impact score:
 ```bash
-python3 scripts/error_tracker.py <exp_root> rank <total_experiments>
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> rank <total_experiments>
 ```
 Where `<total_experiments>` comes from the success metrics output. Use this ranking to order suggestions — highest score first.
 
@@ -424,7 +424,7 @@ Write the review to `<exp_root>/reports/session-review.md` containing:
 
 After writing, log each suggestion:
 ```bash
-python3 scripts/error_tracker.py <exp_root> log-suggestion <pattern_id> <scope>
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log-suggestion <pattern_id> <scope>
 ```
 
 ### Review Rules

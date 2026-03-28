@@ -35,7 +35,7 @@ From the orchestrator:
 
 ### Load experiment results
 ```bash
-python3 scripts/result_analyzer.py \
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/result_analyzer.py \
   <project_root>/experiments/results \
   <primary_metric> \
   baseline \
@@ -58,14 +58,14 @@ If any exist, read them for method proposals that were tried.
 ### Read research agenda (if applicable)
 Check if `experiments/reports/research-agenda.json` exists:
 ```bash
-python3 scripts/error_tracker.py <exp_root> agenda list
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> agenda list
 ```
 If ideas exist, include a "Research Agenda Summary" section in the report showing: successful techniques, tried-but-neutral, dead ends, and remaining untried ideas.
 
 ### Read dead-end catalog (if applicable)
 Check if `experiments/reports/dead-ends.json` exists:
 ```bash
-python3 scripts/error_tracker.py <exp_root> dead-end list
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> dead-end list
 ```
 If entries exist, include a "Dead Ends" section listing techniques that were tried and conclusively failed.
 
@@ -87,7 +87,7 @@ Create a comprehensive comparison table with ALL experiments:
 
 ## Step 2.1: Compile HP Sensitivity Analysis
 
-The `scripts/result_analyzer.py` `identify_correlations()` output includes per-HP
+The `${CLAUDE_PLUGIN_ROOT}/scripts/result_analyzer.py` `identify_correlations()` output includes per-HP
 correlation data. Format this into the "Hyperparameter Sensitivity" table:
 - Only include if ≥4 experiments completed (otherwise note "insufficient data")
 - Show direction (lower/higher correlates with better metric)
@@ -98,7 +98,7 @@ correlation data. Format this into the "Hyperparameter Sensitivity" table:
 If any experiments have `method_tier` fields (from research or method proposals), compile a three-tier comparison:
 
 ```python
-# Use scripts/result_analyzer.py's group_by_method_tier() to separate experiments
+# Use ${CLAUDE_PLUGIN_ROOT}/scripts/result_analyzer.py's group_by_method_tier() to separate experiments
 python3 -c "
 import json, sys
 # sys.path: add the plugin's scripts/ directory
@@ -187,10 +187,10 @@ From the analysis reports and results, identify:
 
 ## Step 5.1: Generate Visualizations
 
-Use the scripts/plot_results.py script to generate ASCII charts:
+Use the ${CLAUDE_PLUGIN_ROOT}/scripts/plot_results.py script to generate ASCII charts:
 
 ```bash
-python3 scripts/plot_results.py \
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plot_results.py \
   <project_root>/experiments/results <primary_metric> comparison
 ```
 
@@ -206,7 +206,7 @@ Include the ASCII chart output in the report (in code blocks).
 After the ASCII charts, attempt to generate a matplotlib progress chart:
 
 ```bash
-python3 scripts/plot_results.py \
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plot_results.py \
   <project_root>/experiments/results <primary_metric> progress
 ```
 
@@ -229,13 +229,13 @@ Generate Excalidraw diagrams for interactive exploration:
 
 ```bash
 # Pipeline overview
-python3 scripts/excalidraw_gen.py \
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/excalidraw_gen.py \
   <project_root>/experiments pipeline <primary_metric>
 ```
 
 If the best result used a code branch (method proposal), also generate an architecture diagram:
 ```bash
-python3 scripts/excalidraw_gen.py \
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/excalidraw_gen.py \
   <project_root>/experiments architecture <best_proposal_name>
 ```
 
@@ -245,7 +245,7 @@ Reference the generated `.excalidraw` files in the report: users can open them a
 
 Include in the final report:
 ```bash
-python3 scripts/goal_memory.py <project_root>/experiments summary
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py <project_root>/experiments summary
 ```
 
 Use this summary to add:
@@ -277,7 +277,7 @@ Fill in all sections:
 - Full experiments table (with code branch, duration, GPU columns)
 - Best configuration details
 - HP sensitivity analysis
-- Visualizations (ASCII charts from scripts/plot_results.py)
+- Visualizations (ASCII charts from ${CLAUDE_PLUGIN_ROOT}/scripts/plot_results.py)
 - Key findings
 - What worked / what didn't
 - Reproduction command

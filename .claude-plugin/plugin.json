@@ -1,8 +1,10 @@
 {
   "name": "ml-optimizer",
-  "description": "Autonomous ML model optimization orchestrator. Dispatches specialized agents for research, hyperparameter tuning, and experiment running. Monitors training for divergence and records findings in structured format.",
-  "version": "0.4.0",
+  "description": "A self-referential and self-improving hyperagent for autonomous ML model optimization. Dispatches specialized agents for research, hyperparameter tuning, and experiment running. Monitors training for divergence and records findings in structured format.",
+  "version": "0.5.0",
   "author": {
     "name": "Chua Han Chong"
-  }
+  },
+  "repository": "https://github.com/ChuaHanChong/ml-optimizer",
+  "license": "MIT"
 }

@@ -345,8 +345,8 @@ When a research proposal has `implementation_strategy: from_reference`, clone th
 
 1. **Clone and analyze:**
    ```bash
-   python3 scripts/implement_utils.py clone <repo_url> <dest_dir>
-   python3 scripts/implement_utils.py analyze <dest_dir>
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py clone <repo_url> <dest_dir>
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py analyze <dest_dir>
    ```
    Review the analysis output: framework, relevant files, dependencies.
 

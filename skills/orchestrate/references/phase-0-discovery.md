@@ -48,10 +48,15 @@
    - Store the user's answers — they will guide every subsequent phase
    - If the user is unsure about some answers, note those as areas to investigate in Phase 1
 
-3.5. **Write optimization goals:**
-   After recording user responses, create the goal anchor file:
+3.5. **Write experiment root breadcrumb and optimization goals:**
+   First, write a breadcrumb so hooks can find the experiments directory (even if it's on a different mount):
    ```bash
-   python3 scripts/goal_memory.py <exp_root> init-goals '<goals_json>'
+   mkdir -p .claude
+   python3 -c "import json; json.dump({'exp_root': '<exp_root>'}, open('.claude/ml-optimizer.json', 'w'))"
+   ```
+   Then create the goal anchor file:
+   ```bash
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py <exp_root> init-goals '<goals_json>'
    ```
    Where `<goals_json>` is constructed from the user's answers:
    ```json
@@ -118,7 +123,7 @@
 
    **Cross-session learning:** Check if prior meta-improvement patches exist in the plugin and load them:
    ```bash
-   # Scan for promoted patches
+   # Scan for promoted patches in the plugin
    grep -rl "# \[meta-improvement\]" ${CLAUDE_PLUGIN_ROOT}/skills/*/SKILL.md 2>/dev/null
    ```
    - For each skill file containing `# [meta-improvement]` markers: add the skill name to `hyperagent_state.active_meta_patches` so Phase 7's pre-loop meta-patch loading will include them in agent dispatch context.

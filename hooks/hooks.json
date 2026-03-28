@@ -5,8 +5,18 @@
       {
         "hooks": [
           {
+            "type": "prompt",
+            "prompt": "The ml-optimizer subagent is about to stop. Check: did it validate its outputs (schema validation, goal memory check)? Did it update agent memory with learnings? If either is missing, output a JSON decision to block: {\"decision\":\"block\",\"reason\":\"Must validate outputs and update agent memory before stopping\"}. Otherwise approve: {\"decision\":\"approve\"}. Context: $ARGUMENTS"
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/subagent-stop-hook.sh",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/subagent-start-inject-goals.sh",
             "timeout": 5
           }
         ]
@@ -35,6 +45,18 @@
       }
     ],
     "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/detect-critical-errors.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
       {
         "matcher": "Bash",
         "hooks": [
@@ -93,6 +115,29 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/stop-check.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "FileChanged": [
+      {
+        "matcher": "pipeline-state.json",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/file-changed-pipeline-state.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "CwdChanged": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/cwd-changed-detect-experiments.sh",
             "timeout": 5
           }
         ]

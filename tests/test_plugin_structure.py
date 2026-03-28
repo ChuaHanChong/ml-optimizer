@@ -154,6 +154,11 @@ EXPECTED_AGENTS = {
         "forbidden_tools": set(), "color": "red", "background": False,
         "external_skills": ["ml-optimizer:hyperagent-generate", "ml-optimizer:hyperagent-select", "ml-optimizer:hyperagent-eval", "ml-optimizer:hyperagent-archive", "ml-optimizer:hyperagent-init", "ml-optimizer:hyperagent-inspect", "ml-optimizer:evolve", "ml-optimizer:shinka-setup", "ml-optimizer:shinka-convert", "ml-optimizer:shinka-run", "ml-optimizer:shinka-inspect", "claude-mem:mem-search", "superpowers:systematic-debugging", "feature-dev:code-explorer"],
     },
+    "orchestrator-agent": {
+        "model": "opus", "skill": "ml-optimizer:orchestrate",
+        "required_tools": {"Agent", "Bash", "Read", "Write", "Edit", "Glob", "Grep", "Skill"},
+        "forbidden_tools": set(), "color": "blue", "background": False,
+    },
 }
 
 EXPECTED_SKILLS = [
@@ -438,7 +443,9 @@ class TestOrchestrateDispatch:
         assert len(named_dispatches) >= 5
         bare_invocations = re.findall(r'Invoke\s+the\s+ml-optimizer:', text)
         assert not bare_invocations
-        for agent in EXPECTED_AGENTS:
+        # orchestrator-agent is the main-thread agent (not dispatched by orchestrate skill)
+        dispatched_agents = {a for a in EXPECTED_AGENTS if a != "orchestrator-agent"}
+        for agent in dispatched_agents:
             assert agent in text, f"Orchestrate does not reference {agent}"
 
 

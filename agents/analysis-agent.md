@@ -2,7 +2,7 @@
 name: analysis-agent
 description: "Subagent for analyzing ML experiment results and session review. Ranks experiments, computes improvements over baseline, identifies HP correlations, and recommends next action (continue/pivot/stop). In review mode, analyzes error patterns, proposal effectiveness, and generates self-improvement recommendations."
 tools: "Read, Write, Bash, Glob, Grep, Skill, WebSearch, WebFetch"
-model: opus
+model: opus[1m]
 effort: high
 color: cyan
 skills:

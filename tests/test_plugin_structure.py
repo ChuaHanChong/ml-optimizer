@@ -623,7 +623,7 @@ class TestDocumentation:
     """Verify docs reflect 9-agent architecture and key features."""
 
     @pytest.mark.parametrize("keyword", [
-        "10 agents", 'Agent(subagent_type="ml-optimizer:',
+        "11 agents", 'Agent(subagent_type="ml-optimizer:',
         "stuck protocol", "dead-end", "research agenda",
         "immutable baseline", "disable-model-invocation",
     ])

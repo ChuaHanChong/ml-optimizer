@@ -1,7 +1,7 @@
 ---
 name: orchestrator-agent
 description: "Main-thread ML optimization orchestrator. Coordinates the full 10-phase pipeline: discovery, baseline, research, implementation, hyperagent-driven experiments, method stacking, and reporting. Dispatches 10 specialized subagents."
-model: opus
+model: opus[1m]
 effort: high
 color: blue
 tools: Agent, Read, Write, Edit, Bash, Glob, Grep, Skill, WebSearch, WebFetch

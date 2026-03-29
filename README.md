@@ -224,29 +224,41 @@ Only `orchestrate` is directly invocable. All other skills have `disable-model-i
 ## Project Directory Structure
 
 The plugin creates this structure in your project:
-
 ```
 <project>/experiments/
-  logs/<exp-id>/                        # Raw training logs
-  scripts/<exp-id>/                     # Per-experiment command scripts
-  artifacts/<exp-id>/                   # Per-experiment artifacts (checkpoints, plots)
-  results/prerequisites.json            # Prerequisites check report
-  results/baseline.json                 # Baseline metrics and GPU profiling
-  results/<exp-id>.json                 # Per-experiment results
-  results/proposed-configs/             # HP config proposals from hp-tune
-  results/implementation-manifest.json  # Validated proposal branches
-  optimization-goals.json               # Goal anchor (Phase 0, read by all agents)
-  learned-behaviors.json                # Accumulated behavioral memory (HP constraints, outcomes)
-  reports/                              # Markdown reports (analysis, research, final)
-  reports/error-log.json                # Structured error event log
-  reports/suggestion-history.json       # Suggestion feedback loop
-  reports/session-review.md             # Session review
-  results-table.md                      # Auto-generated Markdown results summary
-  prepared-data/                        # Prepared dataset (if preprocessing needed)
-  code-archive.jsonl                    # Hyperagent evolutionary archive (lineage + fitness)
-  meta-patches/                         # Session-scoped meta-improvement skill patches
-  pipeline-state.json                   # Resumable pipeline state + agent_registry + hyperagent_state
-  dev_notes.md                          # Running session log
+  artifacts/<exp-id>/                            # Per-experiment artifacts (checkpoints, visualizations)
+  artifacts/*.excalidraw                         # Excalidraw diagrams (pipeline, comparison, HP landscape)
+  hyperagent/                                    # Hyperagent engine directory
+  hyperagent/archive.jsonl                       # Evolutionary archive (lineage + fitness)
+  hyperagent/gen_X/                              # Per-generation metadata + eval reports
+  logs/<exp-id>/train.log                        # Raw training logs
+  meta-patches/                                  # Session-scoped meta-improvement skill patches
+  meta-patches/meta-changelog.json               # Changelog of meta-improvements
+  prepared-data/                                 # Prepared dataset (if preprocessing needed)
+  reports/                                       # Markdown reports (analysis, research, final)
+  reports/dashboard.html                         # Self-contained HTML progress dashboard
+  reports/dead-ends.json                         # Dead-end catalog (techniques shown to be unpromising)
+  reports/dead-ends.md                           # Human-readable dead-end companion
+  reports/error-log.json                         # Structured error event log
+  reports/final-report.md                        # Final optimization report
+  reports/progress_chart.png                     # Matplotlib progress chart
+  reports/research-agenda.json                   # Living research agenda (reprioritized after each batch)
+  reports/research-agenda.md                     # Human-readable research agenda companion
+  reports/research-findings.md                   # Web search research findings
+  reports/research-findings-method-proposals.md  # LLM knowledge-mode proposals
+  reports/session-review.md                      # Session review (from analysis agent review mode)
+  reports/suggestion-history.json                # Suggestion feedback loop
+  results/baseline.json                          # Baseline metrics and GPU profiling
+  results/exp-*.json                             # Per-experiment results (schema-validated)
+  results/implementation-manifest.json           # Validated proposal branches
+  results/prerequisites.json                     # Prerequisites check report
+  results/proposed-configs/                      # HP config proposals from hp-tune
+  scripts/<exp-id>/                              # Per-experiment command scripts
+  dev_notes.md                                   # Running session log
+  learned-behaviors.json                         # Accumulated behavioral memory
+  optimization-goals.json                        # Goal anchor (Phase 0, read by all agents)
+  pipeline-state.json                            # Resumable pipeline state + agent_registry + hyperagent_state
+  results-table.md                               # Auto-generated Markdown results summary
 ```
 
 ## Python Utilities
@@ -290,8 +302,8 @@ Eleven agent types in `agents/`. The plugin ships `settings.json` with `"agent":
 
 | Agent | Tools | Model | Effort | Preloaded Skill |
 |-------|-------|-------|--------|-----------------|
-| **`orchestrator`** | Agent, Read, Write, Edit, Bash, Glob, Grep, Skill, WebSearch, WebFetch | **opus** | high | `ml-optimizer:orchestrate` (main thread) |
-| **`hyperagent`** | Read, Write, Edit, Bash, Glob, Grep, Skill, WebSearch, WebFetch | **opus** | high | `ml-optimizer:hyperagent` + all hyperagent-* + evolve + shinka-* + claude-mem |
+| **`orchestrator-agent`** | Agent, Read, Write, Edit, Bash, Glob, Grep, Skill, WebSearch, WebFetch | **opus** | high | `ml-optimizer:orchestrate` |
+| **`hyperagent-agent`** | Read, Write, Edit, Bash, Glob, Grep, Skill, WebSearch, WebFetch | **opus** | high | `ml-optimizer:hyperagent` + all hyperagent-* + evolve + shinka-* + claude-mem |
 | `research-agent` | WebSearch, WebFetch, Read, Write, Bash, Glob, Grep, Skill + alphaxiv MCP (6) | opus | high | `ml-optimizer:research` |
 | `implement-agent` | Bash, Read, Write, Edit, Glob, Grep, Skill, WebSearch, WebFetch + alphaxiv MCP (2) | opus | high | `ml-optimizer:implement` + evolve + shinka-* |
 | `tuning-agent` | Read, Write, Bash, Glob, Grep, Skill, WebSearch, WebFetch | opus | high | `ml-optimizer:hp-tune` |
@@ -302,7 +314,7 @@ Eleven agent types in `agents/`. The plugin ships `settings.json` with `"agent":
 | `experiment-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | sonnet | medium | `ml-optimizer:experiment` |
 | `prerequisites-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | sonnet | medium | `ml-optimizer:prerequisites` |
 
-The **orchestrator** is the main-thread agent (activated by `settings.json`). The **hyperagent** is the Phase 7/8 loop driver. Other agents are specialized workers coordinated through the orchestrator relay. Analytical agents use `effort: high` and `model: opus`. Procedural agents use `effort: medium` and `model: sonnet`.
+The **orchestrator-agent** is the main-thread agent (activated by `settings.json`). The **hyperagent-agent** is the Phase 7/8 loop driver. Other agents are specialized workers coordinated through the orchestrator relay. Analytical agents use `effort: high` and `model: opus`. Procedural agents use `effort: medium` and `model: sonnet`.
 
 ## Hooks (Safety Guardrails)
 
@@ -341,7 +353,7 @@ Exit code `2` = block action. Exit code `0` = allow. Configured in `hooks/hooks.
 - **HP interaction detection**: `detect_hp_interactions()` identifies 2-way HP interaction effects (e.g., "high LR only works with small batch size"). Integrated into analysis output.
 - **Adaptive branch budget**: HP-tune allocates more experiments to promising branches and fewer to struggling ones. Scores by improvement × confidence factor.
 - **Checkpoint warm-starting**: Experiments can resume from prior checkpoints (lower LR, fewer epochs). Saves 50-80% compute in later iterations.
-- **Hyperagent-driven optimization**: The hyperagent drives Phase 7 ↔ Phase 8 in a loop and enables self-improvement. It maintains a code archive (`code-archive.jsonl`) with lineage tracking and selects parents using Hyperagents' exact algorithms: `sigmoid(10(s - μ)) × exp(-(children/8)³)`. Three mutation operators: LLM patches (structural), ShinkaEvolve (fine-grained), research-implement (paper-informed). The hyperagent learns which operator is effective and adapts.
+- **Hyperagent-driven optimization**: The hyperagent drives Phase 7 ↔ Phase 8 in a loop and enables self-improvement. It maintains a code archive (`hyperagent/archive.jsonl`) with lineage tracking and selects parents using Hyperagents' exact algorithms: `sigmoid(10(s - μ)) × exp(-(children/8)³)`. Three mutation operators: LLM patches (structural), ShinkaEvolve (fine-grained), research-implement (paper-informed). The hyperagent learns which operator is effective and adapts.
 - **Staged evaluation**: Every code mutation gets a cheap pre-filter (10% budget, adaptive threshold) before full training. Warm-starts from staged checkpoint. Saves 50-80% compute by filtering unpromising variants early.
 - **Self-referential meta-improvement**: The hyperagent can modify the plugin's own skill instructions (hp-tune, analyze, research). Session-scoped patches in `experiments/meta-patches/`. Max 3 per session. End-of-session promotion gate: analysis-agent evaluates, user approves, committed to plugin branch.
 - **ShinkaEvolve as mutation operator**: ShinkaEvolve is one tool within the Hyperagent loop. The hyperagent dispatches it for fine-grained code mutations (numerical constants, local optimizations) via `Skill("ml-optimizer:evolve")`. The full pipeline: `shinka-convert` → `shinka-run` (file-based LLM handoff) → `shinka-inspect` → commit. Evolve HPs are tuning-agent-driven.

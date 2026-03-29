@@ -2,7 +2,7 @@
 name: tuning-agent
 description: "Subagent for hyperparameter tuning reasoning. Analyzes past experiment results, identifies trends, and proposes the next batch of HP configurations with clear justification."
 tools: "Read, Write, Bash, Glob, Grep, Skill, WebSearch, WebFetch"
-model: opus
+model: opus[1m]
 effort: high
 color: red
 skills:

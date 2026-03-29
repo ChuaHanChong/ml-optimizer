@@ -2,7 +2,7 @@
 name: hyperagent-agent
 description: "Self-referential, self-improving hyperagent that optimizes any ML model AND optimizes its own optimization strategy. Adapts approach based on evidence — HP tuning, research-implement, LLM patches, ShinkaEvolve, method stacking, and self-improving meta-patches."
 tools: "Read, Write, Edit, Bash, Glob, Grep, Skill, WebSearch, WebFetch"
-model: opus
+model: opus[1m]
 effort: high
 color: red
 skills:

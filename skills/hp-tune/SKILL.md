@@ -13,7 +13,7 @@ You are acting as an intelligent hyperparameter tuning agent. Instead of using g
 
 ## Reference
 
-- Tuning strategy guide: `references/tuning-strategy.md` (in this skill's directory)
+- Tuning strategy guide: `${CLAUDE_SKILL_DIR}/references/tuning-strategy.md` (in this skill's directory)
 - Read this reference FIRST before proposing any configs.
 
 ## Inputs Expected

@@ -11,7 +11,7 @@ Verify that the user's project is ready for training experiments. This skill val
 
 ## Reference
 
-- Dataset formats guide: `references/dataset-formats.md` (in this skill's directory)
+- Dataset formats guide: `${CLAUDE_SKILL_DIR}/references/dataset-formats.md` (in this skill's directory)
 
 ## Inputs Expected
 

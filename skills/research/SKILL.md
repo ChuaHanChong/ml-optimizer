@@ -13,7 +13,7 @@ Search for and analyze ML techniques that could improve the target model. Extrac
 
 ## Reference
 
-- Paper analysis guide: `references/paper-analysis.md` (in this skill's directory)
+- Paper analysis guide: `${CLAUDE_SKILL_DIR}/references/paper-analysis.md` (in this skill's directory)
 - Read this reference FIRST to understand the extraction framework.
 
 ## Inputs Expected
@@ -55,7 +55,7 @@ If the user provided papers or URLs:
 
 2. For local files, use Read to read them
 
-3. Apply the paper analysis framework from `references/paper-analysis.md`:
+3. Apply the paper analysis framework from `${CLAUDE_SKILL_DIR}/references/paper-analysis.md`:
    - Extract core technique
    - Determine implementation details
    - Assess expected impact

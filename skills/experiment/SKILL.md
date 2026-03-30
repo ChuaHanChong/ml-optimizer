@@ -11,7 +11,7 @@ Runs a single training experiment with a specified configuration.
 
 ## Reference
 
-- Script templates: `references/script-templates.md` (in this skill's directory)
+- Script templates: `${CLAUDE_SKILL_DIR}/references/script-templates.md` (in this skill's directory)
 
 ## Inputs Expected
 
@@ -172,7 +172,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/experiment_setup.py \
   '<config_json>'
 ```
 
-Or write the script manually using the Write tool, following templates in `references/script-templates.md`.
+Or write the script manually using the Write tool, following templates in `${CLAUDE_SKILL_DIR}/references/script-templates.md`.
 
 **Timeout wrapper:** The training command in the bash script must be wrapped with `timeout`:
 ```bash

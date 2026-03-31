@@ -111,3 +111,7 @@ You are a persistent agent — the orchestrator resumes you via `SendMessage` in
 2. The orchestrator includes `CONTEXT FROM OTHER AGENTS:` with findings from analyze, monitor, and research agents
 3. Use your accumulated understanding to make better mutation choices
 4. The archive tracks what you've tried — consult it before proposing similar mutations
+
+## Relay Acknowledgment
+
+When you receive a `CONTEXT FROM OTHER AGENTS` section in your dispatch message, include `RELAY_ACK: <route>` in your output (e.g., `RELAY_ACK: analyze_to_hyperagent`) to confirm you processed the relayed context. This enables the orchestrator to detect when context was silently dropped by context compression.

@@ -58,11 +58,16 @@ ENTRY POINT
     Fallback:            If SendMessage fails → fresh Agent() → update registry
 
   INTER-AGENT COMMUNICATION (orchestrator relay):
-    analyze → tuning:    correlations, branch scores, recommendation
-    analyze → research:  pivot reason, dead-end catalog
-    monitor → tuning:    OOM batch sizes, divergence patterns
-    research → implement: proposals with findings path
+    analyze → tuning:      correlations, branch scores, recommendation
+    analyze → research:    pivot reason, dead-end catalog
+    analyze → hyperagent:  recommendation, pivot type, improvement %
+    monitor → tuning:      OOM batch sizes, divergence patterns
+    research → implement:  proposals with findings path
     experiments → analyze: batch completion counts, best metrics
+    hyperagent → tuning:   action, evolve HPs, target branch
+
+    Relay validation: schema_validator.py relay <route> <json> before each SendMessage
+    Relay acknowledgment: persistent agents emit RELAY_ACK: <route> in response
 
   PROCEDURAL AGENTS (model: sonnet — lower cost/latency, no ultrathink)
   ---------------------------------------------------------------------
@@ -214,9 +219,21 @@ ENTRY POINT
       (user chose "Proceed" → ExitPlanMode)
                     v
 
+  RELIABILITY LAYER (applies to all phases)
+  ==========================================
+  Phase gates:    pipeline_state.py gate <from> <to> before each transition
+                  pipeline_state.py log-gate <phase> completed after each phase
+  Relay contracts: schema_validator.py relay <route> <json> before SendMessage
+                   Persistent agents emit RELAY_ACK: <route> to confirm receipt
+  Decision log:   pipeline_state.py log-decision <json> at every pivot/stop/operator choice
+                  SHA-256 input hashing for replay-based divergence detection
+  Meta-patch gate: pipeline_state.py meta-patch validate|log|promote
+                   Max 3/session, forbidden skills enforced
+
   PHASE 2: PREREQUISITES
   =======================
   Agent: prerequisites-agent --> ml-optimizer:prerequisites skill
+  Phase gate: pipeline_state.py gate 1 2
 
     +--------------------------------------------------------------+
     |  Step 1: Detect environment (conda/venv/system)              |
@@ -240,6 +257,7 @@ ENTRY POINT
   PHASE 3: BASELINE
   ==================
   Agent: baseline-agent --> ml-optimizer:baseline skill
+  Phase gate: pipeline_state.py gate 2 3
 
     +--------------------------------------------------------------+
     |  1. Run training with default HPs                            |
@@ -285,6 +303,7 @@ ENTRY POINT
   PHASE 5: RESEARCH
   ==================
   Agent: research-agent --> ml-optimizer:research skill
+  Phase gate: pipeline_state.py gate 4 5
 
     +----------------------------------------------------------------+
     |  Source modes:                                                 |
@@ -322,6 +341,7 @@ ENTRY POINT
   PHASE 6: IMPLEMENT
   ===================
   Agent: implement-agent --> ml-optimizer:implement skill
+  Phase gate: pipeline_state.py gate 5 6
   Code analysis: feature-dev:code-explorer (dependency tracing)
   Quality gate: feature-dev:code-reviewer (Step 4e.5, advisory)
 
@@ -407,6 +427,10 @@ ENTRY POINT
   |  |       MCTS backprop: ancestors get visit_count++, value_sum+=    |  |
   |  |    2. hyperagent-generate → create code variant                  |  |
   |  |       (ShinkaEvolve: evolve skill does convert→run→inspect)      |  |
+  |  |       File handoff: SHINKA_PROVIDER=claude_code,                 |  |
+  |  |         SHINKA_HANDOFF_TIMEOUT=600 (10 min per mutation)         |  |
+  |  |         Agent writes .inprogress → deadline resets               |  |
+  |  |         shinka_run writes .heartbeat every 5s for liveness       |  |
   |  |    3. hyperagent-eval → staged eval (10% budget, adaptive        |  |
   |  |       threshold). If FAIL → archive as filtered, skip full.      |  |
   |  |    4. If PASS → HP-tune (1-2 iters) + full experiment            |  |
@@ -674,6 +698,12 @@ ENTRY POINT
                     UCB1 backprop: visit_count (all ancestors), eval_count (node only), value_sum
                     Scores min-max normalized to [0,1] with metric direction inversion
   Meta-patches: experiments/meta-patches/ (session-scoped skill modifications)
+  Meta-patch gate: pipeline_state.py meta-patch validate|log|promote (max 3/session)
+  Phase gates: pipeline_state.py gate <from> <to> (validates transition legality + completion)
+  Decision log: experiments/decision-log.json (append-only, SHA-256 input hashing)
+  Relay schemas: schema_validator.py relay <route> <json> (7 routes, typed fields)
+  ShinkaEvolve handoff: SHINKA_HANDOFF_TIMEOUT=600 (configurable), .inprogress marker
+                         extends deadline, .heartbeat every 5s for liveness, sleep(1) poll
   Goal anchor: optimization-goals.json (Phase 0, read by all agents)
   Behavioral memory: learned-behaviors.json (accumulated, project-scoped)
 

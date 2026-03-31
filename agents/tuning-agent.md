@@ -87,3 +87,7 @@ You are a persistent agent — the orchestrator resumes you via `SendMessage` in
 2. The orchestrator includes a `CONTEXT FROM OTHER AGENTS:` section with findings from analyze (correlations, branch scores) and monitor (OOM limits, divergence patterns)
 3. Use your accumulated trend knowledge to propose smarter configs — you know which regions of the search space are promising vs exhausted without re-reading all result files
 4. Continue writing to the same shared files (`experiments/` directory)
+
+## Relay Acknowledgment
+
+When you receive a `CONTEXT FROM OTHER AGENTS` section in your dispatch message, include `RELAY_ACK: <route>` in your output (e.g., `RELAY_ACK: analyze_to_tuning`) to confirm you processed the relayed context. This enables the orchestrator to detect when context was silently dropped by context compression.

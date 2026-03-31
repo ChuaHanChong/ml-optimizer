@@ -17,11 +17,26 @@ from unittest import mock
 import pytest
 
 from pipeline_state import (
+    META_PATCH_FORBIDDEN_SKILLS,
+    META_PATCH_MAX_PER_SESSION,
+    PHASE_TRANSITIONS,
+    RECOVERY_INSTRUCTIONS,
+    _RECOVERY_DEFAULT,
     _compute_baseline_checksum,
     cleanup_stale,
+    get_decisions,
+    get_meta_patches,
+    get_recovery_instruction,
     init_hyperagent_state,
     load_state,
+    log_decision,
+    log_meta_patch,
+    log_phase_gate,
+    promote_meta_patch,
+    replay_check,
     save_state,
+    validate_meta_patch,
+    validate_phase_gate,
     validate_phase_requirements,
     verify_baseline_integrity,
 )
@@ -697,3 +712,522 @@ class TestCLI:
     def test_cli_experiment_setup(self, run_main, tmp_path):
         r = run_main("experiment_setup.py", str(tmp_path), "python train.py")
         assert r.returncode == 0 and json.loads(r.stdout)["exp_id"] == "exp-001"
+
+
+# ---------------------------------------------------------------------------
+# TestPhaseGates
+# ---------------------------------------------------------------------------
+
+class TestPhaseGates:
+    """Phase gate protocol: transition validation, gate logging, recovery instructions."""
+
+    def test_valid_transitions(self, tmp_path):
+        """All edges in PHASE_TRANSITIONS pass validation."""
+        for src, dsts in PHASE_TRANSITIONS.items():
+            for dst in dsts:
+                # Log the source phase as completed (unless phase 0)
+                if src != 0:
+                    log_phase_gate(str(tmp_path), src, "completed", f"Phase {src} done")
+                # Set up file prerequisites for the destination phase
+                _setup_phase_prereqs(tmp_path, dst)
+                result = validate_phase_gate(src, dst, str(tmp_path))
+                assert result["valid"] is True, (
+                    f"Transition {src} -> {dst} should be valid but got errors: "
+                    f"{result['errors']}"
+                )
+
+    def test_invalid_transitions(self, tmp_path):
+        """Disallowed jumps (e.g., 2->7) are rejected."""
+        invalid_pairs = [(2, 7), (0, 5), (3, 9), (1, 4), (5, 8), (9, 0)]
+        for src, dst in invalid_pairs:
+            # Even if we log completion, the transition itself is illegal
+            if src != 0:
+                log_phase_gate(str(tmp_path), src, "completed", f"Phase {src} done")
+            result = validate_phase_gate(src, dst, str(tmp_path))
+            assert result["valid"] is False, (
+                f"Transition {src} -> {dst} should be invalid"
+            )
+            assert any("not allowed" in e for e in result["errors"])
+
+    def test_gate_requires_completion(self, tmp_path):
+        """Gate fails if previous phase status is not 'completed'."""
+        # Log phase 3 as "failed"
+        log_phase_gate(str(tmp_path), 3, "failed", "Phase 3 crashed")
+        # Set up prereqs for phase 4
+        _write_baseline(tmp_path, {"loss": 0.5}, {"lr": 0.001})
+        result = validate_phase_gate(3, 4, str(tmp_path))
+        assert result["valid"] is False
+        assert any("not been marked as completed" in e for e in result["errors"])
+
+    def test_phase_zero_no_completion_required(self, tmp_path):
+        """Phase 0 doesn't need a prior gate log entry."""
+        # gate 0->1 should work without any prior logs
+        # Phase 1 -> validate_phase_requirements for phase 1 has no rules
+        # (undefined phase warns but is still valid)
+        result = validate_phase_gate(0, 1, str(tmp_path))
+        assert result["valid"] is True
+
+    def test_recovery_instructions(self):
+        """Each phase x failure type has a non-empty recovery string."""
+        for (phase, failure_type), instruction in RECOVERY_INSTRUCTIONS.items():
+            assert isinstance(instruction, str)
+            assert len(instruction) > 0
+            result = get_recovery_instruction(phase, failure_type)
+            assert result == instruction
+
+    def test_recovery_default_fallback(self):
+        """Unknown failure types get the default recovery instruction."""
+        result = get_recovery_instruction(99, "unknown_failure")
+        assert result == _RECOVERY_DEFAULT
+        assert len(result) > 0
+        # Also check a known phase with unknown failure type
+        result2 = get_recovery_instruction(7, "some_other_error")
+        assert result2 == _RECOVERY_DEFAULT
+
+    def test_log_phase_gate_creates_file(self, tmp_path):
+        """First call creates phase-gates.json."""
+        gate_path = tmp_path / "phase-gates.json"
+        assert not gate_path.exists()
+        log_phase_gate(str(tmp_path), 1, "completed", "Phase 1 finished")
+        assert gate_path.exists()
+        entries = json.loads(gate_path.read_text())
+        assert len(entries) == 1
+        assert entries[0]["phase"] == 1
+        assert entries[0]["status"] == "completed"
+        assert entries[0]["summary"] == "Phase 1 finished"
+
+    def test_log_phase_gate_appends(self, tmp_path):
+        """Multiple calls append entries."""
+        log_phase_gate(str(tmp_path), 1, "completed", "Phase 1 done")
+        log_phase_gate(str(tmp_path), 2, "completed", "Phase 2 done")
+        log_phase_gate(str(tmp_path), 3, "failed", "Phase 3 crashed")
+        entries = json.loads((tmp_path / "phase-gates.json").read_text())
+        assert len(entries) == 3
+        assert entries[0]["phase"] == 1
+        assert entries[1]["phase"] == 2
+        assert entries[2]["phase"] == 3
+        assert entries[2]["status"] == "failed"
+
+    def test_log_phase_gate_has_timestamp(self, tmp_path):
+        """Each entry has an ISO8601 timestamp."""
+        log_phase_gate(str(tmp_path), 5, "completed", "Research done")
+        entries = json.loads((tmp_path / "phase-gates.json").read_text())
+        ts = entries[0]["timestamp"]
+        # Verify it parses as ISO8601
+        parsed = datetime.fromisoformat(ts)
+        assert parsed.tzinfo is not None  # Should be timezone-aware
+
+
+def _setup_phase_prereqs(tmp_path, phase):
+    """Set up minimal file prerequisites so validate_phase_requirements passes."""
+    if phase in (4, 5, 6, 7, 9):
+        _write_baseline(tmp_path, {"loss": 0.5}, {"lr": 0.001})
+    elif phase == 3:
+        _make_results_dir(tmp_path)
+    if phase == 8:
+        _write_baseline(tmp_path, {"loss": 0.5}, {"lr": 0.001})
+        d = tmp_path / "results"
+        d.mkdir(exist_ok=True)
+        (d / "implementation-manifest.json").write_text(
+            json.dumps({"proposals": []})
+        )
+
+
+# ---------------------------------------------------------------------------
+# TestDecisionLogging
+# ---------------------------------------------------------------------------
+
+class TestDecisionLogging:
+    """Decision logging (pipeline_state decision logging functions)."""
+
+    def _make_decision(self, **overrides):
+        """Helper to create a valid decision dict with optional overrides."""
+        base = {
+            "phase": 7,
+            "agent": "analysis",
+            "decision_type": "pivot",
+            "decision": "switch to code_evolution",
+        }
+        base.update(overrides)
+        return base
+
+    def test_log_decision_creates_file(self, tmp_path):
+        """First log call creates decision-log.json."""
+        log_path = tmp_path / "decision-log.json"
+        assert not log_path.exists()
+        log_decision(str(tmp_path), self._make_decision())
+        assert log_path.exists()
+        entries = json.loads(log_path.read_text())
+        assert len(entries) == 1
+
+    def test_log_decision_appends(self, tmp_path):
+        """Multiple calls append entries."""
+        log_decision(str(tmp_path), self._make_decision(decision="first"))
+        log_decision(str(tmp_path), self._make_decision(decision="second"))
+        log_decision(str(tmp_path), self._make_decision(decision="third"))
+        entries = json.loads((tmp_path / "decision-log.json").read_text())
+        assert len(entries) == 3
+        assert entries[0]["decision"] == "first"
+        assert entries[1]["decision"] == "second"
+        assert entries[2]["decision"] == "third"
+
+    def test_log_decision_validates_required_fields(self, tmp_path):
+        """Missing required fields raise ValueError."""
+        with pytest.raises(ValueError, match="phase"):
+            log_decision(str(tmp_path), {"agent": "a", "decision_type": "t", "decision": "d"})
+        with pytest.raises(ValueError, match="agent"):
+            log_decision(str(tmp_path), {"phase": 1, "decision_type": "t", "decision": "d"})
+        with pytest.raises(ValueError, match="decision_type"):
+            log_decision(str(tmp_path), {"phase": 1, "agent": "a", "decision": "d"})
+        with pytest.raises(ValueError, match="decision"):
+            log_decision(str(tmp_path), {"phase": 1, "agent": "a", "decision_type": "t"})
+
+    def test_log_decision_adds_timestamp(self, tmp_path):
+        """Each entry gets an ISO8601 timestamp."""
+        log_decision(str(tmp_path), self._make_decision())
+        entries = json.loads((tmp_path / "decision-log.json").read_text())
+        ts = entries[0]["timestamp"]
+        parsed = datetime.fromisoformat(ts)
+        assert parsed.tzinfo is not None
+
+    def test_log_decision_auto_increments_id(self, tmp_path):
+        """IDs auto-increment from 1."""
+        id1 = log_decision(str(tmp_path), self._make_decision(decision="first"))
+        id2 = log_decision(str(tmp_path), self._make_decision(decision="second"))
+        id3 = log_decision(str(tmp_path), self._make_decision(decision="third"))
+        assert id1 == "1"
+        assert id2 == "2"
+        assert id3 == "3"
+
+    def test_log_decision_computes_inputs_hash(self, tmp_path):
+        """Entries have a SHA-256 inputs_hash."""
+        log_decision(str(tmp_path), self._make_decision())
+        entries = json.loads((tmp_path / "decision-log.json").read_text())
+        h = entries[0]["inputs_hash"]
+        assert len(h) == 64
+        assert all(ch in "0123456789abcdef" for ch in h)
+
+    def test_inputs_hash_deterministic(self, tmp_path):
+        """Same inputs produce the same hash."""
+        d1 = self._make_decision()
+        d2 = self._make_decision()
+        log_decision(str(tmp_path), d1)
+        log_decision(str(tmp_path), d2)
+        entries = json.loads((tmp_path / "decision-log.json").read_text())
+        assert entries[0]["inputs_hash"] == entries[1]["inputs_hash"]
+
+    def test_inputs_hash_differs_on_different_inputs(self, tmp_path):
+        """Different inputs produce different hashes."""
+        log_decision(str(tmp_path), self._make_decision(agent="analysis"))
+        log_decision(str(tmp_path), self._make_decision(agent="tuning"))
+        entries = json.loads((tmp_path / "decision-log.json").read_text())
+        assert entries[0]["inputs_hash"] != entries[1]["inputs_hash"]
+
+    def test_get_decisions_all(self, tmp_path):
+        """No filters returns all decisions."""
+        log_decision(str(tmp_path), self._make_decision(decision="a"))
+        log_decision(str(tmp_path), self._make_decision(decision="b"))
+        log_decision(str(tmp_path), self._make_decision(decision="c"))
+        result = get_decisions(str(tmp_path))
+        assert len(result) == 3
+
+    def test_get_decisions_filter_by_phase(self, tmp_path):
+        """Filter by phase returns correct subset."""
+        log_decision(str(tmp_path), self._make_decision(phase=5, decision="research"))
+        log_decision(str(tmp_path), self._make_decision(phase=7, decision="pivot"))
+        log_decision(str(tmp_path), self._make_decision(phase=7, decision="stop"))
+        result = get_decisions(str(tmp_path), phase=7)
+        assert len(result) == 2
+        assert all(e["phase"] == 7 for e in result)
+
+    def test_get_decisions_filter_by_agent(self, tmp_path):
+        """Filter by agent returns correct subset."""
+        log_decision(str(tmp_path), self._make_decision(agent="analysis"))
+        log_decision(str(tmp_path), self._make_decision(agent="tuning"))
+        log_decision(str(tmp_path), self._make_decision(agent="analysis"))
+        result = get_decisions(str(tmp_path), agent="tuning")
+        assert len(result) == 1
+        assert result[0]["agent"] == "tuning"
+
+    def test_get_decisions_empty(self, tmp_path):
+        """Returns empty list when no log exists."""
+        result = get_decisions(str(tmp_path))
+        assert result == []
+
+    def test_replay_check_match(self, tmp_path):
+        """Identical decision matches."""
+        decision = self._make_decision(
+            context_summary="loss plateaued at 0.3",
+            decision="switch to code_evolution",
+        )
+        id1 = log_decision(str(tmp_path), decision)
+        # Log the same decision again (same inputs, same decision text)
+        id2 = log_decision(str(tmp_path), decision)
+        result = replay_check(str(tmp_path), id2, "switch to code_evolution")
+        assert result["match"] is True
+        assert result["divergence"] is None
+        assert result["original_decision"] == "switch to code_evolution"
+        assert result["current_decision"] == "switch to code_evolution"
+
+    def test_replay_check_divergence(self, tmp_path):
+        """Different decision flags divergence."""
+        decision = self._make_decision(
+            context_summary="loss plateaued at 0.3",
+            decision="switch to code_evolution",
+        )
+        id1 = log_decision(str(tmp_path), decision)
+        # Log same inputs but different decision
+        decision2 = self._make_decision(
+            context_summary="loss plateaued at 0.3",
+            decision="try research_implement",
+        )
+        id2 = log_decision(str(tmp_path), decision2)
+        result = replay_check(str(tmp_path), id2, "try research_implement")
+        assert result["match"] is False
+        assert "diverged" in result["divergence"]
+        assert result["original_decision"] == "switch to code_evolution"
+        assert result["current_decision"] == "try research_implement"
+
+    def test_replay_check_no_prior(self, tmp_path):
+        """No matching inputs returns match=None."""
+        decision = self._make_decision(
+            context_summary="unique context",
+            decision="unique decision",
+        )
+        id1 = log_decision(str(tmp_path), decision)
+        result = replay_check(str(tmp_path), id1, "unique decision")
+        assert result["match"] is None
+        assert result["divergence"] == "no_prior_decision_with_matching_inputs"
+
+
+# ---------------------------------------------------------------------------
+# TestMetaPatchManagement
+# ---------------------------------------------------------------------------
+
+def _make_valid_patch(skill="hp-tune", change="Add warmup", reason="Avoids divergence",
+                      expected_impact="Fewer failed experiments"):
+    return {
+        "skill": skill,
+        "change": change,
+        "reason": reason,
+        "expected_impact": expected_impact,
+    }
+
+
+class TestMetaPatchManagement:
+    """Meta-patch validation, logging, retrieval, and promotion."""
+
+    def test_validate_valid_patch(self, tmp_path):
+        """Well-formed patch for allowed skill passes."""
+        result = validate_meta_patch(str(tmp_path), _make_valid_patch())
+        assert result["valid"] is True
+        assert result["errors"] == []
+
+    def test_validate_missing_required_field(self, tmp_path):
+        """Missing required field returns error."""
+        for field in ("skill", "change", "reason", "expected_impact"):
+            patch = _make_valid_patch()
+            del patch[field]
+            result = validate_meta_patch(str(tmp_path), patch)
+            assert result["valid"] is False
+            assert any(field in e for e in result["errors"])
+
+    def test_validate_empty_string_field(self, tmp_path):
+        """Empty string for a required field returns error."""
+        patch = _make_valid_patch(change="   ")
+        result = validate_meta_patch(str(tmp_path), patch)
+        assert result["valid"] is False
+        assert any("change" in e for e in result["errors"])
+
+    def test_validate_forbidden_skill_orchestrate(self, tmp_path):
+        """'orchestrate' skill is rejected."""
+        patch = _make_valid_patch(skill="orchestrate")
+        result = validate_meta_patch(str(tmp_path), patch)
+        assert result["valid"] is False
+        assert any("forbidden" in e.lower() for e in result["errors"])
+
+    def test_validate_forbidden_skill_hyperagent_generate(self, tmp_path):
+        """'hyperagent-generate' is rejected."""
+        patch = _make_valid_patch(skill="hyperagent-generate")
+        result = validate_meta_patch(str(tmp_path), patch)
+        assert result["valid"] is False
+        assert any("hyperagent-generate" in e for e in result["errors"])
+
+    def test_validate_all_forbidden_skills(self, tmp_path):
+        """Every skill in META_PATCH_FORBIDDEN_SKILLS is rejected."""
+        for skill in META_PATCH_FORBIDDEN_SKILLS:
+            patch = _make_valid_patch(skill=skill)
+            result = validate_meta_patch(str(tmp_path), patch)
+            assert result["valid"] is False, f"{skill} should be forbidden"
+
+    def test_validate_counter_enforcement(self, tmp_path):
+        """4th patch is rejected after 3 are logged."""
+        for i in range(META_PATCH_MAX_PER_SESSION):
+            result = log_meta_patch(str(tmp_path), _make_valid_patch(
+                skill=f"skill-{i}", change=f"Change {i}"))
+            assert result["logged"] is True, f"Patch {i} should log successfully"
+
+        # The 4th should be rejected
+        result = validate_meta_patch(str(tmp_path), _make_valid_patch(
+            skill="skill-extra", change="One too many"))
+        assert result["valid"] is False
+        assert any("max" in e.lower() or "exceeded" in e.lower() for e in result["errors"])
+
+    def test_log_creates_directory_and_file(self, tmp_path):
+        """First log creates meta-patches/ and meta-changelog.json."""
+        meta_dir = tmp_path / "meta-patches"
+        assert not meta_dir.exists()
+        result = log_meta_patch(str(tmp_path), _make_valid_patch())
+        assert result["logged"] is True
+        assert meta_dir.is_dir()
+        assert (meta_dir / "meta-changelog.json").is_file()
+
+    def test_log_appends_entries(self, tmp_path):
+        """Multiple logs append correctly."""
+        log_meta_patch(str(tmp_path), _make_valid_patch(skill="analyze", change="A"))
+        log_meta_patch(str(tmp_path), _make_valid_patch(skill="research", change="B"))
+        entries = get_meta_patches(str(tmp_path))
+        assert len(entries) == 2
+        assert entries[0]["skill"] == "analyze"
+        assert entries[1]["skill"] == "research"
+
+    def test_log_invalid_patch_rejected(self, tmp_path):
+        """Invalid patch returns logged=False."""
+        result = log_meta_patch(str(tmp_path), {"skill": "orchestrate"})
+        assert result["logged"] is False
+        assert len(result["errors"]) > 0
+
+    def test_log_auto_increments_id(self, tmp_path):
+        """IDs increment from 1."""
+        r1 = log_meta_patch(str(tmp_path), _make_valid_patch(skill="analyze", change="A"))
+        r2 = log_meta_patch(str(tmp_path), _make_valid_patch(skill="research", change="B"))
+        assert r1["id"] == 1
+        assert r2["id"] == 2
+        entries = get_meta_patches(str(tmp_path))
+        assert entries[0]["id"] == 1
+        assert entries[1]["id"] == 2
+
+    def test_log_has_timestamp(self, tmp_path):
+        """Logged entries have ISO8601 timestamps."""
+        log_meta_patch(str(tmp_path), _make_valid_patch())
+        entries = get_meta_patches(str(tmp_path))
+        ts = entries[0]["timestamp"]
+        parsed = datetime.fromisoformat(ts)
+        assert parsed.tzinfo is not None
+
+    def test_log_returns_count(self, tmp_path):
+        """Log return dict includes correct count."""
+        r1 = log_meta_patch(str(tmp_path), _make_valid_patch(skill="analyze", change="A"))
+        assert r1["count"] == 1
+        r2 = log_meta_patch(str(tmp_path), _make_valid_patch(skill="research", change="B"))
+        assert r2["count"] == 2
+
+    def test_get_meta_patches_empty(self, tmp_path):
+        """Returns empty list when nothing logged."""
+        assert get_meta_patches(str(tmp_path)) == []
+
+    def test_get_meta_patches_returns_all(self, tmp_path):
+        """Returns all logged entries."""
+        for i in range(3):
+            log_meta_patch(str(tmp_path), _make_valid_patch(
+                skill=f"skill-{i}", change=f"Change {i}"))
+        entries = get_meta_patches(str(tmp_path))
+        assert len(entries) == 3
+        for i, entry in enumerate(entries):
+            assert entry["skill"] == f"skill-{i}"
+            assert entry["change"] == f"Change {i}"
+
+    def test_get_meta_patches_corrupt_file(self, tmp_path):
+        """Returns empty list if changelog is corrupt."""
+        meta_dir = tmp_path / "meta-patches"
+        meta_dir.mkdir()
+        (meta_dir / "meta-changelog.json").write_text("{bad json")
+        assert get_meta_patches(str(tmp_path)) == []
+
+    def test_promote_copies_file(self, tmp_path):
+        """Promotion copies patched file to plugin skills dir."""
+        exp_root = tmp_path / "exp"
+        plugin_root = tmp_path / "plugin"
+
+        # Log a patch
+        log_meta_patch(str(exp_root), _make_valid_patch(skill="analyze"))
+
+        # Create the patched file
+        meta_dir = exp_root / "meta-patches"
+        meta_dir.mkdir(parents=True, exist_ok=True)
+        patched_content = "# [meta-improvement]\nUpdated SKILL content"
+        (meta_dir / "analyze-SKILL.md").write_text(patched_content)
+
+        # Create existing plugin skill dir
+        (plugin_root / "skills" / "analyze").mkdir(parents=True)
+        (plugin_root / "skills" / "analyze" / "SKILL.md").write_text("original")
+
+        result = promote_meta_patch(str(exp_root), str(plugin_root), 0)
+        assert result["promoted"] is True
+        assert result["skill"] == "analyze"
+        promoted = Path(result["path"]).read_text()
+        assert "Updated SKILL content" in promoted
+
+    def test_promote_prepends_marker(self, tmp_path):
+        """Promoted file starts with # [meta-improvement]."""
+        exp_root = tmp_path / "exp"
+        plugin_root = tmp_path / "plugin"
+
+        log_meta_patch(str(exp_root), _make_valid_patch(skill="research"))
+
+        meta_dir = exp_root / "meta-patches"
+        # Patched file WITHOUT the marker
+        (meta_dir / "research-SKILL.md").write_text("Just content without marker")
+
+        result = promote_meta_patch(str(exp_root), str(plugin_root), 0)
+        assert result["promoted"] is True
+        content = Path(result["path"]).read_text()
+        assert content.startswith("# [meta-improvement]")
+        assert "Just content without marker" in content
+
+    def test_promote_no_double_marker(self, tmp_path):
+        """If marker already present, it is not duplicated."""
+        exp_root = tmp_path / "exp"
+        plugin_root = tmp_path / "plugin"
+
+        log_meta_patch(str(exp_root), _make_valid_patch(skill="monitor"))
+        meta_dir = exp_root / "meta-patches"
+        (meta_dir / "monitor-SKILL.md").write_text(
+            "# [meta-improvement]\nAlready has marker")
+
+        result = promote_meta_patch(str(exp_root), str(plugin_root), 0)
+        content = Path(result["path"]).read_text()
+        assert content.count("# [meta-improvement]") == 1
+
+    def test_promote_nonexistent_patch_fails(self, tmp_path):
+        """Missing patched file returns promoted=False."""
+        exp_root = tmp_path / "exp"
+        plugin_root = tmp_path / "plugin"
+
+        log_meta_patch(str(exp_root), _make_valid_patch(skill="analyze"))
+        # Do NOT create the patched file
+
+        result = promote_meta_patch(str(exp_root), str(plugin_root), 0)
+        assert result["promoted"] is False
+        assert "not found" in result["error"].lower()
+
+    def test_promote_invalid_index_fails(self, tmp_path):
+        """Out-of-range index returns promoted=False."""
+        exp_root = tmp_path / "exp"
+        plugin_root = tmp_path / "plugin"
+
+        log_meta_patch(str(exp_root), _make_valid_patch(skill="analyze"))
+
+        # Index too high
+        result = promote_meta_patch(str(exp_root), str(plugin_root), 5)
+        assert result["promoted"] is False
+        assert "invalid" in result["error"].lower()
+
+        # Negative index
+        result = promote_meta_patch(str(exp_root), str(plugin_root), -1)
+        assert result["promoted"] is False
+
+    def test_promote_empty_changelog_fails(self, tmp_path):
+        """Promoting from empty changelog returns promoted=False."""
+        result = promote_meta_patch(str(tmp_path), str(tmp_path), 0)
+        assert result["promoted"] is False

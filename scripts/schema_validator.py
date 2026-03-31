@@ -387,13 +387,115 @@ def validate_result_strict(data: dict) -> dict:
     return result
 
 
+
+# ---------------------------------------------------------------------------
+# Relay message schemas (inter-agent communication contracts)
+# ---------------------------------------------------------------------------
+
+RELAY_SCHEMAS = {
+    "analyze_to_tuning": {
+        "required": ["recommendation", "batch_number"],
+        "optional": ["correlations", "branch_scores", "best_metric_value", "pivot_type", "dead_ends_summary"],
+        "types": {"recommendation": str, "batch_number": int, "best_metric_value": (int, float)},
+    },
+    "analyze_to_research": {
+        "required": ["pivot_reason"],
+        "optional": ["dead_end_catalog", "improvement_gaps", "best_metric_value", "scope_level"],
+        "types": {"pivot_reason": str},
+    },
+    "monitor_to_tuning": {
+        "required": [],
+        "optional": ["max_batch_size", "divergence_patterns", "oom_batch_sizes"],
+        "types": {"max_batch_size": int},
+    },
+    "research_to_implement": {
+        "required": ["findings_path"],
+        "optional": ["scope_level", "selected_indices", "implementation_strategies"],
+        "types": {"findings_path": str, "selected_indices": list},
+    },
+    "experiments_to_analyze": {
+        "required": ["completed_ids"],
+        "optional": ["best_metric_value", "diverged_count", "timeout_count", "batch_number"],
+        "types": {"completed_ids": list, "diverged_count": int},
+    },
+    "analyze_to_hyperagent": {
+        "required": ["recommendation"],
+        "optional": ["pivot_type", "correlations", "branch_scores", "improvement_pct", "meta_improvement_recommended"],
+        "types": {"recommendation": str, "meta_improvement_recommended": bool},
+    },
+    "hyperagent_to_tuning": {
+        "required": ["action"],
+        "optional": ["evolve_hps", "target_branch", "archive_stats"],
+        "types": {"action": str},
+    },
+}
+
+
+def validate_relay(route: str, data: dict) -> dict:
+    """Validate a relay message against its schema.
+
+    Args:
+        route: The relay route name (e.g. ``"analyze_to_tuning"``).
+        data: The message payload dict.
+
+    Returns ``{"valid": bool, "errors": [...], "warnings": [...]}``.
+    """
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    if route not in RELAY_SCHEMAS:
+        errors.append(
+            f"Unknown relay route '{route}': must be one of {sorted(RELAY_SCHEMAS.keys())}"
+        )
+        return {"valid": False, "errors": errors, "warnings": warnings}
+
+    schema = RELAY_SCHEMAS[route]
+
+    # Check required fields
+    for field in schema["required"]:
+        if field not in data:
+            errors.append(f"Missing required field: {field}")
+
+    # Check type constraints
+    for field, expected_type in schema.get("types", {}).items():
+        if field in data:
+            if not isinstance(data[field], expected_type):
+                errors.append(
+                    f"Type mismatch for '{field}': expected {expected_type}, "
+                    f"got {type(data[field]).__name__}"
+                )
+
+    # Check for unexpected fields
+    all_known = set(schema["required"]) | set(schema["optional"])
+    for field in data:
+        if field not in all_known:
+            warnings.append(f"Unexpected field: {field}")
+
+    return {"valid": len(errors) == 0, "errors": errors, "warnings": warnings}
+
 # ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    if len(sys.argv) >= 2 and sys.argv[1] == "relay":
+        if len(sys.argv) < 4:
+            print("Usage: schema_validator.py relay <route> <json_data>")
+            sys.exit(1)
+        route = sys.argv[2]
+        try:
+            data = json.loads(sys.argv[3])
+        except json.JSONDecodeError as exc:
+            output = {"valid": False, "errors": [f"Invalid JSON: {exc}"], "warnings": []}
+            print(json.dumps(output, indent=2))
+            sys.exit(1)
+        output = validate_relay(route, data)
+        print(json.dumps(output, indent=2))
+        sys.exit(0 if output["valid"] else 1)
+
     if len(sys.argv) < 3:
         print("Usage: schema_validator.py <filepath> result|baseline|manifest|prerequisites [--strict]")
+        print("       schema_validator.py relay <route> <json_data>")
         sys.exit(1)
     filepath = sys.argv[1]
     schema_type = sys.argv[2]

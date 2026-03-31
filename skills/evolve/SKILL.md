@@ -1,7 +1,6 @@
 ---
 name: evolve
 description: Orchestrate evolutionary code refinement on a method branch via the full ShinkaEvolve pipeline (convert → run → inspect).
-disable-model-invocation: true
 user-invocable: false
 ---
 
@@ -23,6 +22,10 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/setup_evolve.sh
 ```
 
 If the submodule is missing or imports fail, report `status: "shinkaevolve_unavailable"` and return immediately. The orchestrator will fall back to the research → implement path.
+
+**Important:** Use the local submodule, not PyPI `shinka-evolve` — the PyPI version lacks the `file_handoff_provider` module needed for `SHINKA_PROVIDER=claude_code`. Set `PYTHONPATH=${CLAUDE_PLUGIN_ROOT}/skills/evolve/ShinkaEvolve:$PYTHONPATH` before running `shinka_run`.
+
+**Python executable:** ShinkaEvolve invokes bare `python` (not `python3`) in subprocesses. If only `python3` is available, ensure `python` resolves to Python 3 (use a conda env, or `ln -sf "$(which python3)" "$(dirname $(which python3))/python"`).
 
 ## Input Parameters
 
@@ -96,7 +99,7 @@ score = train(model, lr=lr, batch_size=batch_size)
 Invoke via `Skill("ml-optimizer:shinka-run")`.
 
 **Overrides for evolve context:**
-- Set env vars `SHINKA_PROVIDER=claude_code` and `SHINKA_HANDOFF_DIR=<exp_root>` before launching — this enables file-based LLM handoff (Step 3)
+- Set env vars `SHINKA_PROVIDER=claude_code`, `SHINKA_HANDOFF_DIR=<exp_root>`, and `SHINKA_HANDOFF_TIMEOUT=600` before launching — this enables file-based LLM handoff (Step 3) with a 10-minute timeout per mutation
 - Run in background (`&`) and capture PID — needed for the handoff polling loop
 - Autonomous execution — this is the "explicitly autonomous" exception in shinka-run's batch control policy, no user confirmation between batches
 - Use `--task-dir <exp_root>/artifacts/shinka-task`, `--results_dir <exp_root>/artifacts/shinka-results`
@@ -108,19 +111,36 @@ While `shinka-run` is running in the background, poll for LLM requests:
 
 ```
 While shinka-run process is alive (check: kill -0 $SHINKA_PID 2>/dev/null):
-  For each <exp_root>/evolve/pending/*.json:
-    1. Read {system_msg, user_msg, model_name} from the request
-    2. Generate the code mutation:
+  For each <exp_root>/evolve/pending/*.json (skip *.heartbeat, *.inprogress):
+    1. Read {id, system_msg, user_msg, model_name} from the request
+
+    2. Check liveness: if <id>.heartbeat exists and remaining > 0, shinka-run
+       is waiting. If no heartbeat and file age > 30s, skip (stale request).
+
+    3. Acknowledge: write <exp_root>/evolve/pending/<id>.inprogress:
+       {"status": "generating"}
+       This tells shinka-run to extend its timeout — you now have the full
+       SHINKA_HANDOFF_TIMEOUT (600s) from this point.
+
+    4. Generate the code mutation:
        - Read the system_msg (contains EVOLVE-BLOCK code + instructions)
        - Read the user_msg (contains parent metrics + mutation request)
        - Generate a SEARCH/REPLACE patch that improves the code
        - Respect EVOLVE-BLOCK boundaries
        - Check dead_ends — do NOT use dead-end techniques
        - Stay within scope_level constraints
-    3. Write response to <exp_root>/evolve/completed/<same_filename>.json:
+
+    5. Write response to <exp_root>/evolve/completed/<id>.json:
        {"content": "<SEARCH/REPLACE patch>"}
+
+    6. Clean up: remove the .inprogress file (shinka-run cleans up the rest)
+
   Sleep 2s
 ```
+
+**Error recovery:**
+- If you fail to generate a mutation, write an error response: `{"content": "# ERROR: <reason>"}`. ShinkaEvolve treats this as low-fitness and continues.
+- If pending/ is empty for 60+ seconds and the process is alive, shinka-run is evaluating candidates. Keep polling.
 
 **Important:** You ARE the LLM that ShinkaEvolve is calling. Read the prompt carefully and generate a high-quality code mutation. Understand the code, identify weaknesses, propose targeted improvements.
 

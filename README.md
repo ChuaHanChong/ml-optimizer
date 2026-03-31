@@ -162,7 +162,7 @@ Use the ml-optimizer:orchestrate skill to optimize my model
 
 ## Skills
 
-Only `orchestrate` is directly invocable. All other skills have `disable-model-invocation: true` and are called internally via agents dispatched by the orchestrate skill.
+Only `orchestrate` is user-facing (invoked via `/optimize`). Other skills are preloaded into agents via the `skills:` array in their agent definitions and read automatically on dispatch.
 
 | Skill | Description | User-facing |
 |-------|-------------|-------------|
@@ -273,8 +273,8 @@ All scripts in `scripts/` use only the standard library and work as both importa
 | `scripts/result_analyzer.py` | `python3 scripts/result_analyzer.py <results_dir> <metric> [baseline_id] [lower_is_better]` — also: `compare <exp_id_1> <exp_id_2> [metric]` |
 | `scripts/experiment_setup.py` | `python3 scripts/experiment_setup.py <project_root> <train_command> [gpu_id] [config_json]` |
 | `scripts/implement_utils.py` | `python3 scripts/implement_utils.py <findings.md> '<indices_json>'` — also: `clone <url> <dest>`, `analyze <path>` |
-| `scripts/pipeline_state.py` | `python3 scripts/pipeline_state.py <exp_root> validate\|save\|load\|cleanup` |
-| `scripts/schema_validator.py` | `python3 scripts/schema_validator.py <filepath> result\|baseline\|manifest\|prerequisites [--strict]` — `--strict` enforces completeness |
+| `scripts/pipeline_state.py` | `python3 scripts/pipeline_state.py <exp_root> validate\|save\|load\|cleanup\|verify-baseline\|gate\|log-gate\|log-decision\|replay-check\|decisions\|meta-patch` |
+| `scripts/schema_validator.py` | `python3 scripts/schema_validator.py <filepath> result\|baseline\|manifest\|prerequisites [--strict]` — also: `relay <route> <json>` for inter-agent relay validation. `--strict` enforces completeness |
 | `scripts/plot_results.py` | `python3 scripts/plot_results.py <results_dir> <metric> comparison\|timeline\|sensitivity <hp>\|progress [--higher-is-better]` |
 | `scripts/prerequisites_check.py` | `python3 scripts/prerequisites_check.py scan-imports\|check-packages\|detect-env\|detect-format\|detect-format-project\|validate-data\|bulk-install-cmd\|gpu-install-cmd` |
 | `scripts/error_tracker.py` | `python3 scripts/error_tracker.py <exp_root> log\|show\|patterns\|summary\|sync\|success\|proposals\|rank\|cleanup\|log-suggestion\|suggestion-history\|dead-end <add\|list\|check>\|agenda <init\|update\|list\|add>` |
@@ -356,7 +356,7 @@ Exit code `2` = block action. Exit code `0` = allow. Configured in `hooks/hooks.
 - **Hyperagent-driven optimization**: The hyperagent drives Phase 7 ↔ Phase 8 in a loop and enables self-improvement. It maintains a code archive (`hyperagent/archive.jsonl`) with lineage tracking and selects parents using Hyperagents' exact algorithms: `sigmoid(10(s - μ)) × exp(-(children/8)³)`. Three mutation operators: LLM patches (structural), ShinkaEvolve (fine-grained), research-implement (paper-informed). The hyperagent learns which operator is effective and adapts.
 - **Staged evaluation**: Every code mutation gets a cheap pre-filter (10% budget, adaptive threshold) before full training. Warm-starts from staged checkpoint. Saves 50-80% compute by filtering unpromising variants early.
 - **Self-referential meta-improvement**: The hyperagent can modify the plugin's own skill instructions (hp-tune, analyze, research). Session-scoped patches in `experiments/meta-patches/`. Max 3 per session. End-of-session promotion gate: analysis-agent evaluates, user approves, committed to plugin branch.
-- **ShinkaEvolve as mutation operator**: ShinkaEvolve is one tool within the Hyperagent loop. The hyperagent dispatches it for fine-grained code mutations (numerical constants, local optimizations) via `Skill("ml-optimizer:evolve")`. The full pipeline: `shinka-convert` → `shinka-run` (file-based LLM handoff) → `shinka-inspect` → commit. Evolve HPs are tuning-agent-driven.
+- **ShinkaEvolve as mutation operator**: ShinkaEvolve is one tool within the Hyperagent loop. The hyperagent dispatches it for fine-grained code mutations (numerical constants, local optimizations) via `Skill("ml-optimizer:evolve")`. The full pipeline: `shinka-convert` → `shinka-run` (file-based LLM handoff, `SHINKA_PROVIDER=claude_code`) → `shinka-inspect` → commit. Evolve HPs are tuning-agent-driven. The handoff uses a configurable timeout (`SHINKA_HANDOFF_TIMEOUT`, default 600s) with `.inprogress` marker acknowledgment — the agent writes a marker when it picks up a mutation request, which resets `shinka_run`'s deadline from that point.
 - **Small dataset awareness**: Research agent shifts search toward low-data techniques (transfer learning, few-shot learning, adapters, prompt tuning, semi-supervised methods) when dataset has fewer than 5K samples.
 - **Structured ideation**: Knowledge-mode research proposals use a diverge-converge-refine process with 6 ideation lenses (Problem-First, Analogical Reasoning, What Changed Recently, Constraint Manipulation, Negation/Inversion, Composition/Decomposition) plus a Two-Sentence Test filter.
 - **Statistical confidence assessment**: Analysis computes Cohen's d effect sizes for HP impact and labels findings by evidence strength (high/medium/low). Method attribution distinguishes code-change vs HP-tuning vs compound effects.
@@ -372,6 +372,13 @@ Exit code `2` = block action. Exit code `0` = allow. Configured in `hooks/hooks.
 - **Tabular ML frameworks** (sklearn, XGBoost, LightGBM) skip divergence monitoring entirely.
 - **Multiple research findings files**: `research-findings.md` (Phase 5), `research-findings-method-proposals.md` (pre-loop), `research-findings-method-proposals-iter<N>.md` (mid-loop). Deduplication checks all of them.
 - **`scripts/goal_memory.py validate-output` returns exit code 2** for violations (0=valid, 1=script error, 2=violations). Imports `scripts/error_tracker.py` lazily for dead-end checks — both must be in `scripts/`.
+- **ShinkaEvolve must use the local submodule, not PyPI**: The PyPI package `shinka-evolve` lacks `file_handoff_provider`. Use the local submodule via `setup_evolve.sh` or `PYTHONPATH`.
+- **ShinkaEvolve uses bare `python`** for subprocess evaluation. On systems where only `python3` exists, use a conda env or create a symlink.
+- **ShinkaEvolve file handoff timeout**: Default 600s, configurable via `SHINKA_HANDOFF_TIMEOUT` env var. The agent must write `<id>.inprogress` when picking up a pending request to extend the deadline. `shinka_run` writes `<id>.heartbeat` every 5s for liveness detection.
+- **Phase gate protocol**: Each phase reference file includes a gate check (`pipeline_state.py gate <from> <to>`) and completion log (`log-gate`). Prevents illegal phase transitions.
+- **Inter-agent relay contracts**: `schema_validator.py relay <route> <json>` validates relay messages. 7 routes defined. Persistent agents emit `RELAY_ACK`.
+- **Decision logging**: `pipeline_state.py log-decision` records LLM decisions with SHA-256 input hashing for divergence detection.
+- **Meta-patch promotion gate**: `pipeline_state.py meta-patch validate|log|list|promote` enforces max 3 per session, blocks forbidden skills.
 
 ## Evolutionary Submodules
 
@@ -416,7 +423,7 @@ skills/evolve/
   shinka-inspect → evolve/ShinkaEvolve/skills/shinka-inspect
 ```
 
-The hyperagent dispatches ShinkaEvolve via `Skill("ml-optimizer:evolve")` for fine-grained mutations (numerical constants, local optimizations). The full pipeline: `shinka-convert` → `shinka-run` (file-based LLM handoff, `SHINKA_PROVIDER=claude_code`) → `shinka-inspect` → commit.
+The hyperagent dispatches ShinkaEvolve via `Skill("ml-optimizer:evolve")` for fine-grained mutations (numerical constants, local optimizations). The full pipeline: `shinka-convert` → `shinka-run` (file-based LLM handoff, `SHINKA_PROVIDER=claude_code`, `SHINKA_HANDOFF_TIMEOUT=600`) → `shinka-inspect` → commit. The agent writes `.inprogress` markers when picking up mutation requests, and `shinka_run` writes `.heartbeat` files for liveness — ensuring the handoff survives even when mutation generation takes 30-60 seconds.
 
 ## Progress Dashboard
 

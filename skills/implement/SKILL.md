@@ -1,7 +1,6 @@
 ---
 name: implement
 description: "Apply research proposals as code changes. Creates isolated git branches per proposal, implements modifications (architecture, loss, augmentation), validates with progressive checks, and produces a manifest for the experiment loop. Use when: research proposals need to be turned into actual code changes, or when implementing specific ML improvements before experiments."
-disable-model-invocation: true
 user-invocable: false
 ---
 

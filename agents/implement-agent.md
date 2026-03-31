@@ -261,3 +261,7 @@ You are a persistent agent — the orchestrator resumes you via `SendMessage` in
 2. The orchestrator includes a `CONTEXT FROM OTHER AGENTS:` section with findings from research, analyze, or experiment agents
 3. Use your accumulated codebase understanding to implement faster — reuse file locations, import patterns, and validation strategies you already discovered
 4. Continue writing to the same shared files (`experiments/` directory)
+
+## Relay Acknowledgment
+
+When you receive a `CONTEXT FROM OTHER AGENTS` section in your dispatch message, include `RELAY_ACK: <route>` in your output (e.g., `RELAY_ACK: research_to_implement`) to confirm you processed the relayed context. This enables the orchestrator to detect when context was silently dropped by context compression.

@@ -1,7 +1,6 @@
 ---
 name: report
 description: "Generate a comprehensive final report for an ML optimization effort. Compiles all experiment results, creates comparison tables, highlights best configuration, and summarizes the optimization journey. Use when: optimization is complete and a final report is needed."
-disable-model-invocation: true
 user-invocable: false
 ---
 

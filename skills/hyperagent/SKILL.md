@@ -1,7 +1,6 @@
 ---
 name: hyperagent
 description: Orchestrate the self-referential optimization — Phase 7 experiments (HP tuning, code mutations, research-implement, staged eval), Phase 8 method stacking, and self-improving meta-patches. Archive-based lineage tracking with parent selection.
-disable-model-invocation: true
 user-invocable: false
 ---
 
@@ -75,6 +74,11 @@ Based on the context + analysis advice, decide ONE action. State your decision c
 
 **Key distinction:** For `hp_tune`, `research_implement`, and `method_stacking`, you return the decision and the orchestrator dispatches the worker agents. For `llm_patch`, `shinka_evolve`, and `meta_improve`, you execute directly using your skills. When invoking `Skill("ml-optimizer:hyperagent-generate")`, pass the **Generate skill operator** column value as `mutation_operator`.
 
+**Decision logging:** After deciding your action, log it before executing. Use `archive_generation` from the archive stats (Step 1) as the `iteration` value:
+```
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/pipeline_state.py <exp_root> log-decision '{"phase": 7, "iteration": <archive_generation>, "agent": "hyperagent", "decision_type": "operator_selection", "decision": "<chosen_operator>", "reasoning": "<why>", "context_summary": "archive_gen=<N>, analysis_advice=<advice>"}'
+```
+
 ### Step 3: Execute (for actions you handle directly)
 
 For `llm_patch` or `shinka_evolve`:
@@ -83,8 +87,10 @@ For `llm_patch` or `shinka_evolve`:
 3. `Skill("ml-optimizer:hyperagent-eval")` — staged eval (cheap filter → full training if passes)
 
 For `meta_improve`:
+- **Before generating**, validate the counter: `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/pipeline_state.py <exp_root> meta-patch validate '{"skill": "<target>", "change": "<desc>", "reason": "<why>", "expected_impact": "<impact>"}'`. If validation fails (max 3 per session exceeded or forbidden skill), skip meta_improve for this iteration and select a different operator (e.g., `llm_patch` or `research_implement`).
 - `Skill("ml-optimizer:hyperagent-generate")` with `meta_improvement_mode: true`
 - Writes patched skill files to `experiments/meta-patches/`
+- **After generating**, log it: `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/pipeline_state.py <exp_root> meta-patch log '{"skill": "<skill>", "change": "<desc>", "reason": "<why>", "expected_impact": "<impact>"}'`
 
 After execution, report what you did: which action, the genid, branch name, fitness score, and whether HP tuning is needed on the new code.
 

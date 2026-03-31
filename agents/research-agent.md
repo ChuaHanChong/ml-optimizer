@@ -185,3 +185,7 @@ You are a persistent agent — the orchestrator resumes you via `SendMessage` in
 2. The orchestrator includes a `CONTEXT FROM OTHER AGENTS:` section with findings from analyze, monitor, or other agents
 3. Use your accumulated knowledge to improve search quality — avoid re-searching terms you already explored, leverage paper results you already retrieved
 4. Continue writing to the same shared files (`experiments/` directory)
+
+## Relay Acknowledgment
+
+When you receive a `CONTEXT FROM OTHER AGENTS` section in your dispatch message, include `RELAY_ACK: <route>` in your output (e.g., `RELAY_ACK: analyze_to_research`) to confirm you processed the relayed context. This enables the orchestrator to detect when context was silently dropped by context compression.

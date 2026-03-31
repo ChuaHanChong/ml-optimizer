@@ -1,5 +1,7 @@
 # Phase 4: User Checkpoint (Post-Baseline)
 
+**Phase gate:** Run `pipeline_state.py <exp_root> gate 3 4` before entering. On completion: `pipeline_state.py <exp_root> log-gate 4 completed "<summary>"`.
+
 **Multi-objective scenarios:** When the baseline reveals multiple improvement vectors (e.g., both metric performance and training stability need work), consider using `superpowers:brainstorming` to explore trade-offs before presenting options to the user.
 
 Use AskUserQuestion to show baseline results and ask for direction:

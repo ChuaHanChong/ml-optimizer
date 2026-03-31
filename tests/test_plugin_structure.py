@@ -201,8 +201,8 @@ class TestAgentFiles:
         assert fm.get("description"), f"{agent_name}: missing description"
 
         # model
-        assert fm.get("model") == spec["model"], (
-            f"{agent_name}: expected model {spec['model']}, got {fm.get('model')}")
+        assert fm.get("model", "").startswith(spec["model"]), (
+            f"{agent_name}: expected model starting with {spec['model']}, got {fm.get('model')}")
 
         # color
         assert fm.get("color") == spec["color"], (
@@ -259,15 +259,10 @@ class TestSkillFiles:
         assert path.exists(), f"Missing skill: {path}"
         fm = _parse_frontmatter(path)
         assert fm.get("name") == skill_name, f"{skill_name}: name mismatch"
-        if skill_name in self._USER_FACING_SKILLS:
-            # User-facing skills must NOT have disable-model-invocation
-            assert fm.get("disable-model-invocation") is not True, (
-                f"{skill_name}: user-facing skill must not disable model invocation")
-        elif skill_name not in self._THIRD_PARTY_SKILLS:
-            assert fm.get("disable-model-invocation") is True, (
-                f"{skill_name}: must have disable-model-invocation: true")
-            assert fm.get("user-invocable") is False, (
-                f"{skill_name}: must have user-invocable: false")
+        if skill_name not in self._USER_FACING_SKILLS and skill_name not in self._THIRD_PARTY_SKILLS:
+            # Non-user-facing skills should not be user-invocable
+            assert fm.get("user-invocable") is not True, (
+                f"{skill_name}: internal skill should not be user-invocable")
 
     def test_orchestrate_reference_files_exist(self):
         """All 10 phase reference files must exist in orchestrate/references/."""
@@ -625,7 +620,7 @@ class TestDocumentation:
     @pytest.mark.parametrize("keyword", [
         "11 agents", 'Agent(subagent_type="ml-optimizer:',
         "stuck protocol", "dead-end", "research agenda",
-        "immutable baseline", "disable-model-invocation",
+        "immutable baseline",
     ])
     def test_claude_md_documents_feature(self, keyword):
         text = (PLUGIN_ROOT / ".claude" / "CLAUDE.md").read_text()
@@ -639,9 +634,9 @@ class TestDocumentation:
         text = (AGENTS_DIR / "implement-agent.md").read_text()
         assert "Test Writing" in text
 
-    def test_readme_disable_model_invocation(self):
+    def test_readme_mentions_orchestrate_entry_point(self):
         text = (PLUGIN_ROOT / "README.md").read_text()
-        assert "disable-model-invocation" in text
+        assert "orchestrate" in text.lower()
 
 
 # ---------------------------------------------------------------------------

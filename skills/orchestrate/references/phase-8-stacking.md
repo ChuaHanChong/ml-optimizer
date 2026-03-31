@@ -1,5 +1,7 @@
 # Phase 8: Method Stacking (Within the Autonomous Loop)
 
+**Phase gate:** Run `pipeline_state.py <exp_root> gate 7 8` before entering. On completion: `pipeline_state.py <exp_root> log-gate 8 completed "<summary>"`.
+
 Method stacking combines different implementations (from papers, LLM patches, or ShinkaEvolve) into one model. It's triggered by the analysis agent during Phase 7 when it judges that multiple improved methods could yield compound gains — not by a fixed method count.
 
 **Pre-check:** If `strategy: "file_backup"` (non-git project), skip stacking. Log to dev_notes.

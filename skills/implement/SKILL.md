@@ -1,7 +1,6 @@
 ---
 name: implement
 description: "Apply research proposals as code changes. Creates isolated git branches per proposal, implements modifications (architecture, loss, augmentation), validates with progressive checks, and produces a manifest for the experiment loop. Use when: research proposals need to be turned into actual code changes, or when implementing specific ML improvements before experiments."
-disable-model-invocation: true
 user-invocable: false
 ---
 
@@ -13,8 +12,8 @@ Use extended thinking for all analytical reasoning in this skill. Ultrathink. Th
 
 ## Reference
 
-- Implementation patterns: `references/implementation-patterns.md` (in this skill's directory)
-- Validation checklist: `references/validation-checklist.md` (in this skill's directory)
+- Implementation patterns: `${CLAUDE_SKILL_DIR}/references/implementation-patterns.md` (in this skill's directory)
+- Validation checklist: `${CLAUDE_SKILL_DIR}/references/validation-checklist.md` (in this skill's directory)
 - Python helpers: `${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py`
 
 ## Inputs Expected
@@ -182,7 +181,7 @@ Check the proposal's `implementation_strategy` field and follow the appropriate 
 
 #### Path A: `from_reference` (Code Adaptation)
 
-Follow `references/implementation-patterns.md` Section 9.
+Follow `${CLAUDE_SKILL_DIR}/references/implementation-patterns.md` Section 9.
 
 0. **Pre-clone exploration (alphaxiv):**
 
@@ -240,7 +239,7 @@ Follow `references/implementation-patterns.md` Section 9.
 
 #### Path B: `from_scratch` (Paper-Based)
 
-Follow `references/implementation-patterns.md` Sections 1-8.
+Follow `${CLAUDE_SKILL_DIR}/references/implementation-patterns.md` Sections 1-8.
 
 1. **Read implementation patterns:** Find the matching category for this proposal:
    - Loss function changes → Section 1
@@ -269,7 +268,7 @@ Follow `references/implementation-patterns.md` Sections 1-8.
 
 ### 4e. Validate
 
-Read `references/validation-checklist.md` and run checks progressively:
+Read `${CLAUDE_SKILL_DIR}/references/validation-checklist.md` and run checks progressively:
 
 **Mandatory (always run):**
 
@@ -296,7 +295,7 @@ Read `references/validation-checklist.md` and run checks progressively:
 3. Model instantiation check — attempt if the project has a model factory function (e.g., `get_model()`)
 4. Forward pass shape check — attempt if model instantiation succeeds
 
-See `references/validation-checklist.md` for commands. Attempt Level 3 validation when the project structure supports it (e.g., has a clear model factory or config-based instantiation).
+See `${CLAUDE_SKILL_DIR}/references/validation-checklist.md` for commands. Attempt Level 3 validation when the project structure supports it (e.g., has a clear model factory or config-based instantiation).
 
 ### 4e.5. Code Quality Review (optional, for `from_reference` adaptations)
 

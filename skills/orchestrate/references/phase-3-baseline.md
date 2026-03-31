@@ -1,5 +1,7 @@
 # Phase 3: Establish Baseline
 
+**Phase gate:** Run `pipeline_state.py <exp_root> gate 2 3` before entering. On completion: `pipeline_state.py <exp_root> log-gate 3 completed "<summary>"`.
+
 Dispatch the baseline agent:
 ```
 Agent(

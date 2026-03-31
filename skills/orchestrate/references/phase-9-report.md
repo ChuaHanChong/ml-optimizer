@@ -1,5 +1,7 @@
 # Phase 9: Report, Review & Promotion
 
+**Phase gate:** If Phase 8 was skipped: `pipeline_state.py <exp_root> gate 7 9`. If Phase 8 ran: `pipeline_state.py <exp_root> gate 8 9`. On completion: `pipeline_state.py <exp_root> log-gate 9 completed "<summary>"`.
+
 After the experiment loop exits:
 
 **Pre-report state verification:** Before dispatching the report agent, verify critical state files exist:

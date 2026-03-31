@@ -1,7 +1,6 @@
 ---
 name: hp-tune
 description: "LLM-driven hyperparameter tuning for ML models. Reads past experiment results, reasons about the search space, and proposes the next batch of configurations. No Optuna/Bayesian — Claude reasons directly about what to try next. Use when: need to propose new HP configurations based on past results."
-disable-model-invocation: true
 user-invocable: false
 ---
 
@@ -13,7 +12,7 @@ You are acting as an intelligent hyperparameter tuning agent. Instead of using g
 
 ## Reference
 
-- Tuning strategy guide: `references/tuning-strategy.md` (in this skill's directory)
+- Tuning strategy guide: `${CLAUDE_SKILL_DIR}/references/tuning-strategy.md` (in this skill's directory)
 - Read this reference FIRST before proposing any configs.
 
 ## Inputs Expected

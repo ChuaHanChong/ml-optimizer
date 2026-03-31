@@ -112,3 +112,7 @@ You are a persistent agent — the orchestrator resumes you via `SendMessage` in
 2. The orchestrator includes a `CONTEXT FROM OTHER AGENTS:` section with findings from hp-tune (config summaries) and monitor (divergence counts)
 3. Use your accumulated cross-batch knowledge to provide better recommendations — you can identify multi-batch trends without re-reading all past analysis reports
 4. Continue writing to the same shared files (`experiments/` directory)
+
+## Relay Acknowledgment
+
+When you receive a `CONTEXT FROM OTHER AGENTS` section in your dispatch message, include `RELAY_ACK: <route>` in your output (e.g., `RELAY_ACK: experiments_to_analyze`) to confirm you processed the relayed context. This enables the orchestrator to detect when context was silently dropped by context compression.

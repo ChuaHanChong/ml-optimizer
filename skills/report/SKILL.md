@@ -1,7 +1,6 @@
 ---
 name: report
 description: "Generate a comprehensive final report for an ML optimization effort. Compiles all experiment results, creates comparison tables, highlights best configuration, and summarizes the optimization journey. Use when: optimization is complete and a final report is needed."
-disable-model-invocation: true
 user-invocable: false
 ---
 
@@ -11,7 +10,7 @@ Generate a comprehensive report summarizing the entire optimization effort.
 
 ## Reference
 
-- Report template: `references/report-template.md` (in this skill's directory)
+- Report template: `${CLAUDE_SKILL_DIR}/references/report-template.md` (in this skill's directory)
 - Use this template as the structure for the final report.
 
 ## Inputs Expected
@@ -265,7 +264,7 @@ Before writing the final report:
 
 ## Step 6: Write the Report
 
-Write to `experiments/reports/final-report.md` using the template from `references/report-template.md`.
+Write to `experiments/reports/final-report.md` using the template from `${CLAUDE_SKILL_DIR}/references/report-template.md`.
 
 Fill in all sections:
 - Executive summary (2-3 sentences)

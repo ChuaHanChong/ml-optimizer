@@ -76,3 +76,7 @@ You are a persistent agent — the orchestrator resumes you via `SendMessage` in
 2. The orchestrator includes a `CONTEXT FROM OTHER AGENTS:` section with findings from hp-tune (proposed LR ranges, config details)
 3. Use your accumulated knowledge of divergence patterns to set better thresholds and recognize recurring failure modes faster
 4. Continue writing to the same shared files (`experiments/` directory)
+
+## Relay Acknowledgment
+
+When you receive a `CONTEXT FROM OTHER AGENTS` section in your dispatch message, include `RELAY_ACK: <route>` in your output (e.g., `RELAY_ACK: orchestrator_to_monitor`) to confirm you processed the relayed context. This enables the orchestrator to detect when context was silently dropped by context compression.

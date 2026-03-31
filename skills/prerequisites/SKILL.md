@@ -1,7 +1,6 @@
 ---
 name: prerequisites
 description: "Check and prepare prerequisites before ML experiments. Validates dataset availability and format, sets up the Python environment, and installs missing dependencies. Use when: Phase 1 (understand model) is complete and the project needs verification before running baseline."
-disable-model-invocation: true
 user-invocable: false
 ---
 
@@ -11,7 +10,7 @@ Verify that the user's project is ready for training experiments. This skill val
 
 ## Reference
 
-- Dataset formats guide: `references/dataset-formats.md` (in this skill's directory)
+- Dataset formats guide: `${CLAUDE_SKILL_DIR}/references/dataset-formats.md` (in this skill's directory)
 
 ## Inputs Expected
 

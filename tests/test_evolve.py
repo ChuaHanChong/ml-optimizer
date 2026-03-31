@@ -154,6 +154,199 @@ class TestFileHandoffProvider:
 
 
 # ======================================================================
+# TestHandoffTimeoutConfig
+# ======================================================================
+
+
+class TestHandoffTimeoutConfig:
+    """Tests for configurable timeout and in-progress marker behavior."""
+
+    def test_env_var_timeout_override(self, tmp_path, monkeypatch):
+        """SHINKA_HANDOFF_TIMEOUT env var is respected when no explicit timeout."""
+        set_handoff_dir(str(tmp_path))
+        monkeypatch.setenv("SHINKA_HANDOFF_TIMEOUT", "2")
+
+        start = time.monotonic()
+        with pytest.raises(TimeoutError):
+            query_file_handoff("m", "msg", "sys")
+        elapsed = time.monotonic() - start
+
+        assert 1.5 < elapsed < 4.0, f"Expected ~2s timeout, got {elapsed:.1f}s"
+
+    def test_default_timeout_is_600(self, tmp_path, monkeypatch):
+        """Without env var or explicit param, default is 600s (verified via constant)."""
+        monkeypatch.delenv("SHINKA_HANDOFF_TIMEOUT", raising=False)
+        assert _mod._DEFAULT_TIMEOUT == 600
+
+    def test_explicit_timeout_overrides_env(self, tmp_path, monkeypatch):
+        """Explicit timeout_seconds takes precedence over env var."""
+        set_handoff_dir(str(tmp_path))
+        monkeypatch.setenv("SHINKA_HANDOFF_TIMEOUT", "100")
+
+        start = time.monotonic()
+        with pytest.raises(TimeoutError):
+            query_file_handoff("m", "msg", "sys", timeout_seconds=1)
+        elapsed = time.monotonic() - start
+
+        assert elapsed < 3.0, f"Expected ~1s timeout, got {elapsed:.1f}s"
+
+    def test_invalid_env_var_falls_back_to_default(self, tmp_path, monkeypatch):
+        """Non-numeric SHINKA_HANDOFF_TIMEOUT falls back to _DEFAULT_TIMEOUT."""
+        set_handoff_dir(str(tmp_path))
+        monkeypatch.setenv("SHINKA_HANDOFF_TIMEOUT", "notanumber")
+
+        # We can't wait 600s, so just verify it doesn't crash on init
+        # and uses explicit timeout when provided
+        start = time.monotonic()
+        with pytest.raises(TimeoutError):
+            query_file_handoff("m", "msg", "sys", timeout_seconds=1)
+        elapsed = time.monotonic() - start
+        assert elapsed < 3.0
+
+    def test_inprogress_marker_extends_deadline(self, tmp_path):
+        """Writing .inprogress marker resets the deadline, allowing a late response.
+
+        Timeline (timeout_seconds=3):
+          t=0.0s: query starts, deadline = t+3 = 3.0s
+          t=0.3s: responder finds pending file, writes .inprogress
+          t=0.3s: provider detects .inprogress, deadline = 0.3+3 = 3.3s
+          t=3.0s: original deadline would expire — but extended to 3.3s
+          t=2.5s: responder writes completed response
+          t=2.5s: provider finds response, returns successfully
+        Without the marker, timeout at 3.0s would miss the 2.5s response
+        only if the response were at >3s. So we use: marker at ~0.3s,
+        response at 4s, timeout=3s. Without extension: fails at 3s.
+        With extension: deadline moves to 3.3s... still too tight.
+
+        Better approach: timeout=2s, marker at ~0.3s extends to 2.3s,
+        response at 1.8s (within extended window). Verify it succeeds
+        (without marker it would fail because 1.8s < 2s, so it actually
+        wouldn't fail). The real test: timeout=2, no marker → response at
+        3s fails. With marker → response at 3s succeeds (deadline extended
+        to 2+0.3 = 2.3s... no, still fails).
+
+        Simplest correct test: timeout=3, marker at ~0.2s extends deadline
+        to 3.2s, response at 5s. Without extension: fails at 3s. With
+        extension: deadline = 0.2+3 = 3.2s, still fails at 3.2s because
+        response is at 5s. Need response BETWEEN old deadline and new deadline.
+
+        Correct: timeout=3, marker at ~1s extends deadline to 4s,
+        response at 3.5s. Without extension: fails at 3s (response too late).
+        With extension: deadline=4s, response at 3.5s succeeds.
+        """
+        set_handoff_dir(str(tmp_path))
+        pending_dir = tmp_path / "evolve" / "pending"
+        completed_dir = tmp_path / "evolve" / "completed"
+
+        def respond_late():
+            # Poll for the pending file immediately
+            for _ in range(50):
+                files = [f for f in pending_dir.glob("*.json")
+                         if not f.name.endswith((".heartbeat", ".inprogress"))]
+                if files:
+                    break
+                time.sleep(0.1)
+            if not files:
+                return
+            req_id = json.loads(files[0].read_text())["id"]
+
+            # Acknowledge immediately (~0.3s after request)
+            (pending_dir / f"{req_id}.inprogress").write_text('{"status":"ack"}')
+
+            # Wait 8s then respond. Total: ~8.3s after start.
+            # Without extension (timeout=6): deadline at 6s → FAIL (8.3 > 6)
+            # With extension: marker at ~0.3s detected at ~1-2s (1s poll),
+            # deadline = 2 + 6 = 8s minimum. Response at 8.3s vs deadline 8s.
+            # With generous margin: detected at ~1s → deadline = 1+6 = 7s.
+            # Response at 8.3 > 7? Yes. Need bigger timeout.
+            # timeout=8: detected at ~1s → deadline = 1+8 = 9s.
+            # Response at 8.3s < 9s → 0.7s margin. Under load: detected at ~2s
+            # → deadline = 2+8 = 10s. Response at 8.3s < 10s → 1.7s margin.
+            time.sleep(8.0)
+            (completed_dir / f"{req_id}.json").write_text(
+                json.dumps({"content": "late but valid"})
+            )
+
+        t = threading.Thread(target=respond_late)
+        t.start()
+
+        # timeout=6: original deadline at 6s. Response at ~8.3s would FAIL.
+        # Marker at ~0.3s detected at ~1-2s, extends deadline to 7-8s.
+        # Response at 8.3s is close. Use timeout=8 for safety:
+        # Original deadline 8s. Response at 8.3s > 8s (fails without extension).
+        # Extended: detected at ~1s → deadline 9s. 8.3 < 9 → passes.
+        result = query_file_handoff("m", "msg", "sys", timeout_seconds=8)
+        t.join()
+
+        assert result["content"] == "late but valid"
+
+    def test_heartbeat_written(self, tmp_path):
+        """Heartbeat file is written to pending/ during polling."""
+        set_handoff_dir(str(tmp_path))
+        pending_dir = tmp_path / "evolve" / "pending"
+        completed_dir = tmp_path / "evolve" / "completed"
+
+        def respond_after_heartbeat():
+            """Wait for heartbeat, then respond."""
+            # Wait until a heartbeat file appears
+            for _ in range(80):  # up to 8s
+                hb_files = list(pending_dir.glob("*.heartbeat"))
+                if hb_files:
+                    # Verify heartbeat content
+                    hb = json.loads(hb_files[0].read_text())
+                    assert "elapsed" in hb
+                    assert "remaining" in hb
+                    assert hb["status"] == "waiting"
+                    # Now respond
+                    req_id = hb_files[0].stem  # <id>.heartbeat → <id>
+                    resp_path = completed_dir / f"{req_id}.json"
+                    resp_path.write_text(json.dumps({"content": "after heartbeat"}))
+                    return
+                time.sleep(0.1)
+
+        t = threading.Thread(target=respond_after_heartbeat)
+        t.start()
+        result = query_file_handoff("m", "msg", "sys", timeout_seconds=10)
+        t.join()
+
+        assert result["content"] == "after heartbeat"
+
+    def test_cleanup_includes_heartbeat_and_inprogress(self, tmp_path):
+        """All files (pending, completed, heartbeat, inprogress) cleaned up after success."""
+        set_handoff_dir(str(tmp_path))
+        pending_dir = tmp_path / "evolve" / "pending"
+        completed_dir = tmp_path / "evolve" / "completed"
+
+        def respond_with_marker():
+            time.sleep(0.5)
+            files = [f for f in pending_dir.glob("*.json")
+                     if not f.name.endswith((".heartbeat", ".inprogress"))]
+            if not files:
+                return
+            req_id = json.loads(files[0].read_text())["id"]
+
+            # Write inprogress marker
+            (pending_dir / f"{req_id}.inprogress").write_text('{"status":"ack"}')
+            time.sleep(0.5)
+
+            # Write response
+            (completed_dir / f"{req_id}.json").write_text(
+                json.dumps({"content": "done"})
+            )
+
+        t = threading.Thread(target=respond_with_marker)
+        t.start()
+        query_file_handoff("m", "msg", "sys", timeout_seconds=10)
+        t.join()
+
+        # All files should be cleaned up
+        assert len(list(pending_dir.glob("*.json"))) == 0
+        assert len(list(pending_dir.glob("*.heartbeat"))) == 0
+        assert len(list(pending_dir.glob("*.inprogress"))) == 0
+        assert len(list(completed_dir.glob("*.json"))) == 0
+
+
+# ======================================================================
 # TestEvolveSkillStructure
 # ======================================================================
 

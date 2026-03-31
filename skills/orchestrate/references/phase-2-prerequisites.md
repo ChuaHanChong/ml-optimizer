@@ -1,5 +1,7 @@
 # Phase 2: Prerequisites Check
 
+**Phase gate:** Run `pipeline_state.py <exp_root> gate 1 2` before entering. On completion: `pipeline_state.py <exp_root> log-gate 2 completed "<summary>"`.
+
 Dispatch the prerequisites agent:
 ```
 Agent(

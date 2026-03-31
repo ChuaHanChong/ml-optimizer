@@ -2,6 +2,26 @@
 
 This loop runs autonomously without user checkpoints until complete or blocked.
 
+## Table of Contents
+
+- [Pre-Loop: Validate Pipeline State](#pre-loop-validate-pipeline-state) (line 28)
+- [Pre-Loop: Verify Baseline Integrity](#pre-loop-verify-baseline-integrity) (line 46)
+- [Pre-Loop: Sync Behavioral Memory](#pre-loop-sync-behavioral-memory) (line 61)
+- [Pre-Loop: Initialize Code Archive](#pre-loop-initialize-code-archive) (line 69)
+- [Pre-Loop: Load Meta-Patches](#pre-loop-load-meta-patches) (line 80)
+- [Pre-Loop: Load Implementation Manifest](#pre-loop-load-implementation-manifest) (line 97)
+- [Pre-Loop: Method Proposals](#pre-loop-method-proposals) (line 109)
+- [Pre-Loop: Route hp_only Research Proposals](#pre-loop-route-hp_only-research-proposals) (line 183)
+- [Pre-Loop: Initialize Research Cadence](#pre-loop-initialize-research-cadence) (line 191)
+- [Pre-Loop: Save Pipeline State](#pre-loop-save-pipeline-state) (line 198)
+- [Metric Routing Rule](#metric-routing-rule) (line 229)
+- [Polarity Conflict Rule](#polarity-conflict-rule) (line 239)
+- [Branch Dispatch Strategy](#branch-dispatch-strategy) (line 246)
+- [Loop Iteration](#loop-iteration) (line 254) — main experiment loop (steps 1-7)
+- [Parallel GPU Dispatch Pattern](#parallel-gpu-dispatch-pattern) (line 729)
+- [Thinking Depth for Agent Dispatch](#thinking-depth-for-agent-dispatch) (line 749)
+- [Hyperagent Driven Loop](#hyperagent-driven-loop) (line 764) — mandatory hyperagent dispatch
+
 ## Pre-Loop: Validate Pipeline State
 
 Before starting the experiment loop, validate all prerequisites:

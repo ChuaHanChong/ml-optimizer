@@ -1,5 +1,7 @@
 # Phase 5: Research (Optional)
 
+**Phase gate:** Run `pipeline_state.py <exp_root> gate 4 5` before entering. On completion: `pipeline_state.py <exp_root> log-gate 5 completed "<summary>"`.
+
 If the user chose research (option 2 or 3 from Phase 4), dispatch the research agent:
 ```
 Agent(

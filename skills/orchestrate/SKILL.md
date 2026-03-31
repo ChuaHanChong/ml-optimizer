@@ -12,8 +12,8 @@ You are an ML optimization orchestrator. You coordinate the full optimization pi
 
 ## Reference
 
-- Plan template: `references/plan-template.md` (in this skill's directory)
-- Log format specs: `references/log-formats.md` (in this skill's directory)
+- Plan template: `${CLAUDE_SKILL_DIR}/references/plan-template.md` (in this skill's directory)
+- Log format specs: `${CLAUDE_SKILL_DIR}/references/log-formats.md` (in this skill's directory)
 - Python scripts: `${CLAUDE_PLUGIN_ROOT}/scripts/` (gpu_check.py, scripts/parse_logs.py, scripts/detect_divergence.py, scripts/result_analyzer.py, scripts/experiment_setup.py, scripts/implement_utils.py, scripts/pipeline_state.py, scripts/schema_validator.py, scripts/plot_results.py, scripts/error_tracker.py, scripts/prerequisites_check.py, scripts/goal_memory.py)
 
 ## Goal Anchoring & Behavioral Memory
@@ -40,56 +40,56 @@ Each phase has a dedicated reference file with the full workflow. Read the refer
 
 | Phase | Reference | Agent Dispatched |
 |-------|-----------|-----------------|
-| 0 | `references/phase-0-discovery.md` | — (plan mode + AskUserQuestion) |
-| 1 | `references/phase-1-understand.md` | — (direct analysis) |
-| 2 | `references/phase-2-prerequisites.md` | `ml-optimizer:prerequisites-agent` |
-| 3 | `references/phase-3-baseline.md` | `ml-optimizer:baseline-agent` |
-| 4 | `references/phase-4-checkpoint.md` | — (AskUserQuestion) |
-| 5 | `references/phase-5-research.md` | `ml-optimizer:research-agent` |
-| 6 | `references/phase-6-implement.md` | `ml-optimizer:implement-agent` |
-| 7 | `references/phase-7-experiment-loop.md` | tuning, experiment, monitor, analysis agents |
-| 8 | `references/phase-8-stacking.md` | experiment, implement, tuning agents |
-| 9 | `references/phase-9-report.md` | `ml-optimizer:report-agent`, `ml-optimizer:analysis-agent` (review mode) |
+| 0 | `${CLAUDE_SKILL_DIR}/references/phase-0-discovery.md` | — (plan mode + AskUserQuestion) |
+| 1 | `${CLAUDE_SKILL_DIR}/references/phase-1-understand.md` | — (direct analysis) |
+| 2 | `${CLAUDE_SKILL_DIR}/references/phase-2-prerequisites.md` | `ml-optimizer:prerequisites-agent` |
+| 3 | `${CLAUDE_SKILL_DIR}/references/phase-3-baseline.md` | `ml-optimizer:baseline-agent` |
+| 4 | `${CLAUDE_SKILL_DIR}/references/phase-4-checkpoint.md` | — (AskUserQuestion) |
+| 5 | `${CLAUDE_SKILL_DIR}/references/phase-5-research.md` | `ml-optimizer:research-agent` |
+| 6 | `${CLAUDE_SKILL_DIR}/references/phase-6-implement.md` | `ml-optimizer:implement-agent` |
+| 7 | `${CLAUDE_SKILL_DIR}/references/phase-7-experiment-loop.md` | tuning, experiment, monitor, analysis agents |
+| 8 | `${CLAUDE_SKILL_DIR}/references/phase-8-stacking.md` | experiment, implement, tuning agents |
+| 9 | `${CLAUDE_SKILL_DIR}/references/phase-9-report.md` | `ml-optimizer:report-agent`, `ml-optimizer:analysis-agent` (review mode) |
 
 ## Phase 0 + 1: Discovery, Planning & Codebase Analysis (MANDATORY)
 
-Read `references/phase-0-discovery.md` for the full workflow. Phase 1 details in `references/phase-1-understand.md`.
+Read `${CLAUDE_SKILL_DIR}/references/phase-0-discovery.md` for the full workflow. Phase 1 details in `${CLAUDE_SKILL_DIR}/references/phase-1-understand.md`.
 
 Enter plan mode. Ask discovery questions (metric, target, constraints, data paths, environment, scope). Record responses. Write optimization goals. **Stay in plan mode through Phase 1** — analyze codebase, create optimization plan, estimate cost. Present full plan to user. **The user can do multiple rounds of refinement** — adjusting scope, constraints, or budget — before approving. Exit plan mode only when the user chooses to proceed.
 
 ## Phase 2: Prerequisites Check
 
-Read `references/phase-2-prerequisites.md` for the full workflow.
+Read `${CLAUDE_SKILL_DIR}/references/phase-2-prerequisites.md` for the full workflow.
 
 Dispatch `ml-optimizer:prerequisites-agent`. Check results. Handle failure recovery. Persist user choices.
 
 ## Phase 3: Establish Baseline
 
-Read `references/phase-3-baseline.md` for the full workflow.
+Read `${CLAUDE_SKILL_DIR}/references/phase-3-baseline.md` for the full workflow.
 
 Dispatch `ml-optimizer:baseline-agent`. Handle failure recovery with up to 2 retries.
 
 ## Phase 4: User Checkpoint (Post-Baseline)
 
-Read `references/phase-4-checkpoint.md` for the full workflow.
+Read `${CLAUDE_SKILL_DIR}/references/phase-4-checkpoint.md` for the full workflow.
 
 Show baseline results. User chooses direction: HP tuning, research, user papers, skip to experiments, or method proposals. Autonomous mode auto-selects method proposals.
 
 ## Phase 5: Research (Optional)
 
-Read `references/phase-5-research.md` for the full workflow.
+Read `${CLAUDE_SKILL_DIR}/references/phase-5-research.md` for the full workflow.
 
 Dispatch `ml-optimizer:research-agent`. Handle failure recovery (fallback to knowledge-only, then HP-only). User confirms proposal selection.
 
 ## Phase 6: Implement Research Proposals
 
-Read `references/phase-6-implement.md` for the full workflow.
+Read `${CLAUDE_SKILL_DIR}/references/phase-6-implement.md` for the full workflow.
 
 Dispatch `ml-optimizer:implement-agent`. Check manifest results. Handle dependencies, license warnings, conflicts. Post-implementation code review.
 
 ## Phase 7: Experiment Loop (Hyperagent Driven)
 
-Read `references/phase-7-experiment-loop.md` for the full workflow.
+Read `${CLAUDE_SKILL_DIR}/references/phase-7-experiment-loop.md` for the full workflow.
 
 Pre-loop: validate state, initialize code archive (hyperagent-init), load manifest, load meta-patches, save state.
 
@@ -127,7 +127,7 @@ save_state(phase=7, iteration=N, running_exp_ids=[], exp_root=exp_root,
 
 ## Phase 8: Method Stacking (Hyperagent Driven)
 
-Read `references/phase-8-stacking.md` for the full workflow.
+Read `${CLAUDE_SKILL_DIR}/references/phase-8-stacking.md` for the full workflow.
 
 **MANDATORY: Phase 8 is driven by the hyperagent, same as Phase 7. Resume the hyperagent via `SendMessage(to: agent_registry["hyperagent"])` with the stacking context. Do NOT implement stacking logic directly in the orchestrator — the hyperagent decides which methods to stack, in what order, when to evolve for interference resolution, and when to stop. Phase 7 ↔ Phase 8 is one continuous hyperagent-driven loop.**
 
@@ -144,7 +144,7 @@ The hyperagent merges methods sequentially (largest improvement first), resolves
 
 ## Phase 9: Report, Review & Promotion
 
-Read `references/phase-9-report.md` for the full workflow.
+Read `${CLAUDE_SKILL_DIR}/references/phase-9-report.md` for the full workflow.
 
 Three steps:
 1. **Report:** Dispatch `ml-optimizer:report-agent`. Sync errors. Generate dashboard. Present summary.
@@ -160,7 +160,7 @@ If `hyperagent_state.active_meta_patches` is non-empty:
 3. If approved: read patched skill files, prepend `# [meta-improvement]` marker, write to plugin's skill directory, commit to current branch (immediately available next session)
 4. If declined: log to behavioral memory for reference
 
-Read `references/phase-9-report.md` for the full meta-patch promotion flow.
+Read `${CLAUDE_SKILL_DIR}/references/phase-9-report.md` for the full meta-patch promotion flow.
 
 ## Error Handling
 

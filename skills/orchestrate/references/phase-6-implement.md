@@ -1,5 +1,7 @@
 # Phase 6: Implement Research Proposals
 
+**Phase gate:** Run `pipeline_state.py <exp_root> gate 5 6` before entering. On completion: `pipeline_state.py <exp_root> log-gate 6 completed "<summary>"`.
+
 If the user selected research proposals that require code changes (not just HP tuning):
 
 1. **Dispatch the implement agent:**

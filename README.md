@@ -246,6 +246,7 @@ The plugin creates this structure in your project:
   reports/research-agenda.md                     # Human-readable research agenda companion
   reports/research-findings.md                   # Web search research findings
   reports/research-findings-method-proposals.md  # LLM knowledge-mode proposals
+  reports/batch-N-analysis.md                    # Per-batch analysis report
   reports/session-review.md                      # Session review (from analysis agent review mode)
   reports/suggestion-history.json                # Suggestion feedback loop
   results/baseline.json                          # Baseline metrics and GPU profiling

@@ -109,27 +109,44 @@ cd <project_root> && git rev-parse --is-inside-work-tree 2>/dev/null
 
 Proposals can be implemented in parallel using git worktrees. Each proposal gets its own isolated worktree, avoiding checkout conflicts.
 
-1. **Create worktrees** for each proposal:
+**Critical**: Worktrees must live **outside** `<project_root>/experiments/`.
+A cleanup race during parallel dispatches can wipe sibling `experiments/*`
+subdirs if any worktree is nested under `experiments/`. Put them in a
+system temp dir that is outside both the project and the output tree.
+
+1. **Compute a safe worktree root** once:
    ```bash
-   git worktree add experiments/impl-worktrees/<slug> <original_branch>
+   PROJECT_HASH=$(echo "<project_root>" | sha1sum | cut -c1-8)
+   WORKTREE_ROOT="/tmp/ml-opt-impl-worktrees-${PROJECT_HASH}"
+   mkdir -p "$WORKTREE_ROOT"
    ```
 
-2. **Dispatch implementation agents in parallel** — issue all Agent calls in a single message:
+2. **Create worktrees** for each proposal:
+   ```bash
+   git worktree add "$WORKTREE_ROOT/<slug>" <original_branch>
+   ```
+
+3. **Dispatch implementation agents in parallel** — issue all Agent calls in a single message:
    ```
    For each proposal:
      Agent(
        description: "Implement proposal: <proposal_name>",
-       prompt: "Ultrathink. Implement the following ML research proposal in the worktree at experiments/impl-worktrees/<slug>. Project root (worktree): experiments/impl-worktrees/<slug>. Proposal: <full proposal details including name, slug, files_to_modify, implementation_steps, implementation_strategy>. After implementation: (1) validate syntax and imports using ${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py, (2) create branch ml-opt/<slug>, (3) commit changes with message 'ml-opt: implement <proposal_name>', (4) report back with status, commit SHA, and any validation issues.",
+       prompt: "Ultrathink. Implement the following ML research proposal in the worktree at $WORKTREE_ROOT/<slug>. Project root (worktree): $WORKTREE_ROOT/<slug>. Proposal: <full proposal details including name, slug, files_to_modify, implementation_steps, implementation_strategy>. After implementation: (1) validate syntax and imports using ${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py, (2) create branch ml-opt/<slug>, (3) commit changes with message 'ml-opt: implement <proposal_name>', (4) report back with status, commit SHA, and any validation issues.",
        subagent_type: "ml-optimizer:implement-agent",
        run_in_background: true
      )
    ```
 
-3. **Wait for all agents to complete.** Collect results from each.
+4. **Wait for all agents to complete.** Collect results from each.
 
-4. **Clean up worktrees:**
+5. **Clean up worktrees** — validate path registration first, never `rm -rf`:
    ```bash
-   git worktree remove experiments/impl-worktrees/<slug>
+   WT_PATH="$WORKTREE_ROOT/<slug>"
+   if git worktree list --porcelain | grep -q "worktree $WT_PATH$"; then
+       git worktree remove "$WT_PATH"
+   else
+       git worktree prune
+   fi
    ```
 
 5. Proceed directly to Step 5 (Write Implementation Manifest) with the collected results.

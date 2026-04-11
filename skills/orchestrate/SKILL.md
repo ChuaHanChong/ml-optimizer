@@ -13,7 +13,7 @@ You are an ML optimization orchestrator. You coordinate the full optimization pi
 ## Reference
 
 - Plan template: `${CLAUDE_SKILL_DIR}/references/plan-template.md` (in this skill's directory)
-- Log format specs: `${CLAUDE_SKILL_DIR}/references/log-formats.md` (in this skill's directory)
+- JSON schemas: enforced at runtime by `${CLAUDE_PLUGIN_ROOT}/scripts/schema_validator.py` — the authoritative source. Validate any file via `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/schema_validator.py <file> result|baseline|manifest|prerequisites`. Markdown templates (batch analysis, research findings) live in their owning skill's SKILL.md.
 - Python scripts: `${CLAUDE_PLUGIN_ROOT}/scripts/` (gpu_check.py, scripts/parse_logs.py, scripts/detect_divergence.py, scripts/result_analyzer.py, scripts/experiment_setup.py, scripts/implement_utils.py, scripts/pipeline_state.py, scripts/schema_validator.py, scripts/plot_results.py, scripts/error_tracker.py, scripts/prerequisites_check.py, scripts/goal_memory.py)
 
 ## Goal Anchoring & Behavioral Memory
@@ -109,6 +109,48 @@ Save the hyperagent's ID to `agent_registry["hyperagent"]` for SendMessage resum
 **Autonomous by default:** The loop runs non-stop until the target is reached or the user manually stops. It never auto-stops on plateaus — the hyperagent tries different operators before giving up. When the analysis agent recommends stop, the stuck protocol dispatches research for fresh ideas. Only the user can truly end the run.
 
 After each batch, the live dashboard is regenerated (`${CLAUDE_PLUGIN_ROOT}/scripts/dashboard.py --live`). Baseline integrity is verified before each batch.
+
+### MANDATORY: Round Lifecycle (Phase 7 & Phase 8)
+
+Every experiment batch MUST be wrapped in a round. This is enforced at runtime by the PreToolUse hook (`validate_experiment_write.py`) — `exp-*.json` files written outside a `round-N-<type>/` directory are BLOCKED. Skipping this protocol causes pipeline deadlock.
+
+**Before dispatching tuning-agent + experiment-agents:**
+```bash
+round_info=$(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/round_manager.py <exp_root> create-round <type> [--branch <ml-opt/slug>] [--genid <gen-N>])
+# Response: {"id": N, "dir": "round-N-<type>", "type": "<type>", "path": "..."}
+# Capture the "dir" field — this is the round_dir to pass to agents.
+```
+
+Valid `<type>` values and when to use each:
+
+| Type | When |
+|---|---|
+| `hp` | Default — HP tuning batches (hyperagent action: `hp_tune`, pivot: `branch_test`/`hp_expand`/`narrow_space`/`regularization`) |
+| `evolved` | ShinkaEvolve or LLM-patch code mutation (hyperagent action: `shinka_evolve`/`llm_patch`, pivot: `code_evolution`) |
+| `research` | Research-implement batches (hyperagent action: `research_implement`, pivot: `method_proposal`) |
+| `stacked` | Phase 8 method stacking |
+| `meta` | Meta-improvement experiments (hyperagent action: `meta_improve`) |
+
+**Pass `round_dir` to every dispatched agent** via the Agent prompt or SendMessage context:
+- Tuning-agent: include `round_dir: <dir>` in the message so it writes proposals to `proposed-configs/<round_dir>/`
+- Experiment-agents: include `round_dir: <dir>` so they write results to `results/<round_dir>/`
+
+**After experiment-agents return:**
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/round_manager.py <exp_root> check-round <round_dir>
+# Response: {"complete": true/false, "total": N, "valid": N, "terminal": N, "missing_logs": [...], "invalid": [...], "non_terminal": [...]}
+```
+
+If `complete: false`:
+- For each ID in `non_terminal` or missing entirely: the orchestrator should create a minimal failed placeholder (`{"exp_id": "...", "status": "failed", "notes": "agent did not produce result"}`) to keep the round consistent
+- For each entry in `invalid`: log to error tracker and attempt repair
+
+**After the batch is fully analyzed:**
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/round_manager.py <exp_root> close-round --summary "<one-line summary>"
+```
+
+This marks the round closed in `rounds-manifest.json`. Closing is not strictly required for correctness but helps downstream analysis and reporting.
 
 **Pivot type relay to hyperagent:**
 
@@ -206,11 +248,13 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"categor
 The orchestrator ensures this structure exists in the target project:
 ```
 <project>/experiments/
-  logs/<exp-id>/          # Raw training logs
-  reports/                # All Markdown reports + research findings
-  scripts/<exp-id>/        # Per-experiment command scripts
-  results/<exp-id>.json   # Parsed metrics
-  dev_notes.md            # Running log of session tasks by date
+  artifacts/round-N-<type>/<exp-id>/  # Checkpoints, visualizations
+  logs/round-N-<type>/<exp-id>/       # Training logs (train.log, eval.log)
+  proposed-configs/round-N-<type>/    # HP config proposals per round
+  reports/                            # Markdown reports + research findings
+  results/round-N-<type>/exp-*.json   # Schema-validated experiment results
+  scripts/round-N-<type>/<exp-id>/    # Training scripts (train.sh, eval.sh)
+  dev_notes.md                        # Running log of session tasks
 ```
 
 ## State Management

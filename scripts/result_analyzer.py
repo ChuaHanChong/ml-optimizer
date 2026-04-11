@@ -8,11 +8,18 @@ from pathlib import Path
 
 
 def load_results(results_dir: str) -> dict[str, dict]:
-    """Load all experiment results from a directory."""
+    """Load all experiment results from a directory.
+
+    Scans both flat files (``baseline.json``) and hierarchical round
+    directories (``round-*/exp-*.json``).  Exp-ids are globally unique
+    so there is no collision between rounds.
+    """
     path = Path(results_dir)
     results = {}
     if not path.exists():
         return results
+
+    # Load baseline and any flat exp-*.json (backwards compat)
     for f in sorted(path.glob("*.json")):
         if f.stem.lower() != "baseline" and not f.stem.startswith("exp-"):
             continue
@@ -21,6 +28,17 @@ def load_results(results_dir: str) -> dict[str, dict]:
             results[f.stem] = data
         except (json.JSONDecodeError, OSError):
             continue
+
+    # Load from round directories (round-N-type/exp-*.json)
+    for f in sorted(path.glob("round-*/exp-*.json")):
+        if not f.stem.startswith("exp-"):
+            continue
+        try:
+            data = json.loads(f.read_text())
+            results[f.stem] = data
+        except (json.JSONDecodeError, OSError):
+            continue
+
     return results
 
 

@@ -27,8 +27,9 @@ def create_experiment_dirs(project_root: str) -> str:
 def next_experiment_id(results_dir: str) -> str:
     """Generate the next sequential experiment ID (exp-001, exp-002, ...).
 
-    Only files matching the strict ``exp-\\d+\\.json`` pattern are considered,
-    so unrelated JSON files (e.g. ``experiment-summary.json``) are ignored.
+    Scans both flat ``results/`` and round directories
+    (``results/round-*/``) to ensure globally unique IDs.
+    Only files matching the strict ``exp-\\d+\\.json`` pattern are considered.
     """
     path = Path(results_dir)
     if not path.exists():
@@ -36,10 +37,22 @@ def next_experiment_id(results_dir: str) -> str:
 
     exp_pattern = re.compile(r"^exp-(\d+)\.json$")
     nums: list[int] = []
+
+    # Scan flat results directory
     for f in path.iterdir():
-        m = exp_pattern.match(f.name)
-        if m:
-            nums.append(int(m.group(1)))
+        if f.is_file():
+            m = exp_pattern.match(f.name)
+            if m:
+                nums.append(int(m.group(1)))
+
+    # Scan round directories (round-N-type/)
+    for rdir in path.iterdir():
+        if rdir.is_dir() and rdir.name.startswith("round-"):
+            for f in rdir.iterdir():
+                if f.is_file():
+                    m = exp_pattern.match(f.name)
+                    if m:
+                        nums.append(int(m.group(1)))
 
     if not nums:
         return "exp-001"
@@ -84,9 +97,17 @@ def generate_train_script(
 
     When *checkpoint_path* is provided, it is exported as the ``CHECKPOINT_PATH``
     environment variable for the training script to load for warm-starting.
+
+    ``log_file`` is required — callers must compute a round-based path
+    (e.g., ``experiments/logs/round-1-hp/exp-001/train.log``) or the
+    baseline-only flat path (``experiments/logs/baseline/train.log``).
     """
     if log_file is None:
-        log_file = f"experiments/logs/{exp_id}/train.log"
+        raise ValueError(
+            "log_file is required — pass a round-based path like "
+            "'experiments/logs/round-N-<type>/<exp-id>/train.log' "
+            "(or 'experiments/logs/baseline/train.log' for baseline)."
+        )
 
     lines = ["#!/bin/bash", f"# Experiment: {exp_id}", "set -e", ""]
 
@@ -125,20 +146,29 @@ def generate_train_script(
 
     script_dir = Path(scripts_dir) / exp_id
     script_dir.mkdir(parents=True, exist_ok=True)
-    script_path = script_dir / f"{exp_id}.sh"
+    script_path = script_dir / "train.sh"
     script_path.write_text("\n".join(lines))
     script_path.chmod(0o755)
     return str(script_path)
 
 
-def setup(project_root: str, train_command: str, gpu_id: int = 0, config: dict | None = None, checkpoint_path: str | None = None, method_tier: str | None = None, iteration: int | None = None) -> dict:
+def setup(project_root: str, train_command: str, gpu_id: int = 0, config: dict | None = None, checkpoint_path: str | None = None, method_tier: str | None = None, iteration: int | None = None, round_dir: str | None = None) -> dict:
     """Full setup: create dirs, generate ID, write config and script.
 
     Uses atomic file creation to prevent race conditions when multiple
     agents call setup() concurrently.
+
+    When *round_dir* is provided (e.g. ``"round-1-hp"``), the result JSON
+    is created inside ``results/<round_dir>/`` instead of flat ``results/``.
     """
     exp_root = create_experiment_dirs(project_root)
     results_dir = str(Path(exp_root) / "results")
+    # Determine where to write the result file
+    if round_dir:
+        write_dir = str(Path(exp_root) / "results" / round_dir)
+        Path(write_dir).mkdir(parents=True, exist_ok=True)
+    else:
+        write_dir = results_dir
 
     config = config or {}
     max_retries = 10
@@ -154,16 +184,21 @@ def setup(project_root: str, train_command: str, gpu_id: int = 0, config: dict |
                 placeholder["method_tier"] = method_tier
             if iteration is not None:
                 placeholder["iteration"] = iteration
-            config_path = write_experiment_config(results_dir, exp_id, placeholder, exclusive=True)
+            config_path = write_experiment_config(write_dir, exp_id, placeholder, exclusive=True)
             break
         except FileExistsError:
             if attempt == max_retries - 1:
                 raise
             continue
 
-    log_file = str(Path(exp_root) / "logs" / exp_id / "train.log")
+    if round_dir:
+        log_file = str(Path(exp_root) / "logs" / round_dir / exp_id / "train.log")
+        scripts_base = str(Path(exp_root) / "scripts" / round_dir)
+    else:
+        log_file = str(Path(exp_root) / "logs" / exp_id / "train.log")
+        scripts_base = str(Path(exp_root) / "scripts")
     script_path = generate_train_script(
-        str(Path(exp_root) / "scripts"),
+        scripts_base,
         exp_id,
         train_command,
         gpu_id,
@@ -198,9 +233,18 @@ def cleanup_stale_experiments(results_dir: str, timeout_hours: float = 2.0) -> l
     cutoff = now - timeout_hours * 3600
     cleaned: list[str] = []
 
+    # Collect experiment files from flat dir and round directories
+    exp_files: list[Path] = []
     for f in sorted(path.iterdir()):
-        if not exp_pattern.match(f.name):
-            continue
+        if f.is_file() and exp_pattern.match(f.name):
+            exp_files.append(f)
+    for rdir in sorted(path.iterdir()):
+        if rdir.is_dir() and rdir.name.startswith("round-"):
+            for f in sorted(rdir.iterdir()):
+                if f.is_file() and exp_pattern.match(f.name):
+                    exp_files.append(f)
+
+    for f in exp_files:
         if f.stat().st_mtime > cutoff:
             continue
         try:
@@ -230,12 +274,13 @@ if __name__ == "__main__":
         gpu_id = int(sys.argv[3]) if len(sys.argv) > 3 else 0
     except ValueError:
         print(f"Error: invalid gpu_id '{sys.argv[3]}' (expected integer)")
-        print('Usage: experiment_setup.py <project_root> <train_command> [gpu_id] [config_json]')
+        print('Usage: experiment_setup.py <project_root> <train_command> [gpu_id] [config_json] [round_dir]')
         sys.exit(1)
     try:
         config = json.loads(sys.argv[4]) if len(sys.argv) > 4 else {}
     except json.JSONDecodeError:
         print(f"Error: invalid config JSON '{sys.argv[4]}'")
-        print('Usage: experiment_setup.py <project_root> <train_command> [gpu_id] [config_json]')
+        print('Usage: experiment_setup.py <project_root> <train_command> [gpu_id] [config_json] [round_dir]')
         sys.exit(1)
-    print(json.dumps(setup(project_root, train_command, gpu_id, config), indent=2))
+    round_dir = sys.argv[5] if len(sys.argv) > 5 else None
+    print(json.dumps(setup(project_root, train_command, gpu_id, config, round_dir=round_dir), indent=2))

@@ -25,7 +25,7 @@ You are a specialized hyperparameter tuning agent. You reason about past experim
 
 ## Your Approach
 
-1. **Load all past results** from the experiments/results/ directory
+1. **Load all past results** from experiments/results/ (scans all round-*/ subdirectories automatically)
 2. **Identify what worked** — which configs gave the best metrics?
 3. **Identify what failed** — which configs diverged or performed poorly?
 4. **Reason about the search space:**
@@ -66,7 +66,7 @@ Reasoning: <why this config>
 Expected outcome: <what we hope to learn>
 ```
 
-> **Canonical format reference:** See `log-formats.md` in the orchestrate skill's references directory and `hp-tune/SKILL.md` Step 5 for the full proposed-config JSON schema.
+> **Canonical format reference:** See `skills/hp-tune/SKILL.md` Step 5 for the full proposed-config JSON schema. Runtime enforcement is in `scripts/schema_validator.py` (hp_proposal).
 
 ## Agent Memory
 

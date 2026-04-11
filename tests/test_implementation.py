@@ -3,7 +3,6 @@
 import json
 import os
 import subprocess
-import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -42,7 +41,6 @@ from prerequisites_check import (
     _best_torch_cuda_tag,
     _detect_cuda_version,
     _wrap_for_conda,
-    IMPORT_TO_PACKAGE,
 )
 
 SAMPLE_FINDINGS = FIXTURES / "sample_research_findings.md"

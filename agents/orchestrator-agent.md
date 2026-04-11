@@ -98,8 +98,12 @@ experiments/
   results/prerequisites.json          ← Phase 2
   results/baseline.json               ← Phase 3
   results/implementation-manifest.json ← Phase 6
-  results/exp-*.json                  ← Phase 7 (per-experiment)
-  results/proposed-configs/           ← Phase 7 (hp-tune proposals)
+  results/rounds-manifest.json        ← Phase 7+ (round index, source of truth)
+  results/round-N-hp/exp-*.json       ← Phase 7 (HP tuning experiments)
+  results/round-N-evolved/exp-*.json  ← Phase 7 (ShinkaEvolve experiments)
+  results/round-N-research/exp-*.json ← Phase 7 (research-implement experiments)
+  results/round-N-stacked/exp-*.json  ← Phase 8 (stacking experiments)
+  proposed-configs/round-N-<type>/     ← Phase 7 (hp-tune proposals per round, top-level)
   reports/research-findings.md        ← Phase 5
   reports/research-findings-method-proposals.md ← Phase 5/7
   reports/batch-N-analysis.md         ← Phase 7 (per-batch)
@@ -108,9 +112,9 @@ experiments/
   reports/session-review.md           ← Phase 9
   reports/dead-ends.json              ← Phase 7 (analysis)
   reports/research-agenda.json        ← Phase 5/7 (living document)
-  logs/<exp-id>/train.log             ← Phase 7 (per-experiment)
-  scripts/<exp-id>/<exp-id>.sh        ← Phase 7 (per-experiment)
-  artifacts/<exp-id>/                 ← Phase 7 (checkpoints)
+  logs/round-N-<type>/<exp-id>/train.log   ← Phase 7 (per-round)
+  scripts/round-N-<type>/<exp-id>/train.sh ← Phase 7 (per-round)
+  artifacts/round-N-<type>/<exp-id>/       ← Phase 7 (per-round)
   hyperagent/archive.jsonl            ← Phase 7 (evolutionary archive)
   hyperagent/gen_X/                   ← Phase 7 (per-generation metadata)
   meta-patches/                       ← Phase 7 (self-improvement)
@@ -120,6 +124,12 @@ experiments/
   dev_notes.md                        ← All phases (running session log)
   results-table.md                    ← Phase 9 (Markdown summary)
 ```
+
+## Round Lifecycle
+
+Before each experiment batch, create a round: `round_manager.py <exp_root> create-round <type>`.
+After experiments complete, check completeness: `round_manager.py <exp_root> check-round <round_dir>`.
+Round types: `hp`, `evolved`, `research`, `stacked`, `meta`. Exp-ids are globally unique across rounds.
 
 ## Goal Anchoring
 

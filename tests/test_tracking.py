@@ -36,6 +36,7 @@ from error_tracker import (
     update_agenda_item,
     validate_event,
 )
+from pipeline_state import save_state
 
 
 # ---------------------------------------------------------------------------
@@ -74,8 +75,8 @@ def _create_full_session(tmp_path):
         ],
     }
     (results / "implementation-manifest.json").write_text(json.dumps(manifest))
-    configs_dir = results / "proposed-configs"
-    configs_dir.mkdir()
+    configs_dir = exp_root / "proposed-configs" / "round-1-hp"
+    configs_dir.mkdir(parents=True)
     for i in range(4):
         (configs_dir / f"exp-{i+1:03d}.json").write_text(
             json.dumps({"lr": 0.001 * (i + 1)}))
@@ -584,8 +585,8 @@ class TestSuccessMetrics:
         # HP stats
         r2 = tmp_path / "hp" / "results"
         r2.mkdir(parents=True)
-        configs_dir = r2 / "proposed-configs"
-        configs_dir.mkdir()
+        configs_dir = tmp_path / "hp" / "proposed-configs" / "round-1-hp"
+        configs_dir.mkdir(parents=True)
         for i in range(3):
             (configs_dir / f"exp-{i+1:03d}.json").write_text(json.dumps({"lr": 0.001 * (i + 1)}))
         _write_result(r2, "baseline", "completed", {}, {"loss": 1.0})
@@ -867,6 +868,81 @@ class TestReviewWorkflow:
 # ===========================================================================
 # TestCLI
 # ===========================================================================
+
+
+class TestGoalMetricConsistency:
+    """Tests for pipeline_state._check_goal_metric_consistency (Issue 5).
+
+    The orchestrator writes optimization-goals.json once and pipeline-state
+    user_choices separately. If they disagree on primary_metric, analysis
+    and HP tuning silently key off the stale value. save_state() now
+    surfaces the mismatch via stderr + an error_tracker event.
+    """
+
+    def _write_goals(self, tmp_path, primary_metric):
+        goals = {
+            "objective": {
+                "primary_metric": primary_metric,
+                "lower_is_better": False,
+                "target_value": None,
+                "problem_description": "test",
+            },
+            "constraints": {"scope_level": "training"},
+            "divergence": {"metric": "loss", "lower_is_better": True},
+        }
+        (tmp_path / "optimization-goals.json").write_text(json.dumps(goals))
+
+    def test_mismatch_logs_warning(self, tmp_path, capsys):
+        """Mismatched primary_metric → stderr warning + goal_mismatch event."""
+        self._write_goals(tmp_path, primary_metric="accuracy")
+        save_state(
+            phase=3, iteration=0, running_exp_ids=[],
+            exp_root=str(tmp_path),
+            user_choices={"primary_metric": "loss", "lower_is_better": True},
+        )
+
+        captured = capsys.readouterr()
+        assert "goal-metric mismatch" in captured.err
+        assert "accuracy" in captured.err and "loss" in captured.err
+
+        # Error tracker received a goal_mismatch warning event
+        # (logged under pipeline_inefficiency + orchestrate source since
+        # error_tracker rejects unknown category/source values by design)
+        events = get_events(str(tmp_path))
+        goal_events = [
+            e for e in events
+            if e.get("category") == "pipeline_inefficiency"
+            and "goal_metric_mismatch" in e.get("message", "")
+        ]
+        assert len(goal_events) == 1
+        assert goal_events[0]["severity"] == "warning"
+        assert goal_events[0]["source"] == "orchestrate"
+        assert goal_events[0]["config"]["goal_metric"] == "accuracy"
+        assert goal_events[0]["config"]["user_choices_metric"] == "loss"
+
+    def test_agreement_is_silent(self, tmp_path, capsys):
+        """Matching primary_metric → no warning, no event."""
+        self._write_goals(tmp_path, primary_metric="loss")
+        save_state(
+            phase=3, iteration=0, running_exp_ids=[],
+            exp_root=str(tmp_path),
+            user_choices={"primary_metric": "loss", "lower_is_better": True},
+        )
+
+        assert "goal-metric mismatch" not in capsys.readouterr().err
+        events = get_events(str(tmp_path))
+        assert not any(
+            "goal_metric_mismatch" in e.get("message", "") for e in events
+        )
+
+    def test_no_goals_file_is_silent(self, tmp_path, capsys):
+        """When optimization-goals.json does not exist yet, no warning fires."""
+        save_state(
+            phase=3, iteration=0, running_exp_ids=[],
+            exp_root=str(tmp_path),
+            user_choices={"primary_metric": "loss"},
+        )
+        assert "goal-metric mismatch" not in capsys.readouterr().err
 
 
 class TestCLI:

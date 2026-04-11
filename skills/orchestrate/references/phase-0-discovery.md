@@ -45,10 +45,11 @@
    ```
 
 3. **Record user responses:**
+
    - Store the user's answers — they will guide every subsequent phase
    - If the user is unsure about some answers, note those as areas to investigate in Phase 1
 
-3.5. **Write experiment root breadcrumb and optimization goals:**
+3.1. **Write experiment root breadcrumb and optimization goals:**
    First, write a breadcrumb so hooks can find the experiments directory (even if it's on a different mount):
    ```bash
    mkdir -p .claude
@@ -82,7 +83,7 @@
    ```
    This file persists in `experiments/optimization-goals.json` and is read by all agents before acting.
 
-3.6. **Brainstorm optimization strategy:**
+3.2. **Brainstorm optimization strategy:**
    Use `Skill("superpowers:brainstorming")` to explore the optimization space with the user. This helps surface non-obvious approaches, trade-offs, and priorities before committing to a plan. The brainstorming skill structures the conversation to explore:
    - What are the most likely bottlenecks? (data, model capacity, training recipe, regularization)
    - What trade-offs matter? (speed vs accuracy, simplicity vs performance)
@@ -91,7 +92,7 @@
 
    The brainstorming output informs the scope, search space, and strategy for the optimization plan.
 
-3.7. **Present understanding and invite refinement:**
+3.3. **Present understanding and invite refinement:**
    Summarize what you understood back to the user:
    ```
    Here's what I understood:

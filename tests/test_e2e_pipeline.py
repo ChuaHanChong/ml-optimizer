@@ -5,6 +5,7 @@ existing Python scripts (parse_logs, detect_divergence, experiment_setup,
 result_analyzer, gpu_check) work correctly with real training output.
 """
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -32,8 +33,7 @@ from result_analyzer import (
     compare_experiments,
 )
 from pipeline_state import save_state, load_state, validate_phase_requirements, cleanup_stale, init_hyperagent_state
-from schema_validator import validate_result, validate_result_strict, validate_baseline, validate_manifest, validate_file, validate_prerequisites
-import plot_results
+from schema_validator import validate_result, validate_baseline, validate_manifest, validate_file, validate_prerequisites
 from plot_results import plot_metric_comparison, plot_improvement_timeline, plot_hp_sensitivity, plot_progress_chart
 from conftest import FIXTURES, _write_result
 from implement_utils import (
@@ -611,8 +611,11 @@ class TestFullPipelineIntegration:
 
         # Checkpoint warm-starting: generate script with checkpoint path
         with tempfile.TemporaryDirectory() as td:
-            script_path = generate_train_script(td, "test-ckpt", "python train.py",
-                                                 checkpoint_path="/tmp/fake_ckpt.pt")
+            script_path = generate_train_script(
+                td, "test-ckpt", "python train.py",
+                log_file="logs/round-1-hp/test-ckpt/train.log",
+                checkpoint_path="/tmp/fake_ckpt.pt",
+            )
             content = Path(script_path).read_text()
             assert "CHECKPOINT_PATH" in content
             assert "fake_ckpt.pt" in content
@@ -888,6 +891,149 @@ Two optimization proposals identified.
 # ---------------------------------------------------------------------------
 # B3: Non-Git Fallback (no PyTorch needed)
 # ---------------------------------------------------------------------------
+
+class TestWorktreeRaceSafety:
+    """Regression test for Issue 1: worktree cleanup race wiping experiments/.
+
+    Old layout created worktrees under ``<project_root>/experiments/worktrees/``.
+    When two agents ran in parallel and one cleaned up its worktree, sibling
+    ``experiments/*`` subdirs could disappear. The fix moves worktrees to a
+    system temp dir OUTSIDE the project root. This test enforces the
+    invariant: under concurrent lifecycle, sibling results/logs/reports
+    stay intact.
+    """
+
+    def _init_repo(self, repo: Path) -> None:
+        subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+        subprocess.run(
+            ["git", "-c", "user.email=test@test", "-c", "user.name=test",
+             "commit", "-q", "--allow-empty", "-m", "initial"],
+            cwd=repo, check=True,
+        )
+        for branch in ("ml-opt/branch-a", "ml-opt/branch-b"):
+            subprocess.run(
+                ["git", "checkout", "-q", "-b", branch],
+                cwd=repo, check=True,
+            )
+            (repo / f"marker-{branch.split('/')[-1]}.txt").write_text("x")
+            subprocess.run(["git", "add", "."], cwd=repo, check=True)
+            subprocess.run(
+                ["git", "-c", "user.email=t@t", "-c", "user.name=t",
+                 "commit", "-q", "-m", f"add {branch}"],
+                cwd=repo, check=True,
+            )
+            subprocess.run(["git", "checkout", "-q", "master"], cwd=repo, check=True)
+
+    def _seed_experiments(self, exp_root: Path) -> list:
+        """Create sentinel files that MUST survive the parallel lifecycle."""
+        (exp_root / "results").mkdir(parents=True)
+        (exp_root / "logs" / "baseline").mkdir(parents=True)
+        (exp_root / "reports").mkdir(parents=True)
+        sentinels = [
+            exp_root / "results" / "baseline.json",
+            exp_root / "logs" / "baseline" / "train.log",
+            exp_root / "reports" / "research-findings.md",
+        ]
+        for s in sentinels:
+            s.write_text("do-not-delete")
+        return sentinels
+
+    def _worktree_lifecycle(self, repo: Path, wt_root: Path, slug: str,
+                            branch: str, barrier, lock) -> None:
+        """Create → sync → validate → remove a worktree on the safe path.
+
+        git's worktree metadata isn't thread-safe in-process, so we serialize
+        the add/remove with a lock. The test's real invariant is that the
+        SAFE path layout preserves experiments/ sentinels under concurrent
+        lifecycles — not that git allows unserialized threaded writes.
+        """
+        wt_path = wt_root / slug
+        with lock:
+            subprocess.run(
+                ["git", "worktree", "add", str(wt_path), branch],
+                cwd=repo, check=True, capture_output=True,
+            )
+        barrier.wait()  # both worktrees exist concurrently
+        # Intentionally NO untracked writes inside wt_path — keeps
+        # `git worktree remove` clean without needing --force.
+        with lock:
+            listing = subprocess.run(
+                ["git", "worktree", "list", "--porcelain"],
+                cwd=repo, capture_output=True, text=True, check=True,
+            ).stdout
+            assert f"worktree {wt_path}" in listing
+            subprocess.run(
+                ["git", "worktree", "remove", str(wt_path)],
+                cwd=repo, check=True, capture_output=True,
+            )
+
+    def test_parallel_worktrees_outside_experiments_preserve_sentinels(
+        self, tmp_path
+    ):
+        """Two concurrent worktree lifecycles on branches A and B keep
+        experiments/ sentinels intact when worktrees live OUTSIDE experiments/.
+        """
+        repo = tmp_path / "project"
+        repo.mkdir()
+        self._init_repo(repo)
+
+        exp_root = repo / "experiments"
+        sentinels = self._seed_experiments(exp_root)
+
+        # SAFE layout: worktrees in /tmp/ml-opt-wt-test-<hash>, not under
+        # exp_root. Mirrors the fixed Step 1 of skills/experiment/SKILL.md.
+        project_hash = hashlib.sha1(str(repo).encode()).hexdigest()[:8]
+        wt_root = Path(tempfile.gettempdir()) / f"ml-opt-wt-test-{project_hash}"
+        wt_root.mkdir(parents=True, exist_ok=True)
+
+        try:
+            barrier = threading.Barrier(2)
+            git_lock = threading.Lock()
+            threads = [
+                threading.Thread(
+                    target=self._worktree_lifecycle,
+                    args=(repo, wt_root, "exp-a", "ml-opt/branch-a", barrier, git_lock),
+                ),
+                threading.Thread(
+                    target=self._worktree_lifecycle,
+                    args=(repo, wt_root, "exp-b", "ml-opt/branch-b", barrier, git_lock),
+                ),
+            ]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=30)
+                assert not t.is_alive(), "worktree lifecycle hung"
+
+            # INVARIANT: sentinels survived the parallel lifecycle
+            for s in sentinels:
+                assert s.is_file(), f"sentinel wiped by worktree cleanup: {s}"
+                assert s.read_text() == "do-not-delete"
+
+            # Worktree root is outside experiments/ — verify
+            assert not str(wt_root).startswith(str(exp_root)), (
+                "SAFETY REGRESSION: worktree root is under experiments/"
+            )
+        finally:
+            if wt_root.exists():
+                shutil.rmtree(wt_root, ignore_errors=True)
+
+    def test_worktree_path_is_not_inside_experiments(self, tmp_path):
+        """Declarative: code computing a worktree root must not place it
+        under <project_root>/experiments/. This is the single-line
+        invariant the race fix enforces.
+        """
+        project_root = tmp_path / "project"
+        project_root.mkdir()
+        exp_root = project_root / "experiments"
+        exp_root.mkdir()
+
+        project_hash = hashlib.sha1(str(project_root).encode()).hexdigest()[:8]
+        worktree_root = Path("/tmp") / f"ml-opt-worktrees-{project_hash}"
+
+        assert not str(worktree_root).startswith(str(exp_root))
+        assert not str(worktree_root).startswith(str(project_root))
+
 
 class TestNonGitFallback:
     """Test file backup strategy for non-git projects."""

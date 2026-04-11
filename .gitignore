@@ -1,9 +1,10 @@
 __pycache__/
+__archive__/
 .worktrees/
 .coverage
+.claude/agent-memory-local/
 *.egg-info/
 docs/superpowers/
-docs/plans/
 data/
-.claude/agent-memory-local/
 TODO.md
+**/experiments/

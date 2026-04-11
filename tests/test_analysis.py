@@ -1,11 +1,9 @@
 """Consolidated tests for result_analyzer.py, schema_validator.py, and plot_results.py."""
 
 import json
-import math
 
 import pytest
 
-import plot_results
 from conftest import _write_result, _write_results
 
 from result_analyzer import (

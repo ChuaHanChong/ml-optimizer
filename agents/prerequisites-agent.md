@@ -100,7 +100,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/schema_validator.py \
 ```
 If validation fails, fix and re-validate before proceeding.
 
-> **Canonical format reference:** See `log-formats.md` in the orchestrate skill's references directory.
+> **Canonical schema source:** `scripts/schema_validator.py` (prerequisites schema). Run it on your output to see exactly which fields are required.
 
 ## Error Handling
 

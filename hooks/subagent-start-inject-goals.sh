@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# SubagentStart hook: inject goal memory summary when any ml-optimizer agent starts.
-# This ensures every agent sees the optimization goals without relying solely on orchestrator relay.
+# SubagentStart hook: inject goal memory summary + output contract when any ml-optimizer agent starts.
+# Ensures every agent sees (1) optimization goals and (2) its required output paths/schemas.
 set -euo pipefail
 
 INPUT=$(cat)
@@ -9,14 +9,32 @@ CWD=$(echo "$INPUT" | jq -r '.cwd // empty')
 
 EXP_DIR=$("${CLAUDE_PLUGIN_ROOT}/hooks/find-exp-root.sh" "$CWD")
 [ -z "$EXP_DIR" ] && exit 0
-[ ! -f "$EXP_DIR/optimization-goals.json" ] && exit 0
 
 SCRIPTS="${CLAUDE_PLUGIN_ROOT}/scripts"
-if [ -f "$SCRIPTS/goal_memory.py" ]; then
+
+# 1. Inject goal memory summary
+if [ -f "$EXP_DIR/optimization-goals.json" ] && [ -f "$SCRIPTS/goal_memory.py" ]; then
   SUMMARY=$(python3 "$SCRIPTS/goal_memory.py" "$EXP_DIR" summary 2>/dev/null || true)
   if [ -n "$SUMMARY" ]; then
     echo "$SUMMARY"
   fi
 fi
+
+# 2. Inject output contract (tells agent exactly what files to produce)
+AGENT_TYPE=$(echo "$INPUT" | jq -r '.agent_type // .subagent_type // empty')
+if [ -n "$AGENT_TYPE" ] && [ -f "$SCRIPTS/output_contract.py" ]; then
+  # Strip ml-optimizer: prefix
+  AGENT_TYPE=$(echo "$AGENT_TYPE" | sed 's/ml-optimizer://')
+  CONTRACT=$(python3 "$SCRIPTS/output_contract.py" inject "$EXP_DIR" "$AGENT_TYPE" 2>/dev/null || true)
+  if [ -n "$CONTRACT" ]; then
+    echo ""
+    echo "$CONTRACT"
+  fi
+fi
+
+# Note: dev_notes.md enforcement is handled entirely at SubagentStop by comparing
+# the embedded <!-- agent_id: ... --> comment in the last entry against the
+# current agent_id. No marker file needed. The output contract (injected via
+# output_contract.py above) tells the agent to call dev_notes.py append.
 
 exit 0

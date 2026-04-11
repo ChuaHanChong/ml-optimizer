@@ -1,5 +1,21 @@
 #!/usr/bin/env python3
-"""Detect training divergence from metric trajectories."""
+"""Detect training divergence from metric trajectories.
+
+Detects NaN/Inf, loss explosion, and plateau stalls from a sequence of metric values.
+Also supports train/val overfitting detection.
+
+Usage:
+    python3 detect_divergence.py '<json_values>' [--higher-is-better] [--model-category rl|generative|supervised] [--explosion-threshold F] [--plateau-patience N]
+    python3 detect_divergence.py --check-overfitting '<train_json>' '<val_json>' [--higher-is-better] [--patience N] [--min-gap F] [--model-category rl|generative|supervised]
+
+Examples:
+    python3 detect_divergence.py '[0.5, 0.4, 100.0]'                              # Detects explosion
+    python3 detect_divergence.py '[2.5, 1.2, 0.8, 0.5]' --model-category rl       # RL thresholds
+    python3 detect_divergence.py '[0.85, 0.90, 0.92]' --higher-is-better          # Accuracy-like metric
+    python3 detect_divergence.py --check-overfitting '[0.5, 0.4, 0.3]' '[0.5, 0.48, 0.52]'
+
+Note: JSON values must be a valid JSON array, single-quoted for shell.
+"""
 
 import json
 import math

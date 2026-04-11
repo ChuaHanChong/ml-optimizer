@@ -1,6 +1,5 @@
 """Tests for inter-agent relay message validation."""
 import json
-import pytest
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'scripts'))
 from schema_validator import validate_relay, RELAY_SCHEMAS

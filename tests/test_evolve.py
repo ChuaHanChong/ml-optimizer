@@ -203,81 +203,112 @@ class TestHandoffTimeoutConfig:
         elapsed = time.monotonic() - start
         assert elapsed < 3.0
 
-    def test_inprogress_marker_extends_deadline(self, tmp_path):
-        """Writing .inprogress marker resets the deadline, allowing a late response.
+    def test_inprogress_marker_extends_deadline(self, tmp_path, monkeypatch):
+        """Writing .inprogress marker extends the deadline beyond the original.
 
-        Timeline (timeout_seconds=3):
-          t=0.0s: query starts, deadline = t+3 = 3.0s
-          t=0.3s: responder finds pending file, writes .inprogress
-          t=0.3s: provider detects .inprogress, deadline = 0.3+3 = 3.3s
-          t=3.0s: original deadline would expire — but extended to 3.3s
-          t=2.5s: responder writes completed response
-          t=2.5s: provider finds response, returns successfully
-        Without the marker, timeout at 3.0s would miss the 2.5s response
-        only if the response were at >3s. So we use: marker at ~0.3s,
-        response at 4s, timeout=3s. Without extension: fails at 3s.
-        With extension: deadline moves to 3.3s... still too tight.
+        Tests the provider's deadline-extension logic when an ``.inprogress``
+        marker is observed mid-poll. The original version relied on a ~8-second
+        wall-clock test with time.sleep(), which flaked under heavy system
+        load because sleep jitter pushed iterations past the tight deadline
+        margins.
 
-        Better approach: timeout=2s, marker at ~0.3s extends to 2.3s,
-        response at 1.8s (within extended window). Verify it succeeds
-        (without marker it would fail because 1.8s < 2s, so it actually
-        wouldn't fail). The real test: timeout=2, no marker → response at
-        3s fails. With marker → response at 3s succeeds (deadline extended
-        to 2+0.3 = 2.3s... no, still fails).
+        This version monkeypatches the provider module's ``time.sleep`` to
+        poll 10x faster (0.1s instead of 1s) when called with >= 0.5s.
+        Short sleeps (like the responder's 0.01s busy-wait) are unaffected.
+        The 10x faster polling compresses the test runtime to ~0.5s and
+        dramatically widens the jitter tolerance.
 
-        Simplest correct test: timeout=3, marker at ~0.2s extends deadline
-        to 3.2s, response at 5s. Without extension: fails at 3s. With
-        extension: deadline = 0.2+3 = 3.2s, still fails at 3.2s because
-        response is at 5s. Need response BETWEEN old deadline and new deadline.
+        Timeline (timeout_seconds=1 with 0.1s polling):
+          t=0.00s: query starts, deadline = start + 1 = 1.0s
+          t~0.05s: responder finds pending file
+          t~0.15s: responder writes .inprogress marker (after 0.1s delay)
+          t~0.2s:  provider polls, sees marker, deadline extends to ~1.2s
+          t~0.5s:  responder writes completed response (past original 1s? no,
+                   the response arrives at ~0.5s which is BEFORE original 1s)
 
-        Correct: timeout=3, marker at ~1s extends deadline to 4s,
-        response at 3.5s. Without extension: fails at 3s (response too late).
-        With extension: deadline=4s, response at 3.5s succeeds.
+        Wait: we need the response AFTER the original deadline to prove the
+        extension actually matters. Timeline revised:
+
+        Timeline (timeout_seconds=1, fast polling 0.1s):
+          t=0.00s: query starts, deadline = 1.0s
+          t~0.05s: responder finds pending file, starts 0.2s delay
+          t~0.25s: responder writes .inprogress marker
+          t~0.3s:  provider polls, sees marker, extends deadline to ~1.3s
+          t~1.15s: responder writes completed response (past original 1s)
+          t~1.2s:  provider polls, finds response, returns success
+
+        Without extension: response at 1.15s > deadline 1.0s -> TimeoutError.
+        With extension: deadline 1.3s > response 1.15s -> success.
         """
+        # The production module is already loaded at the top of this file
+        # as `_mod`. Monkeypatch `_mod.time.sleep` to make the provider
+        # poll faster. Pytest's monkeypatch handles teardown automatically.
+
+        # Monkeypatch time.sleep inside the provider module: shrink 1-second
+        # polls to 0.1s, leave shorter sleeps unchanged. This is the only
+        # way to test the marker-extension logic reliably: the provider's
+        # hardcoded 1s poll interval combined with the 1-second extension
+        # window is too tight for wall-clock testing under typical OS jitter.
+        import time as _time
+        _real_sleep = _time.sleep
+
+        def _fast_sleep(seconds):
+            if seconds >= 0.5:
+                _real_sleep(0.1)
+            else:
+                _real_sleep(seconds)
+
+        monkeypatch.setattr(_mod.time, "sleep", _fast_sleep)
+
         set_handoff_dir(str(tmp_path))
         pending_dir = tmp_path / "evolve" / "pending"
         completed_dir = tmp_path / "evolve" / "completed"
 
-        def respond_late():
-            # Poll for the pending file immediately
-            for _ in range(50):
+        def responder():
+            # Poll for the pending file (short sleeps = unaffected)
+            files: list = []
+            for _ in range(200):
                 files = [f for f in pending_dir.glob("*.json")
                          if not f.name.endswith((".heartbeat", ".inprogress"))]
                 if files:
                     break
-                time.sleep(0.1)
+                _real_sleep(0.01)
             if not files:
                 return
             req_id = json.loads(files[0].read_text())["id"]
 
-            # Acknowledge immediately (~0.3s after request)
-            (pending_dir / f"{req_id}.inprogress").write_text('{"status":"ack"}')
+            # Wait ~0.2s in wall-clock time before writing the marker. This
+            # ensures the marker appears AFTER the provider's first poll at
+            # t~0 but before subsequent polls, so the extension formula
+            # `now + timeout` produces a deadline strictly greater than
+            # the original `start_time + timeout`.
+            pending_detect = time.monotonic()
+            while time.monotonic() - pending_detect < 0.2:
+                _real_sleep(0.01)
 
-            # Wait 8s then respond. Total: ~8.3s after start.
-            # Without extension (timeout=6): deadline at 6s → FAIL (8.3 > 6)
-            # With extension: marker at ~0.3s detected at ~1-2s (1s poll),
-            # deadline = 2 + 6 = 8s minimum. Response at 8.3s vs deadline 8s.
-            # With generous margin: detected at ~1s → deadline = 1+6 = 7s.
-            # Response at 8.3 > 7? Yes. Need bigger timeout.
-            # timeout=8: detected at ~1s → deadline = 1+8 = 9s.
-            # Response at 8.3s < 9s → 0.7s margin. Under load: detected at ~2s
-            # → deadline = 2+8 = 10s. Response at 8.3s < 10s → 1.7s margin.
-            time.sleep(8.0)
+            (pending_dir / f"{req_id}.inprogress").write_text(
+                '{"status":"ack"}'
+            )
+
+            # Busy-wait 0.9s more in wall-clock time (total ~1.1s from
+            # pending detect). Response lands past original 1s deadline
+            # but within extended ~1.2-1.3s window.
+            marker_time = time.monotonic()
+            while time.monotonic() - marker_time < 0.9:
+                _real_sleep(0.01)
+
             (completed_dir / f"{req_id}.json").write_text(
                 json.dumps({"content": "late but valid"})
             )
 
-        t = threading.Thread(target=respond_late)
+        t = threading.Thread(target=responder)
         t.start()
 
-        # timeout=6: original deadline at 6s. Response at ~8.3s would FAIL.
-        # Marker at ~0.3s detected at ~1-2s, extends deadline to 7-8s.
-        # Response at 8.3s is close. Use timeout=8 for safety:
-        # Original deadline 8s. Response at 8.3s > 8s (fails without extension).
-        # Extended: detected at ~1s → deadline 9s. 8.3 < 9 → passes.
-        result = query_file_handoff("m", "msg", "sys", timeout_seconds=8)
+        # timeout=1s with fast polling. Response at ~1.1s past original
+        # deadline but within extended deadline (~1.2s-1.3s depending on
+        # exactly when the provider first polled after marker write).
+        result = query_file_handoff("m", "msg", "sys", timeout_seconds=1)
         t.join()
-
         assert result["content"] == "late but valid"
 
     def test_heartbeat_written(self, tmp_path):

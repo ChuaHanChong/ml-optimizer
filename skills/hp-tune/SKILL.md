@@ -26,8 +26,9 @@ From the orchestrator:
 - `lower_is_better`: Whether lower metric values are better (True for loss, False for accuracy)
 - `code_branches`: List of validated code branches from the implementation manifest (e.g., `["ml-opt/perceptual-loss"]`), or `[]` for HP-only. In iteration 1, generate one config per branch (with baseline HPs) plus one for the original code, instead of spanning the search space.
 - `warm_start_enabled`: Whether checkpoint warm-starting is enabled (boolean, default false). When true and iteration >= 2, propose warm-starting from the best completed experiment on the same branch.
-- `available_checkpoints`: Dict mapping exp_id to checkpoint info (optional). Only provided when `warm_start_enabled` is true. Example: `{"exp-005": {"checkpoint_path": "experiments/artifacts/exp-005/best.pt", "code_branch": "ml-opt/method-a"}}`.
+- `available_checkpoints`: Dict mapping exp_id to checkpoint info (optional). Only provided when `warm_start_enabled` is true. Example: `{"exp-005": {"checkpoint_path": "experiments/artifacts/round-2-hp/exp-005/best.pt", "code_branch": "ml-opt/method-a"}}`.
 - `branch_scores`: Per-branch allocation scores from analyze (optional). Dict mapping branch name to `{"improvement_pct": X, "sample_count": N, "score": Y}`.
+- `round_dir`: Current round directory (e.g., `"round-3-hp"`). **Required.** Passed by the orchestrator after calling `round_manager.py create-round`. Proposed config JSONs MUST be written inside `proposed-configs/<round_dir>/`. If missing from context, fetch via `round_manager.py current-round`.
 
 ## Step 1: Load Past Results
 
@@ -195,12 +196,19 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"categor
 
 ## Step 5: Write Proposed Configs
 
-Create a directory for proposed configs:
+First, get the current round directory from the orchestrator's context (passed via SendMessage as `round_dir`). If not provided, fetch it:
 ```bash
-mkdir -p <project_root>/experiments/results/proposed-configs
+round_dir=$(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/round_manager.py <exp_root> current-round | python3 -c "import json,sys; print(json.load(sys.stdin)['dir'])")
 ```
 
-For each proposed config, write a JSON file:
+Create the proposed-configs directory **inside the round subdirectory**:
+```bash
+mkdir -p <project_root>/experiments/proposed-configs/<round_dir>
+```
+
+**IMPORTANT:** The PreToolUse hook (`validate_experiment_write.py`) blocks any `exp-*.json` write to `proposed-configs/` outside a `round-N-<type>/` subdirectory. Always write proposals to `proposed-configs/<round_dir>/<exp_id>.json`.
+
+For each proposed config, write a JSON file at `experiments/proposed-configs/<round_dir>/<exp_id>.json`:
 ```json
 {
   "exp_id": "<next_exp_id>",
@@ -242,15 +250,13 @@ For each proposed config, write a JSON file:
 - `"llm_knowledge"`: Proposal originated from LLM knowledge (Phase 7 method proposals)
 - `null`: For baseline experiments (no code change)
 
-Use `${CLAUDE_PLUGIN_ROOT}/scripts/experiment_setup.py` to generate proper experiment IDs:
+Use `round_manager.py next-id` to generate globally unique experiment IDs (scans all round directories, not just the flat `results/`):
 ```bash
-python3 -c "
-import sys
-# sys.path: add the plugin's scripts/ directory
-from experiment_setup import next_experiment_id
-print(next_experiment_id('<project_root>/experiments/results'))
-"
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/round_manager.py <exp_root> next-id
+# Returns: {"exp_id": "exp-NNN"}
 ```
+
+Exp-ids are globally unique across rounds — `exp-001` only ever exists in one round.
 
 ## Step 6: Document Tuning Decision
 

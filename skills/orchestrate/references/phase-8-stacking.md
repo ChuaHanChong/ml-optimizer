@@ -89,11 +89,18 @@ Dispatch hyperagent:
    e. **Validate** (syntax, import, forward pass — same as implement skill validation).
       - If validation fails → skip: delete branch, log reason, continue.
 
+   e2. **Create a stacking round** (MANDATORY before dispatching experiment-agent):
+      ```bash
+      round_info=$(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/round_manager.py <exp_root> create-round stacked --branch ml-opt/stack-{order})
+      # Capture "dir" field as round_dir (e.g., "round-7-stacked")
+      ```
+      Without this, the PreToolUse hook blocks the experiment's result write.
+
    f. **Run experiment** by dispatching the experiment agent:
       ```
       Agent(
         description: "Run stacking experiment stack-{order}",
-        prompt: "Run stacking experiment. Parameters: exp_id: {exp_id}. Config: {config_json}. GPU: {gpu_id}. Project root: {project_root}. Train command: {train_command}. Eval command: {eval_command or null}. Code branch: ml-opt/stack-{order}. Method tier: stacked_default_hp. Stacking order: {order}. Stack base exp: {stack_base_exp}. Code branches: {code_branches_json}.",
+        prompt: "Run stacking experiment. Parameters: exp_id: {exp_id}. Config: {config_json}. GPU: {gpu_id}. Project root: {project_root}. Train command: {train_command}. Eval command: {eval_command or null}. Code branch: ml-opt/stack-{order}. Method tier: stacked_default_hp. Stacking order: {order}. Stack base exp: {stack_base_exp}. Code branches: {code_branches_json}. round_dir: {round_dir}.",
         subagent_type: "ml-optimizer:experiment-agent"
       )
       ```
@@ -178,6 +185,12 @@ Dispatch hyperagent:
         - Delete `ml-opt/stack-<order>` branch
         - Log: "Method <slug> skipped in stacking (analysis determined combination unproductive)"
         - Continue to next method (next stack branch re-branches from last successful stack)
+
+   h. **Close the stacking round:** After all experiments and any evolve/hp-tune sub-rounds for this stack step complete:
+      ```bash
+      python3 ${CLAUDE_PLUGIN_ROOT}/scripts/round_manager.py <exp_root> close-round --summary "Stack step {order}: {result_summary}"
+      ```
+      Where `{result_summary}` is one of: `"kept ({gain}% over baseline)"`, `"skipped (interference)"`, or `"skipped (regression)"`.
 
 4. **Save stacking state** to `pipeline-state.json` via `save_state(user_choices={"stacking": {...}})` after each stack step (for resumption):
    ```json

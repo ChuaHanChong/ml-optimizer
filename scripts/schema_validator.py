@@ -49,6 +49,16 @@ VALID_IMPLEMENTATION_STRATEGIES = ["from_scratch", "from_reference"]
 PREREQUISITES_REQUIRED = ["status", "dataset", "environment", "ready_for_baseline"]
 VALID_PREREQ_STATUSES = ["ready", "partial", "failed"]
 
+HP_PROPOSAL_REQUIRED = ["exp_id", "config"]
+HP_PROPOSAL_OPTIONAL = [
+    "code_branch", "code_proposal", "proposal_source",
+    "method_tier", "gpu_id", "reasoning", "iteration",
+    "checkpoint_source", "warm_started",
+]
+
+ROUNDS_MANIFEST_REQUIRED = ["rounds", "current_round", "total_experiments"]
+VALID_ROUND_TYPES = ["hp", "evolved", "research", "stacked", "meta"]
+
 
 # ---------------------------------------------------------------------------
 # Validation helpers
@@ -290,6 +300,79 @@ def validate_prerequisites(data: dict) -> dict:
     return {"valid": len(errors) == 0, "errors": errors, "warnings": warnings}
 
 
+def validate_hp_proposal(data: dict) -> dict:
+    """Validate an HP tuning proposal dict.
+
+    Checks that ``exp_id`` and ``config`` are present and correctly typed.
+
+    Returns ``{"valid": True/False, "errors": [...]}``.
+    """
+    errors: list[str] = []
+
+    if not isinstance(data, dict):
+        return {"valid": False, "errors": ["Data must be a dict"]}
+
+    errors.extend(_check_required(data, HP_PROPOSAL_REQUIRED))
+
+    if "config" in data and not isinstance(data["config"], dict):
+        errors.append("'config' must be a dict")
+
+    if "method_tier" in data and data["method_tier"] not in VALID_METHOD_TIERS:
+        errors.append(
+            f"Invalid method_tier '{data['method_tier']}': must be one of {VALID_METHOD_TIERS}"
+        )
+
+    if "exp_id" in data and not isinstance(data["exp_id"], str):
+        errors.append("'exp_id' must be a string")
+
+    return {"valid": len(errors) == 0, "errors": errors, "warnings": []}
+
+
+def validate_rounds_manifest(data: dict) -> dict:
+    """Validate a rounds-manifest.json dict.
+
+    Checks that ``rounds`` is a list of valid round entries, ``current_round``
+    is an integer, and ``total_experiments`` is a non-negative integer.
+
+    Returns ``{"valid": True/False, "errors": [...]}``.
+    """
+    errors: list[str] = []
+
+    if not isinstance(data, dict):
+        return {"valid": False, "errors": ["Data must be a dict"]}
+
+    errors.extend(_check_required(data, ROUNDS_MANIFEST_REQUIRED))
+
+    if "current_round" in data and not isinstance(data["current_round"], int):
+        errors.append("'current_round' must be an integer")
+
+    if "total_experiments" in data:
+        te = data["total_experiments"]
+        if not isinstance(te, int) or te < 0:
+            errors.append("'total_experiments' must be a non-negative integer")
+
+    if "rounds" in data:
+        if not isinstance(data["rounds"], list):
+            errors.append("'rounds' must be a list")
+        else:
+            for i, rnd in enumerate(data["rounds"]):
+                if not isinstance(rnd, dict):
+                    errors.append(f"Round at index {i} must be a dict")
+                    continue
+                for field in ["id", "dir", "type"]:
+                    if field not in rnd:
+                        errors.append(f"Round at index {i}: missing required field: {field}")
+                if "type" in rnd and rnd["type"] not in VALID_ROUND_TYPES:
+                    errors.append(
+                        f"Round at index {i}: invalid type '{rnd['type']}': "
+                        f"must be one of {VALID_ROUND_TYPES}"
+                    )
+                if "experiments" in rnd and not isinstance(rnd["experiments"], list):
+                    errors.append(f"Round at index {i}: 'experiments' must be a list")
+
+    return {"valid": len(errors) == 0, "errors": errors, "warnings": []}
+
+
 def validate_file(filepath: str, schema_type: str) -> dict:
     """Read a JSON file and validate it against the specified schema.
 
@@ -319,6 +402,8 @@ def validate_file(filepath: str, schema_type: str) -> dict:
         "baseline": validate_baseline,
         "manifest": validate_manifest,
         "prerequisites": validate_prerequisites,
+        "hp_proposal": validate_hp_proposal,
+        "rounds_manifest": validate_rounds_manifest,
     }
 
     if schema_type not in validators:
@@ -494,7 +579,7 @@ if __name__ == "__main__":
         sys.exit(0 if output["valid"] else 1)
 
     if len(sys.argv) < 3:
-        print("Usage: schema_validator.py <filepath> result|baseline|manifest|prerequisites [--strict]")
+        print("Usage: schema_validator.py <filepath> result|baseline|manifest|prerequisites|hp_proposal|rounds_manifest [--strict]")
         print("       schema_validator.py relay <route> <json_data>")
         sys.exit(1)
     filepath = sys.argv[1]

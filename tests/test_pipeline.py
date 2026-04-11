@@ -96,8 +96,12 @@ class TestPhaseValidation:
 
     @pytest.mark.parametrize("phase", [5, 6, 7, 9])
     def test_phases_requiring_baseline_pass_with_it(self, tmp_path, phase):
-        """Phases 5/6/7/9 pass with a valid baseline."""
+        """Phases 5/6/7/9 pass with a valid baseline (+ goals for Phase 7)."""
         _write_baseline(tmp_path, {"loss": 0.5}, {"lr": 0.001})
+        if phase == 7:
+            # Phase 7 also requires optimization-goals.json
+            goals_path = tmp_path / "optimization-goals.json"
+            goals_path.write_text('{"objective": {"primary_metric": "loss"}}')
         result = validate_phase_requirements(phase, str(tmp_path))
         assert result["valid"] is True
 
@@ -610,20 +614,22 @@ class TestExperimentSetup:
         assert json.loads(Path(path).read_text())["lr"] == 0.001
 
     def test_generate_train_script_features(self, tmp_path):
-        """GPU, command, env vars, log piping, executable, PID, default log path."""
+        """GPU, command, env vars, log piping, executable, PID."""
         path = generate_train_script(
             str(tmp_path), "exp-001", "python train.py --lr 0.001",
-            gpu_id=2, log_file="logs/exp-001/train.log",
+            gpu_id=2, log_file="logs/round-1-hp/exp-001/train.log",
             env_vars={"WANDB_DISABLED": "true"})
         content = Path(path).read_text()
         for expected in ["CUDA_VISIBLE_DEVICES=2", "python train.py --lr 0.001",
-                         "WANDB_DISABLED=true", "tee logs/exp-001/train.log",
+                         "WANDB_DISABLED=true", "tee logs/round-1-hp/exp-001/train.log",
                          "pid", "$$"]:
             assert expected in content
         assert Path(path).stat().st_mode & stat.S_IXUSR
-        # Default log path
-        path2 = generate_train_script(str(tmp_path), "exp-002", "python train.py", gpu_id=0)
-        assert "experiments/logs/exp-002/train.log" in Path(path2).read_text()
+
+    def test_generate_train_script_requires_log_file(self, tmp_path):
+        """Missing log_file raises ValueError — no stale flat-path fallback."""
+        with pytest.raises(ValueError, match="log_file is required"):
+            generate_train_script(str(tmp_path), "exp-002", "python train.py", gpu_id=0)
 
     def test_generate_train_script_path_with_spaces(self, tmp_path):
         path = generate_train_script(str(tmp_path), "exp-001", "python train.py",
@@ -636,7 +642,8 @@ class TestExperimentSetup:
     ], ids=["with_budget", "none", "zero"])
     def test_generate_train_script_time_budget(self, tmp_path, budget, expect_timeout):
         path = generate_train_script(str(tmp_path), "exp-001", "python train.py",
-                                     gpu_id=0, time_budget=budget)
+                                     gpu_id=0, log_file="logs/round-1-hp/exp-001/train.log",
+                                     time_budget=budget)
         content = Path(path).read_text()
         if expect_timeout:
             assert "timeout --signal=SIGTERM --kill-after=60 120" in content
@@ -824,6 +831,11 @@ def _setup_phase_prereqs(tmp_path, phase):
         _write_baseline(tmp_path, {"loss": 0.5}, {"lr": 0.001})
     elif phase == 3:
         _make_results_dir(tmp_path)
+    if phase == 7:
+        # Phase 7 also requires optimization-goals.json
+        goals_path = tmp_path / "optimization-goals.json"
+        if not goals_path.exists():
+            goals_path.write_text(json.dumps({"objective": {"primary_metric": "loss"}}))
     if phase == 8:
         _write_baseline(tmp_path, {"loss": 0.5}, {"lr": 0.001})
         d = tmp_path / "results"
@@ -1121,6 +1133,60 @@ class TestMetaPatchManagement:
         assert r1["count"] == 1
         r2 = log_meta_patch(str(tmp_path), _make_valid_patch(skill="research", change="B"))
         assert r2["count"] == 2
+
+    def test_log_handles_corrupt_string_entries(self, tmp_path):
+        """log_meta_patch survives a changelog containing non-dict entries.
+
+        Pre-fills meta-changelog.json with a mixed list (legacy string + valid
+        dict), then logs a fresh patch. The string entry is dropped, the dict
+        entry is preserved, and the new entry is appended with a correct
+        auto-incremented id (max of surviving dict ids + 1).
+        """
+        meta_dir = tmp_path / "meta-patches"
+        meta_dir.mkdir()
+        changelog = meta_dir / "meta-changelog.json"
+        changelog.write_text(json.dumps([
+            "legacy-string-entry",
+            {"id": 5, "skill": "analyze", "change": "old",
+             "reason": "pre-existing", "expected_impact": "none"},
+        ]))
+
+        result = log_meta_patch(str(tmp_path), _make_valid_patch(
+            skill="hp-tune", change="New guardrail"))
+
+        assert result["logged"] is True
+        assert result["id"] == 6  # max(surviving dict ids) + 1
+        entries = get_meta_patches(str(tmp_path))
+        assert len(entries) == 2
+        assert all(isinstance(e, dict) for e in entries)
+        assert {e["skill"] for e in entries} == {"analyze", "hp-tune"}
+
+    def test_promote_handles_corrupt_entries(self, tmp_path):
+        """promote_meta_patch survives a changelog with non-dict entries.
+
+        get_meta_patches drops the string, so promoting index 0 references
+        the surviving dict — not raise AttributeError on `entry.get(...)`.
+        """
+        exp_root = tmp_path / "exp"
+        plugin_root = tmp_path / "plugin"
+        meta_dir = exp_root / "meta-patches"
+        meta_dir.mkdir(parents=True)
+        (meta_dir / "meta-changelog.json").write_text(json.dumps([
+            "legacy-string",
+            {"id": 1, "skill": "hp-tune", "change": "ok",
+             "reason": "ok", "expected_impact": "ok"},
+        ]))
+        (meta_dir / "hp-tune-SKILL.md").write_text(
+            "# [meta-improvement] test\nbody\n")
+        (plugin_root / "skills" / "hp-tune").mkdir(parents=True)
+
+        result = promote_meta_patch(str(exp_root), str(plugin_root), 0)
+
+        assert result["promoted"] is True
+        assert result["skill"] == "hp-tune"
+        dest = plugin_root / "skills" / "hp-tune" / "SKILL.md"
+        assert dest.is_file()
+        assert dest.read_text().startswith("# [meta-improvement]")
 
     def test_get_meta_patches_empty(self, tmp_path):
         """Returns empty list when nothing logged."""

@@ -716,11 +716,11 @@ def compute_proposal_outcomes(
             "best_improvement": f"{best_imp:.1f}%" if best_imp is not None else None,
         })
 
-    # HP proposal stats
-    configs_dir = results_dir / "proposed-configs" if results_dir.is_dir() else None
+    # HP proposal stats (proposed-configs is top-level, files live under round subdirs)
+    configs_dir = Path(exp_root) / "proposed-configs"
     total_proposed = 0
-    if configs_dir and configs_dir.is_dir():
-        total_proposed = len(list(configs_dir.glob("*.json")))
+    if configs_dir.is_dir():
+        total_proposed = len(list(configs_dir.glob("**/exp-*.json")))
 
     hp_proposals = {
         "total_proposed": total_proposed,

@@ -1,5 +1,17 @@
 #!/usr/bin/env python3
-"""Parse training log files for metrics."""
+"""Parse training log files for metrics.
+
+Auto-detects format: key=value, JSON lines, CSV, XGBoost, LightGBM, HuggingFace Trainer.
+Output: JSON list of {step, <metric_name>: value, ...} dicts.
+
+Usage:
+    python3 parse_logs.py <logfile>              # Auto-detect format
+    python3 parse_logs.py <logfile> <format>     # Force format (kv|json|csv|xgboost|hf)
+
+Examples:
+    python3 parse_logs.py experiments/logs/round-1-hp/exp-001/train.log
+    python3 parse_logs.py train.log json
+"""
 
 import json
 import re

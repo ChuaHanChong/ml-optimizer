@@ -4,8 +4,18 @@
 Stdlib-only — no Streamlit, Flask, or external JS libraries.
 
 Usage:
-    python3 dashboard.py <exp_root>                  # Generate HTML file
-    python3 dashboard.py <exp_root> --serve --port 8080  # Serve via HTTP
+    python3 dashboard.py <exp_root>                         # Static HTML dashboard
+    python3 dashboard.py <exp_root> --live                  # HTML with 30s auto-refresh
+    python3 dashboard.py <exp_root> --table                 # Markdown results table only
+    python3 dashboard.py <exp_root> --live --table          # Both HTML (live) + Markdown
+    python3 dashboard.py <exp_root> --serve --port 8080     # Serve via local HTTP
+    python3 dashboard.py <exp_root> --live --serve --port 8080  # Served live dashboard
+
+Output: <exp_root>/reports/dashboard.html (and/or <exp_root>/results-table.md)
+
+Note: The orchestrator runs this automatically after each experiment batch in Phase 7
+(with --live) and at Phase 9 (static). Manual invocation is only needed if you want
+to regenerate or serve the dashboard outside the pipeline.
 """
 
 import html as html_mod

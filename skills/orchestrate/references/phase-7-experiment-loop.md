@@ -250,6 +250,23 @@ When the implementation manifest contains multiple code branches:
 
 ## Loop Iteration:
 
+0. **Create a new round (MANDATORY):**
+   Before dispatching any agents in this iteration, create a round directory. The PreToolUse hook will block all `exp-*.json` writes that don't go inside a `round-N-<type>/` subdirectory.
+
+   ```bash
+   round_info=$(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/round_manager.py <exp_root> create-round hp --genid gen-<iteration>)
+   # Capture the "dir" field (e.g., "round-3-hp") — this is the round_dir to pass to all agents this iteration.
+   ```
+
+   **Round type by action:**
+   - `create-round hp` — default, for HP tuning batches (most iterations)
+   - `create-round evolved` — when hyperagent action is `shinka_evolve` or `llm_patch` (pivot: `code_evolution`)
+   - `create-round research` — when hyperagent action is `research_implement` (pivot: `method_proposal`)
+   - `create-round stacked` — Phase 8 method stacking (see phase-8-stacking.md)
+   - `create-round meta` — meta-improvement experiments
+
+   Save the `round_dir` into the iteration's local context. It will be passed to every subsequent dispatch in this iteration.
+
 1. **Get HP configs:**
    Dispatch the tuning agent (resume-or-dispatch pattern):
 
@@ -261,7 +278,7 @@ When the implementation manifest contains multiple code branches:
          CONTEXT FROM OTHER AGENTS:
          - ANALYZE (batch {N-1}): {recommendation}, correlations: {correlations}, branch_scores: {scores}
          - MONITOR: max_batch_size={max_batch_size} (OOM constraint)
-         Parameters: project_root: {project_root}, num_gpus: {num_gpus}, search_space: {search_space}, iteration: {iteration}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, code_branches: {code_branches}, max_batch_size: {max_batch_size or omit}, warm_start_enabled: {warm_start_enabled or false}, available_checkpoints: {available_checkpoints_json or {}}, branch_scores: {branch_scores_json or {}}."
+         Parameters: project_root: {project_root}, num_gpus: {num_gpus}, search_space: {search_space}, iteration: {iteration}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, code_branches: {code_branches}, max_batch_size: {max_batch_size or omit}, warm_start_enabled: {warm_start_enabled or false}, available_checkpoints: {available_checkpoints_json or {}}, branch_scores: {branch_scores_json or {}}, round_dir: {round_dir}."
      )
      ```
      → If `SendMessage` fails (agent no longer reachable): fall back to the `Agent()` dispatch below, update `agent_registry["tuning"]` with the new agentId.
@@ -270,7 +287,7 @@ When the implementation manifest contains multiple code branches:
      ```
      Agent(
        description: "HP tuning iteration {iteration}",
-       prompt: "Ultrathink. Propose HP configurations. Parameters: project_root: {project_root}, num_gpus: {num_gpus}, search_space: {search_space}, iteration: {iteration}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, code_branches: {code_branches}, max_batch_size: {max_batch_size or omit}, warm_start_enabled: {warm_start_enabled or false}, available_checkpoints: {available_checkpoints_json or {}}, branch_scores: {branch_scores_json or {}}.",
+       prompt: "Ultrathink. Propose HP configurations. Parameters: project_root: {project_root}, num_gpus: {num_gpus}, search_space: {search_space}, iteration: {iteration}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, code_branches: {code_branches}, max_batch_size: {max_batch_size or omit}, warm_start_enabled: {warm_start_enabled or false}, available_checkpoints: {available_checkpoints_json or {}}, branch_scores: {branch_scores_json or {}}, round_dir: {round_dir}.",
        subagent_type: "ml-optimizer:tuning-agent"
      )
      ```
@@ -308,6 +325,7 @@ When the implementation manifest contains multiple code branches:
 2. **Run experiments:**
    - For each proposed config, invoke `ml-optimizer:experiment` skill
    - Pass `code_branch` and `code_proposal` from the manifest (or null for HP-only)
+   - **Pass `round_dir` (from Step 0)** — the experiment skill will write results to `results/<round_dir>/<exp_id>.json`. Without this, the PreToolUse hook blocks the write.
    - If multiple GPUs available, dispatch experiments in parallel using the Agent tool
    - Each experiment runs on a separate GPU
 
@@ -444,11 +462,30 @@ When the implementation manifest contains multiple code branches:
 
    **Important:** If the user changes `primary_metric`, all future experiment rankings use the new metric. Past experiments are NOT re-ranked — the change applies going forward only.
 
+5b. **Check round completeness and close the round:**
+   Verify all expected experiments produced valid results, then close the round in the manifest.
+
+   ```bash
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/round_manager.py <exp_root> check-round <round_dir>
+   # Response: {"complete": bool, "total": N, "valid": N, "terminal": N,
+   #            "missing_logs": [...], "invalid": [...], "non_terminal": [...]}
+   ```
+
+   - If `complete: true`: proceed.
+   - If `non_terminal` is non-empty (experiments stuck in `running`/`pending`): wait for `experiment_setup.cleanup_stale_experiments()` to mark them failed, then re-check.
+   - If `invalid` is non-empty: each entry has `exp_id` + `errors`. Log to error tracker, attempt schema repair, or mark as failed.
+   - For missing experiment IDs (expected from proposed configs but no JSON file exists): create a minimal failed placeholder at `results/<round_dir>/<exp_id>.json` with `{"exp_id": "...", "status": "failed", "config": {...}, "metrics": {}, "notes": "agent did not produce result"}` to keep the round consistent.
+
+   Close the round with a one-line summary:
+   ```bash
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/round_manager.py <exp_root> close-round --summary "Iteration {N}: best {primary_metric}={value}, {completed}/{total} completed"
+   ```
+
 6. **Decision:**
    - If analyze says **continue**:
-     - Invoke hp-tune → loop back to step 2
+     - Loop back to step 0 (create a new round, then hp-tune → experiments)
    - If analyze says **pivot**:
-     - Apply pivot adjustments → invoke hp-tune → loop back to step 2
+     - Apply pivot adjustments → loop back to step 0 (create a new round with the appropriate `<type>`, then hp-tune → experiments)
      **Pivot dispatch by type:**
      - `"branch_test"`: Pass analyze's suggestion to hp-tune. Generate configs for untested branches with baseline HPs. No research needed.
      - `"hp_expand"`: Widen the search space around the best config (extend LR range by 2× in each direction). Pass updated `search_space` to hp-tune.

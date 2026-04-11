@@ -137,6 +137,82 @@ ENTRY POINT
   +-------------------+
 
 ================================================================================
+                  OUTPUT-STRUCTURE ENFORCEMENT (3-CHECKPOINT)
+================================================================================
+
+  Every agent dispatch passes through three hook checkpoints that together
+  guarantee the agent produces every documented output with valid schema,
+  correct path, and all mandatory fields. All three layers read the same
+  per-agent contract from scripts/output_contract.py (single source of truth).
+
+    +--------------------------------------------------------------------+
+    |  LAYER 1 — SubagentStart (BEFORE work)                             |
+    |  Hook: hooks/subagent-start-inject-goals.sh                        |
+    |    → python3 scripts/output_contract.py inject <exp_root> <agent>  |
+    |  Action: Injects the agent's output contract into its prompt —     |
+    |  exact paths, schema, dev_notes logging command. The agent         |
+    |  cannot claim it didn't know what to produce.                      |
+    +--------------------------------------------------------------------+
+                                   |
+                                   v
+    +--------------------------------------------------------------------+
+    |  LAYER 2 — PreToolUse Write|Edit (DURING work)                     |
+    |  Hook: scripts/validate_experiment_write.py                        |
+    |  Blocks Write/Edit that:                                           |
+    |    - lands in the wrong directory (must be a round subdir)         |
+    |    - fails schema_validator.py checks                              |
+    |    - misses completeness fields for status=completed               |
+    |      (iteration, method_tier, duration_seconds; plus code_branches |
+    |      + stacking_order for stacked tier)                            |
+    |    - missing notes for failed/diverged                             |
+    |    - violates frozen params from optimization-goals.json           |
+    |    - exceeds OOM batch size cap from learned-behaviors.json        |
+    |  Placeholder writes (status: running|pending) are exempt.          |
+    +--------------------------------------------------------------------+
+                                   |
+                                   v
+    +--------------------------------------------------------------------+
+    |  LAYER 3 — SubagentStop (AFTER work)                               |
+    |  Hook: scripts/validate_agent_output.py                            |
+    |    → imports output_contract.check_outputs(<agent>, <exp_root>)    |
+    |  Blocks if any required file/dir is missing.                       |
+    |  Also: reads last entry in dev_notes.md and verifies its embedded  |
+    |  <!-- agent_id: X --> matches the current invocation's agent_id    |
+    |  (stateless multi-day session log correlation).                    |
+    +--------------------------------------------------------------------+
+
+  Contract machinery (scripts/output_contract.py):
+
+    CONTRACTS = {
+      "prerequisites-agent": [unconditional prereq.json, required_if prepared-data/],
+      "baseline-agent":      [baseline.json, logs/baseline/train.log],
+      "research-agent":      [reports/research-findings*.md (glob)],
+      "implement-agent":     [results/implementation-manifest.json],
+      "tuning-agent":        [proposed-configs/<round_dir>/ (dir)],
+      "experiment-agent":    [4 entries: result JSON + log + script dir + artifacts dir],
+      "analysis-agent":      [any_of: batch-N-analysis.md | session-review.md],
+      "report-agent":        [final-report.md, progress_chart.png],
+    }
+
+  Advanced contract fields:
+    glob:         path contains wildcard (e.g. research-findings*.md)
+    dir:          path is a directory, not a file
+    any_of:       a list of paths, at least one must exist
+                  (e.g. analysis-agent batch mode vs session review mode)
+    required_if:  {file, jsonpath, equals} — conditional output, only enforced
+                  when the referenced file's dotted path equals the value.
+                  (e.g. prerequisites-agent's prepared-data/ is only required
+                  when dataset.prepared == true in prerequisites.json)
+
+  Subagents NOT in CONTRACTS are auto-approved at SubagentStop:
+    monitor-agent     — relay only, no file output
+    hyperagent-agent  — manages its own archive lifecycle (hyperagent/)
+
+  Note: orchestrator-agent is the main-thread agent (activated by settings.json),
+  not a subagent. SubagentStop doesn't fire for it at all — it's out of scope,
+  not "auto-approved".
+
+================================================================================
                         PHASE-BY-PHASE PIPELINE
 ================================================================================
 
@@ -525,8 +601,8 @@ ENTRY POINT
     |     pipeline-state.json (resumable)                          |
     +--------------------------------------------------------------+
 
-  Reads: results/exp-*.json, implementation-manifest.json, baseline.json
-  Writes: results/exp-*.json (stacked_default_hp / stacked_tuned_hp)
+  Reads: results/round-*/exp-*.json, implementation-manifest.json, baseline.json
+  Writes: results/round-N-stacked/exp-*.json (stacked_default_hp / stacked_tuned_hp)
           Git branches: ml-opt/stack-<N>
 
                     |
@@ -635,14 +711,15 @@ ENTRY POINT
   6      | research-findings.md           | results/implementation-manifest.json
          |                                | Git branches: ml-opt/<slug>
   7.1    | code-archive.jsonl,            | (hyperagent decision)
-         | results/exp-*.json,            |
+         | results/round-*/exp-*.json,    |
          | operator_stats, dead-ends.json |
-  7.2    | proposed-configs / parent      | results/exp-NNN.json (+ reproducibility)
+  7.2    | proposed-configs/round-N-hp/   | results/round-N-hp/exp-NNN.json (+ reproducibility)
          | branch from archive            | code-archive.jsonl (updated)
-         |                                | logs/<exp-id>/train.log
-         |                                | logs/<exp-id>/pip_freeze.txt
-         |                                | scripts/<exp-id>.sh
-  7.3    | logs/<exp-id>/train.log        | (status: healthy/diverged/unmonitored)
+         |                                | logs/round-N-hp/<exp-id>/train.log
+         |                                | logs/round-N-hp/<exp-id>/pip_freeze.txt
+         |                                | scripts/round-N-hp/<exp-id>/train.sh
+         |                                | artifacts/round-N-hp/<exp-id>/
+  7.3    | logs/round-N-hp/<exp-id>/train.log | (status: healthy/diverged/unmonitored)
   7.3    | results from 7.2               | code-archive.jsonl (add entry)
          |                                | learned-behaviors.json (operator outcome)
   7.4    | results/, code-archive.jsonl,  | reports/batch-N-analysis.md
@@ -652,7 +729,7 @@ ENTRY POINT
          |                                | results-table.md (--table)
   7.5    | error patterns, dead-ends,     | (research dispatch or exit)
          | agenda, success metrics        |
-  8      | results/exp-*.json,            | results/exp-*.json (stacking)
+  8      | results/round-*/exp-*.json,    | results/round-N-stacked/exp-*.json (stacking)
          | implementation-manifest.json   | Git branches: ml-opt/stack-<N>
          |                                | Git branches: ml-opt/evolved-stack-<N> (if evolved)
          |                                | artifacts/shinka-task/ (evolve conversion)
@@ -702,6 +779,10 @@ ENTRY POINT
   Phase gates: pipeline_state.py gate <from> <to> (validates transition legality + completion)
   Decision log: experiments/decision-log.json (append-only, SHA-256 input hashing)
   Relay schemas: schema_validator.py relay <route> <json> (7 routes, typed fields)
+  Output contracts: output_contract.py (single source for 8 agents — see 3-checkpoint
+                    enforcement section). Layer 1 SubagentStart injects, Layer 2
+                    PreToolUse validates writes, Layer 3 SubagentStop verifies outputs.
+                    Supports glob/dir/any_of/required_if for conditional enforcement.
   ShinkaEvolve handoff: SHINKA_HANDOFF_TIMEOUT=600 (configurable), .inprogress marker
                          extends deadline, .heartbeat every 5s for liveness, sleep(1) poll
   Goal anchor: optimization-goals.json (Phase 0, read by all agents)

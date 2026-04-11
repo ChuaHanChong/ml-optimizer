@@ -14,10 +14,22 @@ You are running a comprehensive diagnostic of the ml-optimizer plugin. This vali
 
 ```bash
 cd $PLUGIN_ROOT
+
+# Collection guard: verify pytest discovers at least 1100 tests before running.
+# Catches accidental test-file deletion or broken test collection that would
+# otherwise hide behind a "no failures reported" status.
+COLLECTED=$(python3 -m pytest tests/ --collect-only -q 2>&1 | grep -oE '[0-9]+ tests collected' | grep -oE '[0-9]+')
+if [ -z "$COLLECTED" ] || [ "$COLLECTED" -lt 1100 ]; then
+  echo "✗ [Step 1] pytest collection guard FAILED — expected ≥1100 tests, found '$COLLECTED'"
+else
+  echo "✓ [Step 1] pytest collection guard: $COLLECTED tests discovered"
+fi
+
+# Run the full suite
 python3 -m pytest tests/ -v --tb=short 2>&1 | tail -60
 ```
 
-This runs all 10 test files (~700 tests). Report failures. GPU-related test failures on non-GPU machines are acceptable. If `scripts/plot_results.py` fails due to missing matplotlib, note it but continue.
+This runs all 17 test files (~1192 tests total; ~1149 when `test_evolve.py` is excluded because ShinkaEvolve pulls extra deps). Report failures. GPU-related test failures on non-GPU machines are acceptable. If `scripts/plot_results.py` fails due to missing matplotlib, note it but continue. If `test_evolve.py` can't be collected due to missing ShinkaEvolve dependencies, run with `--ignore=tests/test_evolve.py` and the collection guard will tolerate the lower count.
 
 ## Step 2: Script CLI smoke tests
 
@@ -127,10 +139,12 @@ python3 -c "import matplotlib" 2>/dev/null && \
   python3 $SCRIPTS/plot_results.py /tmp/ml-opt-cli-test/results loss comparison 2>/dev/null \
   && echo "✓ plot_results" || echo "— plot_results (matplotlib missing or empty, OK)"
 
-# 16. hyperagent per-skill scripts — full archive workflow (8 subcommands)
+# 16. hyperagent per-skill scripts — full archive workflow across all 5 per-skill scripts
 INIT_SCRIPT=$PLUGIN_ROOT/skills/hyperagent/Hyperagents/skills/hyperagent-init/scripts/init_archive.py
 SELECT_SCRIPT=$PLUGIN_ROOT/skills/hyperagent/Hyperagents/skills/hyperagent-select/scripts/select_parent.py
 ARCHIVE_SCRIPT=$PLUGIN_ROOT/skills/hyperagent/Hyperagents/skills/hyperagent-archive/scripts/archive_utils.py
+INSPECT_SCRIPT=$PLUGIN_ROOT/skills/hyperagent/Hyperagents/skills/hyperagent-inspect/scripts/inspect_best.py
+EVAL_SCRIPT=$PLUGIN_ROOT/skills/hyperagent/Hyperagents/skills/hyperagent-eval/scripts/run_eval.py
 mkdir -p /tmp/ml-opt-cli-test/results
 echo '{"metrics":{"accuracy":0.82},"config":{}}' > /tmp/ml-opt-cli-test/results/baseline.json
 echo '{"user_choices":{"primary_metric":"accuracy"}}' > /tmp/ml-opt-cli-test/pipeline-state.json
@@ -145,11 +159,64 @@ python3 $INIT_SCRIPT --output-dir /tmp/ml-opt-cli-test/hyperagent \
   && python3 $ARCHIVE_SCRIPT best --output-dir /tmp/ml-opt-cli-test/hyperagent -n 1 > /dev/null \
   && python3 $ARCHIVE_SCRIPT operator-stats --output-dir /tmp/ml-opt-cli-test/hyperagent > /dev/null \
   && python3 $ARCHIVE_SCRIPT prune --output-dir /tmp/ml-opt-cli-test/hyperagent > /dev/null \
-  && echo "✓ hyperagent per-skill scripts (10 subcommands)" || echo "✗ hyperagent per-skill scripts FAILED"
+  && python3 $INSPECT_SCRIPT --output-dir /tmp/ml-opt-cli-test/hyperagent --k 3 > /dev/null \
+  && python3 $EVAL_SCRIPT --help > /dev/null \
+  && echo "✓ hyperagent per-skill scripts (5 scripts, 12 invocations)" || echo "✗ hyperagent per-skill scripts FAILED"
 
 # 17. setup_hyperagent.sh
 bash $PLUGIN_ROOT/scripts/setup_hyperagent.sh > /dev/null 2>&1 \
   && echo "✓ setup_hyperagent" || echo "✗ setup_hyperagent FAILED"
+
+# 18. round_manager.py (round lifecycle + completeness checks — 10 subcommands)
+ROUND_EXP=/tmp/ml-opt-cli-test/round-mgr
+mkdir -p $ROUND_EXP
+python3 $SCRIPTS/round_manager.py $ROUND_EXP create-round hp > /dev/null \
+  && python3 $SCRIPTS/round_manager.py $ROUND_EXP current-round | grep -q '"dir": *"round-1-hp"' \
+  && python3 $SCRIPTS/round_manager.py $ROUND_EXP next-id | grep -q '"exp_id": *"exp-001"' \
+  && python3 $SCRIPTS/round_manager.py $ROUND_EXP register-experiment round-1-hp exp-001 | grep -q '"registered": *true' \
+  && python3 $SCRIPTS/round_manager.py $ROUND_EXP check-round round-1-hp > /dev/null 2>&1; [ $? -eq 2 ] \
+  && python3 $SCRIPTS/round_manager.py $ROUND_EXP check-proposals round-1-hp > /dev/null 2>&1; [ $? -eq 2 ] \
+  && python3 $SCRIPTS/round_manager.py $ROUND_EXP check-baseline > /dev/null 2>&1; [ $? -eq 2 ] \
+  && python3 $SCRIPTS/round_manager.py $ROUND_EXP check-prerequisites > /dev/null 2>&1; [ $? -eq 2 ] \
+  && python3 $SCRIPTS/round_manager.py $ROUND_EXP check-manifest > /dev/null 2>&1; [ $? -eq 2 ] \
+  && python3 $SCRIPTS/round_manager.py $ROUND_EXP close-round --summary "smoke test" | grep -q '"closed": *true' \
+  && echo "✓ round_manager (10 subcommands)" || echo "✗ round_manager FAILED"
+
+# 19. output_contract.py (inject + check subcommands — exercises any_of, required_if rendering)
+OC_EXP=/tmp/ml-opt-cli-test/output-contract
+mkdir -p $OC_EXP/results $OC_EXP/logs/baseline
+echo '{"exp_id":"baseline"}' > $OC_EXP/results/baseline.json
+echo "log" > $OC_EXP/logs/baseline/train.log
+python3 $SCRIPTS/output_contract.py inject $OC_EXP baseline-agent | grep -q "REQUIRED OUTPUTS" \
+  && python3 $SCRIPTS/output_contract.py inject $OC_EXP analysis-agent | grep -q "AT LEAST ONE of" \
+  && python3 $SCRIPTS/output_contract.py inject $OC_EXP prerequisites-agent | grep -q "conditional" \
+  && python3 $SCRIPTS/output_contract.py check $OC_EXP baseline-agent | grep -q '"complete": *true' \
+  && python3 $SCRIPTS/output_contract.py check $OC_EXP report-agent > /dev/null 2>&1; [ $? -eq 2 ] \
+  && echo "✓ output_contract (inject × 3 + check × 2)" || echo "✗ output_contract FAILED"
+
+# 20. dev_notes.py (init + append + last-agent subcommands — dev_notes.md writer + agent_id correlation)
+DN_EXP=/tmp/ml-opt-cli-test/dev-notes
+mkdir -p $DN_EXP
+python3 $SCRIPTS/dev_notes.py $DN_EXP init > /dev/null \
+  && [ -f $DN_EXP/dev_notes.md ] \
+  && python3 $SCRIPTS/dev_notes.py $DN_EXP append baseline-agent "smoke test entry" --agent-id smoke-X > /dev/null \
+  && grep -q '<!-- agent_id: smoke-X -->' $DN_EXP/dev_notes.md \
+  && python3 $SCRIPTS/dev_notes.py $DN_EXP last-agent | grep -q '"agent_id": *"smoke-X"' \
+  && echo "✓ dev_notes (init + append + last-agent)" || echo "✗ dev_notes FAILED"
+
+# 21. setup_evolve.sh (ShinkaEvolve submodule init — must be idempotent)
+bash $PLUGIN_ROOT/scripts/setup_evolve.sh > /dev/null 2>&1 \
+  && echo "✓ setup_evolve" || echo "✗ setup_evolve FAILED"
+
+# 22. validate_experiment_write.py (PreToolUse hook smoke test — empty stdin should approve)
+echo '' | python3 $SCRIPTS/validate_experiment_write.py 2>/dev/null | grep -q '"decision": *"approve"' \
+  && echo "✓ validate_experiment_write (empty stdin → approve)" \
+  || echo "✗ validate_experiment_write FAILED"
+
+# 23. validate_agent_output.py (SubagentStop hook smoke test — empty stdin should approve)
+echo '' | python3 $SCRIPTS/validate_agent_output.py 2>/dev/null | grep -q '"decision": *"approve"' \
+  && echo "✓ validate_agent_output (empty stdin → approve)" \
+  || echo "✗ validate_agent_output FAILED"
 
 rm -rf /tmp/ml-opt-cli-test
 echo "=== Script CLI Tests Done ==="
@@ -157,9 +224,18 @@ echo "=== Script CLI Tests Done ==="
 
 Report pass/fail count.
 
-## Step 3: Hook functional tests
+## Step 3: Hook tests
 
-Test the 8 hooks with synthetic JSON stdin inputs.
+Test every hook wired in `hooks.json` plus the 3-checkpoint enforcement machinery. Split into two sub-steps:
+
+- **Step 3.1** — functional tests for the 9 lifecycle hooks (security, compaction, status, state-change detection).
+- **Step 3.2** — 3-checkpoint enforcement tests for the 3 output-structure hooks (SubagentStart inject, PreToolUse Write/Edit validate, SubagentStop check) with synthetic stdin covering all validator features (`any_of`, `required_if`, stacked tier, frozen params, OOM cap, dev_notes agent_id correlation).
+
+Together these cover all 11 hooks wired in `hooks.json` plus the `statusline.sh` helper.
+
+### Step 3.1: Hook functional tests
+
+Test every hook wired in `hooks.json` with synthetic JSON stdin inputs. Covers 9 lifecycle hooks (bash-safety, file-guardrail, detect-critical-errors, pre-compact, post-compact-context, stop-check, file-changed-pipeline-state, cwd-changed-detect-experiments, statusline helper). The 3 output-structure enforcement hooks (subagent-start-inject-goals, validate_experiment_write, validate_agent_output) are tested separately in **Step 3.2**.
 
 **Prerequisite:** Check if `jq` is installed (`which jq`). If not, skip hook tests and note in report.
 
@@ -215,9 +291,8 @@ echo '{"tool_result":{"stdout":"Segmentation fault (core dumped)","stderr":""},"
   | bash $HOOKS/detect-critical-errors.sh 2>/dev/null
 [ $? -eq 0 ] && echo "✓ detect-critical-errors handles segfault" || echo "✗ detect-critical-errors FAILED"
 
-# subagent-stop-hook.sh — should output approval
-echo '{}' | bash $HOOKS/subagent-stop-hook.sh | grep -q '"decision":"approve"' \
-  && echo "✓ subagent-stop-hook outputs approval" || echo "✗ subagent-stop-hook FAILED"
+# Note: subagent-stop-hook.sh was removed — SubagentStop is now handled by
+# scripts/validate_agent_output.py which is tested in Step 3.2 below.
 
 # pre-compact.sh — should output reminder when pipeline-state.json exists
 echo '{"phase":3,"iteration":0,"status":"running"}' > /tmp/ml-opt-hook-test/experiments/pipeline-state.json
@@ -251,6 +326,48 @@ echo '{"cwd":"/tmp/ml-opt-hook-test"}' | bash $HOOKS/stop-check.sh 2>/dev/null
 
 rm -rf /tmp/ml-opt-hook-test
 
+# file-changed-pipeline-state.sh — silent when pipeline-state.json is valid
+export CLAUDE_PLUGIN_ROOT=$PLUGIN_ROOT
+mkdir -p /tmp/ml-opt-hook-test/.claude /tmp/ml-opt-hook-test/experiments
+echo '{"exp_root":"/tmp/ml-opt-hook-test/experiments"}' > /tmp/ml-opt-hook-test/.claude/ml-optimizer.json
+echo '{"phase":3,"iteration":0}' > /tmp/ml-opt-hook-test/experiments/pipeline-state.json
+OUT=$(echo '{"cwd":"/tmp/ml-opt-hook-test"}' | bash $HOOKS/file-changed-pipeline-state.sh 2>&1)
+[ $? -eq 0 ] && [ -z "$OUT" ] \
+  && echo "✓ file-changed-pipeline-state silent on valid state" \
+  || echo "✗ file-changed-pipeline-state FAILED on valid state"
+
+# file-changed-pipeline-state.sh — warns on corrupt JSON
+echo 'NOT JSON' > /tmp/ml-opt-hook-test/experiments/pipeline-state.json
+OUT=$(echo '{"cwd":"/tmp/ml-opt-hook-test"}' | bash $HOOKS/file-changed-pipeline-state.sh 2>&1)
+[ $? -eq 0 ] && echo "$OUT" | grep -q "corrupt" \
+  && echo "✓ file-changed-pipeline-state warns on corrupt JSON" \
+  || echo "✗ file-changed-pipeline-state FAILED to warn on corrupt JSON"
+
+# file-changed-pipeline-state.sh — silent when no exp_root
+OUT=$(echo '{"cwd":"/tmp/nonexistent-dir-xyz"}' | bash $HOOKS/file-changed-pipeline-state.sh 2>&1)
+[ $? -eq 0 ] && [ -z "$OUT" ] \
+  && echo "✓ file-changed-pipeline-state silent without exp_root" \
+  || echo "✗ file-changed-pipeline-state FAILED without exp_root"
+
+rm -rf /tmp/ml-opt-hook-test
+
+# cwd-changed-detect-experiments.sh — announces resume when state exists
+mkdir -p /tmp/ml-opt-hook-test/.claude /tmp/ml-opt-hook-test/experiments
+echo '{"exp_root":"/tmp/ml-opt-hook-test/experiments"}' > /tmp/ml-opt-hook-test/.claude/ml-optimizer.json
+echo '{"phase":7,"iteration":3,"user_choices":{"primary_metric":"loss"}}' > /tmp/ml-opt-hook-test/experiments/pipeline-state.json
+OUT=$(echo '{"cwd":"/tmp/ml-opt-hook-test"}' | bash $HOOKS/cwd-changed-detect-experiments.sh 2>&1)
+[ $? -eq 0 ] && echo "$OUT" | grep -q 'Existing optimization found' \
+  && echo "✓ cwd-changed-detect-experiments announces existing optimization" \
+  || echo "✗ cwd-changed-detect-experiments FAILED to announce"
+
+# cwd-changed-detect-experiments.sh — silent without exp_root
+OUT=$(echo '{"cwd":"/tmp/nonexistent-dir-xyz"}' | bash $HOOKS/cwd-changed-detect-experiments.sh 2>&1)
+[ $? -eq 0 ] && [ -z "$OUT" ] \
+  && echo "✓ cwd-changed-detect-experiments silent without exp_root" \
+  || echo "✗ cwd-changed-detect-experiments FAILED to stay silent"
+
+rm -rf /tmp/ml-opt-hook-test
+
 # statusline.sh — should output status when pipeline state exists
 mkdir -p /tmp/ml-opt-hook-test/experiments/results
 echo '{"phase":7,"iteration":3,"user_choices":{"primary_metric":"loss","lower_is_better":true}}' \
@@ -271,6 +388,257 @@ echo "=== Hook Tests Done ==="
 ```
 
 Report pass/fail count.
+
+### Step 3.2: 3-checkpoint output structure enforcement
+
+Test the 3 hooks that enforce documented output structure for every agent dispatch. Uses a synthetic experiment directory under `/tmp`. All 3 layers of the enforcement model (SubagentStart inject, PreToolUse Write/Edit validate, SubagentStop check) are exercised with mock stdin — no live agent dispatch required.
+
+**Prerequisite:** `jq` must be installed (already checked in Step 3.1). Set `$SCRIPTS` and `$HOOKS` to the plugin directories.
+
+```bash
+SCRIPTS=$PLUGIN_ROOT/scripts
+HOOKS=$PLUGIN_ROOT/hooks
+ENFORCE_EXP=/tmp/ml-opt-enforce-test
+rm -rf $ENFORCE_EXP
+mkdir -p $ENFORCE_EXP/.claude
+mkdir -p $ENFORCE_EXP/experiments/results
+mkdir -p $ENFORCE_EXP/experiments/logs
+mkdir -p $ENFORCE_EXP/experiments/scripts
+mkdir -p $ENFORCE_EXP/experiments/artifacts
+mkdir -p $ENFORCE_EXP/experiments/reports
+echo '{"exp_root":"'$ENFORCE_EXP'/experiments"}' > $ENFORCE_EXP/.claude/ml-optimizer.json
+
+echo "=== 3-Checkpoint Enforcement Tests ==="
+
+# --- LAYER 1: SubagentStart contract injection ---
+
+# baseline-agent: regular path contract
+INJECTED=$(echo '{"cwd":"'$ENFORCE_EXP'","subagent_type":"ml-optimizer:baseline-agent"}' \
+  | CLAUDE_PLUGIN_ROOT=$PLUGIN_ROOT $HOOKS/subagent-start-inject-goals.sh 2>/dev/null)
+echo "$INJECTED" | grep -q "results/baseline.json" \
+  && echo "$INJECTED" | grep -q "logs/baseline/train.log" \
+  && echo "✓ L1 injects baseline-agent contract (path + log)" \
+  || echo "✗ L1 FAILED for baseline-agent"
+
+# analysis-agent: any_of rendering
+INJECTED=$(echo '{"cwd":"'$ENFORCE_EXP'","subagent_type":"ml-optimizer:analysis-agent"}' \
+  | CLAUDE_PLUGIN_ROOT=$PLUGIN_ROOT $HOOKS/subagent-start-inject-goals.sh 2>/dev/null)
+echo "$INJECTED" | grep -q "AT LEAST ONE of" \
+  && echo "$INJECTED" | grep -q "batch-\*-analysis.md" \
+  && echo "$INJECTED" | grep -q "session-review.md" \
+  && echo "✓ L1 renders analysis-agent any_of (batch | session-review)" \
+  || echo "✗ L1 FAILED any_of rendering"
+
+# prerequisites-agent: required_if rendering
+INJECTED=$(echo '{"cwd":"'$ENFORCE_EXP'","subagent_type":"ml-optimizer:prerequisites-agent"}' \
+  | CLAUDE_PLUGIN_ROOT=$PLUGIN_ROOT $HOOKS/subagent-start-inject-goals.sh 2>/dev/null)
+echo "$INJECTED" | grep -q "conditional" \
+  && echo "$INJECTED" | grep -q "dataset.prepared" \
+  && echo "✓ L1 renders prerequisites-agent required_if (dataset.prepared)" \
+  || echo "✗ L1 FAILED required_if rendering"
+
+# --- LAYER 2: PreToolUse Write/Edit validation ---
+# validate_experiment_write.py always exits 0; the decision is in stdout JSON:
+#   {"decision":"approve"} or {"decision":"block","reason":"..."}
+# The Claude Code harness reads the JSON and applies the block.
+
+# Valid experiment result in round subdir → approve
+mkdir -p $ENFORCE_EXP/experiments/results/round-1-hp
+L2_VALID='{"cwd":"'$ENFORCE_EXP'","tool_name":"Write","tool_input":{"file_path":"'$ENFORCE_EXP'/experiments/results/round-1-hp/exp-001.json","content":"{\"exp_id\":\"exp-001\",\"status\":\"completed\",\"config\":{\"lr\":0.01},\"metrics\":{\"loss\":0.4},\"iteration\":1,\"method_tier\":\"baseline\",\"duration_seconds\":120.0}"}}'
+L2_OUT=$(echo "$L2_VALID" | python3 $SCRIPTS/validate_experiment_write.py 2>/dev/null)
+echo "$L2_OUT" | grep -q '"decision": *"approve"' \
+  && echo "✓ L2 allows valid round-based result" \
+  || echo "✗ L2 wrongly blocked valid write"
+
+# Missing completeness fields (status=completed without iteration/method_tier/duration_seconds) → block
+L2_BAD='{"cwd":"'$ENFORCE_EXP'","tool_name":"Write","tool_input":{"file_path":"'$ENFORCE_EXP'/experiments/results/round-1-hp/exp-002.json","content":"{\"exp_id\":\"exp-002\",\"status\":\"completed\",\"config\":{},\"metrics\":{\"loss\":0.4}}"}}'
+L2_OUT=$(echo "$L2_BAD" | python3 $SCRIPTS/validate_experiment_write.py 2>/dev/null)
+echo "$L2_OUT" | grep -q '"decision": *"block"' \
+  && echo "$L2_OUT" | grep -q "mandatory fields" \
+  && echo "✓ L2 blocks incomplete status=completed" \
+  || echo "✗ L2 FAILED to block missing completeness fields"
+
+# Write directly to results/ (not round subdir) → block
+L2_FLAT='{"cwd":"'$ENFORCE_EXP'","tool_name":"Write","tool_input":{"file_path":"'$ENFORCE_EXP'/experiments/results/exp-003.json","content":"{\"exp_id\":\"exp-003\",\"status\":\"completed\",\"iteration\":1,\"method_tier\":\"baseline\",\"duration_seconds\":10}"}}'
+L2_OUT=$(echo "$L2_FLAT" | python3 $SCRIPTS/validate_experiment_write.py 2>/dev/null)
+echo "$L2_OUT" | grep -q '"decision": *"block"' \
+  && echo "$L2_OUT" | grep -q "round subdirectory" \
+  && echo "✓ L2 blocks flat results/ write (must be round subdir)" \
+  || echo "✗ L2 FAILED to block flat path"
+
+# Placeholder write (status: running) → approve (exempt from completeness check,
+# but base schema still requires config + metrics — use empty dicts)
+L2_PLACEHOLDER='{"cwd":"'$ENFORCE_EXP'","tool_name":"Write","tool_input":{"file_path":"'$ENFORCE_EXP'/experiments/results/round-1-hp/exp-004.json","content":"{\"exp_id\":\"exp-004\",\"status\":\"running\",\"config\":{},\"metrics\":{}}"}}'
+L2_OUT=$(echo "$L2_PLACEHOLDER" | python3 $SCRIPTS/validate_experiment_write.py 2>/dev/null)
+echo "$L2_OUT" | grep -q '"decision": *"approve"' \
+  && echo "✓ L2 allows placeholder status=running (no completeness check)" \
+  || echo "✗ L2 wrongly blocked placeholder"
+
+# Stacked tier missing code_branches + stacking_order → block
+mkdir -p $ENFORCE_EXP/experiments/results/round-1-stacked
+L2_STACK='{"cwd":"'$ENFORCE_EXP'","tool_name":"Write","tool_input":{"file_path":"'$ENFORCE_EXP'/experiments/results/round-1-stacked/exp-010.json","content":"{\"exp_id\":\"exp-010\",\"status\":\"completed\",\"config\":{},\"metrics\":{\"loss\":0.3},\"iteration\":1,\"method_tier\":\"stacked_default_hp\",\"duration_seconds\":60}"}}'
+L2_OUT=$(echo "$L2_STACK" | python3 $SCRIPTS/validate_experiment_write.py 2>/dev/null)
+echo "$L2_OUT" | grep -q '"decision": *"block"' \
+  && echo "$L2_OUT" | grep -q "code_branches" \
+  && echo "$L2_OUT" | grep -q "stacking_order" \
+  && echo "✓ L2 blocks stacked_ tier missing code_branches/stacking_order" \
+  || echo "✗ L2 FAILED to block incomplete stacked tier"
+
+# Failed without notes → block
+L2_FAIL='{"cwd":"'$ENFORCE_EXP'","tool_name":"Write","tool_input":{"file_path":"'$ENFORCE_EXP'/experiments/results/round-1-hp/exp-011.json","content":"{\"exp_id\":\"exp-011\",\"status\":\"failed\",\"config\":{},\"metrics\":{}}"}}'
+L2_OUT=$(echo "$L2_FAIL" | python3 $SCRIPTS/validate_experiment_write.py 2>/dev/null)
+echo "$L2_OUT" | grep -q '"decision": *"block"' \
+  && echo "$L2_OUT" | grep -q "notes" \
+  && echo "✓ L2 blocks failed status without notes field" \
+  || echo "✗ L2 FAILED to require notes for failed"
+
+# Diverged WITH notes → approve
+L2_DIV='{"cwd":"'$ENFORCE_EXP'","tool_name":"Write","tool_input":{"file_path":"'$ENFORCE_EXP'/experiments/results/round-1-hp/exp-012.json","content":"{\"exp_id\":\"exp-012\",\"status\":\"diverged\",\"config\":{},\"metrics\":{},\"notes\":\"NaN at step 50\"}"}}'
+L2_OUT=$(echo "$L2_DIV" | python3 $SCRIPTS/validate_experiment_write.py 2>/dev/null)
+echo "$L2_OUT" | grep -q '"decision": *"approve"' \
+  && echo "✓ L2 allows diverged status with notes field" \
+  || echo "✗ L2 wrongly blocked diverged with notes"
+
+# Frozen parameter violation → block
+# (requires optimization-goals.json with constraints.frozen_parameters)
+cat > $ENFORCE_EXP/experiments/optimization-goals.json << 'EOFGOALS'
+{"constraints":{"frozen_parameters":["model_size","dataset"]}}
+EOFGOALS
+L2_FROZEN='{"cwd":"'$ENFORCE_EXP'","tool_name":"Write","tool_input":{"file_path":"'$ENFORCE_EXP'/experiments/results/round-1-hp/exp-013.json","content":"{\"exp_id\":\"exp-013\",\"status\":\"completed\",\"config\":{\"lr\":0.01,\"model_size\":\"large\"},\"metrics\":{\"loss\":0.4},\"iteration\":1,\"method_tier\":\"baseline\",\"duration_seconds\":60}"}}'
+L2_OUT=$(echo "$L2_FROZEN" | python3 $SCRIPTS/validate_experiment_write.py 2>/dev/null)
+echo "$L2_OUT" | grep -q '"decision": *"block"' \
+  && echo "$L2_OUT" | grep -q "frozen parameter 'model_size'" \
+  && echo "✓ L2 blocks config that modifies frozen parameter" \
+  || echo "✗ L2 FAILED to block frozen parameter violation"
+
+# OOM batch size cap violation → block
+# (requires learned-behaviors.json with resource_constraints.max_batch_size)
+cat > $ENFORCE_EXP/experiments/learned-behaviors.json << 'EOFBEH'
+{"resource_constraints":[{"max_batch_size":128}]}
+EOFBEH
+L2_OOM='{"cwd":"'$ENFORCE_EXP'","tool_name":"Write","tool_input":{"file_path":"'$ENFORCE_EXP'/experiments/results/round-1-hp/exp-014.json","content":"{\"exp_id\":\"exp-014\",\"status\":\"completed\",\"config\":{\"batch_size\":512},\"metrics\":{\"loss\":0.4},\"iteration\":1,\"method_tier\":\"baseline\",\"duration_seconds\":60}"}}'
+L2_OUT=$(echo "$L2_OOM" | python3 $SCRIPTS/validate_experiment_write.py 2>/dev/null)
+echo "$L2_OUT" | grep -q '"decision": *"block"' \
+  && echo "$L2_OUT" | grep -q "batch_size=512 exceeds OOM limit 128" \
+  && echo "✓ L2 blocks config that exceeds OOM batch_size cap" \
+  || echo "✗ L2 FAILED to block OOM cap violation"
+
+# Valid proposed-config (top-level proposed-configs/round-*/) → approve
+mkdir -p $ENFORCE_EXP/experiments/proposed-configs/round-1-hp
+L2_PROP_OK='{"cwd":"'$ENFORCE_EXP'","tool_name":"Write","tool_input":{"file_path":"'$ENFORCE_EXP'/experiments/proposed-configs/round-1-hp/exp-015.json","content":"{\"exp_id\":\"exp-015\",\"config\":{\"lr\":0.005,\"batch_size\":64},\"method_tier\":\"method_tuned_hp\",\"iteration\":2,\"code_branch\":null,\"gpu_id\":0,\"reasoning\":\"Lower lr based on prior results\"}"}}'
+L2_OUT=$(echo "$L2_PROP_OK" | python3 $SCRIPTS/validate_experiment_write.py 2>/dev/null)
+echo "$L2_OUT" | grep -q '"decision": *"approve"' \
+  && echo "✓ L2 allows valid proposed-config in round subdir" \
+  || echo "✗ L2 wrongly blocked valid proposed-config"
+
+# Proposed-config exceeds OOM cap → block (goal compliance also runs on proposals)
+L2_PROP_BAD='{"cwd":"'$ENFORCE_EXP'","tool_name":"Write","tool_input":{"file_path":"'$ENFORCE_EXP'/experiments/proposed-configs/round-1-hp/exp-016.json","content":"{\"exp_id\":\"exp-016\",\"config\":{\"lr\":0.01,\"batch_size\":512},\"method_tier\":\"method_tuned_hp\",\"iteration\":2,\"code_branch\":null,\"gpu_id\":0,\"reasoning\":\"test\"}"}}'
+L2_OUT=$(echo "$L2_PROP_BAD" | python3 $SCRIPTS/validate_experiment_write.py 2>/dev/null)
+echo "$L2_OUT" | grep -q '"decision": *"block"' \
+  && echo "$L2_OUT" | grep -q "OOM limit" \
+  && echo "✓ L2 blocks proposed-config that exceeds OOM cap (goal compliance on proposals)" \
+  || echo "✗ L2 FAILED to enforce OOM cap on proposed-config"
+
+# Cleanup goals/behaviors so they don't affect L3 tests below
+rm -f $ENFORCE_EXP/experiments/optimization-goals.json $ENFORCE_EXP/experiments/learned-behaviors.json
+
+# --- LAYER 3: SubagentStop output verification ---
+
+# baseline-agent with both outputs → approve
+mkdir -p $ENFORCE_EXP/experiments/logs/baseline
+echo '{"exp_id":"baseline"}' > $ENFORCE_EXP/experiments/results/baseline.json
+echo "log data" > $ENFORCE_EXP/experiments/logs/baseline/train.log
+DECISION=$(echo '{"cwd":"'$ENFORCE_EXP'","subagent_type":"ml-optimizer:baseline-agent"}' \
+  | python3 $SCRIPTS/validate_agent_output.py 2>/dev/null)
+echo "$DECISION" | grep -q '"decision": *"approve"' \
+  && echo "✓ L3 approves baseline-agent with both outputs" \
+  || echo "✗ L3 FAILED to approve baseline-agent"
+
+# baseline-agent with missing log → block
+rm $ENFORCE_EXP/experiments/logs/baseline/train.log
+DECISION=$(echo '{"cwd":"'$ENFORCE_EXP'","subagent_type":"ml-optimizer:baseline-agent"}' \
+  | python3 $SCRIPTS/validate_agent_output.py 2>/dev/null)
+echo "$DECISION" | grep -q '"decision": *"block"' \
+  && echo "$DECISION" | grep -q "train.log" \
+  && echo "✓ L3 blocks baseline-agent missing log" \
+  || echo "✗ L3 FAILED to block missing log"
+
+# analysis-agent with batch report (any_of) → approve
+echo "# Batch 1" > $ENFORCE_EXP/experiments/reports/batch-1-analysis.md
+DECISION=$(echo '{"cwd":"'$ENFORCE_EXP'","subagent_type":"ml-optimizer:analysis-agent"}' \
+  | python3 $SCRIPTS/validate_agent_output.py 2>/dev/null)
+echo "$DECISION" | grep -q '"decision": *"approve"' \
+  && echo "✓ L3 approves analysis-agent via any_of (batch report)" \
+  || echo "✗ L3 FAILED any_of batch"
+
+# analysis-agent with session review only (any_of) → approve
+rm $ENFORCE_EXP/experiments/reports/batch-1-analysis.md
+echo "# Review" > $ENFORCE_EXP/experiments/reports/session-review.md
+DECISION=$(echo '{"cwd":"'$ENFORCE_EXP'","subagent_type":"ml-optimizer:analysis-agent"}' \
+  | python3 $SCRIPTS/validate_agent_output.py 2>/dev/null)
+echo "$DECISION" | grep -q '"decision": *"approve"' \
+  && echo "✓ L3 approves analysis-agent via any_of (session review)" \
+  || echo "✗ L3 FAILED any_of session"
+
+# analysis-agent with NEITHER output (any_of not satisfied) → block
+rm $ENFORCE_EXP/experiments/reports/session-review.md
+DECISION=$(echo '{"cwd":"'$ENFORCE_EXP'","subagent_type":"ml-optimizer:analysis-agent"}' \
+  | python3 $SCRIPTS/validate_agent_output.py 2>/dev/null)
+echo "$DECISION" | grep -q '"decision": *"block"' \
+  && echo "✓ L3 blocks analysis-agent when any_of unsatisfied" \
+  || echo "✗ L3 FAILED to block unsatisfied any_of"
+
+# prerequisites-agent with prepared=false (required_if skipped) → approve
+echo '{"status":"ready","dataset":{"prepared":false,"train_path":"/data"}}' > $ENFORCE_EXP/experiments/results/prerequisites.json
+DECISION=$(echo '{"cwd":"'$ENFORCE_EXP'","subagent_type":"ml-optimizer:prerequisites-agent"}' \
+  | python3 $SCRIPTS/validate_agent_output.py 2>/dev/null)
+echo "$DECISION" | grep -q '"decision": *"approve"' \
+  && echo "✓ L3 approves prerequisites-agent when prepared=false (required_if skipped)" \
+  || echo "✗ L3 FAILED required_if false"
+
+# prerequisites-agent with prepared=true but missing prepared-data/ → block
+echo '{"status":"ready","dataset":{"prepared":true,"train_path":"/data"}}' > $ENFORCE_EXP/experiments/results/prerequisites.json
+DECISION=$(echo '{"cwd":"'$ENFORCE_EXP'","subagent_type":"ml-optimizer:prerequisites-agent"}' \
+  | python3 $SCRIPTS/validate_agent_output.py 2>/dev/null)
+echo "$DECISION" | grep -q '"decision": *"block"' \
+  && echo "$DECISION" | grep -q "prepared-data" \
+  && echo "✓ L3 blocks prerequisites-agent when prepared=true but dir missing (required_if true)" \
+  || echo "✗ L3 FAILED required_if true"
+
+# prerequisites-agent with prepared=true AND prepared-data/ exists → approve
+mkdir -p $ENFORCE_EXP/experiments/prepared-data
+DECISION=$(echo '{"cwd":"'$ENFORCE_EXP'","subagent_type":"ml-optimizer:prerequisites-agent"}' \
+  | python3 $SCRIPTS/validate_agent_output.py 2>/dev/null)
+echo "$DECISION" | grep -q '"decision": *"approve"' \
+  && echo "✓ L3 approves prerequisites-agent when prepared=true AND dir exists" \
+  || echo "✗ L3 FAILED required_if true+dir"
+
+# dev_notes.md agent_id correlation: mismatch → block
+# Reset baseline outputs (they may have been cleared by earlier L3 tests)
+mkdir -p $ENFORCE_EXP/experiments/logs/baseline
+echo '{"exp_id":"baseline"}' > $ENFORCE_EXP/experiments/results/baseline.json
+echo "log data" > $ENFORCE_EXP/experiments/logs/baseline/train.log
+# Write an entry tagged with agent-X
+python3 $SCRIPTS/dev_notes.py $ENFORCE_EXP/experiments append baseline-agent 'test entry' --agent-id agent-X >/dev/null 2>&1
+DECISION=$(echo '{"cwd":"'$ENFORCE_EXP'","subagent_type":"ml-optimizer:baseline-agent","agent_id":"agent-Y"}' \
+  | python3 $SCRIPTS/validate_agent_output.py 2>/dev/null)
+echo "$DECISION" | grep -q '"decision": *"block"' \
+  && echo "$DECISION" | grep -q "dev_notes.md" \
+  && echo "✓ L3 blocks agent when dev_notes.md agent_id does not match" \
+  || echo "✗ L3 FAILED dev_notes agent_id mismatch"
+
+# dev_notes.md agent_id match → approve
+DECISION=$(echo '{"cwd":"'$ENFORCE_EXP'","subagent_type":"ml-optimizer:baseline-agent","agent_id":"agent-X"}' \
+  | python3 $SCRIPTS/validate_agent_output.py 2>/dev/null)
+echo "$DECISION" | grep -q '"decision": *"approve"' \
+  && echo "✓ L3 approves agent when dev_notes.md agent_id matches" \
+  || echo "✗ L3 FAILED dev_notes agent_id match"
+
+# Cleanup
+rm -rf $ENFORCE_EXP
+```
+
+Report pass/fail count. Expected: 24 ✓ lines (3 for L1, 11 for L2, 10 for L3).
 
 ## Step 4: Resumable subagent infrastructure validation
 
@@ -765,7 +1133,7 @@ Agent(
 )
 ```
 
-**After hp-tune:** Read the proposed configs from `experiments/results/proposed-configs/`.
+**After hp-tune:** Read the proposed configs from `experiments/proposed-configs/round-1-hp/` (top-level, not under `results/`).
 
 #### Experiment (for each proposed config)
 
@@ -1918,7 +2286,7 @@ sys.path.insert(0, '$SCRIPTS')
 from experiment_setup import generate_train_script
 from pathlib import Path
 with tempfile.TemporaryDirectory() as td:
-    p = generate_train_script(td, 'ckpt-test', 'python train.py', checkpoint_path='/tmp/ckpt.pt')
+    p = generate_train_script(td, 'ckpt-test', 'python train.py', log_file='logs/round-1-hp/ckpt-test/train.log', checkpoint_path='/tmp/ckpt.pt')
     ok = 'CHECKPOINT_PATH' in Path(p).read_text()
     print('✓ [17/31] Checkpoint warm-start: script includes CHECKPOINT_PATH') if ok else print('✗ [17/31] Checkpoint warm-start: FAILED')
 "
@@ -2115,7 +2483,126 @@ print('✓ [31/31] Hyperagent state: persisted in pipeline state') if ok else pr
 echo "=== Feature Verification Done ==="
 ```
 
-### 6.9: Cleanup
+### 6.9: 3-checkpoint evidence in a real run
+
+This differs from Step 3.2 (synthetic hook tests) by checking what the **live agent dispatch actually produced** on disk. If Step 3.2 passes but Step 6.9 fails, the hook scripts work in isolation but the Claude Code runtime integration is broken.
+
+```bash
+echo "=== 3-Checkpoint Evidence in Real Run ==="
+
+# --- Layer 2 evidence: PreToolUse approved the agent's writes ---
+# (If L2 had blocked anything critical, the pipeline would have halted before Step 6 completes)
+
+# Round-based result file exists (proves orchestrator passed round_dir AND L2 approved)
+RESULT_FILES=$(find $EXP/experiments/results -path '*/round-*/exp-*.json' 2>/dev/null | head -5)
+if [ -n "$RESULT_FILES" ]; then
+  echo "✓ [6.9-1] L2 evidence: at least one round-based exp-*.json exists"
+else
+  echo "✗ [6.9-1] L2 evidence: NO round-based exp-*.json found (experiment-agent wrote elsewhere or was blocked)"
+fi
+
+# Result JSONs are schema-valid (proves schema_validator ran and approved)
+FIRST_RESULT=$(echo "$RESULT_FILES" | head -1)
+if [ -n "$FIRST_RESULT" ] && [ -f "$FIRST_RESULT" ]; then
+  python3 $SCRIPTS/schema_validator.py "$FIRST_RESULT" result --strict >/dev/null 2>&1
+  [ $? -eq 0 ] && echo "✓ [6.9-2] L2 evidence: real experiment result passes --strict schema validation" \
+               || echo "✗ [6.9-2] L2 evidence: real experiment result FAILED --strict schema validation: $FIRST_RESULT"
+else
+  echo "✗ [6.9-2] L2 evidence: skipped (no result file to validate)"
+fi
+
+# Completeness fields present on a completed experiment (L2 would have blocked if missing)
+if [ -n "$FIRST_RESULT" ] && [ -f "$FIRST_RESULT" ]; then
+  python3 -c "
+import json, sys
+d = json.load(open('$FIRST_RESULT'))
+if d.get('status') == 'completed':
+    missing = [f for f in ('iteration', 'method_tier', 'duration_seconds') if f not in d]
+    if missing:
+        print(f'✗ [6.9-3] L2 evidence: completed result missing fields {missing}'); sys.exit(1)
+    print('✓ [6.9-3] L2 evidence: completed result has iteration/method_tier/duration_seconds')
+else:
+    print('✓ [6.9-3] L2 evidence: non-completed status, completeness check skipped')
+"
+fi
+
+# --- Layer 3 evidence: experiment-agent contract satisfied ---
+
+# Round-based log path (contract requires logs/<round_dir>/<exp_id>/train.log)
+LOG_FILES=$(find $EXP/experiments/logs -path '*/round-*/*/train.log' 2>/dev/null | head -5)
+if [ -n "$LOG_FILES" ]; then
+  echo "✓ [6.9-4] L3 evidence: round-based train.log exists (experiment-agent contract satisfied)"
+else
+  echo "✗ [6.9-4] L3 evidence: no round-based train.log (SubagentStop should have blocked)"
+fi
+
+# Round-based script dir with purpose-based naming (train.sh not <exp-id>.sh)
+SCRIPT_FILES=$(find $EXP/experiments/scripts -path '*/round-*/*/train.sh' 2>/dev/null | head -5)
+if [ -n "$SCRIPT_FILES" ]; then
+  echo "✓ [6.9-5] L3 evidence: round-based train.sh exists with purpose-based name"
+else
+  echo "✗ [6.9-5] L3 evidence: no round-based train.sh (wrong path or wrong name)"
+fi
+
+# Round-based artifacts dir
+ARTIFACT_DIRS=$(find $EXP/experiments/artifacts -type d -path '*/round-*/*' 2>/dev/null | head -5)
+if [ -n "$ARTIFACT_DIRS" ]; then
+  echo "✓ [6.9-6] L3 evidence: round-based artifacts dir exists"
+else
+  echo "✗ [6.9-6] L3 evidence: no round-based artifacts dir"
+fi
+
+# --- Layer 3 evidence: baseline-agent contract satisfied ---
+[ -f $EXP/experiments/results/baseline.json ] \
+  && [ -f $EXP/experiments/logs/baseline/train.log ] \
+  && echo "✓ [6.9-7] L3 evidence: baseline-agent produced both contracted outputs" \
+  || echo "✗ [6.9-7] L3 evidence: baseline-agent missing contracted outputs"
+
+# --- Layer 3 evidence: prerequisites-agent required_if ---
+if [ -f $EXP/experiments/results/prerequisites.json ]; then
+  PREPARED=$(python3 -c "import json; d=json.load(open('$EXP/experiments/results/prerequisites.json')); print(d.get('dataset',{}).get('prepared',False))")
+  if [ "$PREPARED" = "True" ]; then
+    [ -d $EXP/experiments/prepared-data ] \
+      && echo "✓ [6.9-8] L3 evidence: required_if satisfied (prepared=True AND prepared-data/ exists)" \
+      || echo "✗ [6.9-8] L3 evidence: required_if violated (prepared=True but no prepared-data/)"
+  else
+    echo "✓ [6.9-8] L3 evidence: required_if skipped (prepared=False, directory not required)"
+  fi
+else
+  echo "✗ [6.9-8] L3 evidence: prerequisites.json missing (prerequisites-agent didn't run?)"
+fi
+
+# --- Layer 3 evidence: analysis-agent any_of ---
+BATCH=$(ls $EXP/experiments/reports/batch-*-analysis.md 2>/dev/null | head -1)
+SESSION_REVIEW=$EXP/experiments/reports/session-review.md
+if [ -n "$BATCH" ] || [ -f "$SESSION_REVIEW" ]; then
+  echo "✓ [6.9-9] L3 evidence: analysis-agent any_of satisfied (batch report or session review exists)"
+else
+  echo "✗ [6.9-9] L3 evidence: analysis-agent any_of NOT satisfied (neither batch nor session review)"
+fi
+
+# --- Layer 3 evidence: dev_notes.md agent_id correlation ---
+if [ -f $EXP/experiments/dev_notes.md ]; then
+  AGENT_ID_COUNT=$(grep -c '<!-- agent_id:' $EXP/experiments/dev_notes.md)
+  if [ "$AGENT_ID_COUNT" -gt 0 ]; then
+    echo "✓ [6.9-10] L3 evidence: dev_notes.md has $AGENT_ID_COUNT agent_id-tagged entries"
+  else
+    echo "✗ [6.9-10] L3 evidence: dev_notes.md exists but has zero agent_id tags (dev_notes.py not called)"
+  fi
+else
+  echo "✗ [6.9-10] L3 evidence: dev_notes.md not created (no agent called dev_notes.py)"
+fi
+
+# --- Layer 3 evidence: report-agent contract ---
+[ -f $EXP/experiments/reports/final-report.md ] \
+  && [ -f $EXP/experiments/reports/progress_chart.png ] \
+  && echo "✓ [6.9-11] L3 evidence: report-agent produced final-report.md + progress_chart.png" \
+  || echo "✗ [6.9-11] L3 evidence: report-agent missing contracted outputs"
+
+echo "=== 3-Checkpoint Evidence Check Done ==="
+```
+
+### 6.10: Cleanup
 
 ```bash
 rm -rf /tmp/ml-opt-diagnostic
@@ -2129,8 +2616,9 @@ Summarize all results:
 ML Optimizer End-to-End Diagnostic Results
 ==========================================
 Structural tests (pytest):  X/Y passed (full suite — 10 test files)
-Script CLI smoke tests:     X/20 passed (16 scripts, some multi-subcommand)
-Hook functional tests:      X/19 passed (8 hooks)
+Script CLI smoke tests:     X/26 passed (21 scripts — 100% of scripts/ directory)
+Hook functional tests:      X/23 passed (9 hooks — all of hooks.json except the 3 tested separately in Step 3.2)
+3-checkpoint enforcement:   X/24 passed (L1 inject × 3, L2 write-validate × 11, L3 stop-verify × 10)
 Resumable subagent infra:   X/Y checks passed (registry, patterns, docs)
 Agent smoke tests:          10/10 dispatched (memory: local confirmed)
 

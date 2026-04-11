@@ -1,5 +1,19 @@
 #!/usr/bin/env python3
-"""ASCII and matplotlib visualization of experiment results."""
+"""ASCII and matplotlib visualization of experiment results.
+
+Usage:
+    python3 plot_results.py <results_dir> <metric> comparison        # Bar chart: experiments ranked by metric
+    python3 plot_results.py <results_dir> <metric> timeline          # Metric trajectory over experiment-id
+    python3 plot_results.py <results_dir> <metric> sensitivity <hp>  # Metric vs HP value
+    python3 plot_results.py <results_dir> <metric> progress          # Matplotlib progress chart (PNG)
+
+Add --higher-is-better flag for accuracy-like metrics (default: lower is better).
+
+Examples:
+    python3 plot_results.py experiments/results accuracy comparison --higher-is-better
+    python3 plot_results.py experiments/results loss sensitivity lr
+    python3 plot_results.py experiments/results loss progress
+"""
 
 import math
 import sys

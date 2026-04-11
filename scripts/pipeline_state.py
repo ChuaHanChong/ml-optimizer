@@ -10,6 +10,12 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Make sibling scripts (error_tracker) importable when pipeline_state.py is
+# loaded via `python3 scripts/pipeline_state.py ...` or `from pipeline_state
+# import ...` inside the plugin scripts/ dir.
+sys.path.insert(0, str(Path(__file__).parent))
+from error_tracker import create_event, log_event  # noqa: E402
+
 
 def init_hyperagent_state(enabled: bool = True) -> dict:
     """Create initial hyperagent_state structure for pipeline-state.json.
@@ -188,6 +194,10 @@ def validate_phase_requirements(phase: int, exp_root: str) -> dict:
                 missing.append("results/baseline.json missing 'metrics' key")
             if "config" not in data:
                 missing.append("results/baseline.json missing 'config' key")
+        # Goals file must exist
+        goals_path = root / "optimization-goals.json"
+        if not goals_path.is_file():
+            missing.append("optimization-goals.json does not exist")
 
     elif phase == 8:
         # Stacking: baseline.json + implementation-manifest.json required
@@ -212,10 +222,20 @@ def validate_phase_requirements(phase: int, exp_root: str) -> dict:
                 )
 
     elif phase == 9:
-        # Report: baseline.json must exist
+        # Report: baseline.json + rounds-manifest.json must exist
         baseline_path = root / "results" / "baseline.json"
         if not baseline_path.is_file():
             missing.append("results/baseline.json does not exist")
+        manifest_path = root / "results" / "rounds-manifest.json"
+        if not manifest_path.is_file():
+            warnings.append("results/rounds-manifest.json does not exist (no round history)")
+        # At least one round directory with results should exist
+        results_path = root / "results"
+        if results_path.is_dir():
+            round_dirs = [d for d in results_path.iterdir()
+                          if d.is_dir() and d.name.startswith("round-")]
+            if not round_dirs:
+                warnings.append("No round directories found in results/")
 
     else:
         warnings.append(f"No validation rules defined for phase {phase}")
@@ -226,6 +246,56 @@ def validate_phase_requirements(phase: int, exp_root: str) -> dict:
         "missing": missing,
         "warnings": warnings,
     }
+
+
+def _check_goal_metric_consistency(exp_root: str, user_choices: dict) -> None:
+    """Warn if user_choices.primary_metric disagrees with optimization-goals.json.
+
+    The orchestrator writes ``optimization-goals.json`` at Phase 0 and persists
+    ``user_choices`` to ``pipeline-state.json`` separately. Nothing else checks
+    they agree — so a stale dispatch metric can propagate silently through the
+    whole pipeline. This helper surfaces the mismatch via stderr and, if
+    available, logs a warning to the error tracker.
+
+    No-op when either side is absent (early Phase 0, no goals yet).
+    """
+    metric = user_choices.get("primary_metric") if isinstance(user_choices, dict) else None
+    if not metric:
+        return
+
+    goals_path = Path(exp_root) / "optimization-goals.json"
+    if not goals_path.is_file():
+        return
+    try:
+        goals = json.loads(goals_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return
+    goal_metric = (goals.get("objective") or {}).get("primary_metric")
+    if not goal_metric or goal_metric == metric:
+        return
+
+    msg = (
+        f"goal-metric mismatch: optimization-goals.json primary_metric="
+        f"{goal_metric!r} but user_choices primary_metric={metric!r}. "
+        "Analysis/hp-tune will key off user_choices; the goal anchor will drift."
+    )
+    print(f"[pipeline_state] WARNING: {msg}", file=sys.stderr)
+
+    # Log to error tracker. Use the closest existing category/source —
+    # error_tracker rejects unknown values by design.
+    # "pipeline_inefficiency" covers configuration drift;
+    # "orchestrate" is the pipeline-level source.
+    try:
+        event = create_event(
+            category="pipeline_inefficiency",
+            severity="warning",
+            source="orchestrate",
+            message=f"goal_metric_mismatch: {msg}",
+            config={"goal_metric": goal_metric, "user_choices_metric": metric},
+        )
+        log_event(exp_root, event)
+    except Exception:
+        pass  # never let logging block save_state — stderr warning is the contract
 
 
 def save_state(
@@ -289,6 +359,7 @@ def save_state(
     # Preserve existing user_choices if not explicitly provided
     if user_choices is not None:
         state["user_choices"] = user_choices
+        _check_goal_metric_consistency(exp_root, user_choices)
     elif existing and existing.get("user_choices"):
         state["user_choices"] = existing["user_choices"]
 
@@ -717,6 +788,14 @@ def log_meta_patch(exp_root: str, patch: dict) -> dict:
             else:
                 entries = []
 
+            # Defend against corrupt/legacy entries: changelog must be a list
+            # of dicts. Drop anything else (old string entries, accidental
+            # top-level dict/None). See tests/test_pipeline.py::
+            # TestMetaPatchManagement::test_log_handles_corrupt_string_entries.
+            if not isinstance(entries, list):
+                entries = []
+            entries = [e for e in entries if isinstance(e, dict)]
+
             # Compute next ID (auto-increment from 1)
             next_id = max((e.get("id", 0) for e in entries), default=0) + 1
 
@@ -897,7 +976,11 @@ def get_meta_patches(exp_root: str) -> list[dict]:
         return []
     try:
         entries = json.loads(changelog_path.read_text())
-        return entries if isinstance(entries, list) else []
+        if not isinstance(entries, list):
+            return []
+        # Drop corrupt/legacy non-dict entries so callers (promote_meta_patch)
+        # can .get() safely.
+        return [e for e in entries if isinstance(e, dict)]
     except (json.JSONDecodeError, OSError):
         return []
 

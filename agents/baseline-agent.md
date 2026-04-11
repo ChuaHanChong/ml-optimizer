@@ -78,7 +78,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/schema_validator.py \
 ```
 If validation fails, fix the JSON and re-validate before reporting back.
 
-> **Canonical format reference:** See `log-formats.md` in the orchestrate skill's references directory.
+> **Canonical schema source:** `scripts/schema_validator.py` (run it directly on your output to see exactly which fields are required).
 
 ## Error Handling
 

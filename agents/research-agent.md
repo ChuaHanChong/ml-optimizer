@@ -44,7 +44,7 @@ Always produce structured output with:
 - Reference repo URL and relevant files (when from_reference)
 - Risks
 
-> **Canonical format reference:** See `log-formats.md` in the orchestrate skill's references directory for the full research-findings markdown template.
+> **Canonical format reference:** See `skills/research/SKILL.md` Step 5 for the full research-findings markdown template. JSON schemas are enforced at runtime by `scripts/schema_validator.py`.
 
 ## Important Rules
 

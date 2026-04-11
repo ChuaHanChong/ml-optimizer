@@ -130,6 +130,7 @@ For standalone ShinkaEvolve tasks (user requests, not code_evolution pivots):
       - Apply code changes following the proposal's steps
       - Run validation checklist
    e. Write unit tests for the implemented change
+   e.5. **Post-implementation review (advisory)** — After the change validates and tests pass, invoke `Skill("feature-dev:code-reviewer")` with the diff (`git diff <original_branch>...<ml-opt-branch>`) and the proposal text as the review target. The review is **advisory** — do NOT block `status: "validated"` on style or opinion findings. Attach the reviewer's summary under the proposal entry in `implementation-manifest.json` as `review_notes` (a short free-text string) so hp-tune and analysis can surface it downstream. Only override to `status: "validation_failed"` if the reviewer flags a correctness bug (e.g., "this change breaks the training loop" or "gradient is never backpropagated"), and carry the reviewer's sentence as the validation failure reason.
    f. Commit changes (git strategy) or note backup paths
    g. Return to original branch
 4. **Write manifest** — Save implementation-manifest.json with all results
@@ -201,7 +202,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/schema_validator.py \
 ```
 If validation fails, fix and re-validate before proceeding.
 
-> **Canonical format reference:** See `log-formats.md` in the orchestrate skill's references directory.
+> **Canonical schema source:** `scripts/schema_validator.py` (run it directly on your output to see exactly which fields are required).
 
 ## Conflict Resolution
 

@@ -268,6 +268,82 @@ class TestOperatorStats:
                           env={"HYPERAGENT_METRIC": "accuracy"})
         assert isinstance(out, dict)
 
+    def test_operator_stats_respects_metric_direction(self, initialized_dir):
+        """operator_stats counts improvements in the correct direction.
+
+        Baseline loss from baseline.json is 0.45 (lower is better). Add two
+        llm_patch children: one with loss 0.40 (better) and one with loss
+        0.50 (worse). operator_stats should report exactly 1 improvement
+        for llm_patch when HYPERAGENT_METRIC=loss +
+        HYPERAGENT_METRIC_DIRECTION=lower.
+        """
+        run_archive(
+            initialized_dir, "add",
+            json.dumps({
+                "genid": "100",
+                "parent_genid": "initial",
+                "code_branch": "ml-opt/better",
+                "mutation_type": "llm_patch",
+                "mutation_description": "better",
+                "status": "evaluated",
+                "fitness_score": 0.40,
+            }),
+            env={"HYPERAGENT_METRIC": "loss"},
+        )
+        run_archive(
+            initialized_dir, "add",
+            json.dumps({
+                "genid": "101",
+                "parent_genid": "initial",
+                "code_branch": "ml-opt/worse",
+                "mutation_type": "llm_patch",
+                "mutation_description": "worse",
+                "status": "evaluated",
+                "fitness_score": 0.50,
+            }),
+            env={"HYPERAGENT_METRIC": "loss"},
+        )
+
+        out = run_archive(
+            initialized_dir, "operator-stats",
+            env={
+                "HYPERAGENT_METRIC": "loss",
+                "HYPERAGENT_METRIC_DIRECTION": "lower",
+            },
+        )
+        llm = out.get("llm_patch", {})
+        assert llm.get("attempts") == 2
+        # Exactly 1 improvement (the 0.40 child beats 0.45 baseline)
+        assert llm.get("improvements") == 1
+        assert llm.get("improvement_rate") == 0.5
+
+    def test_stats_reports_mutation_types_for_added_entries(self, initialized_dir):
+        """stats buckets freshly-added entries by their actual mutation_type.
+
+        Regression test for the _read_all_metadata genid-type mismatch that
+        caused every lookup to return {} and every mutation_type to be
+        bucketed as "none".
+        """
+        run_archive(
+            initialized_dir, "add",
+            json.dumps({
+                "genid": "200",
+                "parent_genid": "initial",
+                "code_branch": "ml-opt/t1",
+                "mutation_type": "shinka_evolve",
+                "mutation_description": "evolve",
+                "status": "evaluated",
+                "fitness_score": 0.44,
+            }),
+            env={"HYPERAGENT_METRIC": "loss"},
+        )
+        out = run_archive(
+            initialized_dir, "stats",
+            env={"HYPERAGENT_METRIC": "loss"},
+        )
+        mutation_types = out.get("mutation_types", {})
+        assert mutation_types.get("shinka_evolve", 0) >= 1
+
 
 class TestPrune:
     def test_prune_after_init(self, initialized_dir):

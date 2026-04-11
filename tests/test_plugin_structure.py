@@ -310,7 +310,9 @@ class TestSkillAgentMapping:
 
 EXPECTED_HOOKS = [
     "bash-safety.sh", "file-guardrail.sh", "detect-critical-errors.sh",
-    "subagent-stop-hook.sh", "pre-compact.sh", "post-compact-context.sh",
+    "pre-compact.sh", "post-compact-context.sh",
+    "subagent-start-inject-goals.sh", "stop-check.sh",
+    "file-changed-pipeline-state.sh", "cwd-changed-detect-experiments.sh",
 ]
 
 

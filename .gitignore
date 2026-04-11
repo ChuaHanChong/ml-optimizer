@@ -5,6 +5,7 @@ __archive__/
 .claude/agent-memory-local/
 *.egg-info/
 docs/superpowers/
+docs/plans/
 data/
 TODO.md
 **/experiments/

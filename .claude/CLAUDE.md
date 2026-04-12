@@ -130,7 +130,7 @@ Cross-cutting outputs (managed by scripts or multiple agents):
 
 #### Directory Structure
 
-The plugin creates an `experiments/` directory (location configured at Phase 0, can be anywhere):
+The plugin creates an `<exp_root>/` directory — the user chooses the name and location at Phase 0, there is no hardcoded default. The layout inside `<exp_root>/` is:
 
 ```
 <exp_root>/
@@ -243,7 +243,7 @@ The hyperagent learns which operators are effective and adapts its strategy. The
 - `hyperagent-eval` — Two-stage evaluation: cheap staged eval (10% budget) → adaptive threshold → full training if passes. Warm-starts from staged checkpoint.
 - `hyperagent-archive` — Update archive with results, track lineage and operator effectiveness
 
-**Archive:** `experiments/hyperagent/archive.jsonl` — Hyperagents-native JSONL format with `gen_X/` directories for metadata and eval reports. Managed by `gl_utils.py` directly.
+**Archive:** `<exp_root>/hyperagent/archive.jsonl` — Hyperagents-native JSONL format with `gen_X/` directories for metadata and eval reports. Managed by `gl_utils.py` directly.
 
 **ShinkaEvolve + Hyperagent collaboration:** ShinkaEvolve is one mutation operator within the experiment loop. When the hyperagent needs fine-grained code tuning (numerical constants, local optimizations), it dispatches ShinkaEvolve via `Skill("ml-optimizer:evolve")`. When it needs structural/architectural changes, it generates LLM patches directly.
 
@@ -251,7 +251,7 @@ The hyperagent learns which operators are effective and adapts its strategy. The
 
 **Simplified analyze pivots:** All code-level pivots (research, method proposals, code refinement) emit `code_evolution`. HP-focused pivots (`branch_test`, `hp_expand`, `narrow_space`, `regularization`) remain separate. When all approaches stall, analyze includes `meta_improvement_recommended: true` so the hyperagent considers self-improvement.
 
-**Meta-improvement patches:** Session-scoped skill modifications at `experiments/meta-patches/`. End-of-session: analysis-agent evaluates patches, presents validated ones to user for promotion to the plugin branch.
+**Meta-improvement patches:** Session-scoped skill modifications at `<exp_root>/meta-patches/`. End-of-session: analysis-agent evaluates patches, presents validated ones to user for promotion to the plugin branch.
 
 ### Python Scripts (`scripts/`)
 
@@ -305,6 +305,27 @@ Stacking experiments also carry `code_branches` (array of combined branches), `s
 ### Pipeline Resumption
 
 The orchestrator can be stopped and resumed. On restart it reads `pipeline-state.json` and uses `cleanup_stale()` to handle interrupted experiments (marks them as failed after a timeout). Phase validation via `validate_phase_requirements()` prevents cascading failures. Pipeline state persists Phase 0 user choices (`primary_metric`, `divergence_metric`, `divergence_lower_is_better`, `lower_is_better`, `target_value`, `train_command`, `eval_command`, `train_data_path`, `val_data_path`, `prepared_train_path`, `prepared_val_path`, `env_manager`, `env_name`, `model_category`, `user_papers`, `method_proposal_scope`, `method_proposal_iterations`, `hp_batches_per_round`, `fixed_time_budget`, `fixed_epoch_budget`) via `save_state(user_choices={...})` so they survive interruptions without re-asking the user. The experiment loop also persists `consecutive_stop_count` (for the 3-consecutive-stop exit rule), `stuck_protocol_triggered` (prevents infinite recovery loops), `baseline_checksum` (SHA-256 of baseline metrics for integrity verification), and `agent_registry` (persistent agent IDs for SendMessage resumption) at the root level of pipeline state. On new session start, `agent_registry` is cleared since subagent transcripts are session-scoped — all agents start fresh. A separate `user-choices-backup.json` provides redundant recovery if the main state file corrupts.
+
+### Multi-Run Pattern (one `<exp_root>` = one optimization run)
+
+The plugin does **not** run-namespace state files inside `<exp_root>/`. Each `<exp_root>` is one self-contained optimization run — its hyperagent archive, behavioral memory, round manifest, and reports are all scoped to that directory. For a new optimization direction on the same project, point `exp_root` at a new directory at Phase 0. The plugin has no hardcoded output location; `exp_root` can be any absolute path.
+
+```
+# Each run gets its own <exp_root>:
+<exp_root> = ~/my-project/runs/01-label-smoothing/   # first run
+<exp_root> = ~/my-project/runs/02-augmentation/      # second run, fresh state
+<exp_root> = ~/my-project/runs/03-architecture/      # third run
+```
+
+**Breadcrumb (`.claude/ml-optimizer.json`):** The orchestrator writes a breadcrumb at the project root so hooks can find the active `<exp_root>`. The breadcrumb tracks all runs — each Phase 0 appends to `runs` and sets `active`:
+
+```json
+{"active": "/home/user/runs/02-augmentation", "runs": ["/home/user/runs/01-label-smoothing", "/home/user/runs/02-augmentation"]}
+```
+
+Hooks and the write-validator read `active` to resolve the current `<exp_root>`. The old single-run format (`{"exp_root": "..."}`) is still supported for backward compatibility.
+
+Phase 0 (`skills/orchestrate/references/phase-0-discovery.md` Step 1.1) detects a prior completed run (`phase == 9`) and prompts the user to start a new directory or continue. The `cwd-changed-detect-experiments.sh` hook emits a "completed optimization found" message on phase 9 entry. Cross-run comparison is not automated — diff the `results-table.md` files manually.
 
 ## Key Design Patterns
 
@@ -372,7 +393,7 @@ The orchestrator can be stopped and resumed. On restart it reads `pipeline-state
 - **Research findings files can be multiple**: `research-findings.md` (Phase 5 web search), `research-findings-method-proposals.md` (Phase 7 pre-loop), `research-findings-method-proposals-iter<N>.md` (Phase 7 mid-loop triggers). The research skill's deduplication checks all of these to avoid re-proposing tried techniques.
 - **Hyperagent mode is always on — NEVER skip it**: `hyperagent_state.enabled` defaults to `true`. The hyperagent MUST be dispatched in Phase 7 — it is the loop driver, not optional. Do NOT fall back to a simpler HP-tune → experiment → analyze loop that bypasses the hyperagent. The hyperagent drives Phase 7 ↔ Phase 8 in a loop from the start. It naturally starts with HP tuning (cheapest) and escalates to code mutations (LLM patches, ShinkaEvolve), research-implement, stacking, and self-improvement as needed. If ShinkaEvolve is unavailable, the hyperagent falls back to other operators — but the hyperagent itself is never optional.
 - **Hyperagent archive is separate from experiment results**: `hyperagent/archive.jsonl` tracks code variants with lineage (Hyperagents-native format). `exp-*.json` tracks experiment results. They link via the `genid` field. Don't confuse them.
-- **Meta-patches are session-scoped**: Files in `experiments/meta-patches/` only affect the current session. They're instructions overlaid on top of default skills. Promotion to the plugin repo requires user approval at Phase 9.
+- **Meta-patches are session-scoped**: Files in `<exp_root>/meta-patches/` only affect the current session. They're instructions overlaid on top of default skills. Promotion to the plugin repo requires user approval at Phase 9.
 - **Hyperagents submodule is CC BY-NC-SA 4.0**: NonCommercial + ShareAlike license. The adapter script reimplements the core algorithms in stdlib Python, so the submodule is a reference, not a runtime dependency.
 - **ShinkaEvolve branch naming in Hyperagent mode**: When ShinkaEvolve is used as a mutation operator within the Hyperagent loop, the evolve skill creates `ml-opt/evolved-<slug>` branches. The hyperagent must rename these to `ml-opt/gen-<N>-evolved-<slug>` for archive consistency.
 - **ShinkaEvolve must use the local submodule, not PyPI**: The PyPI package `shinka-evolve` lacks the `file_handoff_provider` module required for `SHINKA_PROVIDER=claude_code`. Always use the local submodule — either install editable (`pip install -e skills/evolve/ShinkaEvolve/`) via `setup_evolve.sh`, or prepend `PYTHONPATH=${CLAUDE_PLUGIN_ROOT}/skills/evolve/ShinkaEvolve:$PYTHONPATH` before `shinka_run`.

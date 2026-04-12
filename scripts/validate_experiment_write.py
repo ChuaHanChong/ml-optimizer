@@ -42,28 +42,55 @@ def block(reason: str) -> None:
     sys.exit(0)
 
 
-def _find_results_segment(file_path: str) -> tuple[list[str], int] | None:
-    """Find the 'experiments/results' segment in the path.
+def _find_subdir_segment(file_path: str, subdir_name: str) -> tuple[list[str], int] | None:
+    """Locate a top-level subdirectory of `<exp_root>` in the file path.
 
-    Returns (path_parts, index_of_results) or None if not found.
+    Walks up from `file_path` looking for a `.claude/ml-optimizer.json`
+    breadcrumb (via the shared `_find_exp_root` helper). The breadcrumb
+    is the authoritative source of truth for `exp_root`, written by the
+    orchestrator at Phase 0. Its `exp_root` field contains the absolute
+    path the user chose — the plugin does not hardcode the output
+    directory name.
+
+    Once `exp_root` is resolved, checks that `file_path` is located
+    at `<exp_root>/<subdir_name>/...` and returns `(path_parts,
+    index_of_subdir)`. Returns `None` if no breadcrumb is found or if
+    the file isn't under `<exp_root>/<subdir_name>/`.
+
+    There is no directory-name-based fallback. Tests that exercise this
+    validator MUST create a `.claude/ml-optimizer.json` breadcrumb
+    pointing at their synthetic `exp_root`.
     """
-    parts = Path(file_path).parts
-    for i, part in enumerate(parts):
-        if part == "results" and i > 0 and parts[i - 1] == "experiments":
-            return list(parts), i
-    return None
+    exp_root_str = _find_exp_root(file_path)
+    if exp_root_str is None:
+        return None
+
+    exp_root = Path(exp_root_str).resolve()
+    parts = Path(file_path).resolve().parts
+    exp_root_depth = len(exp_root.parts)
+    if exp_root_depth >= len(parts):
+        return None
+    if parts[:exp_root_depth] != exp_root.parts:
+        return None
+    if parts[exp_root_depth] != subdir_name:
+        return None
+    return list(parts), exp_root_depth
+
+
+def _find_results_segment(file_path: str) -> tuple[list[str], int] | None:
+    """Find the `<exp_root>/results` segment in the path.
+
+    Returns `(path_parts, index_of_results)` or `None` if not found.
+    """
+    return _find_subdir_segment(file_path, "results")
 
 
 def _find_proposed_configs_segment(file_path: str) -> tuple[list[str], int] | None:
-    """Find the 'experiments/proposed-configs' segment in the path.
+    """Find the `<exp_root>/proposed-configs` segment in the path.
 
-    Returns (path_parts, index_of_proposed_configs) or None if not found.
+    Returns `(path_parts, index_of_proposed_configs)` or `None` if not found.
     """
-    parts = Path(file_path).parts
-    for i, part in enumerate(parts):
-        if part == "proposed-configs" and i > 0 and parts[i - 1] == "experiments":
-            return list(parts), i
-    return None
+    return _find_subdir_segment(file_path, "proposed-configs")
 
 
 def _get_content(hook_input: dict, tool_name: str) -> str | None:
@@ -110,7 +137,7 @@ def _validate_schema(data: dict, schema_type: str) -> dict:
 
 
 def _is_directly_in_results(parts: list[str], results_idx: int) -> bool:
-    """Check if the file is directly inside experiments/results/ (no subdirectory)."""
+    """Check if the file is directly inside <exp_root>/results/ (no subdirectory)."""
     # parts[results_idx] == "results", so the file is at parts[results_idx + 1]
     return len(parts) == results_idx + 2
 
@@ -162,14 +189,22 @@ def _check_completeness(data: dict) -> str | None:
 
 
 def _find_exp_root(file_path: str) -> str | None:
-    """Find exp_root by walking up from the file path looking for .claude/ml-optimizer.json."""
+    """Find exp_root by walking up from the file path looking for .claude/ml-optimizer.json.
+
+    Intentionally uncached — this function runs once per hook invocation
+    (the hook is a short-lived subprocess that exits after validating one
+    Write/Edit). Do NOT add a module-level cache here; if a future refactor
+    calls this in a loop, cache at the call site with an explicit lifetime.
+    """
     path = Path(file_path).resolve()
     for parent in path.parents:
         breadcrumb = parent / ".claude" / "ml-optimizer.json"
         if breadcrumb.is_file():
             try:
                 data = json.loads(breadcrumb.read_text())
-                exp_root = data.get("exp_root", "")
+                # New multi-run format: {"active": "...", "runs": [...]}
+                # Old single format:    {"exp_root": "..."}
+                exp_root = data.get("active") or data.get("exp_root") or ""
                 if exp_root and Path(exp_root).is_dir():
                     return exp_root
             except (json.JSONDecodeError, OSError):
@@ -233,7 +268,7 @@ def validate(hook_input: dict) -> None:
     file_path = tool_input.get("file_path", "")
     tool_name = hook_input.get("tool_name", "Write")
 
-    # Check for experiments/proposed-configs/ (top-level, separate from results)
+    # Check for <exp_root>/proposed-configs/ (top-level, separate from results)
     pc_segment = _find_proposed_configs_segment(file_path)
     if pc_segment is not None:
         pc_parts, pc_idx = pc_segment
@@ -265,7 +300,7 @@ def validate(hook_input: dict) -> None:
         approve()
         return
 
-    # Only validate files under experiments/results/
+    # Only validate files under <exp_root>/results/
     segment = _find_results_segment(file_path)
     if segment is None:
         approve()
@@ -285,7 +320,7 @@ def validate(hook_input: dict) -> None:
     #    implementation-manifest.json, rounds-manifest.json
     if filename == "baseline.json":
         if not _is_directly_in_results(parts, results_idx):
-            block("baseline.json must be directly in experiments/results/, not in a subdirectory")
+            block("baseline.json must be directly in <exp_root>/results/, not in a subdirectory")
         content = _get_content(hook_input, tool_name)
         if content is not None:
             data = _parse_content(content)
@@ -299,7 +334,7 @@ def validate(hook_input: dict) -> None:
 
     if filename == "prerequisites.json":
         if not _is_directly_in_results(parts, results_idx):
-            block("prerequisites.json must be directly in experiments/results/, not in a subdirectory")
+            block("prerequisites.json must be directly in <exp_root>/results/, not in a subdirectory")
         content = _get_content(hook_input, tool_name)
         if content is not None:
             data = _parse_content(content)
@@ -313,7 +348,7 @@ def validate(hook_input: dict) -> None:
 
     if filename == "implementation-manifest.json":
         if not _is_directly_in_results(parts, results_idx):
-            block("implementation-manifest.json must be directly in experiments/results/, not in a subdirectory")
+            block("implementation-manifest.json must be directly in <exp_root>/results/, not in a subdirectory")
         content = _get_content(hook_input, tool_name)
         if content is not None:
             data = _parse_content(content)
@@ -328,7 +363,7 @@ def validate(hook_input: dict) -> None:
     if filename == "rounds-manifest.json":
         # Written by round_manager.py -- skip schema validation, just check location
         if not _is_directly_in_results(parts, results_idx):
-            block("rounds-manifest.json must be directly in experiments/results/, not in a subdirectory")
+            block("rounds-manifest.json must be directly in <exp_root>/results/, not in a subdirectory")
         approve()
         return
 
@@ -338,7 +373,7 @@ def validate(hook_input: dict) -> None:
         if _is_directly_in_results(parts, results_idx):
             block(
                 f"Experiment result {filename} must be inside a round subdirectory "
-                f"(e.g., results/round-1-hp/), not directly in experiments/results/"
+                f"(e.g., results/round-1-hp/), not directly in <exp_root>/results/"
             )
 
         in_round, round_dir = _is_in_round_dir(parts, results_idx)
@@ -381,7 +416,7 @@ def validate(hook_input: dict) -> None:
         return
 
     # 3. Unrecognized JSON file under results/ -- approve with a warning
-    approve(reason=f"Unrecognized file pattern '{filename}' under experiments/results/ -- no validation rules applied")
+    approve(reason=f"Unrecognized file pattern '{filename}' under <exp_root>/results/ -- no validation rules applied")
 
 
 def main() -> None:

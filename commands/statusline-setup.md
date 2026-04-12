@@ -28,4 +28,4 @@ Agent(
 )
 ```
 
-The status line only appears when an ml-optimizer pipeline is active (experiments/pipeline-state.json exists). It exits silently in non-optimizer sessions.
+The status line only appears when an ml-optimizer pipeline is active (`<exp_root>/pipeline-state.json` exists — `<exp_root>` is resolved from the `.claude/ml-optimizer.json` breadcrumb or a walk-up fallback). It exits silently in non-optimizer sessions.

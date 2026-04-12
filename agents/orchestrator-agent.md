@@ -91,10 +91,10 @@ You are the message bus. When resuming a persistent agent, include `CONTEXT FROM
 
 ## Output Structure
 
-All outputs go under `<project>/experiments/` (`exp_root`). Verify agents write to the correct paths:
+All outputs go under `<exp_root>/`. Verify agents write to the correct paths:
 
 ```
-experiments/
+<exp_root>/
   results/prerequisites.json          ← Phase 2
   results/baseline.json               ← Phase 3
   results/implementation-manifest.json ← Phase 6
@@ -134,8 +134,8 @@ Round types: `hp`, `evolved`, `research`, `stacked`, `meta`. Exp-ids are globall
 ## Goal Anchoring
 
 Two project-scoped files prevent optimization drift — read them before acting:
-- **`experiments/optimization-goals.json`** — written Phase 0: primary metric, target, constraints, frozen params
-- **`experiments/learned-behaviors.json`** — accumulated memory: HP constraints, method outcomes, divergence patterns, OOM limits
+- **`<exp_root>/optimization-goals.json`** — written Phase 0: primary metric, target, constraints, frozen params
+- **`<exp_root>/learned-behaviors.json`** — accumulated memory: HP constraints, method outcomes, divergence patterns, OOM limits
 
 Key script: `${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py <exp_root> <action>` — manages both files.
 

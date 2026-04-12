@@ -6,6 +6,19 @@
    - Use `EnterPlanMode` immediately when this skill is invoked
    - Do NOT skip this phase — even if the user provided a model path or description
 
+1.1. **Check for a completed prior run:**
+   If the breadcrumbed `<exp_root>` has a `pipeline-state.json` with
+   `phase == 9`, ask the user via `AskUserQuestion`:
+
+     > *This `<exp_root>` already has a completed run. I'll create a new
+     > directory for your new direction — the previous run stays untouched.
+     > Sound good? (Or say "continue here" to build on the existing state,
+     > or "resume" to re-enter the completed run.)*
+
+   - `phase < 9` → normal resume, proceed without asking.
+   - No `pipeline-state.json` → fresh workspace, proceed normally.
+   - User explicitly said "continue" or "resume" → skip this check.
+
 2. **Ask discovery questions:**
    Use `AskUserQuestion` to gather the following (combine into a single, organized prompt):
 
@@ -50,10 +63,21 @@
    - If the user is unsure about some answers, note those as areas to investigate in Phase 1
 
 3.1. **Write experiment root breadcrumb and optimization goals:**
-   First, write a breadcrumb so hooks can find the experiments directory (even if it's on a different mount):
+   First, write a breadcrumb so hooks can find the `<exp_root>` directory (even if it's on a different mount).
+   The breadcrumb supports multiple runs — each new run appends to `runs[]` and sets `active`:
    ```bash
    mkdir -p .claude
-   python3 -c "import json; json.dump({'exp_root': '<exp_root>'}, open('.claude/ml-optimizer.json', 'w'))"
+   python3 -c "
+import json
+from pathlib import Path
+bc = Path('.claude/ml-optimizer.json')
+data = json.loads(bc.read_text()) if bc.is_file() else {}
+runs = data.get('runs', [])
+exp = '<exp_root>'
+if exp not in runs:
+    runs.append(exp)
+json.dump({'active': exp, 'runs': runs}, bc.open('w'), indent=2)
+"
    ```
    Then create the goal anchor file:
    ```bash
@@ -81,7 +105,7 @@
      }
    }
    ```
-   This file persists in `experiments/optimization-goals.json` and is read by all agents before acting.
+   This file persists in `<exp_root>/optimization-goals.json` and is read by all agents before acting.
 
 3.2. **Brainstorm optimization strategy:**
    Use `Skill("superpowers:brainstorming")` to explore the optimization space with the user. This helps surface non-obvious approaches, trade-offs, and priorities before committing to a plan. The brainstorming skill structures the conversation to explore:

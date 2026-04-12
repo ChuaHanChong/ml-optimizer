@@ -35,7 +35,7 @@ import json; print(json.dumps(validate_phase_requirements(6, '<exp_root>')))
 ```
 
 **Required state:**
-- `experiments/results/baseline.json` must exist with `metrics` and `config` keys
+- `<exp_root>/results/baseline.json` must exist with `metrics` and `config` keys
 - If `implementation-manifest.json` exists, it must have `proposals` key
 
 If validation fails, stop and report the missing prerequisites to the user.
@@ -61,7 +61,7 @@ Before starting experiments, sync behavioral patterns from the error tracker:
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py <exp_root> sync-from-errors
 ```
-This populates `experiments/learned-behaviors.json` with OOM limits, divergence patterns, and dead-end outcomes from the error tracker. All agents will read this via the `summary` command.
+This populates `<exp_root>/learned-behaviors.json` with OOM limits, divergence patterns, and dead-end outcomes from the error tracker. All agents will read this via the `summary` command.
 
 ## Pre-Loop: Initialize Code Archive
 
@@ -82,18 +82,18 @@ If `hyperagent_state.active_meta_patches` is non-empty in pipeline state, the hy
 META-PATCHES ACTIVE: The hyperagent has modified skill instructions for this session.
 For the following skills, read the patched version INSTEAD of your default skill instructions:
 <for each patch in active_meta_patches>
-  - <skill_name>: Read experiments/meta-patches/<skill_name>-SKILL.md
+  - <skill_name>: Read <exp_root>/meta-patches/<skill_name>-SKILL.md
     Change summary: <from meta-changelog.json patches[].change>
 </for each>
 ```
 
-To build this context, read `experiments/meta-patches/meta-changelog.json` and extract the `patches` array. Each entry has `skill`, `change`, `reason`, and `expected_impact`.
+To build this context, read `<exp_root>/meta-patches/meta-changelog.json` and extract the `patches` array. Each entry has `skill`, `change`, `reason`, and `expected_impact`.
 
 This enables the self-referential loop: the hyperagent's strategy improvements are applied to future agent dispatches within the same session.
 
 ## Pre-Loop: Load Implementation Manifest
 
-If `experiments/results/implementation-manifest.json` exists:
+If `<exp_root>/results/implementation-manifest.json` exists:
 1. Read the manifest
 2. Collect all proposals with `"status": "validated"` — skip any with `"status": "validation_failed"` or `"status": "implementation_error"`
 3. Each validated proposal branch will be tested with HP tuning
@@ -116,7 +116,7 @@ If `method_proposal_scope` is set in user_choices (i.e., user chose option 5 in 
      message: "Research method proposals (pre-loop).
        CONTEXT FROM OTHER AGENTS:
        - BASELINE: current_metrics={current_metrics}
-       Parameters: source: both, scope_level: {method_proposal_scope}, output_path: experiments/reports/research-findings-method-proposals.md, model_type: {model_type}, task: {task}, current_metrics: {current_metrics}, problem_description: {problem_description}, exp_root: {exp_root}."
+       Parameters: source: both, scope_level: {method_proposal_scope}, output_path: <exp_root>/reports/research-findings-method-proposals.md, model_type: {model_type}, task: {task}, current_metrics: {current_metrics}, problem_description: {problem_description}, exp_root: {exp_root}."
    )
    ```
    → If `SendMessage` fails: fall back to the `Agent()` dispatch below, update `agent_registry["research"]`.
@@ -125,7 +125,7 @@ If `method_proposal_scope` is set in user_choices (i.e., user chose option 5 in 
    ```
    Agent(
      description: "Research method proposals",
-     prompt: "Ultrathink. Research ML optimization techniques. Parameters: source: both, scope_level: {method_proposal_scope}, output_path: experiments/reports/research-findings-method-proposals.md, model_type: {model_type}, task: {task}, current_metrics: {current_metrics}, problem_description: {problem_description}, exp_root: {exp_root}.",
+     prompt: "Ultrathink. Research ML optimization techniques. Parameters: source: both, scope_level: {method_proposal_scope}, output_path: <exp_root>/reports/research-findings-method-proposals.md, model_type: {model_type}, task: {task}, current_metrics: {current_metrics}, problem_description: {problem_description}, exp_root: {exp_root}.",
      subagent_type: "ml-optimizer:research-agent"
    )
    ```
@@ -153,8 +153,8 @@ If `method_proposal_scope` is set in user_choices (i.e., user chose option 5 in 
      to: agent_registry["implement"],
      message: "Implement method proposals (pre-loop).
        CONTEXT FROM OTHER AGENTS:
-       - RESEARCH: found proposals in experiments/reports/research-findings-method-proposals.md
-       Parameters: findings_path: experiments/reports/research-findings-method-proposals.md, selected_indices: {selected_indices}, project_root: {project_root}."
+       - RESEARCH: found proposals in <exp_root>/reports/research-findings-method-proposals.md
+       Parameters: findings_path: <exp_root>/reports/research-findings-method-proposals.md, selected_indices: {selected_indices}, project_root: {project_root}."
    )
    ```
    → If `SendMessage` fails: fall back to the `Agent()` dispatch below, update `agent_registry["implement"]`.
@@ -163,14 +163,14 @@ If `method_proposal_scope` is set in user_choices (i.e., user chose option 5 in 
    ```
    Agent(
      description: "Implement method proposals",
-     prompt: "Ultrathink. Implement research proposals. Parameters: findings_path: experiments/reports/research-findings-method-proposals.md, selected_indices: {selected_indices}, project_root: {project_root}.",
+     prompt: "Ultrathink. Implement research proposals. Parameters: findings_path: <exp_root>/reports/research-findings-method-proposals.md, selected_indices: {selected_indices}, project_root: {project_root}.",
      subagent_type: "ml-optimizer:implement-agent"
    )
    ```
    → Save returned `agentId` to `agent_registry["implement"]`
    → Persist registry: `save_state(..., agent_registry=agent_registry)`
 
-4. **Check implementation results** from `experiments/results/implementation-manifest.json`:
+4. **Check implementation results** from `<exp_root>/results/implementation-manifest.json`:
    - Merge validated method proposal branches into the `code_branches` list
    - Follow the same handling as Phase 6 (failed proposals, dependencies, license warnings)
 
@@ -391,7 +391,7 @@ When the implementation manifest contains multiple code branches:
 
    ```bash
    for exp_id in <batch_exp_ids>:
-       python3 schema_validator.py experiments/results/${exp_id}.json result --strict
+       python3 schema_validator.py <exp_root>/results/${exp_id}.json result --strict
    ```
 
    If any validation fails:
@@ -577,7 +577,7 @@ When the implementation manifest contains multiple code branches:
           - ANALYZE: pivot_type={pivot_type}, reason={reason}
           - EXPERIMENTS: best improvement={best_improvement}%
           - DEAD ENDS: {dead_end_catalog}
-          Parameters: source: both, scope_level: {scope_level}, output_path: experiments/reports/research-findings-method-proposals-iter{N}.md, model_type: {model_type}, task: {task}, current_metrics: {current_metrics}, problem_description: {problem_description}, exp_root: {exp_root}."
+          Parameters: source: both, scope_level: {scope_level}, output_path: <exp_root>/reports/research-findings-method-proposals-iter{N}.md, model_type: {model_type}, task: {task}, current_metrics: {current_metrics}, problem_description: {problem_description}, exp_root: {exp_root}."
       )
       ```
       → If `SendMessage` fails: fall back to the `Agent()` dispatch below, update `agent_registry["research"]` with the new agentId.
@@ -586,7 +586,7 @@ When the implementation manifest contains multiple code branches:
       ```
       Agent(
         description: "Mid-loop research proposals",
-        prompt: "Ultrathink. Research ML optimization techniques. Parameters: source: both, scope_level: {scope_level}, output_path: experiments/reports/research-findings-method-proposals-iter{N}.md, model_type: {model_type}, task: {task}, current_metrics: {current_metrics}, problem_description: {problem_description}, exp_root: {exp_root}.",
+        prompt: "Ultrathink. Research ML optimization techniques. Parameters: source: both, scope_level: {scope_level}, output_path: <exp_root>/reports/research-findings-method-proposals-iter{N}.md, model_type: {model_type}, task: {task}, current_metrics: {current_metrics}, problem_description: {problem_description}, exp_root: {exp_root}.",
         subagent_type: "ml-optimizer:research-agent"
       )
       ```
@@ -693,7 +693,7 @@ When the implementation manifest contains multiple code branches:
           - ANALYZE: {last_analysis_summary}
           - EXPERIMENTS: best improvement={best_improvement}%, branches active: {code_branches}
           - DEAD ENDS: {dead_end_catalog}
-          Parameters: source: both, scope_level: {method_proposal_scope}, output_path: experiments/reports/research-findings-method-proposals-iter{N}.md, model_type: {model_type}, task: {task}, current_metrics: {current_metrics}, problem_description: {problem_description}, exp_root: {exp_root}."
+          Parameters: source: both, scope_level: {method_proposal_scope}, output_path: <exp_root>/reports/research-findings-method-proposals-iter{N}.md, model_type: {model_type}, task: {task}, current_metrics: {current_metrics}, problem_description: {problem_description}, exp_root: {exp_root}."
       )
       ```
       → If `SendMessage` fails: fall back to the `Agent()` dispatch below, update `agent_registry["research"]` with the new agentId.
@@ -702,7 +702,7 @@ When the implementation manifest contains multiple code branches:
       ```
       Agent(
         description: "Cadence-based research round",
-        prompt: "Ultrathink. Research ML optimization techniques. Parameters: source: both, scope_level: {method_proposal_scope}, output_path: experiments/reports/research-findings-method-proposals-iter{N}.md, model_type: {model_type}, task: {task}, current_metrics: {current_metrics}, problem_description: {problem_description}, exp_root: {exp_root}.",
+        prompt: "Ultrathink. Research ML optimization techniques. Parameters: source: both, scope_level: {method_proposal_scope}, output_path: <exp_root>/reports/research-findings-method-proposals-iter{N}.md, model_type: {model_type}, task: {task}, current_metrics: {current_metrics}, problem_description: {problem_description}, exp_root: {exp_root}.",
         subagent_type: "ml-optimizer:research-agent"
       )
       ```
@@ -875,8 +875,8 @@ Orchestrator dispatches analysis-agent (existing Step 5 flow). The analyze skill
 When the hyperagent chooses `meta_improve` (or analyze returns `pivot_type: "meta_improvement"`):
 
 1. Hyperagent reads current skill files (hp-tune, analyze, research) + archive + operator stats
-2. Generates patched skill files to `experiments/meta-patches/`
-3. Writes `experiments/meta-patches/meta-changelog.json`
+2. Generates patched skill files to `<exp_root>/meta-patches/`
+3. Writes `<exp_root>/meta-patches/meta-changelog.json`
 4. Orchestrator records patches in `hyperagent_state.active_meta_patches`
 5. Subsequent agent dispatches include meta-patch context (see "Pre-Loop: Load Meta-Patches")
 6. Hyperagent resumes with improved strategy

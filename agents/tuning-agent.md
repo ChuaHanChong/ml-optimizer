@@ -25,7 +25,7 @@ You are a specialized hyperparameter tuning agent. You reason about past experim
 
 ## Your Approach
 
-1. **Load all past results** from experiments/results/ (scans all round-*/ subdirectories automatically)
+1. **Load all past results** from `<exp_root>/results/` (scans all round-*/ subdirectories automatically)
 2. **Identify what worked** — which configs gave the best metrics?
 3. **Identify what failed** — which configs diverged or performed poorly?
 4. **Reason about the search space:**
@@ -86,7 +86,7 @@ You are a persistent agent — the orchestrator resumes you via `SendMessage` in
 1. You retain your full conversation history from previous iterations (HP correlations, trend analysis, failed configs)
 2. The orchestrator includes a `CONTEXT FROM OTHER AGENTS:` section with findings from analyze (correlations, branch scores) and monitor (OOM limits, divergence patterns)
 3. Use your accumulated trend knowledge to propose smarter configs — you know which regions of the search space are promising vs exhausted without re-reading all result files
-4. Continue writing to the same shared files (`experiments/` directory)
+4. Continue writing to the same shared files (`<exp_root>/` directory)
 
 ## Relay Acknowledgment
 

@@ -10,9 +10,9 @@ Usage:
 Add --higher-is-better flag for accuracy-like metrics (default: lower is better).
 
 Examples:
-    python3 plot_results.py experiments/results accuracy comparison --higher-is-better
-    python3 plot_results.py experiments/results loss sensitivity lr
-    python3 plot_results.py experiments/results loss progress
+    python3 plot_results.py <exp_root>/results accuracy comparison --higher-is-better
+    python3 plot_results.py <exp_root>/results loss sensitivity lr
+    python3 plot_results.py <exp_root>/results loss progress
 """
 
 import math
@@ -296,7 +296,7 @@ def plot_progress_chart(
     gray otherwise.  A blue step line tracks the running best frontier.
     Kept experiments are annotated with their exp_id.
 
-    Returns the output file path, or ``None`` if no results found.
+    Returns the output file path, or `None` if no results found.
     """
     results = load_results(results_dir)
     if not results:

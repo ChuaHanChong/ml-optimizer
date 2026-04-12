@@ -190,11 +190,11 @@ Analysis based on <N> completed experiments:
 | <id>   | <log_file path> | <script_file path> | <result path> |
 
 ### Research Findings
-<Summary or link to `experiments/reports/research-findings.md`>
+<Summary or link to `<exp_root>/reports/research-findings.md`>
 
 ### Batch Analyses
-<List of `experiments/reports/batch-*-analysis.md` with 1-line summary each>
+<List of `<exp_root>/reports/batch-*-analysis.md` with 1-line summary each>
 
 ### Dev Notes
-See `experiments/dev_notes.md` for full session log.
+See `<exp_root>/dev_notes.md` for full session log.
 ```

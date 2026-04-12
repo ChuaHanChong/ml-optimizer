@@ -110,7 +110,7 @@ def update_goals(exp_root: str, updates: dict) -> dict:
     learned-behaviors.json under category 'goal_update'.
 
     Args:
-        exp_root: Path to experiments/ directory.
+        exp_root: Path to the `<exp_root>` directory (any name — not hardcoded).
         updates: Dict with partial goal structure. Example:
             {"objective": {"target_value": 85.0}}
             {"constraints": {"frozen_parameters": ["lr"]}}

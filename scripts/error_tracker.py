@@ -437,9 +437,9 @@ def rank_suggestions(
     """Rank detected patterns by impact score.
 
     Score = severity_weight × occurrences.
-    Returns patterns sorted by score descending, with ``score`` added.
+    Returns patterns sorted by score descending, with `score` added.
     When *total_experiments* is provided, each entry also gets a
-    ``significance`` field (occurrences / total_experiments).
+    `significance` field (occurrences / total_experiments).
     """
     if not patterns:
         return []
@@ -766,9 +766,9 @@ def _normalize_technique(name: str) -> str:
 def log_dead_end(exp_root: str, entry: dict) -> str:
     """Append a dead-end entry. Returns the JSON file path.
 
-    *entry* should contain at minimum ``technique`` and ``reason``.
-    Optional fields: ``branch``, ``experiments_tried``, ``best_result``,
-    ``source``.  ``timestamp`` is auto-added.
+    *entry* should contain at minimum `technique` and `reason`.
+    Optional fields: `branch`, `experiments_tried`, `best_result`,
+    `source`.  `timestamp` is auto-added.
     """
     path = _dead_ends_path(exp_root)
     lock_path = path.with_suffix(".lock")
@@ -867,8 +867,8 @@ def _agenda_md_path(exp_root: str) -> Path:
 def init_agenda(exp_root: str, ideas: list[dict]) -> str:
     """Initialize the research agenda from a list of ideas. Returns JSON path.
 
-    Each idea should have at minimum ``id`` and ``name``.
-    Optional fields: ``priority``, ``source``, ``scope``, ``status``.
+    Each idea should have at minimum `id` and `name`.
+    Optional fields: `priority`, `source`, `scope`, `status`.
     """
     path = _agenda_path(exp_root)
     lock_path = path.with_suffix(".lock")
@@ -909,9 +909,9 @@ def get_agenda(exp_root: str) -> list[dict]:
 def update_agenda_item(exp_root: str, idea_id: str, updates: dict) -> bool:
     """Update a single agenda item by id. Returns True if found and updated.
 
-    *updates* can include any fields: ``status``, ``priority``,
-    ``evidence`` (appended, not replaced), ``lessons``,
-    ``related_dead_end``.
+    *updates* can include any fields: `status`, `priority`,
+    `evidence` (appended, not replaced), `lessons`,
+    `related_dead_end`.
     """
     path = _agenda_path(exp_root)
     lock_path = path.with_suffix(".lock")

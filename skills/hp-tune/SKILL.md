@@ -10,6 +10,8 @@ Use extended thinking for all analytical reasoning in this skill. Ultrathink. Th
 
 You are acting as an intelligent hyperparameter tuning agent. Instead of using grid search, random search, or Bayesian optimization, you reason directly about past results to propose the next batch of configurations.
 
+> **Path convention:** All paths written as `<exp_root>/...` refer to the `exp_root` parameter from your dispatch. The plugin does not hardcode the output directory name.
+
 ## Reference
 
 - Tuning strategy guide: `${CLAUDE_SKILL_DIR}/references/tuning-strategy.md` (in this skill's directory)
@@ -26,7 +28,7 @@ From the orchestrator:
 - `lower_is_better`: Whether lower metric values are better (True for loss, False for accuracy)
 - `code_branches`: List of validated code branches from the implementation manifest (e.g., `["ml-opt/perceptual-loss"]`), or `[]` for HP-only. In iteration 1, generate one config per branch (with baseline HPs) plus one for the original code, instead of spanning the search space.
 - `warm_start_enabled`: Whether checkpoint warm-starting is enabled (boolean, default false). When true and iteration >= 2, propose warm-starting from the best completed experiment on the same branch.
-- `available_checkpoints`: Dict mapping exp_id to checkpoint info (optional). Only provided when `warm_start_enabled` is true. Example: `{"exp-005": {"checkpoint_path": "experiments/artifacts/round-2-hp/exp-005/best.pt", "code_branch": "ml-opt/method-a"}}`.
+- `available_checkpoints`: Dict mapping exp_id to checkpoint info (optional). Only provided when `warm_start_enabled` is true. Example: `{"exp-005": {"checkpoint_path": "<exp_root>/artifacts/round-2-hp/exp-005/best.pt", "code_branch": "ml-opt/method-a"}}`.
 - `branch_scores`: Per-branch allocation scores from analyze (optional). Dict mapping branch name to `{"improvement_pct": X, "sample_count": N, "score": Y}`.
 - `round_dir`: Current round directory (e.g., `"round-3-hp"`). **Required.** Passed by the orchestrator after calling `round_manager.py create-round`. Proposed config JSONs MUST be written inside `proposed-configs/<round_dir>/`. If missing from context, fetch via `round_manager.py current-round`.
 
@@ -40,13 +42,13 @@ python3 -c "
 import json, sys
 # sys.path: add the plugin's scripts/ directory
 from result_analyzer import load_results, rank_by_metric
-results = load_results('<project_root>/experiments/results')
+results = load_results('<exp_root>/results')
 print(json.dumps({k: v for k, v in results.items()}, indent=2))
 "
 ```
 
 Also load the baseline:
-- Read `experiments/results/baseline.json` for the starting point
+- Read `<exp_root>/results/baseline.json` for the starting point
 - Note the baseline metrics and config
 
 ## Step 2: Analyze What's Been Tried
@@ -54,7 +56,7 @@ Also load the baseline:
 Use the result analyzer:
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/result_analyzer.py \
-  <project_root>/experiments/results \
+  <exp_root>/results \
   <primary_metric> \
   baseline \
   <lower_is_better>
@@ -203,12 +205,12 @@ round_dir=$(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/round_manager.py <exp_root> cu
 
 Create the proposed-configs directory **inside the round subdirectory**:
 ```bash
-mkdir -p <project_root>/experiments/proposed-configs/<round_dir>
+mkdir -p <exp_root>/proposed-configs/<round_dir>
 ```
 
 **IMPORTANT:** The PreToolUse hook (`validate_experiment_write.py`) blocks any `exp-*.json` write to `proposed-configs/` outside a `round-N-<type>/` subdirectory. Always write proposals to `proposed-configs/<round_dir>/<exp_id>.json`.
 
-For each proposed config, write a JSON file at `experiments/proposed-configs/<round_dir>/<exp_id>.json`:
+For each proposed config, write a JSON file at `<exp_root>/proposed-configs/<round_dir>/<exp_id>.json`:
 ```json
 {
   "exp_id": "<next_exp_id>",
@@ -260,7 +262,7 @@ Exp-ids are globally unique across rounds — `exp-001` only ever exists in one 
 
 ## Step 6: Document Tuning Decision
 
-Append to `experiments/dev_notes.md`:
+Append to `<exp_root>/dev_notes.md`:
 ```markdown
 ## <date> — HP Tuning Iteration <N>
 

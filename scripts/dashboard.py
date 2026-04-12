@@ -330,7 +330,7 @@ def generate_dashboard(exp_root: str, *, live: bool = False) -> str:
     """Generate the dashboard HTML file. Returns the output path.
 
     When *live* is True (or the pipeline is still running), the HTML
-    includes ``<meta http-equiv="refresh" content="30">`` so the browser
+    includes `<meta http-equiv="refresh" content="30">` so the browser
     auto-reloads every 30 seconds.
     """
     data = _load_dashboard_data(exp_root)
@@ -535,7 +535,7 @@ def generate_dashboard(exp_root: str, *, live: bool = False) -> str:
 
 
 def generate_results_table(exp_root: str, metric: str = "loss", lower_is_better: bool = True) -> str:
-    """Generate experiments/results-table.md with ranked experiment results.
+    """Generate <exp_root>/results-table.md with ranked experiment results.
 
     Returns the output file path.
     """

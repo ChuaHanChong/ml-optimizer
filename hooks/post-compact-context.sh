@@ -11,7 +11,14 @@ if [ -z "$CWD" ]; then
   exit 0
 fi
 
-STATE_FILE="$CWD/experiments/pipeline-state.json"
+# Resolve exp_root from breadcrumb or walk-up fallback.
+source "$(dirname "${BASH_SOURCE[0]}")/_env.sh"
+EXP_DIR=$("$PLUGIN_ROOT/hooks/find-exp-root.sh" "$CWD")
+if [ -z "$EXP_DIR" ]; then
+  exit 0
+fi
+
+STATE_FILE="$EXP_DIR/pipeline-state.json"
 
 if [ ! -f "$STATE_FILE" ]; then
   exit 0
@@ -27,7 +34,7 @@ LOWER_IS_BETTER=$(jq -r '.user_choices.lower_is_better // "unknown"' "$STATE_FIL
 RUNNING=$(jq -r '.running_experiments // [] | length' "$STATE_FILE" 2>/dev/null)
 
 # Count completed experiments
-RESULTS_DIR="$CWD/experiments/results"
+RESULTS_DIR="$EXP_DIR/results"
 COMPLETED=0
 if [ -d "$RESULTS_DIR" ]; then
   COMPLETED=$(find "$RESULTS_DIR" -name 'exp-*.json' -type f 2>/dev/null | wc -l)
@@ -39,7 +46,8 @@ ML-OPTIMIZER PIPELINE CONTEXT (restored after compaction):
 - Primary metric: $PRIMARY_METRIC (lower_is_better=$LOWER_IS_BETTER)
 - Consecutive stops: $STOP_COUNT
 - Experiments completed: $COMPLETED | Currently running: $RUNNING
-- State file: experiments/pipeline-state.json
+- exp_root: $EXP_DIR
+- State file: $STATE_FILE
 - Read the full state file to restore detailed context before proceeding.
 EOF
 

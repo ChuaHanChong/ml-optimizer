@@ -8,6 +8,8 @@ user-invocable: false
 
 Use extended thinking for all reasoning. Ultrathink.
 
+> **Path convention:** All paths written as `<exp_root>/...` refer to the `exp_root` parameter from your dispatch. The plugin does not hardcode the output directory name.
+
 ## Overview
 
 This skill enables the plugin to **self-improve** while optimizing. The hyperagent helps Phase 7 (experiments) and Phase 8 (method stacking) in a loop, choosing the best strategy at each iteration. It also maintains an evolutionary archive with lineage tracking and parent selection.
@@ -28,7 +30,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/setup_hyperagent.sh
 ## Input Parameters
 
 - `project_root`: Path to the user's project
-- `exp_root`: Path to experiments directory
+- `exp_root`: Path to the output directory (any name — set at Phase 0)
 - `primary_metric`: Metric being optimized
 - `lower_is_better`: Metric direction
 - `scope_level`: Constraint on changes (`"training"`, `"architecture"`, `"full"`)
@@ -89,7 +91,7 @@ For `llm_patch` or `shinka_evolve`:
 For `meta_improve`:
 - **Before generating**, validate the counter: `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/pipeline_state.py <exp_root> meta-patch validate '{"skill": "<target>", "change": "<desc>", "reason": "<why>", "expected_impact": "<impact>"}'`. If validation fails (max 3 per session exceeded or forbidden skill), skip meta_improve for this iteration and select a different operator (e.g., `llm_patch` or `research_implement`).
 - `Skill("ml-optimizer:hyperagent-generate")` with `meta_improvement_mode: true`
-- Writes patched skill files to `experiments/meta-patches/`
+- Writes patched skill files to `<exp_root>/meta-patches/`
 - **After generating**, log it: `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/pipeline_state.py <exp_root> meta-patch log '{"skill": "<skill>", "change": "<desc>", "reason": "<why>", "expected_impact": "<impact>"}'`
 
 After execution, report what you did: which action, the genid, branch name, fitness score, and whether HP tuning is needed on the new code.
@@ -105,14 +107,14 @@ python3 ${CLAUDE_PLUGIN_ROOT}/skills/hyperagent-archive/scripts/archive_utils.py
 
 ### Step 5: Report Meta-Patches (if meta-improve was used)
 
-After a `meta_improve` action, report to the orchestrator that patched skill files were generated at `experiments/meta-patches/`. The orchestrator will then include these patches in all subsequent agent dispatches:
+After a `meta_improve` action, report to the orchestrator that patched skill files were generated at `<exp_root>/meta-patches/`. The orchestrator will then include these patches in all subsequent agent dispatches:
 
 ```
-META-PATCHES ACTIVE: Read the patched version at experiments/meta-patches/<skill>-SKILL.md
+META-PATCHES ACTIVE: Read the patched version at <exp_root>/meta-patches/<skill>-SKILL.md
 INSTEAD of your default skill. Changes: <from meta-changelog.json>
 ```
 
-This ensures the self-referential improvement takes effect immediately — not just in the next session. The orchestrator reads `experiments/meta-patches/meta-changelog.json` to know which skills were patched.
+This ensures the self-referential improvement takes effect immediately — not just in the next session. The orchestrator reads `<exp_root>/meta-patches/meta-changelog.json` to know which skills were patched.
 
 ### Step 6: Analyze
 
@@ -142,10 +144,10 @@ ShinkaEvolve is one mutation operator. When the hyperagent chooses `shinka_evolv
 ## Output
 
 The loop produces:
-- `experiments/code-archive.jsonl` — evolutionary archive with lineage
-- `experiments/results/exp-*.json` — experiment results (standard format)
-- `experiments/meta-patches/` — session-scoped skill modifications (if meta-improve was used)
-- `experiments/meta-patches/meta-changelog.json` — changelog of meta-improvements
+- `<exp_root>/code-archive.jsonl` — evolutionary archive with lineage
+- `<exp_root>/results/exp-*.json` — experiment results (standard format)
+- `<exp_root>/meta-patches/` — session-scoped skill modifications (if meta-improve was used)
+- `<exp_root>/meta-patches/meta-changelog.json` — changelog of meta-improvements
 
 ## Important Rules
 

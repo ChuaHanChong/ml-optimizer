@@ -44,7 +44,7 @@ IMPORT_TO_PACKAGE: dict[str, str] = {
 # Directories to skip when scanning imports
 _DEFAULT_EXCLUDE_DIRS: set[str] = {
     ".git", "__pycache__", "node_modules", ".eggs", "build", "dist",
-    "experiments", ".tox", ".mypy_cache", ".pytest_cache", "venv", ".venv",
+    ".tox", ".mypy_cache", ".pytest_cache", "venv", ".venv",
     "env", ".env", ".worktrees", "worktrees",
 }
 
@@ -62,9 +62,9 @@ def scan_imports(
     project_root: str,
     exclude_dirs: list[str] | None = None,
 ) -> dict:
-    """Scan all ``.py`` files under *project_root* for import statements.
+    """Scan all `.py` files under *project_root* for import statements.
 
-    Uses ``ast.parse`` for reliable extraction.  Classifies each top-level
+    Uses `ast.parse` for reliable extraction.  Classifies each top-level
     module name as *stdlib*, *local* (file exists in project), or
     *third_party*.
 
@@ -78,6 +78,18 @@ def scan_imports(
     """
     root = Path(project_root).resolve()
     excludes = _DEFAULT_EXCLUDE_DIRS | set(exclude_dirs or [])
+
+    # Dynamically skip the user's actual exp_root so the scanner doesn't
+    # walk a potentially large output directory full of checkpoints/logs.
+    breadcrumb = root / ".claude" / "ml-optimizer.json"
+    if breadcrumb.is_file():
+        try:
+            _bc = json.loads(breadcrumb.read_text())
+            _exp = _bc.get("exp_root", "")
+            if _exp:
+                excludes.add(Path(_exp).name)
+        except (json.JSONDecodeError, OSError):
+            pass
 
     # Collect local module names (any .py file or package dir in the project)
     local_names: set[str] = set()
@@ -438,7 +450,7 @@ def detect_dataset_format_project(
 ) -> dict:
     """Detect dataset format by scanning the training script AND its local imports.
 
-    Parses the training script's imports, finds matching local ``.py`` files
+    Parses the training script's imports, finds matching local `.py` files
     in the project, scans those for data-loading patterns too, and returns
     the most confident detection across all scanned files.
 
@@ -674,12 +686,12 @@ def bulk_install_command(
 ) -> dict:
     """Generate the recommended bulk install command for a project.
 
-    Checks for common dependency files (``requirements.txt``,
-    ``environment.yml``, ``pyproject.toml``) and generates the appropriate
+    Checks for common dependency files (`requirements.txt`,
+    `environment.yml`, `pyproject.toml`) and generates the appropriate
     install command for *env_manager*.
 
-    When *env_manager* is ``"conda"`` and *env_name* is provided, conda
-    commands include ``-n <env_name>`` to target the correct environment.
+    When *env_manager* is `"conda"` and *env_name* is provided, conda
+    commands include `-n <env_name>` to target the correct environment.
 
     Returns::
 
@@ -790,9 +802,9 @@ _JAX_CUDA_EXTRAS: dict[str, str] = {
 
 
 def _detect_cuda_version() -> str | None:
-    """Run ``nvidia-smi`` and parse the CUDA driver version.
+    """Run `nvidia-smi` and parse the CUDA driver version.
 
-    Returns a version string like ``"12.1"`` or ``None`` if no GPU found.
+    Returns a version string like `"12.1"` or `None` if no GPU found.
     """
     try:
         result = subprocess.run(
@@ -839,13 +851,13 @@ def gpu_install_command(
     """Return the recommended install command for *package*, GPU-aware.
 
     For PyTorch packages (torch, torchvision, torchaudio), detects the CUDA
-    version and returns the appropriate ``--index-url`` command.  For
-    tensorflow, returns ``tensorflow[and-cuda]`` when a GPU is present.
-    For JAX packages (jax, jaxlib), returns ``jax[cuda12]`` or similar.
-    For other packages, returns a plain ``pip install <package>``.
+    version and returns the appropriate `--index-url` command.  For
+    tensorflow, returns `tensorflow[and-cuda]` when a GPU is present.
+    For JAX packages (jax, jaxlib), returns `jax[cuda12]` or similar.
+    For other packages, returns a plain `pip install <package>`.
 
-    When *env_manager* is ``"conda"`` and *env_name* is provided, the
-    resulting pip command is wrapped with ``conda run --no-banner -n <env_name>``
+    When *env_manager* is `"conda"` and *env_name* is provided, the
+    resulting pip command is wrapped with `conda run --no-banner -n <env_name>`
     so that packages install into the correct conda environment.
 
     Returns::
@@ -922,7 +934,7 @@ def _wrap_for_conda(
     env_manager: str | None,
     env_name: str | None,
 ) -> str:
-    """Wrap a pip command for conda if *env_manager* is ``"conda"``."""
+    """Wrap a pip command for conda if *env_manager* is `"conda"`."""
     if env_manager == "conda" and env_name:
         return f"conda run --no-banner -n {env_name} {pip_cmd}"
     return pip_cmd

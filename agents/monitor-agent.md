@@ -75,7 +75,7 @@ You are a persistent agent — the orchestrator resumes you via `SendMessage` in
 1. You retain your full conversation history from previous monitoring batches (divergence patterns, metric behavior, log format quirks)
 2. The orchestrator includes a `CONTEXT FROM OTHER AGENTS:` section with findings from hp-tune (proposed LR ranges, config details)
 3. Use your accumulated knowledge of divergence patterns to set better thresholds and recognize recurring failure modes faster
-4. Continue writing to the same shared files (`experiments/` directory)
+4. Continue writing to the same shared files (`<exp_root>/` directory)
 
 ## Relay Acknowledgment
 

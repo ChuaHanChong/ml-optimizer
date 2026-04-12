@@ -86,7 +86,7 @@ When the orchestrator dispatches you with `meta_improvement_mode: true`:
 
 1. Analyze what optimization strategies worked and what failed across the session
 2. Read current skill files (hp-tune, analyze, research)
-3. Generate improved versions to `experiments/meta-patches/`
+3. Generate improved versions to `<exp_root>/meta-patches/`
 4. Each patch must include a reason and expected impact
 
 **Constraints:**

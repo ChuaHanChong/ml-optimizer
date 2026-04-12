@@ -206,13 +206,13 @@ class TestHandoffTimeoutConfig:
     def test_inprogress_marker_extends_deadline(self, tmp_path, monkeypatch):
         """Writing .inprogress marker extends the deadline beyond the original.
 
-        Tests the provider's deadline-extension logic when an ``.inprogress``
+        Tests the provider's deadline-extension logic when an `.inprogress`
         marker is observed mid-poll. The original version relied on a ~8-second
         wall-clock test with time.sleep(), which flaked under heavy system
         load because sleep jitter pushed iterations past the tight deadline
         margins.
 
-        This version monkeypatches the provider module's ``time.sleep`` to
+        This version monkeypatches the provider module's `time.sleep` to
         poll 10x faster (0.1s instead of 1s) when called with >= 0.5s.
         Short sleeps (like the responder's 0.01s busy-wait) are unaffected.
         The 10x faster polling compresses the test runtime to ~0.5s and

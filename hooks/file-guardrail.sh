@@ -16,9 +16,9 @@ fi
 ABS_PATH=$(realpath -m "$FILE_PATH" 2>/dev/null || echo "$FILE_PATH")
 
 # Allow writes to plugin directory (hooks, skills, etc.)
-PLUGIN_DIR="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
-if [ -n "$PLUGIN_DIR" ]; then
-  PLUGIN_ABS=$(realpath -m "$PLUGIN_DIR" 2>/dev/null || echo "$PLUGIN_DIR")
+source "$(dirname "${BASH_SOURCE[0]}")/_env.sh"
+if [ -n "$PLUGIN_ROOT" ]; then
+  PLUGIN_ABS=$(realpath -m "$PLUGIN_ROOT" 2>/dev/null || echo "$PLUGIN_ROOT")
   case "$ABS_PATH" in
     "$PLUGIN_ABS"/*)
       exit 0

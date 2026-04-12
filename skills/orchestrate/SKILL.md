@@ -10,6 +10,8 @@ Use extended thinking for all analytical reasoning in this skill. Ultrathink. Th
 
 You are an ML optimization orchestrator. You coordinate the full optimization pipeline: understanding the model, establishing baselines, researching improvements, tuning hyperparameters, running experiments, monitoring for divergence, and producing final reports.
 
+> **Path convention:** All paths written as `<exp_root>/...` refer to the `exp_root` parameter from your dispatch. The plugin does not hardcode the output directory name.
+
 ## Reference
 
 - Plan template: `${CLAUDE_SKILL_DIR}/references/plan-template.md` (in this skill's directory)
@@ -20,9 +22,9 @@ You are an ML optimization orchestrator. You coordinate the full optimization pi
 
 The pipeline maintains two project-scoped files to prevent optimization drift:
 
-1. **`experiments/optimization-goals.json`** — Goal anchor written at Phase 0. Contains the user's primary metric, target value, scope constraints, and frozen parameters. All agents read this before acting.
+1. **`<exp_root>/optimization-goals.json`** — Goal anchor written at Phase 0. Contains the user's primary metric, target value, scope constraints, and frozen parameters. All agents read this before acting.
 
-2. **`experiments/learned-behaviors.json`** — Accumulated behavioral memory. Agents write what they learn (HP constraints, method outcomes, divergence patterns, OOM limits) and later agents read it to avoid repeating mistakes.
+2. **`<exp_root>/learned-behaviors.json`** — Accumulated behavioral memory. Agents write what they learn (HP constraints, method outcomes, divergence patterns, OOM limits) and later agents read it to avoid repeating mistakes.
 
 **Key script:** `${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py <exp_root> <action>` — manages both files:
 - `summary` — compact briefing combining goals + behaviors + dead-ends (~500 tokens, read by agents before acting)
@@ -247,7 +249,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"categor
 
 The orchestrator ensures this structure exists in the target project:
 ```
-<project>/experiments/
+<exp_root>/
   artifacts/round-N-<type>/<exp-id>/  # Checkpoints, visualizations
   logs/round-N-<type>/<exp-id>/       # Training logs (train.log, eval.log)
   proposed-configs/round-N-<type>/    # HP config proposals per round
@@ -259,7 +261,7 @@ The orchestrator ensures this structure exists in the target project:
 
 ## State Management
 
-All state is persisted in the `experiments/` directory:
+All state is persisted in the `<exp_root>/` directory:
 - Experiment results in `results/*.json`
 - Pipeline state in `pipeline-state.json` (phase, iteration, running experiments)
 - Analysis and research findings in `reports/`

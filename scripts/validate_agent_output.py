@@ -38,7 +38,7 @@ def check_agent_output(cwd: str, agent_name: str, agent_id: str = "") -> dict:
     """Check if an agent produced its expected output files.
 
     Uses output_contract.check_outputs() for consistency with SubagentStart injection.
-    The ``agent_id`` is used to key per-agent state files (dev_notes mtime marker)
+    The `agent_id` is used to key per-agent state files (dev_notes mtime marker)
     so parallel subagent dispatches don't clobber each other.
     """
     exp_root = _find_exp_root(cwd)

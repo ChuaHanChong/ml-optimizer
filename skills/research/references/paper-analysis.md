@@ -121,7 +121,7 @@ If alphaxiv tools are unavailable, use `WebFetch(url)` for paper content and `We
 
 ## Previously Tried Techniques
 
-Before proposing, check if `experiments/reports/research-findings.md` already exists. If so:
+Before proposing, check if `<exp_root>/reports/research-findings.md` already exists. If so:
 1. Read all previously proposed technique names
 2. Do NOT re-propose techniques that were already tried
 3. Note in the output: "Excluded N previously-proposed techniques"

@@ -102,13 +102,14 @@ def validate_phase_requirements(phase: int, exp_root: str) -> dict:
     """Validate that prerequisites for a given pipeline phase are met.
 
     Phase 2 (prerequisites): no file requirements.
-    Phase 3 (baseline): exp_root/results/ directory must exist.
+    Phase 3 (baseline): `<exp_root>/results/` directory must exist.
         If prerequisites.json exists and ready_for_baseline is false, fail.
-    Phase 4 (checkpoint): exp_root/results/baseline.json must exist with
-        "metrics" and "config" keys.
-    Phase 5 (research): exp_root/results/baseline.json must exist.
+    Phase 4 (checkpoint): `<exp_root>/results/baseline.json` must exist
+        with "metrics" and "config" keys.
+    Phase 5 (research): `<exp_root>/results/baseline.json` must exist.
     Phase 6 (experiment loop): baseline.json must exist with metrics+config,
-        and if implementation-manifest.json exists it must have a "proposals" key.
+        and if implementation-manifest.json exists it must have a "proposals"
+        key.
     """
     root = Path(exp_root)
     missing: list[str] = []
@@ -251,8 +252,8 @@ def validate_phase_requirements(phase: int, exp_root: str) -> dict:
 def _check_goal_metric_consistency(exp_root: str, user_choices: dict) -> None:
     """Warn if user_choices.primary_metric disagrees with optimization-goals.json.
 
-    The orchestrator writes ``optimization-goals.json`` at Phase 0 and persists
-    ``user_choices`` to ``pipeline-state.json`` separately. Nothing else checks
+    The orchestrator writes `optimization-goals.json` at Phase 0 and persists
+    `user_choices` to `pipeline-state.json` separately. Nothing else checks
     they agree — so a stale dispatch metric can propagate silently through the
     whole pipeline. This helper surfaces the mismatch via stderr and, if
     available, logs a warning to the error tracker.
@@ -454,7 +455,7 @@ def cleanup_stale(exp_root: str, timeout_hours: float = 2.0) -> list[str]:
 
     Reads pipeline-state.json and checks if status is "running" with a
     timestamp older than *timeout_hours* ago.  Also scans
-    experiments/results/ for any exp-*.json with status "running" older
+    <exp_root>/results/ for any exp-*.json with status "running" older
     than the timeout.
 
     Returns a list of cleaned-up item descriptions.
@@ -495,7 +496,7 @@ def cleanup_stale(exp_root: str, timeout_hours: float = 2.0) -> list[str]:
             except (ValueError, TypeError):
                 pass
 
-    # --- experiments/results/exp-*.json ---
+    # --- <exp_root>/results/exp-*.json ---
     results_dir = root / "results"
     if results_dir.is_dir():
         for exp_file in sorted(results_dir.glob("exp-*.json")):
@@ -608,7 +609,7 @@ def validate_phase_gate(current_phase, next_phase, exp_root):
 
 
 def log_phase_gate(exp_root, phase, status, summary):
-    """Append a phase gate entry to experiments/phase-gates.json.
+    """Append a phase gate entry to <exp_root>/phase-gates.json.
 
     Each entry: {"phase": int, "status": str, "summary": str, "timestamp": ISO8601}.
     Creates the file if it does not exist. Uses atomic write with file locking.
@@ -732,10 +733,10 @@ def validate_meta_patch(exp_root: str, patch: dict) -> dict:
 
     Checks:
     1. All required fields present and non-empty strings.
-    2. ``skill`` not in ``META_PATCH_FORBIDDEN_SKILLS``.
-    3. Current logged patch count < ``META_PATCH_MAX_PER_SESSION``.
+    2. `skill` not in `META_PATCH_FORBIDDEN_SKILLS`.
+    3. Current logged patch count < `META_PATCH_MAX_PER_SESSION`.
 
-    Returns ``{"valid": bool, "errors": list[str]}``.
+    Returns `{"valid": bool, "errors": list[str]}`.
     """
     errors: list[str] = []
 
@@ -764,8 +765,8 @@ def validate_meta_patch(exp_root: str, patch: dict) -> dict:
 def log_meta_patch(exp_root: str, patch: dict) -> dict:
     """Validate and log a meta-patch to the changelog.
 
-    Returns ``{"logged": True, "id": N, "count": N}`` on success, or
-    ``{"logged": False, "errors": [...]}`` on validation failure.
+    Returns `{"logged": True, "id": N, "count": N}` on success, or
+    `{"logged": False, "errors": [...]}` on validation failure.
     """
     result = validate_meta_patch(exp_root, patch)
     if not result["valid"]:
@@ -825,7 +826,7 @@ def log_meta_patch(exp_root: str, patch: dict) -> dict:
 
 
 def log_decision(exp_root: str, decision: dict) -> str:
-    """Append a decision entry to experiments/decision-log.json.
+    """Append a decision entry to <exp_root>/decision-log.json.
 
     The *decision* dict must contain at minimum: phase (int), agent (str),
     decision_type (str), decision (str). Optional fields: iteration (int),
@@ -991,12 +992,12 @@ def promote_meta_patch(
     """Promote a meta-patch by copying its patched skill file into the plugin.
 
     1. Load changelog entry at *patch_index*.
-    2. Look for patched file at ``experiments/meta-patches/<skill>-SKILL.md``.
-    3. Ensure content starts with ``# [meta-improvement]``.
-    4. Write to ``<plugin_root>/skills/<skill>/SKILL.md``.
+    2. Look for patched file at `<exp_root>/meta-patches/<skill>-SKILL.md`.
+    3. Ensure content starts with `# [meta-improvement]`.
+    4. Write to `<plugin_root>/skills/<skill>/SKILL.md`.
 
-    Returns ``{"promoted": True, "skill": str, "path": str}`` on success,
-    or ``{"promoted": False, "error": str}`` on failure.
+    Returns `{"promoted": True, "skill": str, "path": str}` on success,
+    or `{"promoted": False, "error": str}` on failure.
     """
     entries = get_meta_patches(exp_root)
     if not isinstance(patch_index, int) or patch_index < 0 or patch_index >= len(entries):

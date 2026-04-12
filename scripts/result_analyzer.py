@@ -10,8 +10,8 @@ from pathlib import Path
 def load_results(results_dir: str) -> dict[str, dict]:
     """Load all experiment results from a directory.
 
-    Scans both flat files (``baseline.json``) and hierarchical round
-    directories (``round-*/exp-*.json``).  Exp-ids are globally unique
+    Scans both flat files (`baseline.json`) and hierarchical round
+    directories (`round-*/exp-*.json`).  Exp-ids are globally unique
     so there is no collision between rounds.
     """
     path = Path(results_dir)
@@ -224,7 +224,7 @@ def build_experiment_description(
 ) -> str:
     """Build a short human-readable description for a progress chart annotation.
 
-    Combines the method name (from ``code_proposal``) with the most
+    Combines the method name (from `code_proposal`) with the most
     distinctive HP change vs *baseline_config*.  Falls back to exp_id
     when no richer information is available.
 
@@ -512,7 +512,7 @@ def compute_branch_scores(
 ) -> dict[str, dict]:
     """Compute per-branch allocation scores for adaptive budget allocation.
 
-    For each code_branch (null branch keyed as ``__baseline__``), computes
+    For each code_branch (null branch keyed as `__baseline__`), computes
     improvement_pct over baseline, sample_count, and a composite score.
     """
     # Find baseline metric value
@@ -604,8 +604,8 @@ def compare_experiments(
 ) -> dict:
     """Pairwise comparison of experiments: config diff, metric delta, winner.
 
-    Returns a structured dict with ``config_diff``, ``metrics_comparison``,
-    ``metadata``, and ``winner`` fields.
+    Returns a structured dict with `config_diff`, `metrics_comparison`,
+    `metadata`, and `winner` fields.
     """
     results = load_results(results_dir)
     if len(exp_ids) != 2:

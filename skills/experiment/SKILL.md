@@ -8,6 +8,8 @@ user-invocable: false
 
 Runs a single training experiment with a specified configuration.
 
+> **Path convention:** All paths written as `<exp_root>/...` refer to the `exp_root` parameter from your dispatch. The plugin does not hardcode the output directory name.
+
 ## Reference
 
 - Script templates: `${CLAUDE_SKILL_DIR}/references/script-templates.md` (in this skill's directory)
@@ -46,10 +48,10 @@ round_dir=$(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/round_manager.py <exp_root> cu
 
 If `code_branch` is provided (from implementation manifest):
 
-1. **Compute a safe worktree path OUTSIDE `experiments/`** to avoid a cleanup
+1. **Compute a safe worktree path OUTSIDE `<exp_root>/`** to avoid a cleanup
    race condition. A parallel experiment-agent + hyperagent dispatch can wipe
-   sibling `experiments/*` subdirs if any of them has a worktree under
-   `experiments/`. Put the worktree in a system temp dir instead:
+   sibling `<exp_root>/*` subdirs if any of them has a worktree under
+   `<exp_root>/`. Put the worktree in a system temp dir instead:
    ```bash
    PROJECT_HASH=$(echo "<project_root>" | sha1sum | cut -c1-8)
    WORKTREE_ROOT="/tmp/ml-opt-worktrees-${PROJECT_HASH}"
@@ -57,14 +59,14 @@ If `code_branch` is provided (from implementation manifest):
    WORKTREE_PATH="$WORKTREE_ROOT/<exp_id>"
    git worktree add "$WORKTREE_PATH" <code_branch>
    ```
-   **Never** create worktrees under `<project_root>/experiments/` or under
-   `<project_root>` itself. See the "Worktree race" lesson in
-   `dev_notes.md` if you see unexplained file loss mid-run.
+   **Never** create worktrees under `<exp_root>/` or under `<project_root>/`
+   itself. See the "Worktree race" lesson in `dev_notes.md` if you see
+   unexplained file loss mid-run.
 2. Verify the branch exists and the expected modified files are present in the worktree
 3. Run training commands from within the worktree directory
 4. **Copy artifacts BEFORE cleanup** — model checkpoints, eval reports, and
    any files you want preserved must be copied out of the worktree to
-   `experiments/artifacts/<round_dir>/<exp_id>/` while the worktree is still
+   `<exp_root>/artifacts/<round_dir>/<exp_id>/` while the worktree is still
    alive.
 5. **After training completes**, validate-then-remove the worktree. Never
    `rm -rf` a worktree — always let git scope the cleanup:
@@ -124,7 +126,7 @@ Before running training, capture environment state for experiment reproduction:
 
 2. **Environment snapshot**:
    ```bash
-   pip freeze > experiments/logs/<round_dir>/<exp_id>/pip_freeze.txt 2>/dev/null || true
+   pip freeze > <exp_root>/logs/<round_dir>/<exp_id>/pip_freeze.txt 2>/dev/null || true
    ```
 
 3. **Git state**: Record `git rev-parse HEAD` (supplements `code_branch` with exact commit).
@@ -135,7 +137,7 @@ Include in the result JSON under a `"reproducibility"` key:
 ```json
 "reproducibility": {
   "random_seed": null,
-  "environment_file": "experiments/logs/<round_dir>/<exp_id>/pip_freeze.txt",
+  "environment_file": "<exp_root>/logs/<round_dir>/<exp_id>/pip_freeze.txt",
   "git_sha": "<sha>",
   "framework_version": "<version>"
 }
@@ -145,14 +147,14 @@ Include in the result JSON under a `"reproducibility"` key:
 
 Construct the full training command by overriding the base command with experiment-specific config:
 
-1. Read the base training command from `experiments/results/baseline.json`
+1. Read the base training command from `<exp_root>/results/baseline.json`
 1.4. **Validate prepared data paths:** If `prepared_train_path` or `prepared_val_path` was provided:
    - Verify each path exists on disk (file or directory)
-   - If a path does not exist, log a warning to `experiments/dev_notes.md` and fall back to the original `train_data_path`/`val_data_path`
+   - If a path does not exist, log a warning to `<exp_root>/dev_notes.md` and fall back to the original `train_data_path`/`val_data_path`
    - Log to error tracker with `category: "config_error"`, `severity: "warning"`, `source: "experiment"`
 1.5. **Apply prepared data paths:** If `prepared_train_path` or `prepared_val_path` was provided (and validated in 1.4):
    a. **CLI substitution:** Check if the original `train_data_path`/`val_data_path` appears as a literal substring in the train_command. If found, replace it with the prepared path.
-   b. **Config file substitution:** If not found in the train_command, read the training config file (YAML/JSON) and search for the original data path. Create a modified config copy at `experiments/logs/<round_dir>/<exp_id>/config_modified.yaml` with the path updated.
+   b. **Config file substitution:** If not found in the train_command, read the training config file (YAML/JSON) and search for the original data path. Create a modified config copy at `<exp_root>/logs/<round_dir>/<exp_id>/config_modified.yaml` with the path updated.
    c. **No match:** Log a warning to dev_notes.md: "Could not find original data path in train_command or config — proceeding with original paths." Pass the prepared paths as additional CLI args if the training script accepts generic data path arguments (detected in Phase 1).
 2. Determine how the project accepts config overrides:
    - **CLI args:** `python train.py --lr 0.001 --batch_size 16`
@@ -175,18 +177,18 @@ Read the training script to determine the override method:
 - If it uses environment variables: set them in the script
 
 For config file approach, write a modified config to:
-`experiments/logs/<round_dir>/<exp_id>/config.yaml`
+`<exp_root>/logs/<round_dir>/<exp_id>/config.yaml`
 
 ## Step 2.1: Artifact Storage
 
 Save model checkpoints, intermediate outputs, and visualizations to:
 ```
-experiments/artifacts/<round_dir>/<exp-id>/
+<exp_root>/artifacts/<round_dir>/<exp-id>/
 ```
 
 Create the per-experiment subdirectory before training:
 ```bash
-mkdir -p experiments/artifacts/<round_dir>/<exp_id>
+mkdir -p <exp_root>/artifacts/<round_dir>/<exp_id>
 ```
 
 If the training command produces checkpoint files (`*.pt`, `*.pth`, `*.ckpt`, `*.h5`, `*.pkl`, `*.safetensors`), configure the save path to point here. Add the artifact path to the generated training script via `--checkpoint_dir`, `--save_dir`, `--output_dir`, or whichever flag the training script uses.
@@ -209,20 +211,20 @@ Or write the script manually using the Write tool, following templates in `${CLA
 
 **Timeout wrapper:** The training command in the bash script must be wrapped with `timeout`:
 ```bash
-timeout --signal=SIGTERM --kill-after=60 {timeout_seconds} {train_command} 2>&1 | tee experiments/logs/{round_dir}/{exp_id}/train.log
+timeout --signal=SIGTERM --kill-after=60 {timeout_seconds} {train_command} 2>&1 | tee <exp_root>/logs/{round_dir}/{exp_id}/train.log
 EXIT_CODE=${PIPESTATUS[0]}
 if [ $EXIT_CODE -eq 124 ]; then
-    echo "TIMEOUT: Training exceeded {timeout_seconds}s limit" >> experiments/logs/{round_dir}/{exp_id}/train.log
+    echo "TIMEOUT: Training exceeded {timeout_seconds}s limit" >> <exp_root>/logs/{round_dir}/{exp_id}/train.log
 fi
 ```
 
 The script must:
 - Set `CUDA_VISIBLE_DEVICES=<gpu_id>`
 - Create the log directory
-- Run training with output logged to `experiments/logs/<round_dir>/<exp_id>/train.log`
+- Run training with output logged to `<exp_root>/logs/<round_dir>/<exp_id>/train.log`
 - Include any environment variables needed
 
-Save to: `experiments/scripts/<round_dir>/<exp_id>/train.sh`
+Save to: `<exp_root>/scripts/<round_dir>/<exp_id>/train.sh`
 
 ## Step 3.1: Write Placeholder Result
 
@@ -235,8 +237,8 @@ Before starting training, write a placeholder result file so the monitor and `cl
   "config": <config>,
   "metrics": {},
   "gpu_id": <gpu_id>,
-  "log_file": "experiments/logs/<round_dir>/<exp_id>/train.log",
-  "script_file": "experiments/scripts/<round_dir>/<exp_id>/train.sh",
+  "log_file": "<exp_root>/logs/<round_dir>/<exp_id>/train.log",
+  "script_file": "<exp_root>/scripts/<round_dir>/<exp_id>/train.sh",
   "code_branch": "<code_branch or null>",
   "code_proposal": "<code_proposal or null>",
   "proposal_source": "<proposal_source or null>",
@@ -248,21 +250,21 @@ Before starting training, write a placeholder result file so the monitor and `cl
 }
 ```
 
-Write to: `experiments/results/<round_dir>/<exp_id>.json`
+Write to: `<exp_root>/results/<round_dir>/<exp_id>.json`
 
 **Why:** This prevents a race condition where the monitor detects divergence and writes a minimal result file (missing metadata like `code_branch`, `method_tier`, `iteration`) before the experiment agent has written anything. With the placeholder, the monitor sees `status: "running"` and updates to `"diverged"` while preserving all metadata fields.
 
 Validate the placeholder:
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/schema_validator.py \
-  experiments/results/<round_dir>/<exp_id>.json result
+  <exp_root>/results/<round_dir>/<exp_id>.json result
 ```
 
 ## Step 4: Execute Training
 
 Run the experiment:
 ```bash
-bash experiments/scripts/<round_dir>/<exp_id>/train.sh
+bash <exp_root>/scripts/<round_dir>/<exp_id>/train.sh
 ```
 
 **For foreground execution** (when called directly):
@@ -277,14 +279,14 @@ bash experiments/scripts/<round_dir>/<exp_id>/train.sh
 
 After training starts, perform a fast sanity check on the first few log entries — **independent of the monitor skill**:
 
-1. Wait for the first 5-10 training steps to appear in the log (poll `experiments/logs/<round_dir>/<exp_id>/train.log` briefly)
+1. Wait for the first 5-10 training steps to appear in the log (poll `<exp_root>/logs/<round_dir>/<exp_id>/train.log` briefly)
 2. Parse the initial loss values using:
    ```bash
-   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/parse_logs.py experiments/logs/<round_dir>/<exp_id>/train.log
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/parse_logs.py <exp_root>/logs/<round_dir>/<exp_id>/train.log
    ```
 3. **Abort immediately** if any of these conditions are met:
    - Loss is `NaN` or `Inf` in the first 10 steps
-   - Loss exceeds 10× the baseline's initial loss (read from `experiments/results/baseline.json` → `metrics.loss` or first logged loss value)
+   - Loss exceeds 10× the baseline's initial loss (read from `<exp_root>/results/baseline.json` → `metrics.loss` or first logged loss value)
    - Training process already exited with non-zero code
 
 4. If aborting:
@@ -306,7 +308,7 @@ After training completes:
 
 1. Parse the training log:
    ```bash
-   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/parse_logs.py experiments/logs/<round_dir>/<exp_id>/train.log
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/parse_logs.py <exp_root>/logs/<round_dir>/<exp_id>/train.log
    ```
 
 2. **If an eval command was provided, run evaluation** (mandatory — the primary_metric often comes from eval output):
@@ -315,7 +317,7 @@ After training completes:
    ```
    Parse eval output for final metrics.
 
-   **Worktree experiments:** Evaluation MUST run inside the worktree directory (before `git worktree remove`). Copy model checkpoints/artifacts from the worktree to `experiments/artifacts/<round_dir>/<exp_id>/` BEFORE removing the worktree.
+   **Worktree experiments:** Evaluation MUST run inside the worktree directory (before `git worktree remove`). Copy model checkpoints/artifacts from the worktree to `<exp_root>/artifacts/<round_dir>/<exp_id>/` BEFORE removing the worktree.
 
 3. Extract key metrics:
    - Final loss value
@@ -329,7 +331,7 @@ After training completes:
 
 **Note:** This overwrites the placeholder result from Step 3.1. If the monitor has already updated the placeholder to `status: "diverged"`, check the current file status first — if the experiment completed successfully despite the monitor's divergence call, use `status: "completed"` (the experiment's own metrics are authoritative).
 
-Write experiment results to `experiments/results/<round_dir>/<exp_id>.json`:
+Write experiment results to `<exp_root>/results/<round_dir>/<exp_id>.json`:
 
 ```json
 {
@@ -347,8 +349,8 @@ Write experiment results to `experiments/results/<round_dir>/<exp_id>.json`:
   },
   "gpu_id": <gpu_id>,
   "duration_seconds": <training_time>,
-  "log_file": "experiments/logs/<round_dir>/<exp_id>/train.log",
-  "script_file": "experiments/scripts/<round_dir>/<exp_id>/train.sh",
+  "log_file": "<exp_root>/logs/<round_dir>/<exp_id>/train.log",
+  "script_file": "<exp_root>/scripts/<round_dir>/<exp_id>/train.sh",
   "code_branch": "<branch name or null>",
   "code_proposal": "<proposal name or null>",
   "proposal_source": "<paper|llm_knowledge|null>",
@@ -361,7 +363,7 @@ Write experiment results to `experiments/results/<round_dir>/<exp_id>.json`:
   "stack_base_exp": "<exp_id of previous stack step>",
   "reproducibility": {
     "random_seed": "<seed_or_null>",
-    "environment_file": "experiments/logs/<round_dir>/<exp_id>/pip_freeze.txt",
+    "environment_file": "<exp_root>/logs/<round_dir>/<exp_id>/pip_freeze.txt",
     "git_sha": "<sha>",
     "framework_version": "<version>"
   },
@@ -373,7 +375,7 @@ Write experiment results to `experiments/results/<round_dir>/<exp_id>.json`:
 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/schema_validator.py \
-  experiments/results/<round_dir>/<exp_id>.json result
+  <exp_root>/results/<round_dir>/<exp_id>.json result
 ```
 
 If validation fails, read the errors, fix the JSON file, and re-validate. Do not proceed to Step 7 until validation passes.

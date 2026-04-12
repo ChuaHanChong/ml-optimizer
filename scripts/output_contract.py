@@ -144,10 +144,10 @@ SCHEMA_EXAMPLES = {
 def _format_path(path_template, exp_root, **kwargs):
     """Format a path template, preserving unresolved placeholders.
 
-    Used so that a missing ``round_dir`` / ``exp_id`` kwarg is kept as
-    ``{round_dir}`` / ``{exp_id}`` in the output, letting callers see
+    Used so that a missing `round_dir` / `exp_id` kwarg is kept as
+    `{round_dir}` / `{exp_id}` in the output, letting callers see
     which placeholders weren't filled in (and letting glob matching
-    substitute ``*`` later).
+    substitute `*` later).
     """
     try:
         return path_template.format(exp_root=exp_root, **kwargs)
@@ -159,13 +159,13 @@ def _format_path(path_template, exp_root, **kwargs):
 
 
 def _condition_satisfied(required_if, exp_root, **kwargs):
-    """Evaluate a ``required_if`` predicate.
+    """Evaluate a `required_if` predicate.
 
     Reads the referenced JSON file, navigates the dotted jsonpath, and
-    compares the value to ``equals``. Returns ``True`` if the conditional
-    output should be enforced, ``False`` if it should be skipped.
+    compares the value to `equals`. Returns `True` if the conditional
+    output should be enforced, `False` if it should be skipped.
 
-    Any read/parse/navigation failure returns ``False`` (skip the entry) —
+    Any read/parse/navigation failure returns `False` (skip the entry) —
     a missing or malformed reference file means the condition can't be
     evaluated, so we default to "not required" rather than blocking.
     """
@@ -187,12 +187,12 @@ def _condition_satisfied(required_if, exp_root, **kwargs):
 def get_contract(agent_name, exp_root, **kwargs):
     """Resolve contract paths for an agent.
 
-    Returns a list of dicts with resolved ``path``, ``description``,
-    and optional ``glob`` / ``dir`` / ``any_of`` flags.  Returns ``[]``
+    Returns a list of dicts with resolved `path`, `description`,
+    and optional `glob` / `dir` / `any_of` flags.  Returns `[]`
     for unknown agents.
 
-    An ``any_of`` entry in a contract becomes a resolved list of paths
-    under the ``any_of`` key — at least one must exist to satisfy the
+    An `any_of` entry in a contract becomes a resolved list of paths
+    under the `any_of` key — at least one must exist to satisfy the
     contract (used for mode-dependent outputs like analysis-agent).
     """
     templates = CONTRACTS.get(agent_name)
@@ -267,11 +267,11 @@ def format_injection(agent_name, exp_root, **kwargs):
 def check_outputs(agent_name, exp_root, **kwargs):
     """Verify all contracted outputs exist.
 
-    Returns ``{"complete": bool, "missing": [...], "found": [...]}``.
+    Returns `{"complete": bool, "missing": [...], "found": [...]}`.
     Unknown agents are treated as having no contract (always complete).
 
-    When ``round_dir`` or ``exp_id`` kwargs are missing, unresolved
-    placeholders in paths are replaced with ``*`` wildcards so glob
+    When `round_dir` or `exp_id` kwargs are missing, unresolved
+    placeholders in paths are replaced with `*` wildcards so glob
     matching can still verify that at least one matching file exists.
     """
     contract = get_contract(agent_name, exp_root, **kwargs)

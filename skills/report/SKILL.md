@@ -8,6 +8,8 @@ user-invocable: false
 
 Generate a comprehensive report summarizing the entire optimization effort.
 
+> **Path convention:** All paths written as `<exp_root>/...` refer to the `exp_root` parameter from your dispatch. The plugin does not hardcode the output directory name.
+
 ## Reference
 
 - Report template: `${CLAUDE_SKILL_DIR}/references/report-template.md` (in this skill's directory)
@@ -24,9 +26,9 @@ From the orchestrator:
 
 ## State Preservation (CRITICAL)
 
-**DO NOT** run any git commands that modify the working tree (`git checkout`, `git reset`, `git clean`, `git stash`). The project may have untracked experiment data in `experiments/` that would be lost. Only use **read-only** git commands (`git log`, `git branch --list`, `git show`).
+**DO NOT** run any git commands that modify the working tree (`git checkout`, `git reset`, `git clean`, `git stash`). The project may have untracked experiment data in `<exp_root>/` that would be lost. Only use **read-only** git commands (`git log`, `git branch --list`, `git show`).
 
-**DO NOT** recreate, delete, or overwrite files outside of `experiments/reports/` and `experiments/artifacts/`. The `experiments/results/`, `experiments/pipeline-state.json`, and `experiments/reports/error-log.json` are read-only inputs — never modify them.
+**DO NOT** recreate, delete, or overwrite files outside of `<exp_root>/reports/` and `<exp_root>/artifacts/`. The `<exp_root>/results/`, `<exp_root>/pipeline-state.json`, and `<exp_root>/reports/error-log.json` are read-only inputs — never modify them.
 
 ## Step 1: Gather All Data
 
@@ -35,52 +37,52 @@ From the orchestrator:
 ### Load experiment results
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/result_analyzer.py \
-  <project_root>/experiments/results \
+  <exp_root>/results \
   <primary_metric> \
   baseline \
   <lower_is_better>
 ```
 
 ### Read all batch analyses
-Use Glob to find: `experiments/reports/batch-*-analysis.md`
+Use Glob to find: `<exp_root>/reports/batch-*-analysis.md`
 Read each one for key findings.
 
 ### Read dev notes
-Read `experiments/dev_notes.md` for decisions, reasoning, and observations.
+Read `<exp_root>/dev_notes.md` for decisions, reasoning, and observations.
 
 ### Read research findings (if applicable)
-Check if `experiments/reports/research-findings.md` exists.
+Check if `<exp_root>/reports/research-findings.md` exists.
 If so, read for proposals that were tried.
-Also check for method proposal findings: `experiments/reports/research-findings-method-proposals*.md`.
+Also check for method proposal findings: `<exp_root>/reports/research-findings-method-proposals*.md`.
 If any exist, read them for method proposals that were tried.
 
 ### Read research agenda (if applicable)
-Check if `experiments/reports/research-agenda.json` exists:
+Check if `<exp_root>/reports/research-agenda.json` exists:
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> agenda list
 ```
 If ideas exist, include a "Research Agenda Summary" section in the report showing: successful techniques, tried-but-neutral, dead ends, and remaining untried ideas.
 
 ### Read dead-end catalog (if applicable)
-Check if `experiments/reports/dead-ends.json` exists:
+Check if `<exp_root>/reports/dead-ends.json` exists:
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> dead-end list
 ```
 If entries exist, include a "Dead Ends" section listing techniques that were tried and conclusively failed.
 
 ### Read implementation manifest (if applicable)
-Check if `experiments/results/implementation-manifest.json` exists.
+Check if `<exp_root>/results/implementation-manifest.json` exists.
 If so, read for: validated proposals, branches, files modified, conflicts.
 
 ### Extract profiling data
-Read `experiments/results/baseline.json` and extract the `profiling` block
+Read `<exp_root>/results/baseline.json` and extract the `profiling` block
 for GPU memory, throughput, and max batch size.
 
 ## Step 2: Compile Results Table
 
 Create a comprehensive comparison table with ALL experiments:
 
-1. Load all result JSONs from `experiments/results/`
+1. Load all result JSONs from `<exp_root>/results/`
 2. Sort by primary metric (best first)
 3. Include: exp_id, status, key config changes, all metrics, delta vs baseline
 
@@ -102,7 +104,7 @@ python3 -c "
 import json, sys
 # sys.path: add the plugin's scripts/ directory
 from result_analyzer import load_results, group_by_method_tier
-results = load_results('<project_root>/experiments/results')
+results = load_results('<exp_root>/results')
 groups = group_by_method_tier(results)
 print(json.dumps({k: len(v) for k, v in groups.items()}))
 "
@@ -190,7 +192,7 @@ Use the ${CLAUDE_PLUGIN_ROOT}/scripts/plot_results.py script to generate ASCII c
 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plot_results.py \
-  <project_root>/experiments/results <primary_metric> comparison
+  <exp_root>/results <primary_metric> comparison
 ```
 
 Generate:
@@ -206,10 +208,10 @@ After the ASCII charts, attempt to generate a matplotlib progress chart:
 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plot_results.py \
-  <project_root>/experiments/results <primary_metric> progress
+  <exp_root>/results <primary_metric> progress
 ```
 
-If successful, this saves a PNG to `experiments/reports/progress_chart.png` showing:
+If successful, this saves a PNG to `<exp_root>/reports/progress_chart.png` showing:
 - Green dots for experiments that set a new running best
 - Gray dots for experiments that didn't improve
 - Blue step line tracking the running best frontier
@@ -264,7 +266,7 @@ Before writing the final report:
 
 ## Step 6: Write the Report
 
-Write to `experiments/reports/final-report.md` using the template from `${CLAUDE_SKILL_DIR}/references/report-template.md`.
+Write to `<exp_root>/reports/final-report.md` using the template from `${CLAUDE_SKILL_DIR}/references/report-template.md`.
 
 Fill in all sections:
 - Executive summary (2-3 sentences)
@@ -285,7 +287,7 @@ Fill in all sections:
 
 ## Step 7: Write Final Dev Notes Entry
 
-Append to `experiments/dev_notes.md`:
+Append to `<exp_root>/dev_notes.md`:
 
 ```markdown
 ## <date> — Optimization Complete
@@ -293,7 +295,7 @@ Append to `experiments/dev_notes.md`:
 - Best experiment: <exp_id>
 - <metric>: <baseline_value> -> <best_value> (<improvement%>)
 - Summary: <1-2 sentences about the overall optimization effort>
-- Final report: experiments/reports/final-report.md
+- Final report: <exp_root>/reports/final-report.md
 ```
 
 ## Step 8: Present to User
@@ -315,7 +317,7 @@ Top findings:
 
 To reproduce: <command>
 
-Full report: experiments/reports/final-report.md
+Full report: <exp_root>/reports/final-report.md
 ```
 
 ## Output

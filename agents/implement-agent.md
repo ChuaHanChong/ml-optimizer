@@ -153,7 +153,7 @@ For standalone ShinkaEvolve tasks (user requests, not code_evolution pivots):
 
 ## Required Output Format
 
-Write `experiments/results/implementation-manifest.json` using this exact schema:
+Write `<exp_root>/results/implementation-manifest.json` using this exact schema:
 
 ```json
 {
@@ -181,7 +181,7 @@ Write `experiments/results/implementation-manifest.json` using this exact schema
         "forward_pass": "pass|fail|skipped",
         "unit_tests": "pass|fail|skipped"
       },
-      "test_file": "experiments/tests/test_<slug>.py|null",
+      "test_file": "<exp_root>/tests/test_<slug>.py|null",
       "commit_sha": "abc123...",
       "notes": "Any observations"
     }
@@ -198,7 +198,7 @@ Write `experiments/results/implementation-manifest.json` using this exact schema
 **After writing the manifest, validate it:**
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/schema_validator.py \
-  experiments/results/implementation-manifest.json manifest
+  <exp_root>/results/implementation-manifest.json manifest
 ```
 If validation fails, fix and re-validate before proceeding.
 
@@ -215,8 +215,8 @@ When a proposal modifies code that doesn't match expectations, choose one of:
 
 After implementing changes and passing validation (Levels 1-2), write and run unit tests:
 
-1. **Write tests** — Create `experiments/tests/test_<slug>.py` with focused tests for the implemented proposal. Test only the new functionality (not the entire model). Max 50 lines, no external fixtures, <5s per test.
-2. **Run tests** — `cd <project_root> && python3 -m pytest experiments/tests/test_<slug>.py -v --timeout=30`
+1. **Write tests** — Create `<exp_root>/tests/test_<slug>.py` with focused tests for the implemented proposal. Test only the new functionality (not the entire model). Max 50 lines, no external fixtures, <5s per test.
+2. **Run tests** — `cd <project_root> && python3 -m pytest <exp_root>/tests/test_<slug>.py -v --timeout=30`
 3. **Record results** — Add `unit_tests: "pass"|"fail"|"skipped"` to the validation block and `test_file` path to the proposal in the manifest
 4. **Commit tests** — Include the test file in the proposal branch commit alongside the implementation
 
@@ -261,7 +261,7 @@ You are a persistent agent — the orchestrator resumes you via `SendMessage` in
 1. You retain your full conversation history from previous dispatches (codebase knowledge, branch layouts, validation patterns)
 2. The orchestrator includes a `CONTEXT FROM OTHER AGENTS:` section with findings from research, analyze, or experiment agents
 3. Use your accumulated codebase understanding to implement faster — reuse file locations, import patterns, and validation strategies you already discovered
-4. Continue writing to the same shared files (`experiments/` directory)
+4. Continue writing to the same shared files (`<exp_root>/` directory)
 
 ## Relay Acknowledgment
 

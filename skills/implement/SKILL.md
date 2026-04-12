@@ -10,6 +10,8 @@ Apply research proposals as actual code changes with git branch isolation, progr
 
 Use extended thinking for all analytical reasoning in this skill. Ultrathink. Think through implementation approaches, potential side effects, validation strategies, and backwards compatibility before making code changes.
 
+> **Path convention:** All paths written as `<exp_root>/...` refer to the `exp_root` parameter from your dispatch. The plugin does not hardcode the output directory name.
+
 ## Reference
 
 - Implementation patterns: `${CLAUDE_SKILL_DIR}/references/implementation-patterns.md` (in this skill's directory)
@@ -19,7 +21,7 @@ Use extended thinking for all analytical reasoning in this skill. Ultrathink. Th
 ## Inputs Expected
 
 From the orchestrator or direct invocation:
-- `findings_path`: Path to `experiments/reports/research-findings.md`
+- `findings_path`: Path to `<exp_root>/reports/research-findings.md`
 - `selected_indices`: List of proposal indices to implement (1-based)
 - `project_root`: Project root directory
 
@@ -100,7 +102,7 @@ cd <project_root> && git rev-parse --is-inside-work-tree 2>/dev/null
 
 **If not a git repo (fallback):**
 - `strategy = "file_backup"`
-- Back up files to `experiments/backups/<slug>/` before each modification
+- Back up files to `<exp_root>/backups/<slug>/` before each modification
 - Apply changes sequentially, validating after each
 
 ## Step 3.1: Parallel Implementation (Git Strategy Only)
@@ -109,9 +111,9 @@ cd <project_root> && git rev-parse --is-inside-work-tree 2>/dev/null
 
 Proposals can be implemented in parallel using git worktrees. Each proposal gets its own isolated worktree, avoiding checkout conflicts.
 
-**Critical**: Worktrees must live **outside** `<project_root>/experiments/`.
-A cleanup race during parallel dispatches can wipe sibling `experiments/*`
-subdirs if any worktree is nested under `experiments/`. Put them in a
+**Critical**: Worktrees must live **outside** `<exp_root>/`.
+A cleanup race during parallel dispatches can wipe sibling `<exp_root>/*`
+subdirs if any worktree is nested under `<exp_root>/`. Put them in a
 system temp dir that is outside both the project and the output tree.
 
 1. **Compute a safe worktree root** once:
@@ -159,7 +161,7 @@ Skip this step. Use the sequential flow in Step 4 below.
 
 Before starting any implementation (parallel or sequential), validate that all target files exist:
 
-**File-backup strategy note:** For `strategy == "file_backup"`, pre-flight validation is critical because there is no branch isolation. If implementation fails mid-way, the working directory may be corrupted. Verify the baseline backup (`experiments/backups/_baseline/`) is intact before proceeding with other proposals.
+**File-backup strategy note:** For `strategy == "file_backup"`, pre-flight validation is critical because there is no branch isolation. If implementation fails mid-way, the working directory may be corrupted. Verify the baseline backup (`<exp_root>/backups/_baseline/`) is intact before proceeding with other proposals.
 
 For each proposal:
 
@@ -223,13 +225,13 @@ Follow `${CLAUDE_SKILL_DIR}/references/implementation-patterns.md` Section 9.
 
 1. **Clone reference repo:**
    ```bash
-   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py clone <reference_repo_url> experiments/reference-repos/<slug>
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py clone <reference_repo_url> <exp_root>/reference-repos/<slug>
    ```
    If multiple proposals share the same repo, clone once and reuse.
 
 2. **Analyze repo structure:**
    ```bash
-   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py analyze experiments/reference-repos/<slug>
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py analyze <exp_root>/reference-repos/<slug>
    ```
 
 3. **Read reference code:** Read the files listed in the proposal's `reference_files`. Identify the core implementation, internal dependencies, and external packages.
@@ -250,7 +252,7 @@ Follow `${CLAUDE_SKILL_DIR}/references/implementation-patterns.md` Section 9.
    python3 -c "
    import sys; # sys.path: add the plugin's scripts/ directory
    from implement_utils import cleanup_reference_repo
-   cleanup_reference_repo('experiments/reference-repos/<slug>')
+   cleanup_reference_repo('<exp_root>/reference-repos/<slug>')
    "
    ```
 
@@ -324,7 +326,7 @@ Skip this step for simple `from_scratch` changes that modify < 20 lines.
 
 After validation passes (at least Level 1-2), write a focused unit test for the implemented proposal.
 
-**Test file location:** `experiments/tests/test_<slug>.py`
+**Test file location:** `<exp_root>/tests/test_<slug>.py`
 
 **What to test (choose based on proposal type):**
 
@@ -373,7 +375,7 @@ class Test<ProposalClassName>:
 
 **Run tests:**
 ```bash
-cd <project_root> && python3 -m pytest experiments/tests/test_<slug>.py -v --timeout=30 2>&1 | head -50
+cd <project_root> && python3 -m pytest <exp_root>/tests/test_<slug>.py -v --timeout=30 2>&1 | head -50
 ```
 
 **Record results in manifest:**
@@ -383,7 +385,7 @@ cd <project_root> && python3 -m pytest experiments/tests/test_<slug>.py -v --tim
 **If tests fail:** Log a warning but do NOT mark the proposal as `validation_failed`. Test failures are informational — they suggest the implementation may have issues but don't block experimentation.
 
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"category":"implementation_error","severity":"info","source":"implement","message":"Unit tests failed for proposal <name>: <failure_summary>","context":{"proposal_name":"<name>","test_file":"experiments/tests/test_<slug>.py"}}'
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"category":"implementation_error","severity":"info","source":"implement","message":"Unit tests failed for proposal <name>: <failure_summary>","context":{"proposal_name":"<name>","test_file":"<exp_root>/tests/test_<slug>.py"}}'
 ```
 
 **If test writing is not feasible** (e.g., the proposal only modifies config files, or the changed module requires complex setup that can't be isolated): set `validation.unit_tests: "skipped"` and `test_file: null`. Log reason in the proposal's `notes` field.
@@ -418,7 +420,7 @@ Then proceed to the next proposal.
 
 ## Step 5: Write Implementation Manifest
 
-Write `experiments/results/implementation-manifest.json`:
+Write `<exp_root>/results/implementation-manifest.json`:
 
 ```json
 {
@@ -445,7 +447,7 @@ Write `experiments/results/implementation-manifest.json`:
         "forward_pass": "pass|fail|skipped",
         "unit_tests": "pass|fail|skipped"
       },
-      "test_file": "experiments/tests/test_<slug>.py|null",
+      "test_file": "<exp_root>/tests/test_<slug>.py|null",
       "explanation": "Plain-language description of what changed and why it should improve the metric",
       "diff_summary": {"files_changed": 2, "lines_added": 45, "lines_removed": 10, "changed_functions": ["train_step", "compute_loss"]},
       "commit_sha": "abc123...",
@@ -465,21 +467,21 @@ Write `experiments/results/implementation-manifest.json`:
 Use the helper:
 ```python
 from implement_utils import write_manifest
-write_manifest("experiments/results/implementation-manifest.json", manifest_data)
+write_manifest("<exp_root>/results/implementation-manifest.json", manifest_data)
 ```
 
 ## Step 5.1: Validate Manifest
 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/schema_validator.py \
-  experiments/results/implementation-manifest.json manifest
+  <exp_root>/results/implementation-manifest.json manifest
 ```
 
 If validation fails, fix the manifest and re-validate before proceeding.
 
 ## Step 6: Write Dev Notes
 
-Write a summary to `experiments/reports/implementation-summary.md`:
+Write a summary to `<exp_root>/reports/implementation-summary.md`:
 
 ```markdown
 # Implementation Summary
@@ -513,7 +515,7 @@ Implementation complete:
 - Validated: Z/Y proposals
 - Conflicts: N files shared between proposals
 
-Manifest: experiments/results/implementation-manifest.json
+Manifest: <exp_root>/results/implementation-manifest.json
 
 Validated branches ready for experiments:
 - ml-opt/<slug-1> (Proposal 1: <name>)
@@ -548,11 +550,11 @@ New dependencies needed (install before experiments):
 ## Non-Git Fallback Details
 
 When using `file_backup` strategy:
-1. **Before the first proposal:** Create a baseline backup of ALL files that ANY proposal will modify → `experiments/backups/_baseline/`. This is the clean reference state.
-2. **Before each proposal:** Restore ALL target files from `experiments/backups/_baseline/` first (ensures a clean slate). Then apply this proposal's changes.
+1. **Before the first proposal:** Create a baseline backup of ALL files that ANY proposal will modify → `<exp_root>/backups/_baseline/`. This is the clean reference state.
+2. **Before each proposal:** Restore ALL target files from `<exp_root>/backups/_baseline/` first (ensures a clean slate). Then apply this proposal's changes.
 3. Validate
 4. If validation fails: restore from baseline backup
-5. If validation passes: backup the modified state to `experiments/backups/<slug>/`, then restore from baseline backup (return to clean state before next proposal)
+5. If validation passes: backup the modified state to `<exp_root>/backups/<slug>/`, then restore from baseline backup (return to clean state before next proposal)
 6. The manifest records backup paths instead of branch names
 
 **Critical:** The restore-before-apply pattern (step 2) prevents proposal A's changes from leaking into proposal B's code. Each proposal is validated and backed up independently against the original code.

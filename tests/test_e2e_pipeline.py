@@ -25,7 +25,8 @@ import yaml
 
 from parse_logs import parse_log, extract_metric_trajectory
 from detect_divergence import check_divergence, check_overfitting
-from experiment_setup import create_experiment_dirs, generate_train_script, next_experiment_id, setup
+from experiment_setup import generate_script, next_experiment_id
+from conftest import create_experiment_dirs, setup_experiment
 from result_analyzer import (
     analyze, load_results, rank_by_metric, compute_deltas,
     rank_methods_for_stacking, group_by_method_tier,
@@ -304,7 +305,7 @@ class TestPhase6ExperimentLoop:
         }))
 
         # Experiment 1: lower lr
-        exp1_setup = setup(str(exp_project), "python train.py --lr 0.001", config={"lr": 0.001})
+        exp1_setup = setup_experiment(str(exp_project), "python train.py --lr 0.001", config={"lr": 0.001})
         assert exp1_setup["exp_id"] == "exp-001"
 
         exp1_output = tmp_path / "exp1_out"
@@ -326,7 +327,7 @@ class TestPhase6ExperimentLoop:
         Path(exp1_setup["config_path"]).write_text(json.dumps(exp1_data, indent=2))
 
         # Experiment 2: higher lr
-        exp2_setup = setup(str(exp_project), "python train.py --lr 0.1", config={"lr": 0.1})
+        exp2_setup = setup_experiment(str(exp_project), "python train.py --lr 0.1", config={"lr": 0.1})
         assert exp2_setup["exp_id"] == "exp-002"
 
         exp2_output = tmp_path / "exp2_out"
@@ -518,7 +519,7 @@ class TestFullPipelineIntegration:
             {"lr": "0.05", "config": {"lr": 0.05}},
         ]
         for i, exp_params in enumerate(experiments):
-            exp_info = setup(
+            exp_info = setup_experiment(
                 str(exp_project),
                 f"python train.py --lr {exp_params['lr']}",
                 config=exp_params["config"],
@@ -611,7 +612,7 @@ class TestFullPipelineIntegration:
 
         # Checkpoint warm-starting: generate script with checkpoint path
         with tempfile.TemporaryDirectory() as td:
-            script_path = generate_train_script(
+            script_path = generate_script(
                 td, "test-ckpt", "python train.py",
                 log_file="logs/round-1-hp/test-ckpt/train.log",
                 checkpoint_path="/tmp/fake_ckpt.pt",
@@ -895,9 +896,9 @@ Two optimization proposals identified.
 class TestWorktreeRaceSafety:
     """Regression test for Issue 1: worktree cleanup race wiping experiments/.
 
-    Old layout created worktrees under ``<project_root>/experiments/worktrees/``.
+    Old layout created worktrees under `<project_root>/experiments/worktrees/`.
     When two agents ran in parallel and one cleaned up its worktree, sibling
-    ``experiments/*`` subdirs could disappear. The fix moves worktrees to a
+    `experiments/*` subdirs could disappear. The fix moves worktrees to a
     system temp dir OUTSIDE the project root. This test enforces the
     invariant: under concurrent lifecycle, sibling results/logs/reports
     stay intact.
@@ -1214,7 +1215,7 @@ class TestExperimentIdSequencing:
         actual_ids = []
         config_paths = []
         for i in range(5):
-            result = setup(project, f"python train.py --lr 0.0{i+1}", config={"lr": 0.01 * (i + 1)})
+            result = setup_experiment(project, f"python train.py --lr 0.0{i+1}", config={"lr": 0.01 * (i + 1)})
             actual_ids.append(result["exp_id"])
             config_paths.append(result["config_path"])
         assert actual_ids == expected_ids
@@ -1893,7 +1894,7 @@ class TestFullWorkflowE2E:
             {"lr": "0.02", "config": {"lr": 0.02, "batch_size": 64}},
         ]
         for i, exp_params in enumerate(experiments):
-            exp_info = setup(
+            exp_info = setup_experiment(
                 str(exp_project),
                 f"python train.py --lr {exp_params['lr']}",
                 config=exp_params["config"],
@@ -2189,6 +2190,13 @@ class TestStatusLine:
             "exp_id": "exp-001", "status": "completed",
             "config": {"lr": 0.001}, "metrics": {"loss": 0.7},
         }))
+        # Hooks resolve exp_root via the .claude/ml-optimizer.json breadcrumb
+        # (see hooks/find-exp-root.sh). Tests must create the breadcrumb
+        # pointing at their synthetic exp_root.
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".claude" / "ml-optimizer.json").write_text(
+            json.dumps({"exp_root": str(exp)})
+        )
         stdin = json.dumps({"cwd": str(tmp_path)})
         hook_path = HOOKS_DIR / "statusline.sh"
         result = subprocess.run(
@@ -2200,6 +2208,69 @@ class TestStatusLine:
         assert "[ml-opt]" in output
         assert "P7" in output
         assert "I3" in output
+
+    def test_multi_run_breadcrumb_format(self, tmp_path):
+        """New multi-run breadcrumb format: hooks read 'active' field."""
+        exp = tmp_path / "runs" / "02-aug"
+        exp.mkdir(parents=True)
+        (exp / "results").mkdir()
+        (exp / "pipeline-state.json").write_text(json.dumps({
+            "phase": 5, "iteration": 1,
+            "user_choices": {"primary_metric": "loss", "lower_is_better": True},
+        }))
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".claude" / "ml-optimizer.json").write_text(json.dumps({
+            "active": str(exp),
+            "runs": [str(tmp_path / "runs" / "01-ls"), str(exp)],
+        }))
+        stdin = json.dumps({"cwd": str(tmp_path)})
+        hook_path = HOOKS_DIR / "statusline.sh"
+        result = subprocess.run(
+            ["bash", str(hook_path)], input=stdin,
+            capture_output=True, text=True, timeout=10,
+        )
+        assert result.returncode == 0
+        assert "[ml-opt]" in result.stdout
+        assert "P5" in result.stdout
+
+    def test_old_breadcrumb_format_still_works(self, tmp_path):
+        """Old single-run breadcrumb format: hooks fall back to 'exp_root'."""
+        exp = tmp_path / "legacy-experiments"
+        exp.mkdir()
+        (exp / "pipeline-state.json").write_text(json.dumps({
+            "phase": 3, "iteration": 0,
+            "user_choices": {"primary_metric": "accuracy", "lower_is_better": False},
+        }))
+        (tmp_path / ".claude").mkdir()
+        # Old format — no "active" key, just "exp_root"
+        (tmp_path / ".claude" / "ml-optimizer.json").write_text(json.dumps({
+            "exp_root": str(exp),
+        }))
+        stdin = json.dumps({"cwd": str(tmp_path)})
+        hook_path = HOOKS_DIR / "statusline.sh"
+        result = subprocess.run(
+            ["bash", str(hook_path)], input=stdin,
+            capture_output=True, text=True, timeout=10,
+        )
+        assert result.returncode == 0
+        assert "[ml-opt]" in result.stdout
+        assert "P3" in result.stdout
+
+    def test_breadcrumb_points_at_nonexistent_dir(self, tmp_path):
+        """When the breadcrumb's exp_root no longer exists (user deleted it
+        or moved it), the hook exits silently — no error, no output."""
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".claude" / "ml-optimizer.json").write_text(
+            json.dumps({"exp_root": str(tmp_path / "deleted-exp-root")})
+        )
+        stdin = json.dumps({"cwd": str(tmp_path)})
+        hook_path = HOOKS_DIR / "statusline.sh"
+        result = subprocess.run(
+            ["bash", str(hook_path)], input=stdin,
+            capture_output=True, text=True, timeout=10,
+        )
+        assert result.returncode == 0
+        assert result.stdout.strip() == ""
 
     def test_without_pipeline_state(self, tmp_path):
         """Statusline exits silently when no pipeline state exists."""

@@ -8,6 +8,8 @@ user-invocable: false
 
 Use extended thinking for all reasoning. Ultrathink.
 
+> **Path convention:** All paths written as `<exp_root>/...` refer to the `exp_root` parameter from your dispatch. The plugin does not hardcode the output directory name.
+
 ## Overview
 
 This skill orchestrates **evolutionary code refinement** on the best method branch. It runs the full ShinkaEvolve pipeline internally — converting code, running evolution, and extracting the best mutation — then commits the result as a new branch.
@@ -35,7 +37,7 @@ If the submodule is missing or imports fail, report `status: "shinkaevolve_unava
 - `primary_metric`: Which metric to optimize
 - `lower_is_better`: Metric direction
 - `scope_level`: Constraint on changes (`"training"`, `"architecture"`, `"full"`)
-- `exp_root`: Path to experiments directory
+- `exp_root`: Path to the output directory (any name — set at Phase 0)
 - `feedback_context`: Structured feedback:
   - `batch_analysis`: Summary of what worked/failed
   - `error_patterns`: From error-log.json

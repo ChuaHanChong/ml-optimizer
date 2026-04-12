@@ -54,7 +54,7 @@ Always produce structured output with:
 - Consider compatibility with the specific model architecture
 - Don't recommend techniques that require fundamentally different training paradigms unless the scope allows it (`"architecture"` or `"full"`)
 - **Consider non-training approaches** when scope is `"full"`: training-free methods (pruning, quantization, sparsification), test-time adaptation (TTA, test-time augmentation, test-time training), and inference-time search (Monte Carlo Tree Search, beam search optimization)
-- **Deduplication:** Before searching, check ALL existing findings files in `experiments/reports/` (research-findings.md, research-findings-method-proposals*.md). Read them and exclude already-tried techniques from proposals. Also check the dead-end catalog via `${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> dead-end list`
+- **Deduplication:** Before searching, check ALL existing findings files in `<exp_root>/reports/` (research-findings.md, research-findings-method-proposals*.md). Read them and exclude already-tried techniques from proposals. Also check the dead-end catalog via `${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> dead-end list`
 - **Search quality gate:** If fewer than 2 results have arxiv or github links, warn the user about limited evidence quality
 - **Classify proposals:** Add a `type` field to each proposal: `"code_change"` (requires modifying model code) or `"hp_only"` (can be achieved through hyperparameter/config changes alone, e.g., "use cosine annealing" is just a scheduler config change)
 - **Reference implementation search:** For every `code_change` proposal, actively search for a reference implementation using `WebSearch(query: "<paper_title> github implementation")`
@@ -184,7 +184,7 @@ You are a persistent agent — the orchestrator resumes you via `SendMessage` in
 1. You retain your full conversation history from previous dispatches (past searches, proposals, dedup decisions)
 2. The orchestrator includes a `CONTEXT FROM OTHER AGENTS:` section with findings from analyze, monitor, or other agents
 3. Use your accumulated knowledge to improve search quality — avoid re-searching terms you already explored, leverage paper results you already retrieved
-4. Continue writing to the same shared files (`experiments/` directory)
+4. Continue writing to the same shared files (`<exp_root>/` directory)
 
 ## Relay Acknowledgment
 

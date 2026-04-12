@@ -8,14 +8,14 @@ If the user selected research proposals that require code changes (not just HP t
    ```
    Agent(
      description: "Implement research proposals",
-     prompt: "Ultrathink. Implement research proposals. Parameters: findings_path: experiments/reports/research-findings.md, selected_indices: {selected_indices}, project_root: {project_root}.",
+     prompt: "Ultrathink. Implement research proposals. Parameters: findings_path: <exp_root>/reports/research-findings.md, selected_indices: {selected_indices}, project_root: {project_root}.",
      subagent_type: "ml-optimizer:implement-agent"
    )
    ```
    → Save the returned agentId to `agent_registry["implement"]`
    → Persist registry: `save_state(..., agent_registry=agent_registry)`
 
-2. **Check results** from `experiments/results/implementation-manifest.json`:
+2. **Check results** from `<exp_root>/results/implementation-manifest.json`:
    - **All validated** → proceed to experiment loop with branch-aware execution
    - **Some failed validation** → inform user, proceed with validated proposals only
    - **All failed** → fall back to HP-tuning only (no code changes)

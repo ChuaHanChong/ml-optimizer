@@ -92,7 +92,7 @@ output = model.apply(variables, dummy_input)
 
 Write and run a focused unit test for the implemented change.
 
-**Test location:** `experiments/tests/test_<slug>.py`
+**Test location:** `<exp_root>/tests/test_<slug>.py`
 
 Test the specific functionality introduced by the proposal — not the entire model.
 
@@ -117,7 +117,7 @@ def test_cutmix_no_nan():
 
 Run:
 ```bash
-python3 -m pytest experiments/tests/test_<slug>.py -v --timeout=30
+python3 -m pytest <exp_root>/tests/test_<slug>.py -v --timeout=30
 ```
 
 **Pass criteria:** All tests pass within timeout.

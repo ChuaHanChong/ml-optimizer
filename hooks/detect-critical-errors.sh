@@ -17,11 +17,14 @@ if [ -z "$COMBINED" ] || [ -z "$CWD" ]; then
   exit 0
 fi
 
-EXP_ROOT="$CWD/experiments"
-TRACKER="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}/scripts/error_tracker.py"
+source "$(dirname "${BASH_SOURCE[0]}")/_env.sh"
+TRACKER="$PLUGIN_ROOT/scripts/error_tracker.py"
 
-# Only log if experiments directory exists (we're in an active optimization session)
-if [ ! -d "$EXP_ROOT" ]; then
+# Resolve exp_root from breadcrumb or walk-up fallback
+EXP_ROOT=$("$PLUGIN_ROOT/hooks/find-exp-root.sh" "$CWD")
+
+# Only log if exp_root exists (we're in an active optimization session)
+if [ -z "$EXP_ROOT" ] || [ ! -d "$EXP_ROOT" ]; then
   exit 0
 fi
 

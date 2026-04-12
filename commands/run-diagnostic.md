@@ -281,7 +281,8 @@ echo '{"tool_input":{"file_path":"/home/user/project/train.py"}}' | bash $HOOKS/
 [ $? -eq 0 ] && echo "✓ file-guardrail allows normal file" || echo "✗ file-guardrail wrongly blocked"
 
 # detect-critical-errors.sh — should detect CUDA OOM (advisory, always exit 0)
-mkdir -p /tmp/ml-opt-hook-test/experiments
+mkdir -p /tmp/ml-opt-hook-test/.claude /tmp/ml-opt-hook-test/experiments
+echo '{"exp_root":"/tmp/ml-opt-hook-test/experiments"}' > /tmp/ml-opt-hook-test/.claude/ml-optimizer.json
 echo '{"tool_result":{"stdout":"RuntimeError: CUDA out of memory. Tried to allocate 2.00 GiB","stderr":""},"cwd":"/tmp/ml-opt-hook-test"}' \
   | bash $HOOKS/detect-critical-errors.sh 2>/dev/null
 [ $? -eq 0 ] && echo "✓ detect-critical-errors handles OOM" || echo "✗ detect-critical-errors FAILED"
@@ -369,7 +370,8 @@ OUT=$(echo '{"cwd":"/tmp/nonexistent-dir-xyz"}' | bash $HOOKS/cwd-changed-detect
 rm -rf /tmp/ml-opt-hook-test
 
 # statusline.sh — should output status when pipeline state exists
-mkdir -p /tmp/ml-opt-hook-test/experiments/results
+mkdir -p /tmp/ml-opt-hook-test/.claude /tmp/ml-opt-hook-test/experiments/results
+echo '{"exp_root":"/tmp/ml-opt-hook-test/experiments"}' > /tmp/ml-opt-hook-test/.claude/ml-optimizer.json
 echo '{"phase":7,"iteration":3,"user_choices":{"primary_metric":"loss","lower_is_better":true}}' \
   > /tmp/ml-opt-hook-test/experiments/pipeline-state.json
 echo '{"exp_id":"baseline","status":"completed","config":{},"metrics":{"loss":1.0}}' \
@@ -442,42 +444,49 @@ echo "$INJECTED" | grep -q "conditional" \
 #   {"decision":"approve"} or {"decision":"block","reason":"..."}
 # The Claude Code harness reads the JSON and applies the block.
 
+# L2 helper: uses Python json.dumps to generate correctly-escaped payloads
+# (avoids shell escaping issues with nested JSON in content fields)
+l2_payload() {
+  python3 -c "
+import json, sys
+content = json.loads(sys.argv[1])
+payload = {'cwd': '$ENFORCE_EXP', 'tool_name': 'Write', 'tool_input': {
+    'file_path': sys.argv[2], 'content': json.dumps(content)
+}}
+print(json.dumps(payload))
+" "$1" "$2"
+}
+
 # Valid experiment result in round subdir → approve
 mkdir -p $ENFORCE_EXP/experiments/results/round-1-hp
-L2_VALID='{"cwd":"'$ENFORCE_EXP'","tool_name":"Write","tool_input":{"file_path":"'$ENFORCE_EXP'/experiments/results/round-1-hp/exp-001.json","content":"{\"exp_id\":\"exp-001\",\"status\":\"completed\",\"config\":{\"lr\":0.01},\"metrics\":{\"loss\":0.4},\"iteration\":1,\"method_tier\":\"baseline\",\"duration_seconds\":120.0}"}}'
-L2_OUT=$(echo "$L2_VALID" | python3 $SCRIPTS/validate_experiment_write.py 2>/dev/null)
+L2_OUT=$(l2_payload '{"exp_id":"exp-001","status":"completed","config":{"lr":0.01},"metrics":{"loss":0.4},"iteration":1,"method_tier":"baseline","duration_seconds":120.0}' "$ENFORCE_EXP/experiments/results/round-1-hp/exp-001.json" | python3 $SCRIPTS/validate_experiment_write.py 2>/dev/null)
 echo "$L2_OUT" | grep -q '"decision": *"approve"' \
   && echo "✓ L2 allows valid round-based result" \
   || echo "✗ L2 wrongly blocked valid write"
 
 # Missing completeness fields (status=completed without iteration/method_tier/duration_seconds) → block
-L2_BAD='{"cwd":"'$ENFORCE_EXP'","tool_name":"Write","tool_input":{"file_path":"'$ENFORCE_EXP'/experiments/results/round-1-hp/exp-002.json","content":"{\"exp_id\":\"exp-002\",\"status\":\"completed\",\"config\":{},\"metrics\":{\"loss\":0.4}}"}}'
-L2_OUT=$(echo "$L2_BAD" | python3 $SCRIPTS/validate_experiment_write.py 2>/dev/null)
+L2_OUT=$(l2_payload '{"exp_id":"exp-002","status":"completed","config":{},"metrics":{"loss":0.4}}' "$ENFORCE_EXP/experiments/results/round-1-hp/exp-002.json" | python3 $SCRIPTS/validate_experiment_write.py 2>/dev/null)
 echo "$L2_OUT" | grep -q '"decision": *"block"' \
   && echo "$L2_OUT" | grep -q "mandatory fields" \
   && echo "✓ L2 blocks incomplete status=completed" \
   || echo "✗ L2 FAILED to block missing completeness fields"
 
 # Write directly to results/ (not round subdir) → block
-L2_FLAT='{"cwd":"'$ENFORCE_EXP'","tool_name":"Write","tool_input":{"file_path":"'$ENFORCE_EXP'/experiments/results/exp-003.json","content":"{\"exp_id\":\"exp-003\",\"status\":\"completed\",\"iteration\":1,\"method_tier\":\"baseline\",\"duration_seconds\":10}"}}'
-L2_OUT=$(echo "$L2_FLAT" | python3 $SCRIPTS/validate_experiment_write.py 2>/dev/null)
+L2_OUT=$(l2_payload '{"exp_id":"exp-003","status":"completed","iteration":1,"method_tier":"baseline","duration_seconds":10,"config":{},"metrics":{}}' "$ENFORCE_EXP/experiments/results/exp-003.json" | python3 $SCRIPTS/validate_experiment_write.py 2>/dev/null)
 echo "$L2_OUT" | grep -q '"decision": *"block"' \
   && echo "$L2_OUT" | grep -q "round subdirectory" \
   && echo "✓ L2 blocks flat results/ write (must be round subdir)" \
   || echo "✗ L2 FAILED to block flat path"
 
-# Placeholder write (status: running) → approve (exempt from completeness check,
-# but base schema still requires config + metrics — use empty dicts)
-L2_PLACEHOLDER='{"cwd":"'$ENFORCE_EXP'","tool_name":"Write","tool_input":{"file_path":"'$ENFORCE_EXP'/experiments/results/round-1-hp/exp-004.json","content":"{\"exp_id\":\"exp-004\",\"status\":\"running\",\"config\":{},\"metrics\":{}}"}}'
-L2_OUT=$(echo "$L2_PLACEHOLDER" | python3 $SCRIPTS/validate_experiment_write.py 2>/dev/null)
+# Placeholder write (status: running) → approve
+L2_OUT=$(l2_payload '{"exp_id":"exp-004","status":"running","config":{},"metrics":{}}' "$ENFORCE_EXP/experiments/results/round-1-hp/exp-004.json" | python3 $SCRIPTS/validate_experiment_write.py 2>/dev/null)
 echo "$L2_OUT" | grep -q '"decision": *"approve"' \
   && echo "✓ L2 allows placeholder status=running (no completeness check)" \
   || echo "✗ L2 wrongly blocked placeholder"
 
 # Stacked tier missing code_branches + stacking_order → block
 mkdir -p $ENFORCE_EXP/experiments/results/round-1-stacked
-L2_STACK='{"cwd":"'$ENFORCE_EXP'","tool_name":"Write","tool_input":{"file_path":"'$ENFORCE_EXP'/experiments/results/round-1-stacked/exp-010.json","content":"{\"exp_id\":\"exp-010\",\"status\":\"completed\",\"config\":{},\"metrics\":{\"loss\":0.3},\"iteration\":1,\"method_tier\":\"stacked_default_hp\",\"duration_seconds\":60}"}}'
-L2_OUT=$(echo "$L2_STACK" | python3 $SCRIPTS/validate_experiment_write.py 2>/dev/null)
+L2_OUT=$(l2_payload '{"exp_id":"exp-010","status":"completed","config":{},"metrics":{"loss":0.3},"iteration":1,"method_tier":"stacked_default_hp","duration_seconds":60}' "$ENFORCE_EXP/experiments/results/round-1-stacked/exp-010.json" | python3 $SCRIPTS/validate_experiment_write.py 2>/dev/null)
 echo "$L2_OUT" | grep -q '"decision": *"block"' \
   && echo "$L2_OUT" | grep -q "code_branches" \
   && echo "$L2_OUT" | grep -q "stacking_order" \
@@ -485,55 +494,47 @@ echo "$L2_OUT" | grep -q '"decision": *"block"' \
   || echo "✗ L2 FAILED to block incomplete stacked tier"
 
 # Failed without notes → block
-L2_FAIL='{"cwd":"'$ENFORCE_EXP'","tool_name":"Write","tool_input":{"file_path":"'$ENFORCE_EXP'/experiments/results/round-1-hp/exp-011.json","content":"{\"exp_id\":\"exp-011\",\"status\":\"failed\",\"config\":{},\"metrics\":{}}"}}'
-L2_OUT=$(echo "$L2_FAIL" | python3 $SCRIPTS/validate_experiment_write.py 2>/dev/null)
+L2_OUT=$(l2_payload '{"exp_id":"exp-011","status":"failed","config":{},"metrics":{}}' "$ENFORCE_EXP/experiments/results/round-1-hp/exp-011.json" | python3 $SCRIPTS/validate_experiment_write.py 2>/dev/null)
 echo "$L2_OUT" | grep -q '"decision": *"block"' \
   && echo "$L2_OUT" | grep -q "notes" \
   && echo "✓ L2 blocks failed status without notes field" \
   || echo "✗ L2 FAILED to require notes for failed"
 
 # Diverged WITH notes → approve
-L2_DIV='{"cwd":"'$ENFORCE_EXP'","tool_name":"Write","tool_input":{"file_path":"'$ENFORCE_EXP'/experiments/results/round-1-hp/exp-012.json","content":"{\"exp_id\":\"exp-012\",\"status\":\"diverged\",\"config\":{},\"metrics\":{},\"notes\":\"NaN at step 50\"}"}}'
-L2_OUT=$(echo "$L2_DIV" | python3 $SCRIPTS/validate_experiment_write.py 2>/dev/null)
+L2_OUT=$(l2_payload '{"exp_id":"exp-012","status":"diverged","config":{},"metrics":{},"notes":"NaN at step 50"}' "$ENFORCE_EXP/experiments/results/round-1-hp/exp-012.json" | python3 $SCRIPTS/validate_experiment_write.py 2>/dev/null)
 echo "$L2_OUT" | grep -q '"decision": *"approve"' \
   && echo "✓ L2 allows diverged status with notes field" \
   || echo "✗ L2 wrongly blocked diverged with notes"
 
 # Frozen parameter violation → block
-# (requires optimization-goals.json with constraints.frozen_parameters)
 cat > $ENFORCE_EXP/experiments/optimization-goals.json << 'EOFGOALS'
 {"constraints":{"frozen_parameters":["model_size","dataset"]}}
 EOFGOALS
-L2_FROZEN='{"cwd":"'$ENFORCE_EXP'","tool_name":"Write","tool_input":{"file_path":"'$ENFORCE_EXP'/experiments/results/round-1-hp/exp-013.json","content":"{\"exp_id\":\"exp-013\",\"status\":\"completed\",\"config\":{\"lr\":0.01,\"model_size\":\"large\"},\"metrics\":{\"loss\":0.4},\"iteration\":1,\"method_tier\":\"baseline\",\"duration_seconds\":60}"}}'
-L2_OUT=$(echo "$L2_FROZEN" | python3 $SCRIPTS/validate_experiment_write.py 2>/dev/null)
+L2_OUT=$(l2_payload '{"exp_id":"exp-013","status":"completed","config":{"lr":0.01,"model_size":"large"},"metrics":{"loss":0.4},"iteration":1,"method_tier":"baseline","duration_seconds":60}' "$ENFORCE_EXP/experiments/results/round-1-hp/exp-013.json" | python3 $SCRIPTS/validate_experiment_write.py 2>/dev/null)
 echo "$L2_OUT" | grep -q '"decision": *"block"' \
   && echo "$L2_OUT" | grep -q "frozen parameter 'model_size'" \
   && echo "✓ L2 blocks config that modifies frozen parameter" \
   || echo "✗ L2 FAILED to block frozen parameter violation"
 
 # OOM batch size cap violation → block
-# (requires learned-behaviors.json with resource_constraints.max_batch_size)
 cat > $ENFORCE_EXP/experiments/learned-behaviors.json << 'EOFBEH'
 {"resource_constraints":[{"max_batch_size":128}]}
 EOFBEH
-L2_OOM='{"cwd":"'$ENFORCE_EXP'","tool_name":"Write","tool_input":{"file_path":"'$ENFORCE_EXP'/experiments/results/round-1-hp/exp-014.json","content":"{\"exp_id\":\"exp-014\",\"status\":\"completed\",\"config\":{\"batch_size\":512},\"metrics\":{\"loss\":0.4},\"iteration\":1,\"method_tier\":\"baseline\",\"duration_seconds\":60}"}}'
-L2_OUT=$(echo "$L2_OOM" | python3 $SCRIPTS/validate_experiment_write.py 2>/dev/null)
+L2_OUT=$(l2_payload '{"exp_id":"exp-014","status":"completed","config":{"batch_size":512},"metrics":{"loss":0.4},"iteration":1,"method_tier":"baseline","duration_seconds":60}' "$ENFORCE_EXP/experiments/results/round-1-hp/exp-014.json" | python3 $SCRIPTS/validate_experiment_write.py 2>/dev/null)
 echo "$L2_OUT" | grep -q '"decision": *"block"' \
   && echo "$L2_OUT" | grep -q "batch_size=512 exceeds OOM limit 128" \
   && echo "✓ L2 blocks config that exceeds OOM batch_size cap" \
   || echo "✗ L2 FAILED to block OOM cap violation"
 
-# Valid proposed-config (top-level proposed-configs/round-*/) → approve
+# Valid proposed-config → approve
 mkdir -p $ENFORCE_EXP/experiments/proposed-configs/round-1-hp
-L2_PROP_OK='{"cwd":"'$ENFORCE_EXP'","tool_name":"Write","tool_input":{"file_path":"'$ENFORCE_EXP'/experiments/proposed-configs/round-1-hp/exp-015.json","content":"{\"exp_id\":\"exp-015\",\"config\":{\"lr\":0.005,\"batch_size\":64},\"method_tier\":\"method_tuned_hp\",\"iteration\":2,\"code_branch\":null,\"gpu_id\":0,\"reasoning\":\"Lower lr based on prior results\"}"}}'
-L2_OUT=$(echo "$L2_PROP_OK" | python3 $SCRIPTS/validate_experiment_write.py 2>/dev/null)
+L2_OUT=$(l2_payload '{"exp_id":"exp-015","config":{"lr":0.005,"batch_size":64},"method_tier":"method_tuned_hp","iteration":2,"code_branch":null,"gpu_id":0,"reasoning":"Lower lr based on prior results"}' "$ENFORCE_EXP/experiments/proposed-configs/round-1-hp/exp-015.json" | python3 $SCRIPTS/validate_experiment_write.py 2>/dev/null)
 echo "$L2_OUT" | grep -q '"decision": *"approve"' \
   && echo "✓ L2 allows valid proposed-config in round subdir" \
   || echo "✗ L2 wrongly blocked valid proposed-config"
 
-# Proposed-config exceeds OOM cap → block (goal compliance also runs on proposals)
-L2_PROP_BAD='{"cwd":"'$ENFORCE_EXP'","tool_name":"Write","tool_input":{"file_path":"'$ENFORCE_EXP'/experiments/proposed-configs/round-1-hp/exp-016.json","content":"{\"exp_id\":\"exp-016\",\"config\":{\"lr\":0.01,\"batch_size\":512},\"method_tier\":\"method_tuned_hp\",\"iteration\":2,\"code_branch\":null,\"gpu_id\":0,\"reasoning\":\"test\"}"}}'
-L2_OUT=$(echo "$L2_PROP_BAD" | python3 $SCRIPTS/validate_experiment_write.py 2>/dev/null)
+# Proposed-config exceeds OOM cap → block
+L2_OUT=$(l2_payload '{"exp_id":"exp-016","config":{"lr":0.01,"batch_size":512},"method_tier":"method_tuned_hp","iteration":2,"code_branch":null,"gpu_id":0,"reasoning":"test"}' "$ENFORCE_EXP/experiments/proposed-configs/round-1-hp/exp-016.json" | python3 $SCRIPTS/validate_experiment_write.py 2>/dev/null)
 echo "$L2_OUT" | grep -q '"decision": *"block"' \
   && echo "$L2_OUT" | grep -q "OOM limit" \
   && echo "✓ L2 blocks proposed-config that exceeds OOM cap (goal compliance on proposals)" \
@@ -2283,10 +2284,10 @@ print(f'✓ [16/31] Branch scores: {len(scores)} branches scored') if isinstance
 python3 -c "
 import sys, os, tempfile
 sys.path.insert(0, '$SCRIPTS')
-from experiment_setup import generate_train_script
+from experiment_setup import generate_script
 from pathlib import Path
 with tempfile.TemporaryDirectory() as td:
-    p = generate_train_script(td, 'ckpt-test', 'python train.py', log_file='logs/round-1-hp/ckpt-test/train.log', checkpoint_path='/tmp/ckpt.pt')
+    p = generate_script(td, 'ckpt-test', 'python train.py', log_file='logs/round-1-hp/ckpt-test/train.log', checkpoint_path='/tmp/ckpt.pt')
     ok = 'CHECKPOINT_PATH' in Path(p).read_text()
     print('✓ [17/31] Checkpoint warm-start: script includes CHECKPOINT_PATH') if ok else print('✗ [17/31] Checkpoint warm-start: FAILED')
 "

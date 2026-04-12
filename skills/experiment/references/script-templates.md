@@ -8,14 +8,14 @@ set -e
 
 export CUDA_VISIBLE_DEVICES={gpu_id}
 
-mkdir -p experiments/logs/{round_dir}/{exp_id}
-echo $$ > experiments/logs/{round_dir}/{exp_id}/pid
+mkdir -p <exp_root>/logs/{round_dir}/{exp_id}
+echo $$ > <exp_root>/logs/{round_dir}/{exp_id}/pid
 
 echo "Starting experiment {exp_id} on GPU {gpu_id}"
 echo "Config: {config_summary}"
 echo "Started at: $(date)"
 
-{train_command} 2>&1 | tee experiments/logs/{round_dir}/{exp_id}/train.log
+{train_command} 2>&1 | tee <exp_root>/logs/{round_dir}/{exp_id}/train.log
 
 echo "Experiment {exp_id} completed at: $(date)"
 ```
@@ -28,8 +28,8 @@ set -e
 
 export CUDA_VISIBLE_DEVICES={gpu_id}
 
-mkdir -p experiments/logs/{round_dir}/{exp_id}
-echo $$ > experiments/logs/{round_dir}/{exp_id}/pid
+mkdir -p <exp_root>/logs/{round_dir}/{exp_id}
+echo $$ > <exp_root>/logs/{round_dir}/{exp_id}/pid
 
 python train.py \
   --config {base_config} \
@@ -37,8 +37,8 @@ python train.py \
   --batch_size {batch_size} \
   --weight_decay {weight_decay} \
   --epochs {epochs} \
-  --output_dir experiments/logs/{round_dir}/{exp_id} \
-  2>&1 | tee experiments/logs/{round_dir}/{exp_id}/train.log
+  --output_dir <exp_root>/logs/{round_dir}/{exp_id} \
+  2>&1 | tee <exp_root>/logs/{round_dir}/{exp_id}/train.log
 ```
 
 ## Training with Eval at End
@@ -49,14 +49,14 @@ set -e
 
 export CUDA_VISIBLE_DEVICES={gpu_id}
 
-mkdir -p experiments/logs/{round_dir}/{exp_id}
-echo $$ > experiments/logs/{round_dir}/{exp_id}/pid
+mkdir -p <exp_root>/logs/{round_dir}/{exp_id}
+echo $$ > <exp_root>/logs/{round_dir}/{exp_id}/pid
 
 # Training
-{train_command} 2>&1 | tee experiments/logs/{round_dir}/{exp_id}/train.log
+{train_command} 2>&1 | tee <exp_root>/logs/{round_dir}/{exp_id}/train.log
 
 # Evaluation
-{eval_command} 2>&1 | tee experiments/logs/{round_dir}/{exp_id}/eval.log
+{eval_command} 2>&1 | tee <exp_root>/logs/{round_dir}/{exp_id}/eval.log
 
 echo "Experiment {exp_id} completed"
 ```
@@ -71,13 +71,13 @@ set -e
 
 export CUDA_VISIBLE_DEVICES={gpu_id}
 
-mkdir -p experiments/logs/{round_dir}/{exp_id}
-mkdir -p experiments/artifacts/{round_dir}/{exp_id}
-echo $$ > experiments/logs/{round_dir}/{exp_id}/pid
+mkdir -p <exp_root>/logs/{round_dir}/{exp_id}
+mkdir -p <exp_root>/artifacts/{round_dir}/{exp_id}
+echo $$ > <exp_root>/logs/{round_dir}/{exp_id}/pid
 
 # Set up isolated worktree for code branch
-git worktree add experiments/worktrees/{exp_id} {code_branch}
-cd experiments/worktrees/{exp_id}
+git worktree add <exp_root>/worktrees/{exp_id} {code_branch}
+cd <exp_root>/worktrees/{exp_id}
 
 # Training
 {train_command} 2>&1 | tee ../../logs/{round_dir}/{exp_id}/train.log
@@ -90,7 +90,7 @@ cp -r *.pt *.pth *.ckpt *.h5 *.pkl *.safetensors ../../artifacts/{round_dir}/{ex
 
 # Cleanup worktree
 cd -
-git worktree remove experiments/worktrees/{exp_id}
+git worktree remove <exp_root>/worktrees/{exp_id}
 ```
 
 ## Background Training with PID Tracking
@@ -101,11 +101,11 @@ set -e
 
 export CUDA_VISIBLE_DEVICES={gpu_id}
 
-mkdir -p experiments/logs/{round_dir}/{exp_id}
+mkdir -p <exp_root>/logs/{round_dir}/{exp_id}
 
-{train_command} > experiments/logs/{round_dir}/{exp_id}/train.log 2>&1 &
+{train_command} > <exp_root>/logs/{round_dir}/{exp_id}/train.log 2>&1 &
 TRAIN_PID=$!
-echo $TRAIN_PID > experiments/logs/{round_dir}/{exp_id}/pid
+echo $TRAIN_PID > <exp_root>/logs/{round_dir}/{exp_id}/pid
 
 echo "Experiment {exp_id} running in background (PID: $TRAIN_PID)"
 wait $TRAIN_PID

@@ -53,8 +53,8 @@ def _run_hook(hook_path, stdin_json, extra_env=None):
 def _parse_decision(stdout: str) -> dict:
     """Parse the last JSON decision object from stdout.
 
-    Raises ``AssertionError`` if no decision JSON is present — this gives
-    tests a clear failure message instead of a ``NoneType`` subscript error.
+    Raises `AssertionError` if no decision JSON is present — this gives
+    tests a clear failure message instead of a `NoneType` subscript error.
     """
     for line in reversed(stdout.strip().splitlines()):
         line = line.strip()

@@ -11,7 +11,7 @@ Agent(
 )
 ```
 - Wait for baseline results
-- Store in `experiments/results/baseline.json`
+- Store in `<exp_root>/results/baseline.json`
 
 ## Phase 3 Failure Recovery
 

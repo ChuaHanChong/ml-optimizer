@@ -11,9 +11,9 @@ Agent(
 )
 ```
 
-**Check results** from `experiments/results/prerequisites.json`:
+**Check results** from `<exp_root>/results/prerequisites.json`:
 - `ready_for_baseline = true` → proceed to Phase 3
-- `status = "partial"` → log warnings to `experiments/dev_notes.md`: "Prerequisites partial — proceeding anyway." Proceed to Phase 3.
+- `status = "partial"` → log warnings to `<exp_root>/dev_notes.md`: "Prerequisites partial — proceeding anyway." Proceed to Phase 3.
 - `status = "failed"` → Classify the failure reason from `prerequisites.json`:
   - **Data path invalid / not found:** Attempt auto-recovery: search the project for data files, check the training script for auto-download patterns (CIFAR, MNIST, HuggingFace `load_dataset`). If a plausible path is found, update `train_data_path`/`val_data_path` and re-run Phase 2. If not found: BLOCK with AskUserQuestion.
   - **Dependency install failed:** Retry install once with `--no-deps`, then check if import still fails. If still fails: BLOCK with AskUserQuestion.

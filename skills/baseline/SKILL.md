@@ -1,12 +1,14 @@
 ---
 name: baseline
-description: "Establish baseline metrics for an ML model. Runs evaluation, profiles GPU memory and training throughput, and creates the experiments directory structure. Use when: need to measure current model performance before optimization."
+description: "Establish baseline metrics for an ML model. Runs evaluation, profiles GPU memory and training throughput, and creates the <exp_root> directory structure. Use when: need to measure current model performance before optimization."
 user-invocable: false
 ---
 
 # Baseline Evaluation
 
 Establish baseline performance metrics for the ML model. This is always the first step in optimization.
+
+> **Path convention:** All paths written as `<exp_root>/...` refer to the `exp_root` parameter from your dispatch. The plugin does not hardcode the output directory name.
 
 ## Inputs Expected
 
@@ -56,7 +58,7 @@ Search the project for evaluation scripts:
 If the orchestrator passed `prepared_train_path` or `prepared_val_path`:
 1. Identify how the training command references data paths (CLI args like `--data_dir`, `--train_path`, `--val_path`, or config file entries)
 2. Substitute the prepared paths into the training/eval commands before running them
-3. If data paths are in a config file, create a modified copy at `experiments/logs/baseline/config.yaml` with updated paths
+3. If data paths are in a config file, create a modified copy at `<exp_root>/logs/baseline/config.yaml` with updated paths
 4. Log in dev_notes which paths were substituted
 
 If no prepared paths were provided, use the original commands as-is.
@@ -70,7 +72,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/experiment_setup.py <project_root> "<train
 
 This creates:
 ```
-<project>/experiments/
+<exp_root>/
   logs/
   reports/
   scripts/
@@ -109,7 +111,7 @@ When executing evaluation or training commands (Steps 3 and 4), apply this retry
 
 ## Step 2.2: Apply Training Budget to Baseline
 
-The baseline must use the same training budget as experiments to ensure fair comparisons. Read `experiments/pipeline-state.json` and check `user_choices` for either budget type:
+The baseline must use the same training budget as experiments to ensure fair comparisons. Read `<exp_root>/pipeline-state.json` and check `user_choices` for either budget type:
 
 **If `fixed_time_budget` is set** (seconds):
 1. Wrap the training command with `timeout`:
@@ -170,7 +172,7 @@ Run a short training session to measure GPU resource usage:
 
 ## Step 5: Write Baseline Results
 
-Write `experiments/results/baseline.json`:
+Write `<exp_root>/results/baseline.json`:
 ```json
 {
   "exp_id": "baseline",
@@ -206,7 +208,7 @@ Use the Write tool to create this file.
 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/schema_validator.py \
-  experiments/results/baseline.json baseline
+  <exp_root>/results/baseline.json baseline
 ```
 
 If validation fails, fix and re-validate before proceeding.
@@ -221,7 +223,7 @@ After schema validation passes, verify the `metrics` dict contains required keys
 
 ## Step 6: Write Dev Notes
 
-Append to `experiments/dev_notes.md`:
+Append to `<exp_root>/dev_notes.md`:
 ```markdown
 ## <date> — Baseline
 

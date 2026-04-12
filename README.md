@@ -28,7 +28,7 @@ The ml-optimizer understands your ML model, establishes baselines, researches im
 - LLM-driven hyperparameter tuning (Claude reasons about results — no Optuna/grid search)
 - Research via web search + alphaxiv academic paper search + user-provided papers
 - ShinkaEvolve for fine-grained evolutionary code mutations
-- Structured `experiments/` directory in your project
+- Structured output directory in your project (location chosen at Phase 0 — the plugin has no hardcoded default)
 
 ### Hyperagent Capabilities
 
@@ -139,7 +139,7 @@ The plugin will:
 2. **Analysis** — read your code, detect the framework, present an optimization plan for your approval
 3. **Baseline** — establish current metrics with the unmodified code
 4. **Optimization loop** — research techniques → implement as git branches → run experiments → analyze → repeat
-5. **Report** — final report at `experiments/reports/final-report.md` and live progress dashboard at `experiments/reports/dashboard.html` (auto-refreshed during optimization)
+5. **Report** — final report at `<exp_root>/reports/final-report.md` and live progress dashboard at `<exp_root>/reports/dashboard.html` (auto-refreshed during optimization)
 
 Or invoke the skill directly without the slash command:
 
@@ -249,7 +249,7 @@ All three layers read the same per-agent contract from `scripts/output_contract.
 | `validate_agent_output.py` | SubagentStop | command | Layer 3 of the output-structure enforcement: looks up the agent's contract in `output_contract.py` and blocks the agent from finishing if any required output file is missing. Also enforces `dev_notes.md` updates by comparing the last entry's embedded `agent_id` against the current invocation |
 | `subagent-start-inject-goals.sh` | SubagentStart | command | Layer 1 of the output-structure enforcement: injects the optimization-goals summary from `goal_memory.py` AND the per-agent output contract from `output_contract.py inject` into the agent's prompt — so every agent sees its exact required output paths, schema, and `dev_notes.md` logging instructions before it starts work |
 | `file-changed-pipeline-state.sh` | FileChanged (pipeline-state.json) | command | Detects external corruption of pipeline state |
-| `cwd-changed-detect-experiments.sh` | CwdChanged | command | Auto-detects existing `experiments/` and offers to resume |
+| `cwd-changed-detect-experiments.sh` | CwdChanged | command | Auto-detects existing `<exp_root>` and offers to resume (mid-run) or start a new run (if phase 9) |
 | `stop-check.sh` | Stop | command | Verifies a final report exists before the session ends when `pipeline-state.json` indicates experiments were run |
 
 Exit code `2` = block action. Exit code `0` = allow. Configured in `hooks/hooks.json`.
@@ -373,7 +373,7 @@ Cross-cutting outputs (managed by scripts or multiple agents):
 
 #### Directory Structure
 
-The plugin creates an `experiments/` directory (location configured at Phase 0, can be anywhere):
+The plugin creates an `<exp_root>/` directory — the user chooses the name and location at Phase 0, there is no hardcoded default. The layout inside `<exp_root>/` is:
 
 ```
 <exp_root>/
@@ -426,6 +426,16 @@ The plugin creates an `experiments/` directory (location configured at Phase 0, 
 └── results-table.md                       — Auto-generated Markdown results summary
 ```
 
+#### Multi-Run Support
+
+Each `<exp_root>` is one optimization run. For a new direction on the same project, point `<exp_root>` at a new directory at Phase 0 — state files are not run-namespaced. The `.claude/ml-optimizer.json` breadcrumb tracks all runs:
+
+```json
+{"active": "/home/user/runs/02-augmentation", "runs": ["/home/user/runs/01-label-smoothing", "/home/user/runs/02-augmentation"]}
+```
+
+Hooks read `active` to resolve the current run. Old single-run format (`{"exp_root": "..."}`) is still supported. Phase 0 detects completed runs (`phase == 9`) and prompts the user to start a new directory.
+
 ## Reference
 
 ### Key Design Patterns
@@ -446,7 +456,7 @@ The plugin creates an `experiments/` directory (location configured at Phase 0, 
 - **Checkpoint warm-starting**: Experiments can resume from prior checkpoints (lower LR, fewer epochs). Saves 50-80% compute in later iterations.
 - **Hyperagent-driven optimization**: The hyperagent drives Phase 7 ↔ Phase 8 in a loop and enables self-improvement. It maintains a code archive (`hyperagent/archive.jsonl`) with lineage tracking and selects parents using Hyperagents' exact algorithms: `sigmoid(10(s - μ)) × exp(-(children/8)³)`. Three mutation operators: LLM patches (structural), ShinkaEvolve (fine-grained), research-implement (paper-informed). The hyperagent learns which operator is effective and adapts.
 - **Staged evaluation**: Every code mutation gets a cheap pre-filter (10% budget, adaptive threshold) before full training. Warm-starts from staged checkpoint. Saves 50-80% compute by filtering unpromising variants early.
-- **Self-referential meta-improvement**: The hyperagent can modify the plugin's own skill instructions (hp-tune, analyze, research). Session-scoped patches in `experiments/meta-patches/`. Max 3 per session. End-of-session promotion gate: analysis-agent evaluates, user approves, committed to plugin branch.
+- **Self-referential meta-improvement**: The hyperagent can modify the plugin's own skill instructions (hp-tune, analyze, research). Session-scoped patches in `<exp_root>/meta-patches/`. Max 3 per session. End-of-session promotion gate: analysis-agent evaluates, user approves, committed to plugin branch.
 - **ShinkaEvolve as mutation operator**: ShinkaEvolve is one tool within the Hyperagent loop. The hyperagent dispatches it for fine-grained code mutations (numerical constants, local optimizations) via `Skill("ml-optimizer:evolve")`. The full pipeline: `shinka-convert` → `shinka-run` (file-based LLM handoff, `SHINKA_PROVIDER=claude_code`) → `shinka-inspect` → commit. Evolve HPs are tuning-agent-driven. The handoff uses a configurable timeout (`SHINKA_HANDOFF_TIMEOUT`, default 600s) with `.inprogress` marker acknowledgment — the agent writes a marker when it picks up a mutation request, which resets `shinka_run`'s deadline from that point.
 - **Small dataset awareness**: Research agent shifts search toward low-data techniques (transfer learning, few-shot learning, adapters, prompt tuning, semi-supervised methods) when dataset has fewer than 5K samples.
 - **Structured ideation**: Knowledge-mode research proposals use a diverge-converge-refine process with 6 ideation lenses (Problem-First, Analogical Reasoning, What Changed Recently, Constraint Manipulation, Negation/Inversion, Composition/Decomposition) plus a Two-Sentence Test filter.

@@ -14,7 +14,12 @@ INPUT=$(cat)
 CWD=$(echo "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)
 [ -z "$CWD" ] && exit 0
 
-STATE_FILE="$CWD/experiments/pipeline-state.json"
+# Resolve exp_root from breadcrumb or walk-up fallback.
+source "$(dirname "${BASH_SOURCE[0]}")/_env.sh"
+EXP_DIR=$("$PLUGIN_ROOT/hooks/find-exp-root.sh" "$CWD")
+[ -z "$EXP_DIR" ] && exit 0
+
+STATE_FILE="$EXP_DIR/pipeline-state.json"
 [ -f "$STATE_FILE" ] || exit 0
 
 # Parse pipeline state
@@ -24,7 +29,7 @@ METRIC=$(jq -r '.user_choices.primary_metric // "loss"' "$STATE_FILE" 2>/dev/nul
 LOWER=$(jq -r '.user_choices.lower_is_better // true' "$STATE_FILE" 2>/dev/null)
 
 # Count experiments
-RESULTS_DIR="$CWD/experiments/results"
+RESULTS_DIR="$EXP_DIR/results"
 COMPLETED=0
 RUNNING=0
 TOTAL=0

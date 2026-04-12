@@ -178,8 +178,8 @@ def check_overfitting(
     """Detect overfitting by comparing train vs val metric trajectories.
 
     Overfitting = train metric improving while val metric worsens for
-    ``patience`` consecutive steps. Returns a dict with ``overfitting``
-    (bool), ``reason``, ``step``, ``severity``, and trend info.
+    `patience` consecutive steps. Returns a dict with `overfitting`
+    (bool), `reason`, `step`, `severity`, and trend info.
     """
     # Align to the shorter trajectory, filtering NaN/Inf from both
     pairs = []
@@ -284,8 +284,8 @@ _DIVERGENCE_KEYS = {
 def get_thresholds_for_category(model_category: str | None) -> dict:
     """Return divergence threshold overrides for a model category.
 
-    Only returns keys accepted by ``check_divergence()``, filtering out
-    overfitting-specific defaults like ``overfitting_patience``.
+    Only returns keys accepted by `check_divergence()`, filtering out
+    overfitting-specific defaults like `overfitting_patience`.
     """
     all_defaults = MODEL_CATEGORY_DEFAULTS.get(model_category, {})
     return {k: v for k, v in all_defaults.items() if k in _DIVERGENCE_KEYS}

@@ -10,6 +10,8 @@ Use extended thinking for all analytical reasoning in this skill. Ultrathink. Cr
 
 Search for and analyze ML techniques that could improve the target model. Extract actionable, implementable proposals — not just paper summaries.
 
+> **Path convention:** All paths written as `<exp_root>/...` refer to the `exp_root` parameter from your dispatch. The plugin does not hardcode the output directory name.
+
 ## Reference
 
 - Paper analysis guide: `${CLAUDE_SKILL_DIR}/references/paper-analysis.md` (in this skill's directory)
@@ -23,7 +25,7 @@ From the orchestrator:
 - `current_metrics`: Current performance numbers
 - `problem_description`: What needs improvement
 - `user_papers`: Optional list of paper URLs or files provided by the user
-- `exp_root`: Path to experiments/ directory (for error logging)
+- `exp_root`: Path to <exp_root>/ directory (for error logging)
 - `source`: One of `"web"` (default), `"knowledge"`, or `"both"`. Controls how proposals are generated:
   - `"web"`: Current behavior — web search + paper analysis (Phase 5)
   - `"knowledge"`: LLM proposes methods from its own training knowledge (Phase 7 method proposals)
@@ -32,7 +34,7 @@ From the orchestrator:
   - `"training"`: Optimizer, LR schedulers, warmup strategies, gradient clipping/accumulation, mixed precision, loss functions, weight decay, data augmentation, regularization (dropout, label smoothing), EMA
   - `"architecture"`: All of `training` + attention mechanism changes, normalization layer changes, activation function changes, block design changes, skip connection modifications
   - `"full"`: All of `architecture` + data pipeline changes, preprocessing, tokenization, feature engineering, ensemble approaches, distillation, curriculum learning, training-free methods (pruning, quantization, sparsification), test-time adaptation (TTA, test-time augmentation), inference-time search (MCTS, beam search)
-- `output_path`: Where to write findings (default: `experiments/reports/research-findings.md`). When called from Phase 7, use `experiments/reports/research-findings-method-proposals.md`
+- `output_path`: Where to write findings (default: `<exp_root>/reports/research-findings.md`). When called from Phase 7, use `<exp_root>/reports/research-findings-method-proposals.md`
 
 ## Step 1: Analyze User-Provided Papers (if any)
 
@@ -64,7 +66,7 @@ If the user provided papers or URLs:
 
 Before searching, check for existing findings and dead ends:
 
-1. Check ALL existing findings files in `experiments/reports/`:
+1. Check ALL existing findings files in `<exp_root>/reports/`:
    - `research-findings.md` (Phase 5 web-based proposals)
    - `research-findings-method-proposals.md` (Phase 7 pre-loop method proposals)
    - `research-findings-method-proposals-iter*.md` (Phase 7 mid-loop iterations)
@@ -388,7 +390,7 @@ If a proposal originated from a user-provided paper (`user_papers` input):
 
 ## Step 5: Write Research Findings
 
-Write to the path specified by `output_path` (default: `experiments/reports/research-findings.md`):
+Write to the path specified by `output_path` (default: `<exp_root>/reports/research-findings.md`):
 
 ```markdown
 # Research Findings

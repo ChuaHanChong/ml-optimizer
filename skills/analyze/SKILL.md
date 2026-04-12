@@ -10,6 +10,8 @@ Use extended thinking for all analytical reasoning in this skill. Ultrathink. Th
 
 Analyze completed experiment results to determine what worked, what didn't, and what to do next.
 
+> **Path convention:** All paths written as `<exp_root>/...` refer to the `exp_root` parameter from your dispatch. The plugin does not hardcode the output directory name.
+
 ## Inputs Expected
 
 From the orchestrator:
@@ -27,7 +29,7 @@ From the orchestrator:
 Run the result analyzer:
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/result_analyzer.py \
-  <project_root>/experiments/results \
+  <exp_root>/results \
   <primary_metric> \
   baseline \
   <lower_is_better>
@@ -227,7 +229,7 @@ Do not log dead ends for techniques that showed mixed results (some improvement,
 
 ## Step 4: Write Batch Analysis Report
 
-Write to `experiments/reports/batch-<N>-analysis.md`:
+Write to `<exp_root>/reports/batch-<N>-analysis.md`:
 
 ```markdown
 # Batch <N> Analysis
@@ -263,7 +265,7 @@ Write to `experiments/reports/batch-<N>-analysis.md`:
 
 ## Step 4.1: Update Research Agenda
 
-If a research agenda exists (`experiments/reports/research-agenda.json`), update it based on this batch's results:
+If a research agenda exists (`<exp_root>/reports/research-agenda.json`), update it based on this batch's results:
 
 ```bash
 # Check if agenda exists
@@ -300,7 +302,7 @@ Skip this step if `time_budget_seconds` is not present in experiment results.
 
 ## Step 5: Update Dev Notes
 
-Append to `experiments/dev_notes.md`:
+Append to `<exp_root>/dev_notes.md`:
 ```markdown
 ## <date> — Batch <N> Analysis
 
@@ -341,7 +343,7 @@ When dispatched with `scope: "session"`, switch from batch analysis to session r
 
 From the orchestrator:
 - `project_root`: Project root directory
-- `exp_root`: Path to experiments/ directory (default: `<project_root>/experiments`)
+- `exp_root`: Path to <exp_root>/ directory (default: `<project_root>/experiments`)
 - `primary_metric`: The metric that was optimized
 - `lower_is_better`: Whether lower values are better for the primary metric
 - `scope`: `"session"`
@@ -429,7 +431,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log-suggestion
 ### Review Rules
 
 1. **Advisory only** — present recommendations, do NOT auto-apply changes
-2. **Cite specific evidence** — every recommendation must reference concrete files (e.g., `experiments/results/exp-003.json`), exact values (e.g., "diverged at lr=0.05, NaN at step 42"), and specific `event_id` values from the error log
+2. **Cite specific evidence** — every recommendation must reference concrete files (e.g., `<exp_root>/results/exp-003.json`), exact values (e.g., "diverged at lr=0.05, NaN at step 42"), and specific `event_id` values from the error log
 3. **Distinguish patterns from one-offs** — a single divergence is an event; three divergences at similar LRs is a pattern worth recommending against
 4. **Note confidence based on sample size** — 2 experiments is Low confidence, 5+ is Medium, 10+ with consistent results is High
 5. **Focus on strategy** — recommend HP ranges, methods to try/avoid, budget allocation, scope changes

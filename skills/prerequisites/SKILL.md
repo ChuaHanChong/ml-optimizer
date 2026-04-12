@@ -8,6 +8,8 @@ user-invocable: false
 
 Verify that the user's project is ready for training experiments. This skill validates dataset paths and format, then checks and sets up the Python environment.
 
+> **Path convention:** All paths written as `<exp_root>/...` refer to the `exp_root` parameter from your dispatch. The plugin does not hardcode the output directory name.
+
 ## Reference
 
 - Dataset formats guide: `${CLAUDE_SKILL_DIR}/references/dataset-formats.md` (in this skill's directory)
@@ -82,7 +84,7 @@ Options:
 ```
 
 If restructuring is requested:
-1. Create `experiments/prepared-data/` directory
+1. Create `<exp_root>/prepared-data/` directory
 2. Perform the necessary restructuring (directory layout, symlinks, format conversion)
 3. **Never modify the original data files**
 4. Re-validate the prepared data
@@ -216,7 +218,7 @@ If the script doesn't accept step-limiting flags, run it with a 120-second timeo
 
 ## Step 7: Write Prerequisites Report
 
-Write `experiments/results/prerequisites.json`:
+Write `<exp_root>/results/prerequisites.json`:
 ```json
 {
   "status": "ready|partial|failed",
@@ -246,12 +248,12 @@ Write `experiments/results/prerequisites.json`:
 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/schema_validator.py \
-  experiments/results/prerequisites.json prerequisites
+  <exp_root>/results/prerequisites.json prerequisites
 ```
 
 If validation fails, fix and re-validate before proceeding.
 
-Append to `experiments/dev_notes.md`:
+Append to `<exp_root>/dev_notes.md`:
 ```markdown
 ## <date> — Prerequisites Check
 

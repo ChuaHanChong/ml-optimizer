@@ -8,6 +8,8 @@ user-invocable: false
 
 Watches running training experiments for signs of divergence and takes corrective action.
 
+> **Path convention:** All paths written as `<exp_root>/...` refer to the `exp_root` parameter from your dispatch. The plugin does not hardcode the output directory name.
+
 ## Inputs Expected
 
 From the orchestrator:
@@ -30,7 +32,7 @@ From the orchestrator:
    # Check if training process is still running
    ps aux | grep "<exp_id>" | grep -v grep
    ```
-   Or check for PID files in `experiments/logs/<round_dir>/<exp_id>/pid`
+   Or check for PID files in `<exp_root>/logs/<round_dir>/<exp_id>/pid`
 
 ## Step 2: Poll Loop
 
@@ -41,14 +43,14 @@ For each monitoring cycle:
 For each log file:
 ```bash
 # Read the last N lines of the log file
-tail -100 experiments/logs/<round_dir>/<exp_id>/train.log
+tail -100 <exp_root>/logs/<round_dir>/<exp_id>/train.log
 ```
 
 ### 2b: Parse Metrics
 
 Parse the log content for the watched metric:
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/parse_logs.py experiments/logs/<round_dir>/<exp_id>/train.log
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/parse_logs.py <exp_root>/logs/<round_dir>/<exp_id>/train.log
 ```
 
 Extract the metric trajectory (all values of the watched metric over time).
@@ -73,7 +75,7 @@ import json, sys
 from detect_divergence import check_divergence, get_thresholds_for_category
 from parse_logs import parse_log, extract_metric_trajectory
 
-records = parse_log('experiments/logs/<round_dir>/<exp_id>/train.log')
+records = parse_log('<exp_root>/logs/<round_dir>/<exp_id>/train.log')
 values = extract_metric_trajectory(records, '<metric>')
 kwargs = get_thresholds_for_category('<model_category or None>')
 kwargs['lower_is_better'] = <lower_is_better>
@@ -114,7 +116,7 @@ If divergence is detected:
 1. **Kill the training process:**
    ```bash
    # Option 1: PID file (preferred — most reliable)
-   kill $(cat experiments/logs/<round_dir>/<exp_id>/pid) 2>/dev/null
+   kill $(cat <exp_root>/logs/<round_dir>/<exp_id>/pid) 2>/dev/null
 
    # Option 2: Safe pattern match — verify process is a training process before killing
    # First find candidates, then verify cmdline contains python/train before killing
@@ -140,12 +142,12 @@ If divergence is detected:
    - Write the updated result using the Write tool
    - **Validate the written file:**
      ```bash
-     python3 schema_validator.py experiments/results/<exp_id>.json result
+     python3 schema_validator.py <exp_root>/results/<exp_id>.json result
      ```
      If validation fails, fix the JSON before continuing.
 
 3. **Log the event:**
-   Append to `experiments/dev_notes.md`:
+   Append to `<exp_root>/dev_notes.md`:
    ```
    ## Divergence Detected
    - Experiment: <exp_id>
@@ -231,7 +233,7 @@ When `divergence_metric` is a reward metric (`lower_is_better = False`):
 
 ## Error Handling
 
-- **Log file doesn't exist yet:** Wait up to 60 seconds for it to appear (or 180 seconds if the experiment has a `code_branch` — worktree setup, dataset downloads, and dependency resolution add significant startup time). If the log file still doesn't exist after the wait period, check whether the experiment process is still alive (via PID file at `experiments/logs/<round_dir>/<exp_id>/pid`). If the process is alive, extend the wait by another 60 seconds. If the process is dead or no PID file exists, report error immediately.
+- **Log file doesn't exist yet:** Wait up to 60 seconds for it to appear (or 180 seconds if the experiment has a `code_branch` — worktree setup, dataset downloads, and dependency resolution add significant startup time). If the log file still doesn't exist after the wait period, check whether the experiment process is still alive (via PID file at `<exp_root>/logs/<round_dir>/<exp_id>/pid`). If the process is alive, extend the wait by another 60 seconds. If the process is dead or no PID file exists, report error immediately.
 - **Log file format unrecognized:** Try all parsers, report if none work
 - **Process already dead:** Check exit code, mark as failed if non-zero
 - **Permission errors:** Report and skip that experiment

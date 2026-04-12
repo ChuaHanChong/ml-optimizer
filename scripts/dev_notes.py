@@ -59,7 +59,7 @@ def append(exp_root: str, agent_name: str, message: str, agent_id: str = "") -> 
         ## YYYY-MM-DD HH:MM — <description> (<agent_name>)
         <message lines>
 
-    The ``agent_id`` is embedded as an HTML comment so SubagentStop can verify
+    The `agent_id` is embedded as an HTML comment so SubagentStop can verify
     THIS specific agent invocation (not just the agent type) wrote the entry.
 
     Returns {"appended": True, "path": str, "timestamp": str}.

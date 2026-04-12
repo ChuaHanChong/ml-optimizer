@@ -92,11 +92,11 @@ def validate_result(data: dict) -> dict:
 
     Checks:
     - All required fields are present.
-    - ``status`` is one of the valid status values.
-    - ``metrics`` is a dict.
-    - ``config`` is a dict.
+    - `status` is one of the valid status values.
+    - `metrics` is a dict.
+    - `config` is a dict.
 
-    Returns ``{"valid": True/False, "errors": [...]}``.
+    Returns `{"valid": True/False, "errors": [...]}`.
     """
     errors: list[str] = []
 
@@ -160,7 +160,7 @@ def validate_baseline(data: dict) -> dict:
 
     Checks that all required baseline fields are present.
 
-    Returns ``{"valid": True/False, "errors": [...]}``.
+    Returns `{"valid": True/False, "errors": [...]}`.
     """
     errors: list[str] = []
 
@@ -190,11 +190,11 @@ def validate_manifest(data: dict) -> dict:
 
     Checks:
     - All required manifest fields are present.
-    - ``strategy`` is one of the valid strategies.
-    - ``proposals`` is a list and each proposal has the required fields.
-    - Each proposal ``status`` is valid.
+    - `strategy` is one of the valid strategies.
+    - `proposals` is a list and each proposal has the required fields.
+    - Each proposal `status` is valid.
 
-    Returns ``{"valid": True/False, "errors": [...]}``.
+    Returns `{"valid": True/False, "errors": [...]}`.
     """
     errors: list[str] = []
 
@@ -241,14 +241,14 @@ def validate_prerequisites(data: dict) -> dict:
 
     Checks:
     - All required fields are present.
-    - ``status`` is one of the valid prerequisite statuses.
-    - ``dataset`` and ``environment`` are dicts.
-    - ``ready_for_baseline`` is a boolean.
-    - Inner field warnings for missing ``dataset.train_path``,
-      ``dataset.prepared_train_path`` (when ``prepared`` is True),
-      and ``environment.manager``.
+    - `status` is one of the valid prerequisite statuses.
+    - `dataset` and `environment` are dicts.
+    - `ready_for_baseline` is a boolean.
+    - Inner field warnings for missing `dataset.train_path`,
+      `dataset.prepared_train_path` (when `prepared` is True),
+      and `environment.manager`.
 
-    Returns ``{"valid": True/False, "errors": [...], "warnings": [...]}``.
+    Returns `{"valid": True/False, "errors": [...], "warnings": [...]}`.
     """
     errors: list[str] = []
     warnings: list[str] = []
@@ -303,9 +303,9 @@ def validate_prerequisites(data: dict) -> dict:
 def validate_hp_proposal(data: dict) -> dict:
     """Validate an HP tuning proposal dict.
 
-    Checks that ``exp_id`` and ``config`` are present and correctly typed.
+    Checks that `exp_id` and `config` are present and correctly typed.
 
-    Returns ``{"valid": True/False, "errors": [...]}``.
+    Returns `{"valid": True/False, "errors": [...]}`.
     """
     errors: list[str] = []
 
@@ -331,10 +331,10 @@ def validate_hp_proposal(data: dict) -> dict:
 def validate_rounds_manifest(data: dict) -> dict:
     """Validate a rounds-manifest.json dict.
 
-    Checks that ``rounds`` is a list of valid round entries, ``current_round``
-    is an integer, and ``total_experiments`` is a non-negative integer.
+    Checks that `rounds` is a list of valid round entries, `current_round`
+    is an integer, and `total_experiments` is a non-negative integer.
 
-    Returns ``{"valid": True/False, "errors": [...]}``.
+    Returns `{"valid": True/False, "errors": [...]}`.
     """
     errors: list[str] = []
 
@@ -378,9 +378,9 @@ def validate_file(filepath: str, schema_type: str) -> dict:
 
     Args:
         filepath: Path to the JSON file.
-        schema_type: One of ``"result"``, ``"baseline"``, or ``"manifest"``.
+        schema_type: One of `"result"`, `"baseline"`, or `"manifest"`.
 
-    Returns ``{"valid": True/False, "errors": [...], "filepath": ...}``.
+    Returns `{"valid": True/False, "errors": [...], "filepath": ...}`.
     """
     result: dict = {"filepath": filepath}
     path = Path(filepath)
@@ -429,7 +429,7 @@ def _check_completeness(data: dict) -> list[str]:
     """Return warnings for missing fields that should be present given the status.
 
     These are not structural errors — the result is valid but incomplete.
-    In ``--strict`` mode, these become blocking errors.
+    In `--strict` mode, these become blocking errors.
     """
     warnings: list[str] = []
     status = data.get("status")
@@ -520,10 +520,10 @@ def validate_relay(route: str, data: dict) -> dict:
     """Validate a relay message against its schema.
 
     Args:
-        route: The relay route name (e.g. ``"analyze_to_tuning"``).
+        route: The relay route name (e.g. `"analyze_to_tuning"`).
         data: The message payload dict.
 
-    Returns ``{"valid": bool, "errors": [...], "warnings": [...]}``.
+    Returns `{"valid": bool, "errors": [...], "warnings": [...]}`.
     """
     errors: list[str] = []
     warnings: list[str] = []

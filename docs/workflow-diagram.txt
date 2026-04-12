@@ -324,8 +324,8 @@ ENTRY POINT
     +--------------------------------------------------------------+
 
   Reads: user_choices (train_command, data paths, env_manager)
-  Writes: experiments/results/prerequisites.json
-          experiments/prepared-data/ (if preprocessing needed)
+  Writes: <exp_root>/results/prerequisites.json
+          <exp_root>/prepared-data/ (if preprocessing needed)
 
                     |
                     v
@@ -345,8 +345,8 @@ ENTRY POINT
     +--------------------------------------------------------------+
 
   Reads: prerequisites.json, user_choices
-  Writes: experiments/results/baseline.json
-          experiments/logs/baseline/train.log
+  Writes: <exp_root>/results/baseline.json
+          <exp_root>/logs/baseline/train.log
           pipeline-state.json (baseline_checksum — immutable baseline)
 
                     |
@@ -406,10 +406,10 @@ ENTRY POINT
     +----------------------------------------------------------------+
 
   Reads: baseline.json, user_choices, existing findings files, dead-ends.json
-  Writes: experiments/reports/research-findings.md
-          experiments/reports/research-findings-method-proposals.md (if "both")
-          experiments/reports/research-agenda.json (living document)
-          experiments/reports/research-agenda.md (companion)
+  Writes: <exp_root>/reports/research-findings.md
+          <exp_root>/reports/research-findings-method-proposals.md (if "both")
+          <exp_root>/reports/research-agenda.json (living document)
+          <exp_root>/reports/research-agenda.md (companion)
 
                     |
                     v
@@ -443,7 +443,7 @@ ENTRY POINT
     +--------------------------------------------------------------+
 
   Reads: research-findings.md, user-confirmed proposal indices
-  Writes: experiments/results/implementation-manifest.json
+  Writes: <exp_root>/results/implementation-manifest.json
           Git branches: ml-opt/<slug> (one per proposal)
 
                     |
@@ -514,7 +514,7 @@ ENTRY POINT
   |  |  meta_improve:                                                   |  |
   |  |    hyperagent-generate (meta_improvement_mode: true)             |  |
   |  |    → reads skill files + archive + operator stats                |  |
-  |  |    → writes patched skills to experiments/meta-patches/          |  |
+  |  |    → writes patched skills to <exp_root>/meta-patches/          |  |
   |  |    → writes meta-changelog.json (skill, change, reason, impact)  |  |
   |  |    → IMMEDIATELY loads patches into subsequent dispatches        |  |
   |  |    → tuning/analysis/research use improved instructions          |  |
@@ -651,14 +651,14 @@ ENTRY POINT
     |    stacked_tuned_hp (combined methods, tuned HPs)            |
     +--------------------------------------------------------------+
 
-  Reads: All experiments/results/*.json, error-log.json,
+  Reads: All <exp_root>/results/*.json, error-log.json,
          research-agenda.json, dead-ends.json
-  Writes: experiments/reports/final-report.md
-          experiments/reports/dashboard.html
-          experiments/results-table.md
-          experiments/reports/progress_chart.png
-          experiments/artifacts/pipeline-overview.excalidraw
-          experiments/artifacts/architecture-*.excalidraw
+  Writes: <exp_root>/reports/final-report.md
+          <exp_root>/reports/dashboard.html
+          <exp_root>/results-table.md
+          <exp_root>/reports/progress_chart.png
+          <exp_root>/artifacts/pipeline-overview.excalidraw
+          <exp_root>/artifacts/architecture-*.excalidraw
 
                     |
                     v
@@ -671,7 +671,7 @@ ENTRY POINT
     - Anti-patterns observed
     - Actionable suggestions for next session
 
-  Writes: experiments/reports/session-review.md
+  Writes: <exp_root>/reports/session-review.md
 
                     |
                     v
@@ -774,10 +774,10 @@ ENTRY POINT
   UCB1 tree search: 6 parent selection strategies (best, score_child_prop, ucb, ...)
                     UCB1 backprop: visit_count (all ancestors), eval_count (node only), value_sum
                     Scores min-max normalized to [0,1] with metric direction inversion
-  Meta-patches: experiments/meta-patches/ (session-scoped skill modifications)
+  Meta-patches: <exp_root>/meta-patches/ (session-scoped skill modifications)
   Meta-patch gate: pipeline_state.py meta-patch validate|log|promote (max 3/session)
   Phase gates: pipeline_state.py gate <from> <to> (validates transition legality + completion)
-  Decision log: experiments/decision-log.json (append-only, SHA-256 input hashing)
+  Decision log: <exp_root>/decision-log.json (append-only, SHA-256 input hashing)
   Relay schemas: schema_validator.py relay <route> <json> (7 routes, typed fields)
   Output contracts: output_contract.py (single source for 8 agents — see 3-checkpoint
                     enforcement section). Layer 1 SubagentStart injects, Layer 2

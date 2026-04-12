@@ -40,12 +40,11 @@ from pipeline_state import (
     validate_phase_requirements,
     verify_baseline_integrity,
 )
-from experiment_setup import (
+from experiment_setup import generate_script, next_experiment_id
+from conftest import (
     cleanup_stale_experiments,
     create_experiment_dirs,
-    generate_train_script,
-    next_experiment_id,
-    setup,
+    setup_experiment,
     write_experiment_config,
 )
 
@@ -613,9 +612,9 @@ class TestExperimentSetup:
         path = write_experiment_config(str(tmp_path), "exp-001", {"lr": 0.001})
         assert json.loads(Path(path).read_text())["lr"] == 0.001
 
-    def test_generate_train_script_features(self, tmp_path):
+    def test_generate_script_features(self, tmp_path):
         """GPU, command, env vars, log piping, executable, PID."""
-        path = generate_train_script(
+        path = generate_script(
             str(tmp_path), "exp-001", "python train.py --lr 0.001",
             gpu_id=2, log_file="logs/round-1-hp/exp-001/train.log",
             env_vars={"WANDB_DISABLED": "true"})
@@ -626,13 +625,13 @@ class TestExperimentSetup:
             assert expected in content
         assert Path(path).stat().st_mode & stat.S_IXUSR
 
-    def test_generate_train_script_requires_log_file(self, tmp_path):
+    def test_generate_script_requires_log_file(self, tmp_path):
         """Missing log_file raises ValueError — no stale flat-path fallback."""
         with pytest.raises(ValueError, match="log_file is required"):
-            generate_train_script(str(tmp_path), "exp-002", "python train.py", gpu_id=0)
+            generate_script(str(tmp_path), "exp-002", "python train.py", gpu_id=0)
 
-    def test_generate_train_script_path_with_spaces(self, tmp_path):
-        path = generate_train_script(str(tmp_path), "exp-001", "python train.py",
+    def test_generate_script_path_with_spaces(self, tmp_path):
+        path = generate_script(str(tmp_path), "exp-001", "python train.py",
                                      gpu_id=0, log_file="logs/my experiment/train.log")
         content = Path(path).read_text()
         assert "'logs/my experiment'" in content or "'logs/my experiment/train.log'" in content
@@ -640,8 +639,8 @@ class TestExperimentSetup:
     @pytest.mark.parametrize("budget, expect_timeout", [
         (120, True), (None, False), (0, False),
     ], ids=["with_budget", "none", "zero"])
-    def test_generate_train_script_time_budget(self, tmp_path, budget, expect_timeout):
-        path = generate_train_script(str(tmp_path), "exp-001", "python train.py",
+    def test_generate_script_time_budget(self, tmp_path, budget, expect_timeout):
+        path = generate_script(str(tmp_path), "exp-001", "python train.py",
                                      gpu_id=0, log_file="logs/round-1-hp/exp-001/train.log",
                                      time_budget=budget)
         content = Path(path).read_text()
@@ -651,14 +650,14 @@ class TestExperimentSetup:
             assert "timeout --signal=SIGTERM" not in content
 
     def test_setup_increments_ids(self, tmp_path):
-        r1 = setup(str(tmp_path), "python train.py", gpu_id=0, config={"lr": 0.001})
+        r1 = setup_experiment(str(tmp_path), "python train.py", gpu_id=0, config={"lr": 0.001})
         assert r1["exp_id"] == "exp-001"
         assert Path(r1["config_path"]).exists() and Path(r1["script_path"]).exists()
-        assert setup(str(tmp_path), "python train.py", gpu_id=1)["exp_id"] == "exp-002"
+        assert setup_experiment(str(tmp_path), "python train.py", gpu_id=1)["exp_id"] == "exp-002"
 
     def test_concurrent_setup_unique_ids(self, tmp_path):
         def do_setup(i):
-            return setup(str(tmp_path), f"python train.py --seed {i}", config={"seed": i})
+            return setup_experiment(str(tmp_path), f"python train.py --seed {i}", config={"seed": i})
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
             futures = [pool.submit(do_setup, i) for i in range(8)]
             results = [f.result() for f in concurrent.futures.as_completed(futures)]

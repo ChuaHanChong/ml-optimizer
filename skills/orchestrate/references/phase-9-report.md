@@ -5,9 +5,9 @@
 After the experiment loop exits:
 
 **Pre-report state verification:** Before dispatching the report agent, verify critical state files exist:
-- `experiments/results/baseline.json` — must exist
-- `experiments/pipeline-state.json` — must exist
-- `experiments/results/exp-*.json` — at least 1 must exist
+- `<exp_root>/results/baseline.json` — must exist
+- `<exp_root>/pipeline-state.json` — must exist
+- `<exp_root>/results/exp-*.json` — at least 1 must exist
 If any are missing, log to error tracker (`category: "config_error"`) and warn the user. Do NOT proceed with reporting if baseline is missing.
 
 ## Step 1: Generate Report & Present Summary
@@ -40,8 +40,8 @@ Key findings:
 - [finding 1]
 - [finding 2]
 
-Full report: experiments/reports/final-report.md
-Dashboard: experiments/reports/dashboard.html
+Full report: <exp_root>/reports/final-report.md
+Dashboard: <exp_root>/reports/dashboard.html
 ```
 
 ## Step 2: Session Review
@@ -91,7 +91,7 @@ SendMessage(
   to: agent_registry["analysis"],
   message: "Ultrathink. Evaluate meta-improvement patches.
   scope: meta_patches.
-  Read experiments/meta-patches/meta-changelog.json for the list of patches.
+  Read <exp_root>/meta-patches/meta-changelog.json for the list of patches.
   For each patch:
   1. Read the original skill file and the patched version
   2. Check: did experiments AFTER the patch was applied show improvement over experiments BEFORE?
@@ -120,7 +120,7 @@ Options: "Promote all", "Select which to promote", "Skip (log for reference)"
 ### 3c: Promote (if approved)
 
 For each approved patch:
-1. Read the patched skill file from `experiments/meta-patches/<skill>-SKILL.md`
+1. Read the patched skill file from `<exp_root>/meta-patches/<skill>-SKILL.md`
 2. Prepend a marker header so future sessions can detect it:
    ```
    # [meta-improvement] <change description>. Session <date>.

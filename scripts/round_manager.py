@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Round lifecycle management and completeness checking.
 
-Manages hierarchical round directories under experiments/results/.
+Manages hierarchical round directories under <exp_root>/results/.
 Each round is a directory like round-1-hp/ containing exp-*.json files.
 The rounds-manifest.json file is the single source of truth for round history.
 
@@ -99,7 +99,7 @@ def create_round(exp_root: str, round_type: str, branch: str | None = None,
                  genid: str | None = None) -> dict:
     """Create a new round directory and update manifest.
 
-    Creates experiments/results/round-N-<type>/ and the matching
+    Creates <exp_root>/results/round-N-<type>/ and the matching
     proposed-configs/round-N-<type>/ directory.  Updates
     rounds-manifest.json atomically with file locking.
     """

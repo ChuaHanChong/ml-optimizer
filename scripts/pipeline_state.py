@@ -17,29 +17,6 @@ sys.path.insert(0, str(Path(__file__).parent))
 from error_tracker import create_event, log_event  # noqa: E402
 
 
-def init_hyperagent_state(enabled: bool = True) -> dict:
-    """Create initial hyperagent_state structure for pipeline-state.json.
-
-    Called by the orchestrator in Phase 0. Hyperagent mode is ON by default —
-    the hyperagent enables self-improvement and helps Phase 7 and Phase 8.
-    All fields are initialized to defaults.
-    """
-    return {
-        "enabled": enabled,
-        "current_phase": "hp_tuning",
-        "archive_generation": 0,
-        "strategy_history": [],
-        "meta_improvement_count": 0,
-        "active_meta_patches": [],
-        "operator_stats": {
-            "hp_tune": {"attempts": 0, "improvements": 0},
-            "llm_patch": {"attempts": 0, "improvements": 0},
-            "shinka_evolve": {"attempts": 0, "improvements": 0},
-            "research_implement": {"attempts": 0, "improvements": 0},
-            "meta_improve": {"attempts": 0, "improvements": 0},
-        },
-    }
-
 
 def _compute_baseline_checksum(metrics: dict) -> str:
     """Compute a deterministic SHA-256 checksum of a baseline metrics dict.
@@ -310,7 +287,6 @@ def save_state(
     stuck_protocol_triggered: bool | None = None,
     baseline_checksum: str | None = None,
     agent_registry: dict | None = None,
-    hyperagent_state: dict | None = None,
 ) -> str:
     """Write pipeline-state.json to exp_root.
 
@@ -323,18 +299,17 @@ def save_state(
             user_papers, method_proposal_scope, method_proposal_iterations,
             hp_batches_per_round). These are preserved across pipeline
             resumptions.
-        consecutive_stop_count: Optional counter for the
-            3-consecutive-stop exit rule. Persisted at root level.
+        consecutive_stop_count: Optional running count of consecutive stop
+            recommendations. Persisted at root level as a signal the
+            orchestrator weighs when judging whether the search is exhausted
+            — NOT a hardcoded exit threshold. Resets to 0 on any
+            improvement / continue / pivot.
         stuck_protocol_triggered: Whether the stuck protocol has been
             triggered this session. Prevents infinite recovery loops.
         agent_registry: Optional dict mapping persistent agent roles to
             their agentIds (e.g. {"research": "abc123", "tuning": "def456"}).
             Used for resuming agents via SendMessage instead of fresh dispatch.
             Session-scoped — cleared on new session, preserved within session.
-        hyperagent_state: Optional dict for Hyperagent mode state. Created
-            via init_hyperagent_state(). Tracks archive generation,
-            strategy history, meta-improvement count, operator stats,
-            and active meta-patches. Preserved across pipeline resumptions.
 
     Returns the path to the state file.
     """
@@ -353,7 +328,7 @@ def save_state(
         load_state(exp_root)
         if (user_choices is None or consecutive_stop_count is None
             or stuck_protocol_triggered is None or baseline_checksum is None
-            or agent_registry is None or hyperagent_state is None)
+            or agent_registry is None)
         else None
     )
 
@@ -364,7 +339,7 @@ def save_state(
     elif existing and existing.get("user_choices"):
         state["user_choices"] = existing["user_choices"]
 
-    # Preserve consecutive_stop_count for 3-consecutive-stop exit rule
+    # Preserve consecutive_stop_count (orchestrator exit-judgment signal)
     if consecutive_stop_count is not None:
         state["consecutive_stop_count"] = consecutive_stop_count
     elif existing and "consecutive_stop_count" in existing:
@@ -387,12 +362,6 @@ def save_state(
         state["agent_registry"] = agent_registry
     elif existing and "agent_registry" in existing:
         state["agent_registry"] = existing["agent_registry"]
-
-    # Preserve hyperagent_state (Hyperagent mode: evolutionary code search)
-    if hyperagent_state is not None:
-        state["hyperagent_state"] = hyperagent_state
-    elif existing and "hyperagent_state" in existing:
-        state["hyperagent_state"] = existing["hyperagent_state"]
 
     state_path = root / "pipeline-state.json"
     tmp_fd, tmp_path = tempfile.mkstemp(dir=str(root), suffix=".tmp")
@@ -714,115 +683,6 @@ def _save_decision_log(exp_root: str, entries: list[dict]) -> None:
         raise
 
 
-# ---------------------------------------------------------------------------
-# Meta-Patch Management
-# ---------------------------------------------------------------------------
-
-META_PATCH_MAX_PER_SESSION = 3
-META_PATCH_FORBIDDEN_SKILLS = {
-    "orchestrate", "hyperagent-generate", "hyperagent-select",
-    "hyperagent-eval", "hyperagent-archive", "hyperagent-init",
-    "hyperagent-inspect",
-}
-
-_META_PATCH_REQUIRED_FIELDS = ("skill", "change", "reason", "expected_impact")
-
-
-def validate_meta_patch(exp_root: str, patch: dict) -> dict:
-    """Validate a meta-patch dict before logging.
-
-    Checks:
-    1. All required fields present and non-empty strings.
-    2. `skill` not in `META_PATCH_FORBIDDEN_SKILLS`.
-    3. Current logged patch count < `META_PATCH_MAX_PER_SESSION`.
-
-    Returns `{"valid": bool, "errors": list[str]}`.
-    """
-    errors: list[str] = []
-
-    # 1. Required fields
-    for field in _META_PATCH_REQUIRED_FIELDS:
-        val = patch.get(field)
-        if not isinstance(val, str) or not val.strip():
-            errors.append(f"Missing or empty required field: '{field}'")
-
-    # 2. Forbidden skill check
-    skill = patch.get("skill", "")
-    if skill in META_PATCH_FORBIDDEN_SKILLS:
-        errors.append(f"Skill '{skill}' is forbidden for meta-patches")
-
-    # 3. Counter enforcement
-    existing = get_meta_patches(exp_root)
-    if len(existing) >= META_PATCH_MAX_PER_SESSION:
-        errors.append(
-            f"Max {META_PATCH_MAX_PER_SESSION} meta-patches per session "
-            f"exceeded (current: {len(existing)})"
-        )
-
-    return {"valid": len(errors) == 0, "errors": errors}
-
-
-def log_meta_patch(exp_root: str, patch: dict) -> dict:
-    """Validate and log a meta-patch to the changelog.
-
-    Returns `{"logged": True, "id": N, "count": N}` on success, or
-    `{"logged": False, "errors": [...]}` on validation failure.
-    """
-    result = validate_meta_patch(exp_root, patch)
-    if not result["valid"]:
-        return {"logged": False, "errors": result["errors"]}
-
-    meta_dir = Path(exp_root) / "meta-patches"
-    meta_dir.mkdir(parents=True, exist_ok=True)
-    changelog_path = meta_dir / "meta-changelog.json"
-    lock_path = meta_dir / "meta-changelog.lock"
-
-    with open(lock_path, "w") as lock_fd:
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
-        try:
-            # Read existing entries
-            if changelog_path.is_file():
-                try:
-                    entries = json.loads(changelog_path.read_text())
-                except (json.JSONDecodeError, OSError):
-                    entries = []
-            else:
-                entries = []
-
-            # Defend against corrupt/legacy entries: changelog must be a list
-            # of dicts. Drop anything else (old string entries, accidental
-            # top-level dict/None). See tests/test_pipeline.py::
-            # TestMetaPatchManagement::test_log_handles_corrupt_string_entries.
-            if not isinstance(entries, list):
-                entries = []
-            entries = [e for e in entries if isinstance(e, dict)]
-
-            # Compute next ID (auto-increment from 1)
-            next_id = max((e.get("id", 0) for e in entries), default=0) + 1
-
-            entry = {
-                **patch,
-                "id": next_id,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            }
-            entries.append(entry)
-
-            # Atomic write
-            tmp_fd, tmp_path = tempfile.mkstemp(dir=str(meta_dir), suffix=".tmp")
-            try:
-                with os.fdopen(tmp_fd, "w") as f:
-                    json.dump(entries, f, indent=2)
-                os.replace(tmp_path, str(changelog_path))
-            except BaseException:
-                try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
-                raise
-        finally:
-            fcntl.flock(lock_fd, fcntl.LOCK_UN)
-
-    return {"logged": True, "id": next_id, "count": len(entries)}
 
 
 def log_decision(exp_root: str, decision: dict) -> str:
@@ -967,79 +827,6 @@ def replay_check(exp_root: str, decision_id: str, current_decision: str) -> dict
     }
 
 
-def get_meta_patches(exp_root: str) -> list[dict]:
-    """Return all logged meta-patch changelog entries.
-
-    Returns an empty list if the changelog file does not exist or is corrupt.
-    """
-    changelog_path = Path(exp_root) / "meta-patches" / "meta-changelog.json"
-    if not changelog_path.is_file():
-        return []
-    try:
-        entries = json.loads(changelog_path.read_text())
-        if not isinstance(entries, list):
-            return []
-        # Drop corrupt/legacy non-dict entries so callers (promote_meta_patch)
-        # can .get() safely.
-        return [e for e in entries if isinstance(e, dict)]
-    except (json.JSONDecodeError, OSError):
-        return []
-
-
-def promote_meta_patch(
-    exp_root: str, plugin_root: str, patch_index: int
-) -> dict:
-    """Promote a meta-patch by copying its patched skill file into the plugin.
-
-    1. Load changelog entry at *patch_index*.
-    2. Look for patched file at `<exp_root>/meta-patches/<skill>-SKILL.md`.
-    3. Ensure content starts with `# [meta-improvement]`.
-    4. Write to `<plugin_root>/skills/<skill>/SKILL.md`.
-
-    Returns `{"promoted": True, "skill": str, "path": str}` on success,
-    or `{"promoted": False, "error": str}` on failure.
-    """
-    entries = get_meta_patches(exp_root)
-    if not isinstance(patch_index, int) or patch_index < 0 or patch_index >= len(entries):
-        return {
-            "promoted": False,
-            "error": f"Invalid patch index: {patch_index} (have {len(entries)} entries)",
-        }
-
-    entry = entries[patch_index]
-    skill = entry.get("skill", "")
-
-    # Locate the patched file
-    patched_path = Path(exp_root) / "meta-patches" / f"{skill}-SKILL.md"
-    if not patched_path.is_file():
-        return {
-            "promoted": False,
-            "error": f"Patched file not found: {patched_path}",
-        }
-
-    content = patched_path.read_text()
-
-    # Ensure the meta-improvement marker is present
-    if not content.startswith("# [meta-improvement]"):
-        content = "# [meta-improvement]\n" + content
-
-    # Atomic write to plugin skill directory
-    dest = Path(plugin_root) / "skills" / skill / "SKILL.md"
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp_fd, tmp_path = tempfile.mkstemp(dir=str(dest.parent), suffix=".tmp")
-    try:
-        with os.fdopen(tmp_fd, "w") as f:
-            f.write(content)
-        os.replace(tmp_path, str(dest))
-    except BaseException:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
-
-    return {"promoted": True, "skill": skill, "path": str(dest)}
-
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
@@ -1048,9 +835,7 @@ if __name__ == "__main__":
             "[validate <phase>|save <phase> <iteration>|load|cleanup"
             "|gate <current_phase> <next_phase>|log-gate <phase> <status> <summary>"
             "|log-decision <json_data>|replay-check <decision_id> <current_decision>"
-            "|decisions [--phase N] [--agent NAME] [--type TYPE]"
-            "|meta-patch validate <json>|meta-patch log <json>"
-            "|meta-patch list|meta-patch promote <index> <plugin_root>]"
+            "|decisions [--phase N] [--agent NAME] [--type TYPE]]"
         )
         sys.exit(1)
 
@@ -1183,48 +968,6 @@ if __name__ == "__main__":
             sys.exit(1)
         result = replay_check(exp_root, sys.argv[3], sys.argv[4])
         print(json.dumps(result, indent=2))
-
-    elif action == "meta-patch":
-        if len(sys.argv) < 4:
-            print("Usage: pipeline_state.py <exp_root> meta-patch "
-                  "[validate <json>|log <json>|list|promote <index> <plugin_root>]")
-            sys.exit(1)
-        sub = sys.argv[3]
-        if sub == "validate":
-            if len(sys.argv) < 5:
-                print("Usage: pipeline_state.py <exp_root> meta-patch validate <json_data>")
-                sys.exit(1)
-            try:
-                patch = json.loads(sys.argv[4])
-            except json.JSONDecodeError:
-                print(f"Error: invalid JSON '{sys.argv[4]}'")
-                sys.exit(1)
-            print(json.dumps(validate_meta_patch(exp_root, patch), indent=2))
-        elif sub == "log":
-            if len(sys.argv) < 5:
-                print("Usage: pipeline_state.py <exp_root> meta-patch log <json_data>")
-                sys.exit(1)
-            try:
-                patch = json.loads(sys.argv[4])
-            except json.JSONDecodeError:
-                print(f"Error: invalid JSON '{sys.argv[4]}'")
-                sys.exit(1)
-            print(json.dumps(log_meta_patch(exp_root, patch), indent=2))
-        elif sub == "list":
-            print(json.dumps(get_meta_patches(exp_root), indent=2))
-        elif sub == "promote":
-            if len(sys.argv) < 6:
-                print("Usage: pipeline_state.py <exp_root> meta-patch promote <index> <plugin_root>")
-                sys.exit(1)
-            try:
-                idx = int(sys.argv[4])
-            except ValueError:
-                print(f"Error: invalid index '{sys.argv[4]}' (expected integer)")
-                sys.exit(1)
-            print(json.dumps(promote_meta_patch(exp_root, sys.argv[5], idx), indent=2))
-        else:
-            print(f"Unknown meta-patch subcommand: {sub}")
-            sys.exit(1)
 
     else:
         print(f"Unknown action: {action}")

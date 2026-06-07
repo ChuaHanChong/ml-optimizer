@@ -3,7 +3,7 @@
 
 Static analysis tests that read skill and agent .md files and verify they
 reference required reliability protocols (phase gates, relay validation,
-context budget, decision logging, meta-patch validation).
+context budget, decision logging).
 
 These tests verify the *contracts* defined in Markdown, not Python code.
 """
@@ -110,7 +110,6 @@ PERSISTENT_AGENTS = [
     "analysis-agent",
     "implement-agent",
     "monitor-agent",
-    "hyperagent-agent",
 ]
 
 # Relay routes defined in the orchestrate SKILL.md (key relay routes section)
@@ -120,12 +119,6 @@ DOCUMENTED_RELAY_ROUTES = [
     "monitor_to_tuning",
     "research_to_implement",
     "experiments_to_analyze",
-]
-
-# Additional relay routes that exist for the hyperagent integration
-HYPERAGENT_RELAY_ROUTES = [
-    "analyze_to_hyperagent",
-    "hyperagent_to_tuning",
 ]
 
 
@@ -141,10 +134,8 @@ class TestRelaySchemaCompleteness:
         """Every relay route documented in SKILL.md or phase-7 reference has a schema."""
         from schema_validator import RELAY_SCHEMAS
 
-        all_documented = DOCUMENTED_RELAY_ROUTES + HYPERAGENT_RELAY_ROUTES
-
         missing = []
-        for route in all_documented:
+        for route in DOCUMENTED_RELAY_ROUTES:
             if route not in RELAY_SCHEMAS:
                 missing.append(route)
 
@@ -283,24 +274,6 @@ class TestPhaseGateReferences:
 class TestDecisionLoggingReferences:
     """Verify decision logging protocol is referenced in relevant skills."""
 
-    def test_hyperagent_skill_mentions_decision_logging(self):
-        """hyperagent/SKILL.md mentions decision logging."""
-        content = _read_file(os.path.join(SKILLS_DIR, "hyperagent", "SKILL.md"))
-        assert content is not None, "hyperagent/SKILL.md not found"
-
-        has_decision_logging = (
-            "log-decision" in content
-            or "log_decision" in content
-            or "decision logging" in content.lower()
-            or "Decision Logging Protocol" in content
-            or "decision-log.json" in content
-        )
-        assert has_decision_logging, (
-            "hyperagent/SKILL.md does not mention decision logging. "
-            "Expected 'log-decision', 'log_decision', 'Decision Logging Protocol', "
-            "or 'decision-log.json'."
-        )
-
     def test_pipeline_state_has_log_decision(self):
         """pipeline_state.py exports log_decision function."""
         import pipeline_state
@@ -318,41 +291,6 @@ class TestDecisionLoggingReferences:
             "pipeline_state.py missing get_decisions function"
         )
         assert callable(pipeline_state.get_decisions)
-
-
-# ===========================================================================
-# TestMetaPatchReferences
-# ===========================================================================
-
-
-class TestMetaPatchReferences:
-    """Verify meta-patch validation is referenced in the hyperagent skill."""
-
-    def test_hyperagent_skill_mentions_meta_patch_validation(self):
-        """hyperagent/SKILL.md mentions meta-patch validation."""
-        content = _read_file(os.path.join(SKILLS_DIR, "hyperagent", "SKILL.md"))
-        assert content is not None, "hyperagent/SKILL.md not found"
-
-        has_validation = (
-            "meta-patch validate" in content
-            or "validate_meta_patch" in content
-            or "meta-patch validation" in content.lower()
-            or "meta_patch_validation" in content
-        )
-        assert has_validation, (
-            "hyperagent/SKILL.md does not mention meta-patch validation. "
-            "Expected 'meta-patch validate', 'validate_meta_patch', or "
-            "'meta-patch validation'."
-        )
-
-    def test_hyperagent_skill_mentions_meta_patches(self):
-        """hyperagent/SKILL.md at least mentions meta-patches as a concept."""
-        content = _read_file(os.path.join(SKILLS_DIR, "hyperagent", "SKILL.md"))
-        assert content is not None, "hyperagent/SKILL.md not found"
-
-        assert "meta-patch" in content.lower() or "meta_patch" in content.lower(), (
-            "hyperagent/SKILL.md does not mention meta-patches at all"
-        )
 
 
 # ===========================================================================

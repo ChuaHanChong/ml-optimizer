@@ -57,7 +57,7 @@ HP_PROPOSAL_OPTIONAL = [
 ]
 
 ROUNDS_MANIFEST_REQUIRED = ["rounds", "current_round", "total_experiments"]
-VALID_ROUND_TYPES = ["hp", "evolved", "research", "stacked", "meta"]
+VALID_ROUND_TYPES = ["hp", "evolved", "research", "stacked"]
 
 
 # ---------------------------------------------------------------------------
@@ -502,16 +502,6 @@ RELAY_SCHEMAS = {
         "required": ["completed_ids"],
         "optional": ["best_metric_value", "diverged_count", "timeout_count", "batch_number"],
         "types": {"completed_ids": list, "diverged_count": int},
-    },
-    "analyze_to_hyperagent": {
-        "required": ["recommendation"],
-        "optional": ["pivot_type", "correlations", "branch_scores", "improvement_pct", "meta_improvement_recommended"],
-        "types": {"recommendation": str, "meta_improvement_recommended": bool},
-    },
-    "hyperagent_to_tuning": {
-        "required": ["action"],
-        "optional": ["evolve_hps", "target_branch", "archive_stats"],
-        "types": {"action": str},
     },
 }
 

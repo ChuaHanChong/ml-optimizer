@@ -21,7 +21,7 @@ metric = state.get('user_choices', {}).get('primary_metric', '?')
 # phase == 9 means the full pipeline (Phase 0→9) completed. For a new
 # optimization direction on the same project, the user should configure
 # exp_root to a new subdirectory — the plugin does not run-namespace state
-# files (hyperagent archive, learned-behaviors, round manifest would
+# files (learned-behaviors, round manifest would
 # collide). For phase < 9 the existing state represents a mid-run pause
 # that can be resumed.
 if phase == 9:

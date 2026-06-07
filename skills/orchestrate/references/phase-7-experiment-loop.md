@@ -7,9 +7,7 @@ This loop runs autonomously without user checkpoints until complete or blocked.
 - [Pre-Loop: Validate Pipeline State](#pre-loop-validate-pipeline-state) (line 28)
 - [Pre-Loop: Verify Baseline Integrity](#pre-loop-verify-baseline-integrity) (line 46)
 - [Pre-Loop: Sync Behavioral Memory](#pre-loop-sync-behavioral-memory) (line 61)
-- [Pre-Loop: Initialize Code Archive](#pre-loop-initialize-code-archive) (line 69)
-- [Pre-Loop: Load Meta-Patches](#pre-loop-load-meta-patches) (line 80)
-- [Pre-Loop: Load Implementation Manifest](#pre-loop-load-implementation-manifest) (line 97)
+- [Pre-Loop: Load Implementation Manifest](#pre-loop-load-implementation-manifest) (line 69)
 - [Pre-Loop: Method Proposals](#pre-loop-method-proposals) (line 109)
 - [Pre-Loop: Route hp_only Research Proposals](#pre-loop-route-hp_only-research-proposals) (line 183)
 - [Pre-Loop: Initialize Research Cadence](#pre-loop-initialize-research-cadence) (line 191)
@@ -20,7 +18,6 @@ This loop runs autonomously without user checkpoints until complete or blocked.
 - [Loop Iteration](#loop-iteration) (line 254) — main experiment loop (steps 1-7)
 - [Parallel GPU Dispatch Pattern](#parallel-gpu-dispatch-pattern) (line 729)
 - [Thinking Depth for Agent Dispatch](#thinking-depth-for-agent-dispatch) (line 749)
-- [Hyperagent Driven Loop](#hyperagent-driven-loop) (line 764) — mandatory hyperagent dispatch
 
 ## Pre-Loop: Validate Pipeline State
 
@@ -62,34 +59,6 @@ Before starting experiments, sync behavioral patterns from the error tracker:
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py <exp_root> sync-from-errors
 ```
 This populates `<exp_root>/learned-behaviors.json` with OOM limits, divergence patterns, and dead-end outcomes from the error tracker. All agents will read this via the `summary` command.
-
-## Pre-Loop: Initialize Code Archive
-
-Initialize the evolutionary archive from baseline and existing branches:
-```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/skills/hyperagent-init/scripts/init_archive.py --output-dir <exp_root>/hyperagent
-```
-
-This creates gen-000 from baseline and seeds any validated implementation branches from Phase 6 as gen-001, gen-002, etc. Every experiment result from this point forward updates the archive.
-
-**Standing on the shoulders of giants:** Phase 5 (research) and Phase 6 (implement) are dedicated pre-loop phases that remain critical. They seed the archive with proven techniques from papers BEFORE the experiment loop starts. The hyperagent benefits enormously from this foundation — Phase 6 branches give it diverse starting points to build upon. User-provided papers (from Phase 0) flow through Phase 5 with highest priority. During the loop, the hyperagent can dispatch additional research-implement rounds, building FROM the best parent in the archive (not baseline).
-
-## Pre-Loop: Load Meta-Patches (if meta-improvement has run)
-
-If `hyperagent_state.active_meta_patches` is non-empty in pipeline state, the hyperagent has modified skill instructions for this session. Before every subsequent agent dispatch (hp-tune, analyze, research), prepend to the dispatch prompt:
-
-```
-META-PATCHES ACTIVE: The hyperagent has modified skill instructions for this session.
-For the following skills, read the patched version INSTEAD of your default skill instructions:
-<for each patch in active_meta_patches>
-  - <skill_name>: Read <exp_root>/meta-patches/<skill_name>-SKILL.md
-    Change summary: <from meta-changelog.json patches[].change>
-</for each>
-```
-
-To build this context, read `<exp_root>/meta-patches/meta-changelog.json` and extract the `patches` array. Each entry has `skill`, `change`, `reason`, and `expected_impact`.
-
-This enables the self-referential loop: the hyperagent's strategy improvements are applied to future agent dispatches within the same session.
 
 ## Pre-Loop: Load Implementation Manifest
 
@@ -254,16 +223,15 @@ When the implementation manifest contains multiple code branches:
    Before dispatching any agents in this iteration, create a round directory. The PreToolUse hook will block all `exp-*.json` writes that don't go inside a `round-N-<type>/` subdirectory.
 
    ```bash
-   round_info=$(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/round_manager.py <exp_root> create-round hp --genid gen-<iteration>)
+   round_info=$(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/round_manager.py <exp_root> create-round hp)
    # Capture the "dir" field (e.g., "round-3-hp") — this is the round_dir to pass to all agents this iteration.
    ```
 
    **Round type by action:**
    - `create-round hp` — default, for HP tuning batches (most iterations)
-   - `create-round evolved` — when hyperagent action is `shinka_evolve` or `llm_patch` (pivot: `code_evolution`)
-   - `create-round research` — when hyperagent action is `research_implement` (pivot: `method_proposal`)
+   - `create-round evolved` — ShinkaEvolve code mutation (pivot: `code_evolution`)
+   - `create-round research` — research-implement batches (pivot: `method_proposal`)
    - `create-round stacked` — Phase 8 method stacking (see phase-8-stacking.md)
-   - `create-round meta` — meta-improvement experiments
 
    Save the `round_dir` into the iteration's local context. It will be passed to every subsequent dispatch in this iteration.
 
@@ -495,18 +463,11 @@ When the implementation manifest contains multiple code branches:
      - `"method_proposal"`, `"qualitative_change"`: Route to step 7 (existing handling).
      - **Unknown pivot_type:** Treat as `"hp_expand"` (safest default). Log to error tracker.
    - If analyze says **stop**:
-     - **Do NOT exit the loop.** The loop is autonomous — only the user or target achievement stops it.
-     - Log the stop recommendation. The hyperagent decides what to do next based on evidence.
+     - **Do NOT exit the loop immediately.** Exit is the orchestrator's reasoned judgment, never a fixed counter.
+     - Log the stop recommendation. Increment `consecutive_stop_count` (telemetry only — not an exit trigger).
+     - Invoke the **Stuck Protocol** below to search for new approaches, then run the **Exit Judgment** (see "Loop exit conditions").
 
-     **Options the hyperagent can choose from:**
-     - Switch to an operator it hasn't tried recently (e.g., research-implement if only HP tuning was done, ShinkaEvolve if only LLM patches were tried)
-     - Invoke the **Stuck Protocol** (below) to systematically search for new approaches
-     - Try meta-improvement to change the optimization strategy itself
-     - The hyperagent reads operator stats, archive trends, and error patterns to decide which option is best
-
-     **Stuck Protocol** (available when the hyperagent judges the optimization is stuck):
-
-     The hyperagent can invoke this when it has evidence that current approaches are exhausted — for example, multiple operators tried with no improvement, or the archive shows a clear plateau. This is a tool the hyperagent chooses to use, not an automatic trigger.
+     **Stuck Protocol** (invoked whenever analysis recommends stop):
 
        1. Read error patterns: `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> patterns`
        2. Read success metrics: `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> success <primary_metric> <lower_is_better>`
@@ -539,13 +500,34 @@ When the implementation manifest contains multiple code branches:
           ```
           → Save returned `agentId` to `agent_registry["research"]`
           → Persist registry: `save_state(..., agent_registry=agent_registry)`
-       6. If research returns new proposals → route to step 7 for implementation, continue loop
-       7. If no new proposals → try other operators (LLM patches, ShinkaEvolve, meta-improvement)
+       6. If research returns new in-scope proposals (after dead-end + suggestion-history filtering) → set `stuck_protocol_triggered=false`, reset `consecutive_stop_count=0`, route to step 7 for implementation, continue loop.
+       7. If research returns no new proposals → set `stuck_protocol_triggered=true`, increment `consecutive_stop_count`, then run the **Exit Judgment** below.
    - **If analyze output is malformed or contains an unexpected action:** Treat as `agent_failure`. Log to error tracker. Retry analyze once with a simplified prompt: "Based on the experiment results, should we continue, pivot, or stop? Respond with exactly one of: continue, pivot, stop." If retry also fails, default to `continue`.
-   - **Loop exit conditions:** The experiment loop is **autonomous by default** — it runs non-stop until:
-     1. Target metric achieved (from Phase 0)
-     2. User manually stops
-     The loop does NOT auto-stop on plateaus. Even when the analysis agent recommends "stop", the hyperagent should try different operators (research, LLM patches, ShinkaEvolve, meta-improvement) before giving up. The stuck protocol dispatches research for fresh ideas. Only the user can truly end the run — breakthroughs can come after plateaus.
+   - **Loop exit conditions:** The experiment loop is **autonomous by default** — it runs non-stop until one of the following. There is **no hardcoded stop-count threshold**; the third condition is the orchestrator's own evidence-based judgment.
+     1. Target metric achieved (from Phase 0).
+     2. User manually stops.
+     3. **The orchestrator judges the search has reached a *fixpoint*** — no fresh direction left AND no progress to build on. This is an objective state, not a count: there is literally nothing new to try within scope and the metric has stopped moving.
+
+     **Exit Judgment** (run after the stuck protocol whenever analyze recommended stop). The orchestrator (main agent) decides from evidence — never from a magic number:
+
+       a. **Gather** the evidence the stuck protocol already collected: research output (any new in-scope proposals?), success metrics (current best + whether it improved since the last stop), the dead-end catalog, and the research agenda (any untried items left?).
+       b. **CONTINUE the loop** (do not exit) if ANY of these holds — there is still something to try:
+          - research returned ≥1 new in-scope proposal not in the dead-end catalog / suggestion-history → route to step 7 and implement it;
+          - the research agenda still has an untried item → pivot to it;
+          - the best metric improved since the previous stop → the plateau broke.
+          On any of these, reset `stuck_protocol_triggered=false` and `consecutive_stop_count=0`, then continue.
+       c. **EXIT to Phase 9** only at the fixpoint — when ALL of these hold:
+          - the stuck protocol returned no new in-scope proposals (`stuck_protocol_triggered` is already `true`),
+          - the research agenda has no untried items left, and
+          - the best metric has not improved since the previous stop (flat within the noise margin).
+          Reaching this state means the in-scope idea space is exhausted and there is no progress to build on — running the stuck protocol again with the same best metric and same dead-end set would return the same nothing. This guarantees the loop terminates when (and only when) genuinely stuck.
+       d. **Log the decision** so it is auditable:
+          ```bash
+          python3 ${CLAUDE_PLUGIN_ROOT}/scripts/pipeline_state.py <exp_root> log-decision '{"phase":7,"agent":"orchestrate","decision_type":"loop_exit_judgment","decision":"exit"|"continue","iteration":<N>,"reasoning":"<best_metric, improved_since_last_stop, agenda_items_remaining, new_proposals_count>"}'
+          ```
+          Append the same reasoning to `dev_notes.md` and log to the error tracker.
+
+     A single plateau is **not** exhaustion — breakthroughs can follow plateaus, so the bar for exit is the fixpoint in (c), not a recommendation count. `consecutive_stop_count` is telemetry only; `stuck_protocol_triggered` is the state flag that, together with an unchanged best metric and an empty agenda, defines the fixpoint.
 
 7. **Mid-loop method proposal trigger** (when analyze recommends new methods):
 
@@ -793,96 +775,3 @@ Agent(
 )
 ```
 
----
-
-## Hyperagent Driven Loop
-
-**MANDATORY: The hyperagent MUST be dispatched for Phase 7. It is the loop driver, not an optional enhancement. Do NOT implement a simplified HP-tune → experiment → analyze loop that bypasses the hyperagent. Do NOT skip the hyperagent dispatch for any reason — cost, complexity, or "simplicity". The hyperagent chooses operators (HP tuning, LLM patches, ShinkaEvolve, research-implement, meta-improvement), manages the evolutionary archive, and drives strategy. Without it, the plugin loses self-improvement, archive-based selection, and operator adaptation. If ShinkaEvolve is unavailable, the hyperagent falls back to other operators automatically — but the hyperagent itself is never optional.**
-
-The hyperagent decides what action to take at each iteration — HP tuning, code mutation, research, or self-improvement. The analysis agent advises after each batch (continue, pivot direction, or stacking), and the hyperagent decides the specific action based on the advice + archive state + operator effectiveness. It also enables the plugin to self-improve by modifying skill instructions mid-session. When the analysis agent advises stacking, the hyperagent decides whether to proceed and transitions to Phase 8, then returns to Phase 7 on the stacked code.
-
-### Hyperagent Dispatch (Loop Entry)
-
-At the start of Phase 7, dispatch the hyperagent with the orchestrating hyperagent skill:
-
-```
-Agent(
-  description: "Hyperagent optimization",
-  prompt: "Ultrathink. Invoke Skill('ml-optimizer:hyperagent'). Run the optimization.
-  Parameters: project_root: {project_root}. exp_root: {exp_root}. primary_metric: {primary_metric}. lower_is_better: {lower_is_better}. scope_level: {scope_level}. target_value: {target_value or null}.
-  CONTEXT FROM OTHER AGENTS:
-  - ANALYZE: {last_analyze_summary}
-  - ARCHIVE STATS: {archive_stats_json}
-  - DEAD ENDS: {dead_ends_summary}
-  - BEHAVIORAL MEMORY: {learned_behaviors_summary}",
-  subagent_type: "ml-optimizer:hyperagent-agent"
-)
-```
-
-Save the hyperagent's ID to `agent_registry["hyperagent"]`. For subsequent iterations, resume via SendMessage with updated context from analyze and other agents.
-
-The hyperagent invokes `Skill("ml-optimizer:hyperagent")` which guides its decisions within Phase 7: read context → choose operator → generate variant → staged eval → HP tune → archive. The analysis agent advises after each batch, and the orchestrator relays context between agents and tracks pipeline state.
-
-### Per-Iteration Flow
-
-Each iteration follows the same pattern regardless of what the hyperagent chose:
-
-**1. Hyperagent chooses action** (from SendMessage above)
-
-The hyperagent states its decision in natural language: which action, which parent (for code mutations), and why.
-
-**2. Execute the action:**
-
-| Action | Execution |
-|---|---|
-| `hp_tune` | Orchestrator dispatches tuning-agent (existing Step 1 flow), then experiment-agents |
-| `llm_patch` | Hyperagent invokes `Skill("ml-optimizer:hyperagent-select")` then `Skill("ml-optimizer:hyperagent-generate")` with operator `llm_patch` |
-| `shinka_evolve` | Hyperagent invokes `Skill("ml-optimizer:hyperagent-select")` then `Skill("ml-optimizer:hyperagent-generate")` with operator `shinka_evolve` (internally dispatches evolve skill) |
-| `research_implement` | **Agent coordination:** (1) Hyperagent states it wants research-implement on a selected parent. (2) Orchestrator dispatches research-agent → produces research-findings. (3) Orchestrator dispatches implement-agent → implements FROM the selected parent branch (not baseline), creates `ml-opt/gen-<N>-<technique>`. (4) Hyperagent archives the result. The hyperagent does NOT do research/implementation itself — it coordinates through the orchestrator relay. |
-| `meta_improve` | Hyperagent invokes `Skill("ml-optimizer:hyperagent-generate")` with `meta_improvement_mode: true`. Max 3 per session. |
-
-**3. Staged eval** (for code mutations: llm_patch, shinka_evolve, research_implement):
-
-Hyperagent invokes `Skill("ml-optimizer:hyperagent-eval")`:
-- Stage 1: Quick eval (10% budget), adaptive threshold
-- If PASS → full training (warm-start from staged checkpoint)
-- If FAIL → archive as `status: "filtered"`, skip full training
-
-For `hp_tune` actions: standard experiment execution (existing flow), no staged eval.
-
-**4. Archive results:**
-
-Hyperagent invokes `Skill("ml-optimizer:hyperagent-archive")` to update the archive with the iteration's results. Update `hyperagent_state.archive_generation` and `operator_stats`.
-
-Log to `hyperagent_state.strategy_history`:
-```json
-{"iteration": N, "action": "llm_patch", "genid": "gen-007", "fitness_score": 0.87, "improved": true}
-```
-
-**5. Analyze:**
-
-Orchestrator dispatches analysis-agent (existing Step 5 flow). The analyze skill receives archive stats and returns `continue/pivot/stop`.
-
-**6. Decision:**
-
-- `continue` → resume hyperagent for next iteration
-- `pivot` with `code_evolution` → resume hyperagent (it will choose code mutation next)
-- `pivot` with HP-focused type (`hp_expand`, `narrow_space`, etc.) → resume hyperagent with the pivot context (it will choose `hp_tune` next)
-- `stop` → apply stuck protocol or exit (existing logic)
-
-### Meta-Improvement (Self-Referential)
-
-When the hyperagent chooses `meta_improve` (or analyze returns `pivot_type: "meta_improvement"`):
-
-1. Hyperagent reads current skill files (hp-tune, analyze, research) + archive + operator stats
-2. Generates patched skill files to `<exp_root>/meta-patches/`
-3. Writes `<exp_root>/meta-patches/meta-changelog.json`
-4. Orchestrator records patches in `hyperagent_state.active_meta_patches`
-5. Subsequent agent dispatches include meta-patch context (see "Pre-Loop: Load Meta-Patches")
-6. Hyperagent resumes with improved strategy
-
-**Constraints:** Max 3 meta-improvements per session. Cannot modify orchestrator or its own skill.
-
-### End-of-Session Promotion (Phase 9)
-
-See `references/phase-9-report.md` Phase 9 Step 3 for the full meta-patch promotion flow.

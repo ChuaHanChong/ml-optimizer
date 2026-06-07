@@ -27,7 +27,7 @@ from schema_validator import (
     validate_result,
 )
 
-VALID_ROUND_TYPES = ["hp", "evolved", "research", "stacked", "meta"]
+VALID_ROUND_TYPES = ["hp", "evolved", "research", "stacked"]
 
 
 # ---------------------------------------------------------------------------
@@ -95,8 +95,7 @@ def _scan_exp_ids(results_dir: Path) -> list[int]:
 # Round lifecycle
 # ---------------------------------------------------------------------------
 
-def create_round(exp_root: str, round_type: str, branch: str | None = None,
-                 genid: str | None = None) -> dict:
+def create_round(exp_root: str, round_type: str, branch: str | None = None) -> dict:
     """Create a new round directory and update manifest.
 
     Creates <exp_root>/results/round-N-<type>/ and the matching
@@ -133,7 +132,6 @@ def create_round(exp_root: str, round_type: str, branch: str | None = None,
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "experiments": [],
                 "code_branch": branch,
-                "hyperagent_genid": genid,
                 "summary": None,
                 "closed_at": None,
             }
@@ -395,7 +393,7 @@ if __name__ == "__main__":
     if len(sys.argv) < 3:
         print("Usage: round_manager.py <exp_root> <command> [args...]")
         print("Commands:")
-        print("  create-round <type> [--branch <name>] [--genid <id>]")
+        print("  create-round <type> [--branch <name>]")
         print("  current-round")
         print("  register-experiment <round_dir> <exp_id>")
         print("  close-round [--summary <text>]")
@@ -412,22 +410,18 @@ if __name__ == "__main__":
 
     if command == "create-round":
         if len(sys.argv) < 4:
-            print("Usage: round_manager.py <exp_root> create-round <type> [--branch <name>] [--genid <id>]")
+            print("Usage: round_manager.py <exp_root> create-round <type> [--branch <name>]")
             sys.exit(1)
         rtype = sys.argv[3]
         branch = None
-        genid = None
         i = 4
         while i < len(sys.argv):
             if sys.argv[i] == "--branch" and i + 1 < len(sys.argv):
                 branch = sys.argv[i + 1]
                 i += 2
-            elif sys.argv[i] == "--genid" and i + 1 < len(sys.argv):
-                genid = sys.argv[i + 1]
-                i += 2
             else:
                 i += 1
-        output = create_round(exp_root, rtype, branch=branch, genid=genid)
+        output = create_round(exp_root, rtype, branch=branch)
 
     elif command == "current-round":
         output = current_round(exp_root)

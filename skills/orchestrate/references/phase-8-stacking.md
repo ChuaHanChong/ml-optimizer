@@ -6,43 +6,22 @@ Method stacking combines different implementations (from papers, LLM patches, or
 
 **Pre-check:** If `strategy: "file_backup"` (non-git project), skip stacking. Log to dev_notes.
 
-**Trigger:** The analysis agent advises `pivot_type: "method_stacking"` when multiple methods from different papers or significant code changes have improved independently. The hyperagent decides whether to proceed, which methods to stack, and in what order — no hardcoded threshold.
+**Trigger:** The analysis agent advises `pivot_type: "method_stacking"` when multiple methods from different papers or significant code changes have improved independently. The orchestrator ranks methods by improvement magnitude and drives the stacking loop.
 
-After stacking completes, the hyperagent returns to Phase 7 to continue optimizing on the stacked code. The archive tracks stacked variants with lineage.
+After stacking completes, return to Phase 7 to continue optimizing on the stacked code.
 - **Autonomous mode:** Auto-proceed. Log to dev_notes: "Auto-entering stacking phase with {N} improved methods."
 
-## Hyperagent Driven Stacking
+## Orchestrator-Driven Stacking
 
-**MANDATORY: Phase 8 stacking MUST be driven by the hyperagent. Resume the hyperagent via `SendMessage(to: agent_registry["hyperagent"])` — do NOT implement stacking logic directly in the orchestrator. The hyperagent decides which methods to stack, in what order, when to evolve for interference resolution, and when to stop. Phase 7 ↔ Phase 8 is one continuous hyperagent-driven loop.**
-
-The hyperagent also enables self-improvement — skill patches from Phase 7's meta-improve actions are active during stacking. The orchestrator resumes the hyperagent per stack step.
-
-```
-Dispatch hyperagent:
-  SendMessage(
-    to: agent_registry["hyperagent"],
-    message: "Ultrathink. Phase 8: Method stacking. You have {N} methods that improved
-    over baseline. Decide the stacking order based on archive lineage (methods from
-    different lineages are more likely to complement; same-lineage methods may conflict).
-
-    Methods ranked by improvement (descending — largest improvement first): {ranked_methods_json}
-    Archive lineage data (for conflict detection): {lineage_data_json}
-
-    Stack in rank order (best method first). For each step: merge, experiment, analyze.
-    If methods interfere (stacked gain < best individual): dispatch ShinkaEvolve to resolve.
-    If a method degrades performance: skip it.
-    Use lineage data to flag potential conflicts (same-lineage methods may overlap).
-    Stop when: no more methods, or stacking shows diminishing returns (you judge from evidence)."
-  )
-```
+The orchestrator ranks methods by improvement magnitude (descending — largest improvement first) and drives the stacking loop directly. No archive lineage data needed — methods are stacked in order of effectiveness.
 
 ## Stacking Loop
 
-1. **Rank methods by improvement magnitude** (descending) — the method with the largest improvement over baseline gets stacked first. The hyperagent uses archive lineage as a secondary signal (flag potential conflicts between same-lineage methods) but the primary ordering is always by effectiveness.
+1. **Rank methods by improvement magnitude** (descending) — the method with the largest improvement over baseline gets stacked first.
 
 2. **Initialize stack:** The best method's branch becomes `ml-opt/stack-1`. No experiment needed — its existing best result serves as the stack baseline.
 
-3. **For each method** (in hyperagent's chosen order):
+3. **For each method** (in improvement-ranked order):
 
    a. **Create stack branch:**
    ```bash

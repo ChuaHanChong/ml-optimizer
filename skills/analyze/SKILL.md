@@ -142,12 +142,11 @@ Output:
    - Untested branches exist → `branch_test`
    - Tested branches with insufficient configs → `hp_expand`
 2. **Code-level optimization** _(skip if `scope_level == "training"`)_:
-   All code-level pivots emit `code_evolution`. The hyperagent decides which operator to use.
+   All code-level pivots emit `code_evolution`. The orchestrator routes the action (ShinkaEvolve or research-implement).
    - Trigger: ANY of these conditions → pivot_type: `"code_evolution"`:
      - HP tuning shows diminishing returns (you judge from trend analysis, not a fixed %)
      - HP correlations are weak (improvement is not explained by HP changes)
      - No research done yet and HP exploration is flattening
-     - All current approaches are stalling → additionally include `"meta_improvement_recommended": true`
 3. **Method stacking** _(skip if `scope_level == "training"` or non-git project)_:
    Multiple methods from different papers or significant code changes have improved independently → pivot_type: `"method_stacking"`. Combining them could yield compound gains. No fixed method count — you judge from the archive whether stacking is worth trying.
 4. **Failure pattern:**
@@ -162,22 +161,20 @@ Output:
   "action": "pivot",
   "reason": "<your evidence-based justification>",
   "pivot_type": "<branch_test|hp_expand|narrow_space|regularization|code_evolution|method_stacking>",
-  "meta_improvement_recommended": false,
   "suggestion": "<specific actionable next step>",
   "remaining_potential": "<your assessment of room for improvement>"
 }
 ```
 
-**Role split — analysis advises, hyperagent decides:**
+**Role split — analysis advises, orchestrator routes:**
 
-You (the analysis agent) evaluate evidence and advise a DIRECTION. The hyperagent reads your advice and decides the specific ACTION.
+You (the analysis agent) evaluate evidence and advise a DIRECTION. The orchestrator reads your advice and routes the specific ACTION.
 
-| You advise (pivot_type) | Hyperagent decides |
+| You advise (pivot_type) | Orchestrator routes |
 |---|---|
-| `branch_test`, `hp_expand`, `narrow_space`, `regularization` | Delegates to tuning-agent with adjusted search space |
-| `code_evolution` | Which operator: LLM patch, ShinkaEvolve, or research-implement |
-| `code_evolution` + `meta_improvement_recommended` | Whether to meta-improve (modify skill instructions) |
-| `method_stacking` | Whether to stack, which methods, in what order |
+| `branch_test`, `hp_expand`, `narrow_space`, `regularization` | Adjusts search space, dispatches tuning-agent |
+| `code_evolution` | Dispatches tuning (evolve HPs) → implement-agent with evolve skill → experiment |
+| `method_stacking` | Enters Phase 8: merges methods sequentially, resolves interference via ShinkaEvolve |
 
 ### Stop
 **When:** Target metric achieved. This is the ONLY automatic stop condition. The loop is autonomous — it runs until the goal is reached or the user manually stops. Even if progress is slow, keep trying different approaches. Never recommend stop just because improvement is small — breakthroughs can come after plateaus.

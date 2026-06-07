@@ -470,7 +470,7 @@ class TestLayer3OutputVerification:
         assert decision["decision"] == "approve"
 
     def test_monitor_agent_auto_approved(self, exp_root):
-        """Agents not in CONTRACTS (monitor, hyperagent) are always approved."""
+        """Agents not in CONTRACTS (monitor) are always approved."""
         _, stdout, _ = _run_hook(
             VALIDATE_OUTPUT_SCRIPT,
             self._stop_payload(exp_root, "monitor-agent"),

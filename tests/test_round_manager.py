@@ -88,11 +88,10 @@ class TestCreateRound:
         result = create_round(str(tmp_path), "invalid")
         assert "error" in result
 
-    def test_branch_and_genid(self, tmp_path):
-        result = create_round(str(tmp_path), "hp", branch="ml-opt/test", genid="gen-005")
+    def test_branch(self, tmp_path):
+        result = create_round(str(tmp_path), "hp", branch="ml-opt/test")
         manifest = json.loads((tmp_path / "results" / "rounds-manifest.json").read_text())
         assert manifest["rounds"][0]["code_branch"] == "ml-opt/test"
-        assert manifest["rounds"][0]["hyperagent_genid"] == "gen-005"
         assert result["id"] == 1
 
 
@@ -892,11 +891,6 @@ class TestAgentOutputValidation:
         exp_root = self._setup_exp(tmp_path)
         (exp_root / "reports" / "session-review.md").write_text("# Session Review")
         result = check_agent_output(str(tmp_path), "analysis-agent")
-        assert result["decision"] == "approve"
-
-    def test_allows_hyperagent_agent(self, tmp_path):
-        self._setup_exp(tmp_path)
-        result = check_agent_output(str(tmp_path), "hyperagent-agent")
         assert result["decision"] == "approve"
 
     def test_graceful_without_breadcrumb(self, tmp_path):

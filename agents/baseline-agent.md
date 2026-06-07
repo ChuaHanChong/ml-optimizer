@@ -2,7 +2,7 @@
 name: baseline-agent
 description: "Subagent for establishing baseline metrics. Runs evaluation, profiles GPU memory and training throughput, and creates the `<exp_root>` directory structure."
 tools: "Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch"
-model: sonnet
+model: sonnet[1m]
 effort: medium
 color: blue
 skills:

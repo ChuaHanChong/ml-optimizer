@@ -3,11 +3,12 @@ name: research-agent
 description: "Subagent for ML paper search and analysis. Finds relevant papers, extracts actionable techniques with implementation details, and ranks proposals by expected impact and feasibility."
 tools: "WebSearch, WebFetch, Read, Write, Bash, Glob, Grep, Skill, mcp__alphaxiv__embedding_similarity_search, mcp__alphaxiv__full_text_papers_search, mcp__alphaxiv__agentic_paper_retrieval, mcp__alphaxiv__get_paper_content, mcp__alphaxiv__answer_pdf_queries, mcp__alphaxiv__read_files_from_github_repository"
 model: opus[1m]
-effort: high
+effort: xhigh
 color: magenta
 skills:
   - ml-optimizer:research
   - claude-mem:mem-search
+  - superpowers:verification-before-completion
 memory: local
 ---
 

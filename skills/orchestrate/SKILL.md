@@ -89,26 +89,15 @@ Read `${CLAUDE_SKILL_DIR}/references/phase-6-implement.md` for the full workflow
 
 Dispatch `ml-optimizer:implement-agent`. Check manifest results. Handle dependencies, license warnings, conflicts. Post-implementation code review.
 
-## Phase 7: Experiment Loop (Hyperagent Driven)
+## Phase 7: Experiment Loop (Orchestrator Driven)
 
 Read `${CLAUDE_SKILL_DIR}/references/phase-7-experiment-loop.md` for the full workflow.
 
-Pre-loop: validate state, initialize code archive (hyperagent-init), load manifest, load meta-patches, save state.
+Pre-loop: validate state, load manifest, save state.
 
-**MANDATORY: You MUST dispatch the hyperagent-agent for Phase 7. Do NOT fall back to a simpler HP-tune → experiment → analyze loop. The hyperagent IS the loop driver — it selects operators (HP tuning, LLM patches, ShinkaEvolve, research-implement, meta-improvement), manages the archive, and decides strategy. Running Phase 7 without the hyperagent is a bug. If ShinkaEvolve setup fails, the hyperagent will fall back to other operators — but the hyperagent itself must always be dispatched.**
+The orchestrator drives the experiment loop directly, dispatching tuning, experiment, monitor, and analysis agents per iteration. After each batch, the analysis agent recommends the next action (continue, pivot, or stop). The orchestrator acts on the recommendation using the decision table in phase-7-experiment-loop.md.
 
-Dispatch the hyperagent with `Skill("ml-optimizer:hyperagent")` — the orchestrating skill that controls the full optimization. The hyperagent runs Phase 7 experiments and Phase 8 stacking in a loop, choosing the best strategy at each iteration. The orchestrator relays context between agents and tracks state.
-
-```
-Agent(
-  description: "Hyperagent optimization",
-  prompt: "Ultrathink. Invoke Skill('ml-optimizer:hyperagent'). Parameters: project_root: {project_root}, exp_root: {exp_root}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, scope_level: {scope_level}, target_value: {target_value}.",
-  subagent_type: "ml-optimizer:hyperagent-agent"
-)
-```
-Save the hyperagent's ID to `agent_registry["hyperagent"]` for SendMessage resumption.
-
-**Autonomous by default:** The loop runs non-stop until the target is reached or the user manually stops. It never auto-stops on plateaus — the hyperagent tries different operators before giving up. When the analysis agent recommends stop, the stuck protocol dispatches research for fresh ideas. Only the user can truly end the run.
+**Autonomous by default:** The loop runs non-stop until the target is reached or the user manually stops. When the analysis agent recommends stop, the orchestrator invokes the stuck protocol (research for fresh ideas), then runs the **Exit Judgment** — there is no hardcoded stop-count threshold. Exit to Phase 9 only at the *fixpoint*: no new in-scope proposals (`stuck_protocol_triggered=true`) AND empty research agenda AND a flat best metric — meaning the idea space is exhausted with no progress to build on. Otherwise continue. Every exit/continue decision is logged via `pipeline_state.py log-decision`; `consecutive_stop_count` is telemetry, not a trigger. The user can also end the run early at any time.
 
 After each batch, the live dashboard is regenerated (`${CLAUDE_PLUGIN_ROOT}/scripts/dashboard.py --live`). Baseline integrity is verified before each batch.
 
@@ -118,7 +107,7 @@ Every experiment batch MUST be wrapped in a round. This is enforced at runtime b
 
 **Before dispatching tuning-agent + experiment-agents:**
 ```bash
-round_info=$(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/round_manager.py <exp_root> create-round <type> [--branch <ml-opt/slug>] [--genid <gen-N>])
+round_info=$(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/round_manager.py <exp_root> create-round <type> [--branch <ml-opt/slug>])
 # Response: {"id": N, "dir": "round-N-<type>", "type": "<type>", "path": "..."}
 # Capture the "dir" field — this is the round_dir to pass to agents.
 ```
@@ -127,11 +116,10 @@ Valid `<type>` values and when to use each:
 
 | Type | When |
 |---|---|
-| `hp` | Default — HP tuning batches (hyperagent action: `hp_tune`, pivot: `branch_test`/`hp_expand`/`narrow_space`/`regularization`) |
-| `evolved` | ShinkaEvolve or LLM-patch code mutation (hyperagent action: `shinka_evolve`/`llm_patch`, pivot: `code_evolution`) |
-| `research` | Research-implement batches (hyperagent action: `research_implement`, pivot: `method_proposal`) |
+| `hp` | Default — HP tuning batches (pivot: `branch_test`/`hp_expand`/`narrow_space`/`regularization`) |
+| `evolved` | ShinkaEvolve code mutation (pivot: `code_evolution`) |
+| `research` | Research-implement batches (pivot: `method_proposal`) |
 | `stacked` | Phase 8 method stacking |
-| `meta` | Meta-improvement experiments (hyperagent action: `meta_improve`) |
 
 **Pass `round_dir` to every dispatched agent** via the Agent prompt or SendMessage context:
 - Tuning-agent: include `round_dir: <dir>` in the message so it writes proposals to `proposed-configs/<round_dir>/`
@@ -154,28 +142,27 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/round_manager.py <exp_root> close-round --
 
 This marks the round closed in `rounds-manifest.json`. Closing is not strictly required for correctness but helps downstream analysis and reporting.
 
-**Pivot type relay to hyperagent:**
+**Orchestrator action by analysis pivot_type:**
 
-| Pivot Type | Hyperagent action |
+| Pivot Type | Orchestrator Action |
 |---|---|
-| `branch_test`, `hp_expand`, `narrow_space`, `regularization` | Delegates to tuning-agent with adjusted search space |
-| `code_evolution` | Chooses mutation operator (LLM patch, ShinkaEvolve, or research-implement) |
-| `code_evolution` + `meta_improvement_recommended` | May modify skill files (max 3 per session) |
-| `method_stacking` | Merges improved methods sequentially (largest improvement first), resolves interference via ShinkaEvolve, then continues Phase 7 on stacked code |
+| `branch_test`, `hp_expand`, `narrow_space`, `regularization` | Adjust search space, dispatch tuning-agent |
+| `code_evolution` | Dispatch tuning (evolve HPs) → implement-agent with evolve skill → experiment |
+| `method_proposal`, `qualitative_change` | Dispatch research → implement → merge branches |
+| `method_stacking` | Enter Phase 8: merge improved methods sequentially, resolve interference via ShinkaEvolve |
 
-**State updates:** After each iteration, save pipeline state with updated `hyperagent_state`:
+**State updates:** After each iteration, save pipeline state:
 ```
-save_state(phase=7, iteration=N, running_exp_ids=[], exp_root=exp_root,
-           hyperagent_state=updated_hyperagent_state)
+save_state(phase=7, iteration=N, running_exp_ids=[], exp_root=exp_root)
 ```
 
-## Phase 8: Method Stacking (Hyperagent Driven)
+## Phase 8: Method Stacking (Orchestrator Driven)
 
 Read `${CLAUDE_SKILL_DIR}/references/phase-8-stacking.md` for the full workflow.
 
-**MANDATORY: Phase 8 is driven by the hyperagent, same as Phase 7. Resume the hyperagent via `SendMessage(to: agent_registry["hyperagent"])` with the stacking context. Do NOT implement stacking logic directly in the orchestrator — the hyperagent decides which methods to stack, in what order, when to evolve for interference resolution, and when to stop. Phase 7 ↔ Phase 8 is one continuous hyperagent-driven loop.**
+The orchestrator drives stacking directly — dispatching implement (merge), experiment, and analysis agents per stack step. Methods are ranked by improvement magnitude (descending) and stacked sequentially.
 
-The analysis agent advises when stacking may be beneficial (pivot_type: `method_stacking`). The hyperagent decides whether to stack, which methods, and in what order. No fixed method count — decisions are evidence-based.
+The analysis agent advises when stacking may be beneficial (pivot_type: `method_stacking`). The orchestrator ranks methods by improvement, merges them in order, and resolves interference via ShinkaEvolve if needed. Requires git branch strategy.
 
 ```
 Phase 7 (experiment loop) ←→ Phase 8 (method stacking)
@@ -184,27 +171,13 @@ Phase 7 (experiment loop) ←→ Phase 8 (method stacking)
   Loop continues until goal or user stops
 ```
 
-The hyperagent merges methods sequentially (largest improvement first), resolves interference via ShinkaEvolve if needed. Requires git branch strategy.
-
-## Phase 9: Report, Review & Promotion
+## Phase 9: Report & Review
 
 Read `${CLAUDE_SKILL_DIR}/references/phase-9-report.md` for the full workflow.
 
-Three steps:
+Two steps:
 1. **Report:** Dispatch `ml-optimizer:report-agent`. Sync errors. Generate dashboard. Present summary.
 2. **Session review:** Dispatch `ml-optimizer:analysis-agent` (review mode) — analyzes what worked, what didn't, and how to improve.
-3. **Meta-patch promotion:** If `hyperagent_state.active_meta_patches` is non-empty, evaluate patches via analysis-agent, present to user for promotion to the plugin branch.
-
-### Phase 9 Meta-Patch Promotion
-
-If `hyperagent_state.active_meta_patches` is non-empty:
-
-1. Dispatch `ml-optimizer:analysis-agent` with `scope: "meta_patches"` to evaluate each patch against experimental outcomes
-2. Present validated patches to user via `AskUserQuestion`: "The hyperagent discovered N strategy improvements this session. Promote these to the plugin?"
-3. If approved: read patched skill files, prepend `# [meta-improvement]` marker, write to plugin's skill directory, commit to current branch (immediately available next session)
-4. If declined: log to behavioral memory for reference
-
-Read `${CLAUDE_SKILL_DIR}/references/phase-9-report.md` for the full meta-patch promotion flow.
 
 ## Error Handling
 

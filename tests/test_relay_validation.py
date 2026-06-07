@@ -76,8 +76,6 @@ class TestValidateRelay:
             "monitor_to_tuning": {},
             "research_to_implement": {"findings_path": "reports/research-findings.md"},
             "experiments_to_analyze": {"completed_ids": ["exp-001"]},
-            "analyze_to_hyperagent": {"recommendation": "pivot"},
-            "hyperagent_to_tuning": {"action": "hp_tune"},
         }
         for route, data in test_data.items():
             result = validate_relay(route, data)

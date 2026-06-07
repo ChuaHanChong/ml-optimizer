@@ -123,41 +123,37 @@ EXPECTED_AGENTS = {
         "model": "opus", "skill": "ml-optimizer:research",
         "required_tools": {"Bash", "Read", "Write", "Glob", "Grep", "WebSearch", "WebFetch"},
         "forbidden_tools": {"Edit"}, "color": "magenta", "background": False,
-        "external_skills": ["claude-mem:mem-search"],
+        "external_skills": ["claude-mem:mem-search", "superpowers:verification-before-completion"],
     },
     "implement-agent": {
         "model": "opus", "skill": "ml-optimizer:implement",
-        "required_tools": {"Bash", "Read", "Write", "Edit", "Glob", "Grep"},
+        "required_tools": {"Bash", "Read", "Write", "Edit", "LSP", "Glob", "Grep"},
         "forbidden_tools": set(), "color": "magenta", "background": False,
-        "external_skills": ["superpowers:systematic-debugging", "feature-dev:code-explorer", "feature-dev:code-reviewer", "ml-optimizer:shinka-setup", "ml-optimizer:shinka-convert", "ml-optimizer:shinka-run", "ml-optimizer:shinka-inspect"],
+        "external_skills": ["superpowers:systematic-debugging", "superpowers:verification-before-completion", "karpathy-skills:karpathy-guidelines", "ml-optimizer:shinka-setup", "ml-optimizer:shinka-convert", "ml-optimizer:shinka-run", "ml-optimizer:shinka-inspect"],
     },
     "tuning-agent": {
         "model": "opus", "skill": "ml-optimizer:hp-tune",
         "required_tools": {"Read", "Write", "Bash", "Glob", "Grep"},
         "forbidden_tools": {"Edit"}, "color": "red", "background": False,
-        "external_skills": ["claude-mem:mem-search"],
+        "external_skills": ["claude-mem:mem-search", "superpowers:verification-before-completion"],
     },
     "analysis-agent": {
         "model": "opus", "skill": "ml-optimizer:analyze",
         "required_tools": {"Read", "Write", "Bash", "Glob", "Grep", "Skill"},
         "forbidden_tools": {"Edit"}, "color": "cyan", "background": False,
-        "external_skills": ["claude-mem:mem-search"],
+        "external_skills": ["claude-mem:mem-search", "superpowers:verification-before-completion"],
     },
     "report-agent": {
         "model": "opus", "skill": "ml-optimizer:report",
         "required_tools": {"Read", "Write", "Bash", "Glob", "Grep", "Skill"},
         "forbidden_tools": {"Edit"}, "color": "blue", "background": False,
-    },
-    "hyperagent-agent": {
-        "model": "opus", "skill": "ml-optimizer:hyperagent",
-        "required_tools": {"Read", "Write", "Edit", "Bash", "Glob", "Grep", "Skill"},
-        "forbidden_tools": set(), "color": "red", "background": False,
-        "external_skills": ["ml-optimizer:hyperagent-generate", "ml-optimizer:hyperagent-select", "ml-optimizer:hyperagent-eval", "ml-optimizer:hyperagent-archive", "ml-optimizer:hyperagent-init", "ml-optimizer:hyperagent-inspect", "ml-optimizer:evolve", "ml-optimizer:shinka-setup", "ml-optimizer:shinka-convert", "ml-optimizer:shinka-run", "ml-optimizer:shinka-inspect", "claude-mem:mem-search", "superpowers:systematic-debugging", "feature-dev:code-explorer"],
+        "external_skills": ["superpowers:verification-before-completion"],
     },
     "orchestrator-agent": {
         "model": "opus", "skill": "ml-optimizer:orchestrate",
         "required_tools": {"Agent", "Bash", "Read", "Write", "Edit", "Glob", "Grep", "Skill"},
         "forbidden_tools": set(), "color": "blue", "background": False,
+        "external_skills": ["superpowers:verification-before-completion"],
     },
 }
 
@@ -165,8 +161,6 @@ EXPECTED_SKILLS = [
     "orchestrate", "prerequisites", "baseline", "experiment", "monitor",
     "research", "implement", "hp-tune", "analyze", "report",
     "evolve", "shinka-setup", "shinka-convert", "shinka-run", "shinka-inspect",
-    "hyperagent", "hyperagent-init", "hyperagent-select",
-    "hyperagent-generate", "hyperagent-eval", "hyperagent-archive", "hyperagent-inspect",
 ]
 
 NON_ORCHESTRATE_SKILLS = [s for s in EXPECTED_SKILLS if s != "orchestrate"]
@@ -241,12 +235,9 @@ class TestAgentFiles:
 class TestSkillFiles:
     """Validate all 10 skill definition files."""
 
-    # ShinkaEvolve and Hyperagent skills are symlinked from submodules —
-    # they have different frontmatter conventions, so only check name + existence
-    _THIRD_PARTY_SKILLS = {"shinka-setup", "shinka-convert", "shinka-run", "shinka-inspect",
-                           "hyperagent-init", "hyperagent-select",
-                           "hyperagent-generate", "hyperagent-eval", "hyperagent-archive",
-                           "hyperagent-inspect"}
+    # ShinkaEvolve skills are symlinked from the submodule — they have
+    # different frontmatter conventions, so only check name + existence
+    _THIRD_PARTY_SKILLS = {"shinka-setup", "shinka-convert", "shinka-run", "shinka-inspect"}
 
     # orchestrate is the user-facing entry point — it must be invocable
     # (no disable-model-invocation, no user-invocable: false)
@@ -398,9 +389,6 @@ class TestSkillSymlinks:
 
     _SYMLINKED_SKILLS = [
         "shinka-setup", "shinka-convert", "shinka-run", "shinka-inspect",
-        "hyperagent-init", "hyperagent-select",
-        "hyperagent-generate", "hyperagent-eval", "hyperagent-archive",
-        "hyperagent-inspect",
     ]
 
     @pytest.mark.parametrize("skill_name", _SYMLINKED_SKILLS)
@@ -617,10 +605,10 @@ class TestResumableSubagents:
 # ---------------------------------------------------------------------------
 
 class TestDocumentation:
-    """Verify docs reflect 9-agent architecture and key features."""
+    """Verify docs reflect the 10-agent architecture (9 subagents + orchestrator) and key features."""
 
     @pytest.mark.parametrize("keyword", [
-        "11 agents", 'Agent(subagent_type="ml-optimizer:',
+        "10 agents", 'Agent(subagent_type="ml-optimizer:',
         "stuck protocol", "dead-end", "research agenda",
         "immutable baseline",
     ])
@@ -655,7 +643,6 @@ class TestSkillContracts:
         ("report", "agenda"), ("experiment", "time_budget"),
         ("baseline", "auto-repair"), ("experiment", "non-retryable"),
         # skill integration: verify new features exist in skills
-        ("implement", "feature-dev:code-reviewer"),
         ("research", "diverge"), ("research", "converge"),
         ("analyze", "effect size"), ("experiment", "reproducibility"),
         ("report", "verify claims"),
@@ -843,14 +830,16 @@ def test_prerequisites_contract():
 # --- HP batch size, method_tier, monitor, analyze ---
 
 def test_hp_batch_size_contract():
-    """HP batch size = max(num_gpus, 1) and stop-after-3-consecutive logic."""
+    """HP batch size = max(num_gpus, 1); branch-iter slot widening.
+
+    Loop exit is NOT a fixed stop-count threshold — it is the orchestrator's
+    evidence-based judgment (see phase-7-experiment-loop.md). consecutive_stop_count
+    is a persisted signal, not a hardcoded trigger, so no numeric gate is asserted here.
+    """
     assert max(4, 1) == 4   # 4 GPUs
     assert max(2, 1) == 2   # 2 GPUs
     assert max(0, 1) == 1   # CPU-only
     assert max(1, 1) == 1   # 1 GPU
-    # Stop after 3 consecutive
-    assert 3 >= 3  # triggers stuck protocol
-    assert 0 < 3   # not enough to trigger
     # Branch iter 1
     assert min(3 + 1, 5) == 4
     assert min(3 + 1, 2) == 2

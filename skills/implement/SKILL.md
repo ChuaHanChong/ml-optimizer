@@ -71,33 +71,8 @@ cd <project_root> && git rev-parse --is-inside-work-tree 2>/dev/null
 
 **If git repo (preferred):**
 - `strategy = "git_branch"`
-- Record `original_branch` via `git rev-parse --abbrev-ref HEAD`
-- **Check for uncommitted changes:**
-  ```bash
-  git status --porcelain
-  ```
-  If output is non-empty (dirty working tree):
-
-  Auto-stash uncommitted changes to ensure clean branch creation:
-  1. Run `git stash --include-untracked`
-  2. Log to dev_notes: "Auto-stashed working tree changes"
-  3. Set `auto_stashed = true` for later restoration
-  4. After all implementation is complete (end of Step 7), if `auto_stashed`:
-     - Run `git stash pop`
-     - Log to dev_notes: "Restored auto-stashed changes"
-
-  If auto-stash fails, use AskUserQuestion:
-  ```
-  Your working tree has uncommitted changes. These changes would be carried into
-  all proposal branches, which could contaminate the baseline comparison.
-
-  Please either:
-  1. Commit your changes: git commit -am "WIP"
-  2. Stash your changes: git stash
-
-  Then re-run the implement skill.
-  ```
-  Do NOT proceed with branch creation on a dirty working tree in interactive mode.
+- Record `original_branch` via `git -C <project_root> rev-parse --abbrev-ref HEAD`
+- Implementation runs in a dedicated **git worktree** (Step 3.1) created from `<original_branch>`'s **commit**, so the project's main working tree is never touched. **No need to stash** — uncommitted changes in the main tree stay there and cannot contaminate the proposal branches (the worktree is a clean checkout of the commit).
 - Each proposal gets branch `ml-opt/<slug>`
 
 **If not a git repo (fallback):**
@@ -105,57 +80,26 @@ cd <project_root> && git rev-parse --is-inside-work-tree 2>/dev/null
 - Back up files to `<exp_root>/backups/<slug>/` before each modification
 - Apply changes sequentially, validating after each
 
-## Step 3.1: Parallel Implementation (Git Strategy Only)
+## Step 3.1: Set Up the Implementation Worktree (git strategy)
 
-**If `strategy == "git_branch"` AND more than one proposal is selected:**
+Do the implementation inside a git **worktree** so the project's main working tree is never disturbed. Put it **outside** `<exp_root>/` (a worktree nested under `<exp_root>/` can be wiped by a cleanup race):
+```bash
+PROJECT_HASH=$(echo "<project_root>" | sha1sum | cut -c1-8)
+WORKTREE_ROOT="/tmp/ml-opt-impl-worktrees-${PROJECT_HASH}"; mkdir -p "$WORKTREE_ROOT"
+WORKTREE_PATH="$WORKTREE_ROOT/impl"
+# --detach: <original_branch> is checked out in the main tree, so attach detached at its commit.
+git -C <project_root> worktree add --detach "$WORKTREE_PATH" <original_branch>
+cd "$WORKTREE_PATH"
+```
 
-Proposals can be implemented in parallel using git worktrees. Each proposal gets its own isolated worktree, avoiding checkout conflicts.
+Implement all selected proposals here **sequentially**, one `ml-opt/<slug>` branch each (Step 4 loop). After the last proposal, remove the worktree — the `ml-opt/<slug>` branches (with commits) persist in the repo for the experiment loop:
+```bash
+cd - >/dev/null
+git -C <project_root> worktree list --porcelain | grep -q "worktree $WORKTREE_PATH$" \
+  && git -C <project_root> worktree remove "$WORKTREE_PATH" || git -C <project_root> worktree prune
+```
 
-**Critical**: Worktrees must live **outside** `<exp_root>/`.
-A cleanup race during parallel dispatches can wipe sibling `<exp_root>/*`
-subdirs if any worktree is nested under `<exp_root>/`. Put them in a
-system temp dir that is outside both the project and the output tree.
-
-1. **Compute a safe worktree root** once:
-   ```bash
-   PROJECT_HASH=$(echo "<project_root>" | sha1sum | cut -c1-8)
-   WORKTREE_ROOT="/tmp/ml-opt-impl-worktrees-${PROJECT_HASH}"
-   mkdir -p "$WORKTREE_ROOT"
-   ```
-
-2. **Create worktrees** for each proposal:
-   ```bash
-   git worktree add "$WORKTREE_ROOT/<slug>" <original_branch>
-   ```
-
-3. **Dispatch implementation agents in parallel** — issue all Agent calls in a single message:
-   ```
-   For each proposal:
-     Agent(
-       description: "Implement proposal: <proposal_name>",
-       prompt: "Ultrathink. Implement the following ML research proposal in the worktree at $WORKTREE_ROOT/<slug>. Project root (worktree): $WORKTREE_ROOT/<slug>. Proposal: <full proposal details including name, slug, files_to_modify, implementation_steps, implementation_strategy>. After implementation: (1) validate syntax and imports using ${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py, (2) create branch ml-opt/<slug>, (3) commit changes with message 'ml-opt: implement <proposal_name>', (4) report back with status, commit SHA, and any validation issues.",
-       subagent_type: "ml-optimizer:implement-agent",
-       run_in_background: true
-     )
-   ```
-
-4. **Wait for all agents to complete.** Collect results from each.
-
-5. **Clean up worktrees** — validate path registration first, never `rm -rf`:
-   ```bash
-   WT_PATH="$WORKTREE_ROOT/<slug>"
-   if git worktree list --porcelain | grep -q "worktree $WT_PATH$"; then
-       git worktree remove "$WT_PATH"
-   else
-       git worktree prune
-   fi
-   ```
-
-5. Proceed directly to Step 5 (Write Implementation Manifest) with the collected results.
-
-**If `strategy == "file_backup"` OR only 1 proposal selected:**
-
-Skip this step. Use the sequential flow in Step 4 below.
+**Backup strategy (non-git project):** skip the worktree — back up and edit files in `<project_root>` directly (Step 4).
 
 ## Step 3.2: Pre-Flight File Existence Validation
 
@@ -175,18 +119,19 @@ For each proposal:
       - If ALL `files_to_modify` are missing: mark proposal as `status: "preflight_failed"`, set `notes: "All target files missing"`. Skip this proposal entirely. Log to error tracker: `category: "implementation_error", severity: "warning", source: "implement", message: "Pre-flight failed: all files missing for proposal <name>"`
       - If SOME missing but others exist: log warning to dev_notes. Check if proposal's implementation steps mention creating these files (expected-missing). If so, proceed. If not, log the gap but still attempt implementation.
 
-3. **Remove preflight-failed proposals** from the active list before passing to Step 3.1 (parallel) or Step 4 (sequential). Include them in the manifest with `status: "preflight_failed"`.
+3. **Remove preflight-failed proposals** from the active list before implementing (Step 4). Include them in the manifest with `status: "preflight_failed"`.
 
 ## Step 4: Implement Each Proposal (Sequential)
 
-For each selected proposal, in order:
+For each selected proposal, in order.
+
+> **Working directory:** for the **git strategy** you are inside the Step 3.1 worktree (`$WORKTREE_PATH`) — that is where the modified code lives, so run all edits, validation, tests, and commits from here. Where a command below shows `<project_root>`, use `$WORKTREE_PATH` (the worktree) under the git strategy; under the **file-backup strategy** there is no worktree, so it means the real `<project_root>`.
 
 ### 4a. Set up isolation
 
-**Git strategy:**
+**Git strategy** (inside the Step 3.1 worktree): create the proposal's branch directly off `<original_branch>` — do **not** `git checkout <original_branch>` first (it's checked out in the main tree; branching from its commit-ish is allowed and avoids the conflict):
 ```bash
-git checkout <original_branch>
-git checkout -b ml-opt/<slug>
+git checkout -b ml-opt/<slug> <original_branch>
 ```
 
 **Backup strategy:**
@@ -309,18 +254,18 @@ Read `${CLAUDE_SKILL_DIR}/references/validation-checklist.md` and run checks pro
    "
    ```
 
+3. **LSP static check (Pyright):** For each modified `.py` file, use the `LSP` tool to get diagnostics. This catches undefined names, type mismatches, wrong call signatures, and unresolved imports **statically** — before any GPU time. Treat **errors** as blocking (fix and re-check); **warnings** are advisory (log to dev_notes). If the `LSP` tool is unavailable (pyright not installed), skip and note it — the syntax/import checks above still apply.
+
 **Recommended (run if project supports it):**
 
-3. Model instantiation check — attempt if the project has a model factory function (e.g., `get_model()`)
-4. Forward pass shape check — attempt if model instantiation succeeds
+4. Model instantiation check — attempt if the project has a model factory function (e.g., `get_model()`)
+5. Forward pass shape check — attempt if model instantiation succeeds
 
 See `${CLAUDE_SKILL_DIR}/references/validation-checklist.md` for commands. Attempt Level 3 validation when the project structure supports it (e.g., has a clear model factory or config-based instantiation).
 
-### 4e.5. Code Quality Review (optional, for `from_reference` adaptations)
+### 4e.5. Code Quality Gate
 
-After passing Levels 1-2 validation, invoke `feature-dev:code-reviewer` on the modified files to check for code quality issues (unused imports, dead code, style violations, potential bugs). This is advisory — quality issues are logged to dev_notes but do not block implementation.
-
-Skip this step for simple `from_scratch` changes that modify < 20 lines.
+Your quality gate is the syntax/import/**LSP** checks above (step 4e) — record the result in the manifest's `validation` block.
 
 ### 4f. Write Unit Tests
 
@@ -373,9 +318,9 @@ class Test<ProposalClassName>:
 - Each test function must complete in <5 seconds
 - Import only the specific module/function being tested, not the full model
 
-**Run tests:**
+**Run tests** (from the worktree, so the test imports the *modified* code):
 ```bash
-cd <project_root> && python3 -m pytest <exp_root>/tests/test_<slug>.py -v --timeout=30 2>&1 | head -50
+python3 -m pytest <exp_root>/tests/test_<slug>.py -v --timeout=30 2>&1 | head -50
 ```
 
 **Record results in manifest:**
@@ -410,13 +355,11 @@ Store the result as `diff_summary` in the manifest proposal entry.
 
 Also write an `explanation` field — a 1-2 sentence plain-language description of what the code change does and why it should improve the primary metric. For example: "Replaces CrossEntropyLoss with FocalLoss to better handle class imbalance, which should improve accuracy on minority classes." This explanation is shown in the live dashboard to help users understand each method without reading code.
 
-### 4h. Return to original branch
+### 4h. Reset for the next proposal
 
-```bash
-git checkout <original_branch>
-```
+**Git strategy:** nothing to reset — the next proposal's 4a branches fresh from `<original_branch>` (`git checkout -b ml-opt/<next-slug> <original_branch>`).
 
-Then proceed to the next proposal.
+**Backup strategy:** restore the baseline backup before the next proposal.
 
 ## Step 5: Write Implementation Manifest
 

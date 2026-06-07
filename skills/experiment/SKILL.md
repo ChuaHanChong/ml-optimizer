@@ -49,15 +49,18 @@ round_dir=$(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/round_manager.py <exp_root> cu
 If `code_branch` is provided (from implementation manifest):
 
 1. **Compute a safe worktree path OUTSIDE `<exp_root>/`** to avoid a cleanup
-   race condition. A parallel experiment-agent + hyperagent dispatch can wipe
-   sibling `<exp_root>/*` subdirs if any of them has a worktree under
-   `<exp_root>/`. Put the worktree in a system temp dir instead:
+   race condition. A parallel experiment-agent dispatch can wipe sibling
+   `<exp_root>/*` subdirs if any of them has a worktree under `<exp_root>/`.
+   Put the worktree in a system temp dir instead:
    ```bash
    PROJECT_HASH=$(echo "<project_root>" | sha1sum | cut -c1-8)
    WORKTREE_ROOT="/tmp/ml-opt-worktrees-${PROJECT_HASH}"
    mkdir -p "$WORKTREE_ROOT"
    WORKTREE_PATH="$WORKTREE_ROOT/<exp_id>"
-   git worktree add "$WORKTREE_PATH" <code_branch>
+   # --detach: lets multiple parallel experiments share the same <code_branch>
+   # (plain `git worktree add <path> <branch>` fails "already checked out" for the 2nd+).
+   # Experiments only read the branch to run training, so a detached checkout is correct.
+   git worktree add --detach "$WORKTREE_PATH" <code_branch>
    ```
    **Never** create worktrees under `<exp_root>/` or under `<project_root>/`
    itself. See the "Worktree race" lesson in `dev_notes.md` if you see

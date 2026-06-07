@@ -75,22 +75,31 @@ mkdir -p <exp_root>/logs/{round_dir}/{exp_id}
 mkdir -p <exp_root>/artifacts/{round_dir}/{exp_id}
 echo $$ > <exp_root>/logs/{round_dir}/{exp_id}/pid
 
-# Set up isolated worktree for code branch
-git worktree add <exp_root>/worktrees/{exp_id} {code_branch}
-cd <exp_root>/worktrees/{exp_id}
+# Isolated worktree for the code branch, OUTSIDE <exp_root>/ (a worktree under
+# <exp_root>/ can be wiped by a parallel-cleanup race). --detach lets multiple
+# parallel experiments share {code_branch} (plain add fails "already checked out").
+PROJECT_HASH=$(echo "<project_root>" | sha1sum | cut -c1-8)
+WORKTREE_ROOT="/tmp/ml-opt-worktrees-${PROJECT_HASH}"; mkdir -p "$WORKTREE_ROOT"
+WORKTREE_PATH="$WORKTREE_ROOT/{exp_id}"
+git worktree add --detach "$WORKTREE_PATH" {code_branch}
+cd "$WORKTREE_PATH"
 
-# Training
-{train_command} 2>&1 | tee ../../logs/{round_dir}/{exp_id}/train.log
+# Training (absolute log path — the worktree is outside <exp_root>)
+{train_command} 2>&1 | tee <exp_root>/logs/{round_dir}/{exp_id}/train.log
 
-# Copy artifacts out of worktree before cleanup
-cp -r *.pt *.pth *.ckpt *.h5 *.pkl *.safetensors ../../artifacts/{round_dir}/{exp_id}/ 2>/dev/null || true
+# Copy artifacts out of the worktree before cleanup
+cp -r *.pt *.pth *.ckpt *.h5 *.pkl *.safetensors <exp_root>/artifacts/{round_dir}/{exp_id}/ 2>/dev/null || true
 
-# Evaluation — MUST run inside worktree before cleanup
-{eval_command} 2>&1 | tee ../../logs/{round_dir}/{exp_id}/eval.log
+# Evaluation — MUST run inside the worktree before cleanup
+{eval_command} 2>&1 | tee <exp_root>/logs/{round_dir}/{exp_id}/eval.log
 
-# Cleanup worktree
-cd -
-git worktree remove <exp_root>/worktrees/{exp_id}
+# Cleanup worktree (validate registration first, never rm -rf)
+cd - >/dev/null
+if git worktree list --porcelain | grep -q "worktree $WORKTREE_PATH$"; then
+    git worktree remove "$WORKTREE_PATH"
+else
+    git worktree prune
+fi
 ```
 
 ## Background Training with PID Tracking

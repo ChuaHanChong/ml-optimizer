@@ -27,17 +27,15 @@ The plugin works without any MCP servers but benefits significantly from alphaxi
 commands/optimize.md             — /optimize slash command (entry point)
 skills/                          — Skill definitions (SKILL.md files)
 skills/evolve/ShinkaEvolve/      — Git submodule (SakanaAI/ShinkaEvolve) for evolutionary code mutation
-skills/hyperagent/Hyperagents/   — Git submodule (facebookresearch/Hyperagents) for evolutionary code search
-skills/hyperagent-*/             — Symlinks → hyperagent/Hyperagents/skills/hyperagent-* (created by setup_hyperagent.sh)
 skills/shinka-*/                 — Symlinks → evolve/ShinkaEvolve/skills/shinka-* (created by setup_evolve.sh)
-agents/                          — 11 agent definitions (10 subagents + orchestrator-agent main-thread)
+agents/                          — 10 agent definitions (9 subagents + orchestrator-agent main-thread)
 scripts/                         — Python utilities (stdlib only)
 tests/                           — pytest test suite
 ```
 
 ### Skill Pipeline (Orchestrator Flow)
 
-The `orchestrate` skill coordinates a 10-phase pipeline. Each phase dispatches a named agent via `Agent(subagent_type="ml-optimizer:<name>-agent")`. Persistent agents (research, implement, tuning, analysis, monitor) are resumed via `SendMessage(to: agentId)` for subsequent dispatches; ephemeral agents (prerequisites, baseline, experiment, report) get fresh spawns:
+The `orchestrate` skill coordinates a 10-phase pipeline. Each phase dispatches a named agent via `Agent(subagent_type="ml-optimizer:<name>-agent")`. Persistent agents (research, implement, tuning, analysis, monitor) are resumed via `SendMessage(to: agentId)` for subsequent dispatches; ephemeral agents (prerequisites, baseline, experiment, report) get fresh spawns. The orchestrator drives Phase 7 and Phase 8 directly, dispatching tuning/experiment/monitor/analysis agents per iteration:
 
 ```
 Phase 0+1: Discovery & Planning (plan mode throughout — multi-round refinement until user approves)
@@ -55,14 +53,13 @@ Phase 7: Experiment loop (autonomous, pipelined):
          [method_proposal] → mid-loop research + implement
          [code_evolution] → tuning (evolve HPs) → evolve → tuning (training HPs) → experiment (scope_level=full only)
          [research_round] → cadence-based research (when method proposals enabled)
-Phase 8: Method stacking (hyperagent driven, when analysis advises):
+Phase 8: Method stacking (orchestrator driven, when analysis advises):
          Sequential accumulation — merge best methods one by one
          LLM conflict resolution, skip-on-failure
          Per step: analyze → tuning (evolve HPs) → evolve → tuning (training HPs) → experiment
          Analysis agent loops until improvement or recommends stop
 Phase 9: report → Final optimization report
          review → Session review (what worked, what didn't, how to improve)
-         promotion → Meta-patch promotion (if hyperagent generated skill patches)
 ```
 
 ### Dispatch Chain & Output Map
@@ -82,10 +79,10 @@ Phase 9: report → Final optimization report
   ├─ Phase 6: Agent(implement-agent)              [persistent → SendMessage]
   │   → results/implementation-manifest.json, git branches ml-opt/<slug>
   │
-  ├─ Phase 7: Agent(hyperagent-agent)             [persistent → SendMessage]
-  │   │  Hyperagent DECIDES action, orchestrator DISPATCHES workers:
+  ├─ Phase 7: Orchestrator drives experiment loop  [dispatches per iteration]
+  │   │  Orchestrator DECIDES action based on analysis, DISPATCHES workers:
   │   │
-  │   ├─ hp_tune: Hyperagent returns → Orchestrator dispatches:
+  │   ├─ hp_tune (default): Orchestrator dispatches:
   │   │   ├─ tuning-agent (SendMessage)              → proposed-configs/round-N-<type>/exp-*.json (top-level dir, not under results/)
   │   │   ├─ experiment-agents (parallel, ephemeral) → results/round-N-<type>/exp-*.json
   │   │   │                                            logs/round-N-<type>/<exp-id>/train.log
@@ -98,19 +95,15 @@ Phase 9: report → Final optimization report
   │   │                                                reports/suggestion-history.json
   │   │                                                relay to orchestrator
   │   │
-  │   ├─ research_implement: Hyperagent returns → Orchestrator dispatches:
-  │   │   ├─ research-agent (SendMessage)         → reports/research-findings-method-proposals*.md
-  │   │   └─ implement-agent (SendMessage)        → results/implementation-manifest.json + branches
+  │   ├─ code_evolution: Orchestrator dispatches:
+  │   │   ├─ tuning-agent (evolve HPs)           → evolve_recommendation
+  │   │   └─ implement-agent (evolve skill)       → git branch ml-opt/evolved-<slug>
   │   │
-  │   ├─ llm_patch / shinka_evolve: Hyperagent executes directly
-  │   │   → Skill(hyperagent-generate) → git branch ml-opt/gen-N-<slug>
-  │   │   → then orchestrator dispatches tuning + experiments on new branch
-  │   │
-  │   └─ meta_improve: Hyperagent executes directly
-  │       → Skill(hyperagent-generate) → meta-patches/<skill>-SKILL.md
-  │       → meta-patches/meta-changelog.json
+  │   └─ method_proposal: Orchestrator dispatches:
+  │       ├─ research-agent (SendMessage)         → reports/research-findings-method-proposals*.md
+  │       └─ implement-agent (SendMessage)        → results/implementation-manifest.json + branches
   │
-  ├─ Phase 8: Orchestrator resumes hyperagent → drives stacking loop
+  ├─ Phase 8: Orchestrator drives stacking loop
   │   └─ Per stack step: implement(merge) → experiment → analysis → [evolve] → [hp-tune]
   │       → results/round-N-stacked/exp-*.json, git branches ml-opt/stack-<N>
   │
@@ -120,7 +113,6 @@ Phase 9: report → Final optimization report
 
 Cross-cutting outputs (managed by scripts or multiple agents):
   round_manager.py       → results/rounds-manifest.json (round lifecycle)
-  hyperagent-archive     → hyperagent/archive.jsonl, hyperagent/gen_X/ (evolutionary lineage)
   error_tracker.py       → reports/error-log.json (error tracking)
   pipeline_state.py      → pipeline-state.json (phase, iteration, agent_registry)
   goal_memory.py         → optimization-goals.json, learned-behaviors.json (goal anchoring)
@@ -138,16 +130,10 @@ The plugin creates an `<exp_root>/` directory — the user chooses the name and 
 │   ├── round-N-<type>/                   — Per-round artifact grouping
 │   │   └── <exp-id>/                     — Checkpoints, visualizations
 │   └── *.excalidraw                      — Excalidraw diagrams (on-demand)
-├── hyperagent/
-│   ├── archive.jsonl                     — Evolutionary archive (lineage + fitness)
-│   └── gen_X/                            — Per-generation metadata + eval reports
 ├── logs/
 │   ├── baseline/train.log                — Baseline training log
 │   └── round-N-<type>/                   — Per-round log grouping
 │       └── <exp-id>/train.log            — Training log (eval.log if separate eval)
-├── meta-patches/
-│   ├── <skill>-SKILL.md                  — Session-scoped skill modifications
-│   └── meta-changelog.json               — Changelog of meta-improvements
 ├── prepared-data/                         — Prepared dataset (if preprocessing needed)
 ├── proposed-configs/
 │   └── round-N-<type>/                   — HP config proposals (per round)
@@ -193,65 +179,32 @@ The implement skill creates `ml-opt/<slug>` branches per research proposal. The 
 
 ### Agent Definitions (`agents/`)
 
-Eleven agent types total — ten subagent types plus one main-thread agent — each with a preloaded skill and specified tool access. `orchestrate` is the user-facing entry point (invoked via `/optimize`). Other skills are preloaded into agents via the `skills:` array in their agent definitions. The `orchestrator-agent` is the main-thread agent activated by `settings.json` — it loads the orchestrate skill and auto-starts Phase 0 via `initialPrompt`. All agents have `memory: local` for persistent role-specific memory at `.claude/agent-memory-local/<agent-name>/` in the target project.
+Ten agent types total — nine subagent types plus one main-thread agent — each with a preloaded skill and specified tool access. `orchestrate` is the user-facing entry point (invoked via `/optimize`). Other skills are preloaded into agents via the `skills:` array in their agent definitions. The `orchestrator-agent` is the main-thread agent activated by `settings.json` — it loads the orchestrate skill and auto-starts Phase 0 via `initialPrompt`. All agents have `memory: local` for persistent role-specific memory at `.claude/agent-memory-local/<agent-name>/` in the target project.
 
 **Persistent agents** — dispatched once via `Agent(subagent_type=...)`, resumed via `SendMessage(to: agentId)` for subsequent tasks. The orchestrator tracks agent IDs in `pipeline-state.json` under `agent_registry` and falls back to fresh dispatch if resumption fails.
 
 **Ephemeral agents** — fresh `Agent()` spawn each time (single-use or parallel tasks).
 
-**Procedural agents** (`model: sonnet` — lower cost/latency, no ultrathink):
+**Procedural agents** (`model: sonnet[1m]` — lower cost/latency, no ultrathink):
 - **baseline-agent** *(ephemeral)*: Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:baseline]`
 - **monitor-agent** *(persistent)*: Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:monitor]`
 - **experiment-agent** *(ephemeral)*: Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:experiment]`
 - **prerequisites-agent** *(ephemeral)*: Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:prerequisites]`
 
-**Analytical agents** (`model: opus`, ultrathink prompting):
-- **research-agent** *(persistent)*: WebSearch, WebFetch, Read, Write, Bash, Glob, Grep, Skill, alphaxiv MCP tools (6) — skills: `[ml-optimizer:research, claude-mem:mem-search]`
-- **tuning-agent** *(persistent)*: Read, Write, Bash, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:hp-tune, claude-mem:mem-search]`
-- **implement-agent** *(persistent)*: Bash, Read, Write, Edit, Glob, Grep, Skill, WebSearch, WebFetch, alphaxiv MCP tools (2: repo reader, PDF Q&A) — skills: `[ml-optimizer:implement, ml-optimizer:evolve, ml-optimizer:shinka-setup, ml-optimizer:shinka-convert, ml-optimizer:shinka-run, ml-optimizer:shinka-inspect, superpowers:systematic-debugging, feature-dev:code-explorer, feature-dev:code-reviewer]`
-- **analysis-agent** *(persistent)*: Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:analyze, claude-mem:mem-search]` (includes session review mode)
-- **hyperagent-agent** *(persistent)*: Read, Write, Edit, Bash, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:hyperagent, ml-optimizer:hyperagent-generate, ml-optimizer:hyperagent-select, ml-optimizer:hyperagent-eval, ml-optimizer:hyperagent-archive, ml-optimizer:hyperagent-init, ml-optimizer:hyperagent-inspect, ml-optimizer:evolve, ml-optimizer:shinka-*, claude-mem:mem-search, superpowers:systematic-debugging, feature-dev:code-explorer]` — enables self-improvement, drives Phase 7 experiments and Phase 8 stacking in a loop
-- **report-agent** *(ephemeral)*: Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:report]`
+**Analytical agents** (`model: opus[1m]`, ultrathink prompting):
+- **research-agent** *(persistent)*: WebSearch, WebFetch, Read, Write, Bash, Glob, Grep, Skill, alphaxiv MCP tools (6) — skills: `[ml-optimizer:research, claude-mem:mem-search, superpowers:verification-before-completion]`
+- **tuning-agent** *(persistent)*: Read, Write, Bash, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:hp-tune, claude-mem:mem-search, superpowers:verification-before-completion]`
+- **implement-agent** *(persistent)*: Bash, Read, Write, Edit, LSP, Glob, Grep, Skill, WebSearch, WebFetch, alphaxiv MCP tools (2: repo reader, PDF Q&A) — skills: `[ml-optimizer:implement, ml-optimizer:evolve, ml-optimizer:shinka-setup, ml-optimizer:shinka-convert, ml-optimizer:shinka-run, ml-optimizer:shinka-inspect, superpowers:systematic-debugging, superpowers:verification-before-completion, karpathy-skills:karpathy-guidelines]` — runs the implement skill to apply the selected research proposals as git branches `ml-opt/<slug>`, **sequentially, inside a git worktree outside `<exp_root>/`** (implement skill Step 3.1/4), with progressive validation incl. `LSP` (pyright). The orchestrator dispatches it once in Phase 6 (step 1). Post-implementation review (`feature-dev:code-reviewer`, `pr-review-toolkit:silent-failure-hunter`, `pr-review-toolkit:pr-test-analyzer`) is orchestrator-driven in Phase 6 (steps 6–7)
+- **analysis-agent** *(persistent)*: Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:analyze, claude-mem:mem-search, superpowers:verification-before-completion]` (includes session review mode)
+- **report-agent** *(ephemeral)*: Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:report, superpowers:verification-before-completion]`
 
 **Main-thread agent** (activated by `settings.json`):
-- **orchestrator-agent**: Agent, Read, Write, Edit, Bash, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:orchestrate]` — main thread when plugin is enabled, auto-starts Phase 0 via `initialPrompt: "/ml-optimizer:orchestrate"`
+- **orchestrator-agent**: Agent, Read, Write, Edit, Bash, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:orchestrate, superpowers:verification-before-completion]` — main thread when plugin is enabled, auto-starts Phase 0 via `initialPrompt: "/ml-optimizer:orchestrate"`
 
 For parallel execution, use `run_in_background: true`. External skills are also available:
 - **research-agent**: Uses `context7` for framework API docs, `claude-mem:mem-search` for cross-session learning, `alphaxiv` MCP for academic paper search/analysis (6 tools: embedding search, full-text search, agentic retrieval, paper content, PDF Q&A, GitHub repo reader)
-- **implement-agent**: Uses `context7` for API docs, `feature-dev:code-explorer` for codebase analysis, `feature-dev:code-reviewer` for post-implementation quality review (advisory, Step 4e.5), `superpowers:systematic-debugging` for error recovery, `alphaxiv` MCP for reference repo exploration (`read_files_from_github_repository`) and paper clarification (`answer_pdf_queries`)
+- **implement-agent**: Uses `context7` for API docs, `superpowers:systematic-debugging` for error recovery, `superpowers:verification-before-completion` to confirm changes actually work before finishing, `karpathy-skills:karpathy-guidelines` to keep code changes surgical and avoid overcomplication, `alphaxiv` MCP for reference repo exploration (`read_files_from_github_repository`) and paper clarification (`answer_pdf_queries`). During validation it runs `LSP` (pyright) diagnostics on modified `.py` files to catch undefined names, type mismatches, and unresolved imports statically before any GPU time. The orchestrator dispatches **one implement-agent** for all selected proposals (Phase 6 step 1); it implements them sequentially in a git worktree (Step 3.1). **Post-implementation review is orchestrator-owned** (Phase 6 steps 6–7): `feature-dev:code-reviewer` + `pr-review-toolkit:silent-failure-hunter` per validated branch (step 6, the latter catches swallowed NaN losses, failed CUDA/optimizer ops, `except: pass` around training/eval) and `pr-review-toolkit:pr-test-analyzer` on the unit test (step 7, advisory).
 - **orchestrator**: Uses `claude-mem:mem-search` in Phase 1 for cross-session recall, `superpowers:brainstorming` in Phase 0/4 for complex multi-objective optimization scenarios
-
-### Hyperagent Architecture (Self-Referential Evolutionary Optimization)
-
-The plugin IS a **self-referential, self-improving hyperagent** — always on by default, not an optional mode. Powered by Facebook Research's Hyperagents (DGM framework, arXiv 2603.19461). The hyperagent enables self-improvement and drives Phase 7 (experiments) and Phase 8 (method stacking) in a loop, deciding at each iteration what action to take:
-
-- **HP tuning** — delegates to tuning-agent (cheapest, best for early exploration)
-- **LLM patch** — hyperagent directly modifies code (structural/architectural changes)
-- **ShinkaEvolve** — dispatches evolve skill for fine-grained code mutation
-- **Research-implement** — dispatches research + implement agents for paper-informed changes
-- **Meta-improvement** — modifies the plugin's own skill instructions (session-scoped, max 3 per session, end-of-session promotion gate)
-
-The hyperagent learns which operators are effective and adapts its strategy. The archive tracks all code variants with lineage. The analyze skill advises, the hyperagent decides.
-
-**Submodule:** `skills/hyperagent/Hyperagents/` (CC BY-NC-SA 4.0 license). Skills at `skills/hyperagent/skills/hyperagent-*/`, symlinked to `skills/hyperagent-*/` for auto-discovery. Setup: `bash scripts/setup_hyperagent.sh` (inits submodule + creates symlinks, same pattern as `setup_evolve.sh`).
-
-**6 Hyperagent skills:**
-- `hyperagent-init` — Create archive from baseline + existing branches
-- `hyperagent-inspect` — Inspect archive state, lineage, operator stats, and generation history
-- `hyperagent-select` — Parent selection (6 strategies: best, latest, random, score_prop, score_child_prop, ucb). Uses Hyperagents' exact math: `sigmoid(10(s - μ)) × exp(-(children/8)³)`. UCB1 (Auer et al. 2002) adds balanced explore/exploit via `value/visits + C×sqrt(ln(N)/visits)` with MCTS-style backpropagation.
-- `hyperagent-generate` — Hyperagent generates code variant (replaces Hyperagents' litellm hyperagent with Claude Code Opus agent). Can dispatch ShinkaEvolve as mutation operator.
-- `hyperagent-eval` — Two-stage evaluation: cheap staged eval (10% budget) → adaptive threshold → full training if passes. Warm-starts from staged checkpoint.
-- `hyperagent-archive` — Update archive with results, track lineage and operator effectiveness
-
-**Archive:** `<exp_root>/hyperagent/archive.jsonl` — Hyperagents-native JSONL format with `gen_X/` directories for metadata and eval reports. Managed by `gl_utils.py` directly.
-
-**ShinkaEvolve + Hyperagent collaboration:** ShinkaEvolve is one mutation operator within the experiment loop. When the hyperagent needs fine-grained code tuning (numerical constants, local optimizations), it dispatches ShinkaEvolve via `Skill("ml-optimizer:evolve")`. When it needs structural/architectural changes, it generates LLM patches directly.
-
-**Pipeline state:** `hyperagent_state` in `pipeline-state.json` tracks: `enabled` (always true), `archive_generation`, `strategy_history` (log of hyperagent decisions), `meta_improvement_count`, `active_meta_patches`, `operator_stats`.
-
-**Simplified analyze pivots:** All code-level pivots (research, method proposals, code refinement) emit `code_evolution`. HP-focused pivots (`branch_test`, `hp_expand`, `narrow_space`, `regularization`) remain separate. When all approaches stall, analyze includes `meta_improvement_recommended: true` so the hyperagent considers self-improvement.
-
-**Meta-improvement patches:** Session-scoped skill modifications at `<exp_root>/meta-patches/`. End-of-session: analysis-agent evaluates patches, presents validated ones to user for promotion to the plugin branch.
 
 ### Python Scripts (`scripts/`)
 
@@ -265,8 +218,8 @@ All scripts work as both importable modules and CLI tools:
 | `${CLAUDE_PLUGIN_ROOT}/scripts/result_analyzer.py` | `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/result_analyzer.py <results_dir> <metric> [baseline_id] [lower_is_better]` — full analysis. Also: `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/result_analyzer.py <results_dir> compare <exp_id_1> <exp_id_2> [metric] [lower_is_better]` — pairwise comparison |
 | `${CLAUDE_PLUGIN_ROOT}/scripts/experiment_setup.py` | Generates experiment IDs and directory structure |
 | `${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py` | `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py <findings.md> '<indices_json>'` — parse proposals; also `clone <url> <dest>`, `analyze <path>`, and `diff <project_root> <branch>` subcommands |
-| `${CLAUDE_PLUGIN_ROOT}/scripts/pipeline_state.py` | `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/pipeline_state.py <exp_root> validate\|save\|load\|cleanup\|verify-baseline\|gate\|log-gate\|log-decision\|replay-check\|decisions\|meta-patch` — phase gates, decision logging, meta-patch lifecycle |
-| `${CLAUDE_PLUGIN_ROOT}/scripts/schema_validator.py` | `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/schema_validator.py <filepath> result\|baseline\|manifest\|prerequisites [--strict]` — validates JSON schemas. `--strict` enforces completeness. Also: `relay <route> <json>` for inter-agent relay validation (7 routes) |
+| `${CLAUDE_PLUGIN_ROOT}/scripts/pipeline_state.py` | `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/pipeline_state.py <exp_root> validate\|save\|load\|cleanup\|verify-baseline\|gate\|log-gate\|log-decision\|replay-check\|decisions` — phase gates, decision logging |
+| `${CLAUDE_PLUGIN_ROOT}/scripts/schema_validator.py` | `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/schema_validator.py <filepath> result\|baseline\|manifest\|prerequisites [--strict]` — validates JSON schemas. `--strict` enforces completeness. Also: `relay <route> <json>` for inter-agent relay validation (5 routes) |
 | `${CLAUDE_PLUGIN_ROOT}/scripts/plot_results.py` | `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plot_results.py <results_dir> <metric> comparison\|timeline\|sensitivity <hp>\|progress [--higher-is-better]` — ASCII charts + matplotlib progress chart |
 | `${CLAUDE_PLUGIN_ROOT}/scripts/prerequisites_check.py` | `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/prerequisites_check.py scan-imports\|check-packages\|detect-env\|detect-format\|detect-format-project\|validate-data\|bulk-install-cmd\|gpu-install-cmd` — dataset, environment, and GPU-aware install validation |
 | `${CLAUDE_PLUGIN_ROOT}/scripts/dashboard.py` | `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/dashboard.py <exp_root> [--live] [--table] [--serve --port 8080]` — generate self-contained HTML dashboard with progress timeline, results table, HP sensitivity, research agenda, error summary, method explanations. `--live` enables 30s auto-refresh. `--table` generates `results-table.md` (Markdown results summary). |
@@ -274,7 +227,6 @@ All scripts work as both importable modules and CLI tools:
 | `${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py` | `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log\|show\|patterns\|summary\|success\|proposals\|rank\|log-suggestion\|suggestion-history\|dead-end <add\|list\|check>\|agenda <init\|update\|list\|add>` — error tracking, pattern detection, success metrics, proposal outcomes, suggestion ranking, suggestion history, dead-end catalog, research agenda |
 | `${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py` | `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py <exp_root> init-goals\|read-goals\|log-behavior <category> <json>\|query-behaviors [category]\|validate-output <agent> <json>\|summary\|sync-from-errors` — goal anchoring, behavioral memory, agent output validation, compact briefings |
 | `${CLAUDE_PLUGIN_ROOT}/scripts/setup_evolve.sh` | `bash scripts/setup_evolve.sh` — initialize ShinkaEvolve submodule and create skill symlinks for auto-discovery |
-| `${CLAUDE_PLUGIN_ROOT}/scripts/setup_hyperagent.sh` | `bash scripts/setup_hyperagent.sh` — initialize Hyperagents submodule and verify environment |
 | `${CLAUDE_PLUGIN_ROOT}/scripts/round_manager.py` | `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/round_manager.py <exp_root> create-round\|current-round\|register-experiment\|close-round\|next-id\|check-baseline\|check-prerequisites\|check-manifest\|check-round\|check-proposals` — round lifecycle + completeness checking |
 | `${CLAUDE_PLUGIN_ROOT}/scripts/validate_experiment_write.py` | PreToolUse hook — validates Write/Edit operations to experiment result files against schema + correct round directory |
 
@@ -304,11 +256,11 @@ Stacking experiments also carry `code_branches` (array of combined branches), `s
 
 ### Pipeline Resumption
 
-The orchestrator can be stopped and resumed. On restart it reads `pipeline-state.json` and uses `cleanup_stale()` to handle interrupted experiments (marks them as failed after a timeout). Phase validation via `validate_phase_requirements()` prevents cascading failures. Pipeline state persists Phase 0 user choices (`primary_metric`, `divergence_metric`, `divergence_lower_is_better`, `lower_is_better`, `target_value`, `train_command`, `eval_command`, `train_data_path`, `val_data_path`, `prepared_train_path`, `prepared_val_path`, `env_manager`, `env_name`, `model_category`, `user_papers`, `method_proposal_scope`, `method_proposal_iterations`, `hp_batches_per_round`, `fixed_time_budget`, `fixed_epoch_budget`) via `save_state(user_choices={...})` so they survive interruptions without re-asking the user. The experiment loop also persists `consecutive_stop_count` (for the 3-consecutive-stop exit rule), `stuck_protocol_triggered` (prevents infinite recovery loops), `baseline_checksum` (SHA-256 of baseline metrics for integrity verification), and `agent_registry` (persistent agent IDs for SendMessage resumption) at the root level of pipeline state. On new session start, `agent_registry` is cleared since subagent transcripts are session-scoped — all agents start fresh. A separate `user-choices-backup.json` provides redundant recovery if the main state file corrupts.
+The orchestrator can be stopped and resumed. On restart it reads `pipeline-state.json` and uses `cleanup_stale()` to handle interrupted experiments (marks them as failed after a timeout). Phase validation via `validate_phase_requirements()` prevents cascading failures. Pipeline state persists Phase 0 user choices (`primary_metric`, `divergence_metric`, `divergence_lower_is_better`, `lower_is_better`, `target_value`, `train_command`, `eval_command`, `train_data_path`, `val_data_path`, `prepared_train_path`, `prepared_val_path`, `env_manager`, `env_name`, `model_category`, `user_papers`, `method_proposal_scope`, `method_proposal_iterations`, `hp_batches_per_round`, `fixed_time_budget`, `fixed_epoch_budget`) via `save_state(user_choices={...})` so they survive interruptions without re-asking the user. The experiment loop also persists `consecutive_stop_count` (telemetry only — not an exit trigger), `stuck_protocol_triggered` (the loop-exit state flag: set `true` when the stuck protocol returns no new in-scope proposals; combined with an empty research agenda and a flat best metric it defines the *fixpoint* at which the orchestrator exits to Phase 9, and reset `false` whenever fresh proposals or metric improvement appear), `baseline_checksum` (SHA-256 of baseline metrics for integrity verification), and `agent_registry` (persistent agent IDs for SendMessage resumption) at the root level of pipeline state. On new session start, `agent_registry` is cleared since subagent transcripts are session-scoped — all agents start fresh. A separate `user-choices-backup.json` provides redundant recovery if the main state file corrupts.
 
 ### Multi-Run Pattern (one `<exp_root>` = one optimization run)
 
-The plugin does **not** run-namespace state files inside `<exp_root>/`. Each `<exp_root>` is one self-contained optimization run — its hyperagent archive, behavioral memory, round manifest, and reports are all scoped to that directory. For a new optimization direction on the same project, point `exp_root` at a new directory at Phase 0. The plugin has no hardcoded output location; `exp_root` can be any absolute path.
+The plugin does **not** run-namespace state files inside `<exp_root>/`. Each `<exp_root>` is one self-contained optimization run — its behavioral memory, round manifest, and reports are all scoped to that directory. For a new optimization direction on the same project, point `exp_root` at a new directory at Phase 0. The plugin has no hardcoded output location; `exp_root` can be any absolute path.
 
 ```
 # Each run gets its own <exp_root>:
@@ -329,18 +281,18 @@ Phase 0 (`skills/orchestrate/references/phase-0-discovery.md` Step 1.1) detects 
 
 ## Key Design Patterns
 
-- **Resumable subagents**: 6 persistent agents (research, implement, tuning, analysis, monitor, hyperagent) are dispatched once via `Agent()` and resumed via `SendMessage(to: agentId)` for subsequent tasks. This preserves accumulated context (search results, HP trends, codebase knowledge) across the pipeline. 4 ephemeral agents (prerequisites, baseline, experiment, report) get fresh spawns. The hyperagent joins the persistent set — it accumulates understanding of which mutation operators are effective across generations. The orchestrator tracks agent IDs in `pipeline-state.json` under `agent_registry` and falls back to fresh dispatch if resumption fails. Agent IDs are session-scoped — cleared on new session start since subagent transcripts don't survive across sessions.
-- **Inter-agent communication (orchestrator relay)**: When resuming a persistent agent, the orchestrator includes a `CONTEXT FROM OTHER AGENTS:` section with relevant findings from other agents. This enables indirect communication: analyze findings reach hp-tune, monitor OOM info reaches hp-tune, research proposals reach implement, etc. The orchestrator acts as a message bus. Key relay routes: analyze→tuning (correlations, branch scores), analyze→research (pivot reasons, dead-ends), analyze→hyperagent (pivot_type, stacking recommendation, meta_improvement_recommended), monitor→tuning (OOM constraints), research→implement (proposals), experiments→analyze (batch results), hyperagent→tuning (action, evolve HPs, target branch).
+- **Resumable subagents**: 5 persistent agents (research, implement, tuning, analysis, monitor) are dispatched once via `Agent()` and resumed via `SendMessage(to: agentId)` for subsequent tasks. This preserves accumulated context (search results, HP trends, codebase knowledge) across the pipeline. 4 ephemeral agents (prerequisites, baseline, experiment, report) get fresh spawns. The orchestrator tracks agent IDs in `pipeline-state.json` under `agent_registry` and falls back to fresh dispatch if resumption fails. Agent IDs are session-scoped — cleared on new session start since subagent transcripts don't survive across sessions.
+- **Inter-agent communication (orchestrator relay)**: When resuming a persistent agent, the orchestrator includes a `CONTEXT FROM OTHER AGENTS:` section with relevant findings from other agents. This enables indirect communication: analyze findings reach hp-tune, monitor OOM info reaches hp-tune, research proposals reach implement, etc. The orchestrator acts as a message bus. Key relay routes: analyze→tuning (correlations, branch scores), analyze→research (pivot reasons, dead-ends), monitor→tuning (OOM constraints), research→implement (proposals), experiments→analyze (batch results).
 - **Non-git fallback**: If the target project isn't a git repo, the implement skill uses file backups instead of branches. Each proposal is validated against a clean baseline backup (restore-before-apply pattern) to prevent cross-proposal code leakage. This forces sequential (not parallel) experiment execution.
-- **Loop exit conditions**: The experiment loop is autonomous — runs until: (1) target metric achieved, or (2) user manually stops. When analysis advises stop, the hyperagent tries other operators before giving up. Phase 7 ↔ Phase 8 loop continuously.
+- **Loop exit conditions**: The experiment loop is autonomous — runs until: (1) target metric achieved, (2) user manually stops, or (3) the orchestrator judges approaches are exhausted. When analysis advises stop, the orchestrator invokes the stuck protocol (research for fresh ideas), then makes an evidence-based decision: continue if research yields fresh non-dead-end proposals, exit to Phase 9 if the search is genuinely out of directions (no new proposals, flat metric, empty agenda). There is no hardcoded stop-count threshold — `consecutive_stop_count` is one input to the judgment.
 - **Proposal priority scoring**: `(impact * confidence) / (11 - min(feasibility, 10))` — feasibility clamped to [1,10] to prevent division by zero.
 - **Spearman correlation**: `${CLAUDE_PLUGIN_ROOT}/scripts/result_analyzer.py` uses rank correlation with average-rank tie-breaking to identify HP-metric relationships (no scipy dependency).
 - **Dual implementation strategy**: Research proposals include an `implementation_strategy` field (`from_scratch` or `from_reference`). The implement agent dispatches accordingly — either implementing from paper descriptions (Section 8) or cloning and adapting reference repos (Section 9). Strategy is decided by the research agent based on repo availability and quality.
 - **Research skill modes**: The research skill accepts `source` (`"web"` | `"knowledge"` | `"both"`), `scope_level` (`"training"` | `"architecture"` | `"full"`), and `output_path` parameters. Knowledge mode skips web search and uses LLM training knowledge only.
 - **Scope-gated pivots**: The analysis agent's pivot decision tree respects `scope_level`: `"training"` (HP-only) disables research and code_evolution pivots — only HP adjustments are available. `"architecture"` enables research but not ShinkaEvolve. `"full"` enables everything including code_evolution via ShinkaEvolve. This ensures the pipeline matches what the user asked for.
-- **Auto-resolution behaviors**: The pipeline auto-resolves many situations: Phase 2 partial prereqs → proceed with warnings, RL polarity → auto-infer from metric name, dirty working trees → auto-stash, environment mismatches → use detected manager, missing conda envs → auto-create, no eval command → fall back to training output metrics. Only unrecoverable errors (Phase 2 failed, baseline failed) block the pipeline. Decisions are logged to dev_notes and error tracker for post-session review.
+- **Auto-resolution behaviors**: The pipeline auto-resolves many situations: Phase 2 partial prereqs → proceed with warnings, RL polarity → auto-infer from metric name, dirty working trees → no action needed (implementation runs in an isolated git worktree, main tree untouched), environment mismatches → use detected manager, missing conda envs → auto-create, no eval command → fall back to training output metrics. Only unrecoverable errors (Phase 2 failed, baseline failed) block the pipeline. Decisions are logged to dev_notes and error tracker for post-session review.
 - **Parallel research**: All WebSearch calls in the research skill are issued simultaneously in a single tool-call message, alongside 3 alphaxiv search calls (embedding similarity, full-text keyword, agentic retrieval). WebFetch follow-ups for different URLs are also parallelized. Domain-specific query sets (NLP, CV, RL, time-series) are issued alongside generic queries. If alphaxiv MCP is unavailable, WebSearch provides full coverage as fallback.
-- **Parallel implementation**: When using git branch strategy with multiple proposals, each proposal is implemented in a separate git worktree via parallel Agent dispatches. File-backup strategy remains sequential.
+- **Sequential implementation in a worktree**: Phase 6 dispatches a **single implement-agent** that implements all selected proposals sequentially, one `ml-opt/<slug>` branch each, **inside a git worktree outside `<exp_root>/`** (implement skill Step 3.1) so the project's main working tree is never disturbed; the worktree is removed at the end and the branches persist. Branches are created with `git checkout -b ml-opt/<slug> <original_branch>` (branching off the base commit, which is valid even though `<original_branch>` is checked out in the main tree). Not parallelized — implementation is reasoning/editing, not GPU-bound (unlike Phase 7 experiments). Consistent with the other single-dispatch phases (prerequisites, baseline, research).
 - **Configurable divergence thresholds**: `${CLAUDE_PLUGIN_ROOT}/scripts/detect_divergence.py` supports per-model-category threshold overrides via `MODEL_CATEGORY_DEFAULTS` dict and `--model-category` CLI flag. RL models use `explosion_threshold=20.0, plateau_patience=50` (prevents false positives on reward spikes). Generative models use `explosion_threshold=10.0, plateau_patience=40` (accommodates slow convergence). Individual thresholds can also be overridden via `--explosion-threshold` and `--plateau-patience` CLI flags.
 - **Experiment timeout**: Each experiment has a hard timeout of `baseline_training_time * 3` (fallback: 6 hours). Timed-out experiments are killed and marked `status: "timeout"`.
 - **Research failure recovery**: If web search fails (both WebSearch and alphaxiv), the orchestrator retries with `source: "knowledge"` (LLM-only). If that also fails, it continues with HP-only optimization. Each fallback is logged. Within a search, alphaxiv failure alone does not trigger the knowledge fallback — WebSearch results are sufficient to proceed.
@@ -353,9 +305,9 @@ Phase 0 (`skills/orchestrate/references/phase-0-discovery.md` Step 1.1) detects 
 - **Small dataset awareness**: The research skill checks dataset size. For datasets under 5K samples, it shifts search toward low-data techniques (transfer learning, fine-tuning, few-shot learning, adapters, prompt tuning, synthetic data, semi-supervised methods) instead of heavy augmentation and regularization which underperform on small data.
 - **Evolutionary code refinement**: When HP tuning shows diminishing returns, the analyze skill can recommend `pivot_type: "code_evolution"`. The orchestrator dispatches the implement-agent with the evolve skill (`Skill("ml-optimizer:evolve")`), which orchestrates the full ShinkaEvolve pipeline internally: `shinka-convert` (create task from best branch) → `shinka-run` (run evolution with file-based handoff, `SHINKA_PROVIDER=claude_code`) → `shinka-inspect` (extract best mutation) → commit as `ml-opt/evolved-<slug>`. Evolve HPs (`num_generations`, `population_size`) are tuning-agent-driven: the orchestrator dispatches the tuning agent to propose evolve HPs before dispatching the implement agent, based on prior evolution outcomes stored in `learned-behaviors.json` under category `evolve_hp`. Defaults: 10 generations, population 2. If ShinkaEvolve is unavailable, the evolve skill reports `shinkaevolve_unavailable` and the orchestrator falls back to the research → implement path. Setup: run `bash scripts/setup_evolve.sh` to init the submodule and create symlinks (`skills/shinka-*` → `skills/evolve/ShinkaEvolve/skills/shinka-*`). The symlinks are required for Claude Code's skill auto-discovery.
 - **Auto-repair loop**: When training or evaluation commands fail during baseline establishment or experiment execution, the agent captures stderr, diagnoses the error, applies a fix (install package, adjust path, reduce batch size), and retries up to 3 times. OOM errors are not retried (deterministic). SyntaxErrors are not retried (code bugs). Identical errors on consecutive attempts skip further retries (loop detection). Each retry is logged to the error tracker. This is intra-agent retry, separate from the orchestrator's Phase 3 retry logic.
-- **Goal anchoring & behavioral memory**: `${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py` maintains two project-scoped files: `optimization-goals.json` (goal anchor, written once at Phase 0) and `learned-behaviors.json` (accumulated behavioral memory). The orchestrator calls `validate-output` after hp-tune, research, and analyze dispatches to catch drift (frozen param changes, scope breaches, dead-end re-proposals, metric mismatches). Each agent also reads a compact `summary` combining goals + constraints + dead-ends before acting. All 11 agents have `memory: local` for persistent role-specific memory at `.claude/agent-memory-local/<agent-name>/` in the target project.
+- **Goal anchoring & behavioral memory**: `${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py` maintains two project-scoped files: `optimization-goals.json` (goal anchor, written once at Phase 0) and `learned-behaviors.json` (accumulated behavioral memory). The orchestrator calls `validate-output` after hp-tune, research, and analyze dispatches to catch drift (frozen param changes, scope breaches, dead-end re-proposals, metric mismatches). Each agent also reads a compact `summary` combining goals + constraints + dead-ends before acting. All 10 agents have `memory: local` for persistent role-specific memory at `.claude/agent-memory-local/<agent-name>/` in the target project.
 - **Immutable baseline**: After baseline is established (Phase 3), a SHA-256 checksum of the baseline metrics dict is stored in `pipeline-state.json`. Before each experiment batch (Phase 7) and on pipeline resumption, the checksum is verified against `baseline.json`. If the metrics have changed (accidental modification, file corruption, or tampering), the pipeline halts with a critical error. Prevents invalid experiment comparisons during long optimization runs.
-- **Stuck protocol**: When analysis advises stop, the hyperagent tries other operators (research, LLM patches, ShinkaEvolve, meta-improvement) before giving up. It reads error patterns, dead ends, and the research agenda to inform the choice. The loop is autonomous — only the user or target achievement stops it.
+- **Stuck protocol**: When analysis advises stop, the orchestrator reads error patterns, dead ends, and the research agenda, then dispatches research for fresh ideas. It then runs the **Exit Judgment**: if research returns new in-scope proposals (or the agenda has untried items, or the metric improved), reset `stuck_protocol_triggered`/`consecutive_stop_count` and continue; otherwise set `stuck_protocol_triggered=true`. Exit to Phase 9 only at the *fixpoint* — no new in-scope proposals AND empty agenda AND flat best metric (the in-scope idea space is exhausted with no progress to build on). There is no hardcoded stop-count threshold; the decision is logged via `pipeline_state.py log-decision`.
 - **Research agenda as living document**: `${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py` maintains `research-agenda.json` — a prioritized list of optimization ideas that evolves over the session. The research skill initializes it from proposals (Phase 5). The analyze skill updates it after each batch: marking ideas as tried/improved/dead-end, adjusting priorities based on evidence, and adding new ideas suggested by experimental results. The hp-tune skill reads it to understand which untried techniques are high-priority. The report skill includes a summary in the final report.
 - **Overfitting detection**: `${CLAUDE_PLUGIN_ROOT}/scripts/detect_divergence.py` provides `check_overfitting(train_values, val_values)` that compares train vs val metric trajectories. Detects when val metric worsens for N consecutive steps while train improves. Severity classified as mild/moderate/severe. Default patience=5 steps; model-category overrides: RL patience=10, generative patience=8. CLI: `--check-overfitting '<train_json>' '<val_json>'`.
 - **HP interaction detection**: `${CLAUDE_PLUGIN_ROOT}/scripts/result_analyzer.py` provides `detect_hp_interactions()` that computes 2-way interaction terms using product of centered ranks. Reports interactions stronger than either individual HP correlation. Integrated into `analyze()` output.
@@ -385,18 +337,13 @@ Phase 0 (`skills/orchestrate/references/phase-0-discovery.md` Step 1.1) detects 
 - **Metric routing is split**: Monitor/divergence always uses loss (lower-is-better). Analyze/hp-tune use the user's `primary_metric`. Mixing these up causes silent wrong behavior.
 - **Branch experiments are independent**: Results on `ml-opt/branch-a` tell you nothing about what HPs will work on `ml-opt/branch-b`. The tuning agent must group by `code_branch` before analyzing trends.
 - **`agent_registry` is session-scoped**: Agent IDs in `pipeline-state.json` under `agent_registry` are only valid within the same Claude conversation session. On pipeline resumption in a new session, the registry must be cleared (`agent_registry = {}`) because subagent transcripts don't survive across sessions. The orchestrator clears it automatically on load. Don't rely on agent_registry for cross-session state — use `memory: local` and shared files for that.
-- **Experiment results MUST live in round directories**: `exp-*.json` files must be written to `results/round-N-<type>/exp-*.json`, NEVER directly to `results/exp-*.json`. The PreToolUse hook (`validate_experiment_write.py`) blocks any Write/Edit that violates this pattern. Before dispatching experiment-agents, the orchestrator must call `round_manager.py create-round <type>` and pass the current round directory to the agent. Valid round types: `hp`, `evolved`, `research`, `stacked`, `meta`.
+- **Experiment results MUST live in round directories**: `exp-*.json` files must be written to `results/round-N-<type>/exp-*.json`, NEVER directly to `results/exp-*.json`. The PreToolUse hook (`validate_experiment_write.py`) blocks any Write/Edit that violates this pattern. Before dispatching experiment-agents, the orchestrator must call `round_manager.py create-round <type>` and pass the current round directory to the agent. Valid round types: `hp`, `evolved`, `research`, `stacked`.
 - **Proposed configs are top-level with round structure**: HP tuning proposals go in `proposed-configs/round-N-<type>/exp-*.json` (top-level, NOT under `results/`). The PreToolUse hook validates this. The round directory must exist (created by `round_manager.py create-round`) before the tuning agent writes proposals.
 - **Exp-ids are globally unique across rounds**: `exp-001` only exists in one round. `round_manager.py next-id` scans all round directories to find the next available ID. Don't try to reuse exp-ids across rounds — results from earlier rounds are preserved and still counted.
 - **`round_manager.py` uses `fcntl.flock` for manifest writes**: `rounds-manifest.json` is protected by a file lock for concurrent safety. Manual edits to the manifest may be lost if agents are running. Always use `round_manager.py` CLI commands (`create-round`, `register-experiment`, `close-round`) to update it.
 - **Tabular ML frameworks skip divergence monitoring**: When the detected framework is scikit-learn, XGBoost, or LightGBM, the orchestrator sets `divergence_metric` to `null` and skips the monitor skill. The baseline skill skips GPU profiling and throughput estimation for these frameworks.
 - **Research findings files can be multiple**: `research-findings.md` (Phase 5 web search), `research-findings-method-proposals.md` (Phase 7 pre-loop), `research-findings-method-proposals-iter<N>.md` (Phase 7 mid-loop triggers). The research skill's deduplication checks all of these to avoid re-proposing tried techniques.
-- **Hyperagent mode is always on — NEVER skip it**: `hyperagent_state.enabled` defaults to `true`. The hyperagent MUST be dispatched in Phase 7 — it is the loop driver, not optional. Do NOT fall back to a simpler HP-tune → experiment → analyze loop that bypasses the hyperagent. The hyperagent drives Phase 7 ↔ Phase 8 in a loop from the start. It naturally starts with HP tuning (cheapest) and escalates to code mutations (LLM patches, ShinkaEvolve), research-implement, stacking, and self-improvement as needed. If ShinkaEvolve is unavailable, the hyperagent falls back to other operators — but the hyperagent itself is never optional.
-- **Hyperagent archive is separate from experiment results**: `hyperagent/archive.jsonl` tracks code variants with lineage (Hyperagents-native format). `exp-*.json` tracks experiment results. They link via the `genid` field. Don't confuse them.
-- **Meta-patches are session-scoped**: Files in `<exp_root>/meta-patches/` only affect the current session. They're instructions overlaid on top of default skills. Promotion to the plugin repo requires user approval at Phase 9.
-- **Hyperagents submodule is CC BY-NC-SA 4.0**: NonCommercial + ShareAlike license. The adapter script reimplements the core algorithms in stdlib Python, so the submodule is a reference, not a runtime dependency.
-- **ShinkaEvolve branch naming in Hyperagent mode**: When ShinkaEvolve is used as a mutation operator within the Hyperagent loop, the evolve skill creates `ml-opt/evolved-<slug>` branches. The hyperagent must rename these to `ml-opt/gen-<N>-evolved-<slug>` for archive consistency.
 - **ShinkaEvolve must use the local submodule, not PyPI**: The PyPI package `shinka-evolve` lacks the `file_handoff_provider` module required for `SHINKA_PROVIDER=claude_code`. Always use the local submodule — either install editable (`pip install -e skills/evolve/ShinkaEvolve/`) via `setup_evolve.sh`, or prepend `PYTHONPATH=${CLAUDE_PLUGIN_ROOT}/skills/evolve/ShinkaEvolve:$PYTHONPATH` before `shinka_run`.
 - **ShinkaEvolve subprocess Python resolution**: `shinka/launch/scheduler.py` falls back to `sys.executable` (the Python running ShinkaEvolve) when no conda env or activate script is configured. This usually resolves correctly. If evaluation subprocesses fail with "python not found", set `python_executable` in `LocalJobConfig` or ensure `python` is on PATH.
 - **ShinkaEvolve file handoff timeout is configurable via `SHINKA_HANDOFF_TIMEOUT`**: Default is 600s (10 minutes). Set before launching `shinka_run` with `SHINKA_PROVIDER=claude_code`. The agent must write a `<id>.inprogress` marker when it picks up a pending request — this resets `shinka_run`'s timeout from the acknowledgment point. Without the marker, the timeout runs from request creation. `shinka_run` also writes `<id>.heartbeat` files every 5s so the agent can verify liveness.
-- **3-checkpoint output enforcement**: Every agent output is enforced at 3 points: (1) **SubagentStart** injects the output contract — exact paths, schemas, and examples — so agents know what to produce before they start (`scripts/output_contract.py` via `hooks/subagent-start-inject-goals.sh`). (2) **PreToolUse** hook blocks invalid JSON writes: wrong path, bad schema, missing completeness fields (completed experiments need `iteration`, `method_tier`, `duration_seconds`; stacked need `code_branches`, `stacking_order`; failed/diverged need `notes`), frozen parameter violations, OOM batch size violations. Placeholder writes (`running`/`pending`) are exempt. (3) **SubagentStop** hook blocks agents from finishing if any required output file is missing (result JSON, training log, script dir, artifacts dir, etc.). Contracts are defined once in `scripts/output_contract.py` and shared by both SubagentStart (injection) and SubagentStop (verification). Contracts support two advanced fields: (a) `any_of` for mode-dependent outputs — e.g., analysis-agent must produce EITHER `reports/batch-<N>-analysis.md` (batch mode) OR `reports/session-review.md` (Phase 9 review mode), and at least one is required; (b) `required_if` for conditional outputs driven by the contents of another output — e.g., prerequisites-agent must produce `prepared-data/` ONLY when `dataset.prepared == true` in `prerequisites.json`. The condition is evaluated at SubagentStop by reading the referenced file and navigating a dotted jsonpath; missing or malformed reference files skip the conditional gracefully (they're caught by the unconditional entry instead). Agents not in the contract (monitor, hyperagent) are auto-approved.
+- **3-checkpoint output enforcement**: Every agent output is enforced at 3 points: (1) **SubagentStart** injects the output contract — exact paths, schemas, and examples — so agents know what to produce before they start (`scripts/output_contract.py` via `hooks/subagent-start-inject-goals.sh`). (2) **PreToolUse** hook blocks invalid JSON writes: wrong path, bad schema, missing completeness fields (completed experiments need `iteration`, `method_tier`, `duration_seconds`; stacked need `code_branches`, `stacking_order`; failed/diverged need `notes`), frozen parameter violations, OOM batch size violations. Placeholder writes (`running`/`pending`) are exempt. (3) **SubagentStop** hook blocks agents from finishing if any required output file is missing (result JSON, training log, script dir, artifacts dir, etc.). Contracts are defined once in `scripts/output_contract.py` and shared by both SubagentStart (injection) and SubagentStop (verification). Contracts support two advanced fields: (a) `any_of` for mode-dependent outputs — e.g., analysis-agent must produce EITHER `reports/batch-<N>-analysis.md` (batch mode) OR `reports/session-review.md` (Phase 9 review mode), and at least one is required; (b) `required_if` for conditional outputs driven by the contents of another output — e.g., prerequisites-agent must produce `prepared-data/` ONLY when `dataset.prepared == true` in `prerequisites.json`. The condition is evaluated at SubagentStop by reading the referenced file and navigating a dotted jsonpath; missing or malformed reference files skip the conditional gracefully (they're caught by the unconditional entry instead). Agents not in the contract (monitor) are auto-approved.

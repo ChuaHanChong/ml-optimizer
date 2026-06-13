@@ -1,4 +1,4 @@
-"""Tests for gpu_check.py."""
+"""Tests for gpu_check.py — nvidia-smi parsing, availability filtering, and CLI."""
 
 import json
 import subprocess
@@ -14,6 +14,7 @@ SAMPLE_OUTPUT = """index, name, memory.total [MiB], memory.used [MiB], utilizati
 
 
 def test_parse_nvidia_smi_basic():
+    """Each GPU row parses into index, name, memory, and utilization fields."""
     gpus = parse_nvidia_smi(SAMPLE_OUTPUT)
     assert len(gpus) == 3
     assert gpus[0]["index"] == 0
@@ -24,11 +25,13 @@ def test_parse_nvidia_smi_basic():
 
 
 def test_parse_nvidia_smi_empty():
+    """Empty input and header-only input both yield no GPUs."""
     assert parse_nvidia_smi("") == []
     assert parse_nvidia_smi("index, name\n") == []
 
 
 def test_check_availability():
+    """Utilization below the threshold marks a GPU available, at/above unavailable."""
     gpus = parse_nvidia_smi(SAMPLE_OUTPUT)
     gpus = check_availability(gpus, util_threshold=30)
     assert gpus[0]["available"] is True   # 5% < 30%
@@ -37,6 +40,7 @@ def test_check_availability():
 
 
 def test_check_availability_custom_threshold():
+    """A tighter utilization threshold reclassifies borderline GPUs as unavailable."""
     gpus = parse_nvidia_smi(SAMPLE_OUTPUT)
     gpus = check_availability(gpus, util_threshold=8)
     assert gpus[0]["available"] is True   # 5% < 8%
@@ -45,6 +49,7 @@ def test_check_availability_custom_threshold():
 
 
 def test_get_free_gpus():
+    """get_free_gpus returns the indices of GPUs marked available."""
     gpus = parse_nvidia_smi(SAMPLE_OUTPUT)
     gpus = check_availability(gpus, util_threshold=30)
     free = get_free_gpus(gpus)
@@ -52,6 +57,7 @@ def test_get_free_gpus():
 
 
 def test_check_availability_memory_threshold():
+    """A memory threshold can mark a GPU unavailable even when utilization is fine."""
     gpus = parse_nvidia_smi(SAMPLE_OUTPUT)
     # GPU 1 has 20000/24576 MiB used (~81.4%). With memory_threshold=80, it should
     # be unavailable even though util_threshold is generous.
@@ -67,6 +73,7 @@ def test_check_availability_memory_threshold():
 
 
 def test_check_availability_both_thresholds():
+    """Both utilization and memory thresholds apply together, and memory_used_pct is reported."""
     gpus = parse_nvidia_smi(SAMPLE_OUTPUT)
     gpus = check_availability(gpus, util_threshold=30, memory_threshold=80)
     # GPU 0: 5% util < 30, ~5% mem < 80 — available
@@ -82,6 +89,7 @@ def test_check_availability_both_thresholds():
 
 
 def test_parse_nvidia_smi_malformed_index():
+    """A row with non-numeric fields keeps its name but drops the numeric keys."""
     malformed = """index, name, memory.total [MiB], memory.used [MiB], utilization.gpu [%]
 N/A, NVIDIA GeForce RTX 3090, ERR MiB, ERR MiB, ERR %
 0, NVIDIA GeForce RTX 3090, 24576 MiB, 1234 MiB, 5 %"""

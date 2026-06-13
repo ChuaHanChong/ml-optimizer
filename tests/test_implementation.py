@@ -1,4 +1,4 @@
-"""Consolidated tests for implement_utils.py and prerequisites_check.py."""
+"""Tests for implement_utils.py and prerequisites_check.py."""
 
 import json
 import os
@@ -54,7 +54,10 @@ TINY_RESNET = FIXTURES / "tiny_resnet_cifar10"
 # =========================================================================
 
 class TestProposalParsing:
+    """Parsing research findings markdown into structured proposal dicts."""
+
     def test_parse_all_proposals(self):
+        """All proposals in the fixture parse with name, slug, complexity, and steps."""
         proposals = parse_research_proposals(str(SAMPLE_FINDINGS))
         assert len(proposals) == 3
         assert proposals[0]["name"] == "Perceptual Loss Function"
@@ -65,6 +68,7 @@ class TestProposalParsing:
         assert len(proposals[0]["implementation_steps"]) == 3
 
     def test_parse_selected_subset(self):
+        """selected_indices returns only the requested proposals, preserving their indices."""
         proposals = parse_research_proposals(str(SAMPLE_FINDINGS), selected_indices=[1, 3])
         assert len(proposals) == 2
         assert proposals[0]["index"] == 1
@@ -72,6 +76,7 @@ class TestProposalParsing:
         assert proposals[1]["name"] == "CutMix Data Augmentation"
 
     def test_detect_conflicts(self):
+        """Two proposals touching the same file are reported as a conflict."""
         proposals = parse_research_proposals(str(SAMPLE_FINDINGS))
         conflicts = detect_conflicts(proposals)
         assert len(conflicts) == 1
@@ -80,6 +85,7 @@ class TestProposalParsing:
         assert 2 in conflicts[0]["proposal_indices"]
 
     def test_detect_no_conflicts(self):
+        """Proposals touching disjoint files produce no conflicts."""
         proposals = parse_research_proposals(str(SAMPLE_FINDINGS), selected_indices=[1, 3])
         assert len(detect_conflicts(proposals)) == 0
 
@@ -154,6 +160,7 @@ class TestProposalParsing:
         assert steps[0] == "First step"
 
     def test_write_manifest(self, tmp_path):
+        """write_manifest persists the manifest dict and reloads with fields intact."""
         manifest_path = tmp_path / "results" / "implementation-manifest.json"
         data = {
             "original_branch": "main",
@@ -173,6 +180,8 @@ class TestProposalParsing:
 # =========================================================================
 
 class TestGitStrategy:
+    """Branch creation, slugification, and git repo detection."""
+
     @pytest.mark.parametrize("input_name,expected_slug", [
         ("Perceptual Loss Function", "perceptual-loss-function"),
         ("CutMix (Data Aug.)", "cutmix-data-aug"),
@@ -182,16 +191,20 @@ class TestGitStrategy:
         ("   ", "proposal"),
     ])
     def test_slugify(self, input_name, expected_slug):
+        """slugify normalizes names and falls back to 'proposal' for empty input."""
         assert slugify(input_name) == expected_slug
 
     def test_is_git_repo_true(self, tmp_path):
+        """A directory containing .git is recognized as a git repo."""
         (tmp_path / ".git").mkdir()
         assert is_git_repo(str(tmp_path)) is True
 
     def test_is_git_repo_false(self, tmp_path):
+        """A directory without .git is not recognized as a git repo."""
         assert is_git_repo(str(tmp_path)) is False
 
     def test_get_current_branch(self):
+        """get_current_branch returns a non-empty branch name for this repo."""
         project_root = str(Path(__file__).parent.parent)
         branch = get_current_branch(project_root)
         assert isinstance(branch, str)
@@ -219,7 +232,10 @@ class TestGitStrategy:
 # =========================================================================
 
 class TestFileStrategy:
+    """File backup strategy for non-git projects."""
+
     def test_backup_files(self, tmp_path):
+        """backup_files copies each file and preserves its contents."""
         src_dir = tmp_path / "src"
         src_dir.mkdir()
         file1 = src_dir / "model.py"
@@ -234,6 +250,7 @@ class TestFileStrategy:
             assert Path(backup).read_text() == Path(original).read_text()
 
     def test_backup_same_name_different_dirs(self, tmp_path):
+        """Same-named files in different dirs back up to distinct mirrored paths."""
         project = tmp_path / "project"
         (project / "models").mkdir(parents=True)
         (project / "data").mkdir(parents=True)
@@ -254,7 +271,10 @@ class TestFileStrategy:
 # =========================================================================
 
 class TestValidation:
+    """Syntax and import validation of modified files."""
+
     def test_validate_syntax_pass(self, tmp_path):
+        """Syntactically valid Python passes with no error."""
         good_file = tmp_path / "good.py"
         good_file.write_text("x = 1 + 2\n")
         results = validate_syntax([str(good_file)])
@@ -262,6 +282,7 @@ class TestValidation:
         assert results[0]["error"] is None
 
     def test_validate_syntax_fail(self, tmp_path):
+        """Syntactically broken Python fails and reports an error."""
         bad_file = tmp_path / "bad.py"
         bad_file.write_text("def foo(\n")
         results = validate_syntax([str(bad_file)])
@@ -286,15 +307,19 @@ class TestValidation:
 # =========================================================================
 
 class TestReferenceRepos:
+    """Cloning, analyzing, and cleaning up reference repositories."""
+
     @pytest.mark.parametrize("body,expected", [
         ("- **Reference files:** `basicsr/models/restormer_arch.py`, `basicsr/losses/loss.py`",
          ["basicsr/models/restormer_arch.py", "basicsr/losses/loss.py"]),
         ("- **Complexity:** Low\n- **Risk:** None", []),
     ])
     def test_extract_reference_files(self, body, expected):
+        """Reference files are extracted from the body, or empty when absent."""
         assert _extract_reference_files(body) == expected
 
     def test_parse_proposals_with_reference_repo(self):
+        """from_reference proposals carry a repo URL and reference files; others stay empty."""
         proposals = parse_research_proposals(str(SAMPLE_FINDINGS_REF))
         p1 = proposals[0]
         assert p1["implementation_strategy"] == "from_reference"
@@ -330,6 +355,7 @@ class TestReferenceRepos:
             assert clone_reference_repo("https://github.com/user/repo", "/tmp/dest")["success"] is False
 
     def test_analyze_full_structure(self, tmp_path):
+        """Repo analysis detects framework, model files, requirements, and readme, skipping tests."""
         (tmp_path / "model.py").write_text("import torch\nfrom torch import nn\nclass MyModel(nn.Module):\n    pass\n")
         (tmp_path / "train.py").write_text("import torch\nfor epoch in range(10):\n    pass\n")
         (tmp_path / "test_model.py").write_text("# should be skipped\n")
@@ -364,6 +390,7 @@ class TestReferenceRepos:
                 os.chmod(str(f), 0o644)
 
     def test_analyze_skips_docs_and_test_dirs(self, tmp_path):
+        """Repo analysis omits Python files under docs/ directories."""
         (tmp_path / "docs").mkdir()
         (tmp_path / "docs" / "guide.py").write_text("x = 1\n")
         (tmp_path / "model.py").write_text("x = 1\n")
@@ -372,6 +399,7 @@ class TestReferenceRepos:
         assert "docs/guide.py" not in result["python_files"]
 
     def test_cleanup(self, tmp_path):
+        """cleanup_reference_repo removes an existing repo and reports False for a missing one."""
         repo_dir = tmp_path / "repo"
         repo_dir.mkdir()
         (repo_dir / "file.py").write_text("x = 1\n")
@@ -385,12 +413,16 @@ class TestReferenceRepos:
 # =========================================================================
 
 class TestBranchDiff:
+    """Extracting the diff a branch introduces over its base."""
+
     def test_not_git_repo(self, tmp_path):
+        """A non-git directory yields a 'Not a git repo' error and zero changes."""
         result = extract_branch_diff(str(tmp_path), "some-branch")
         assert result["error"] == "Not a git repo"
         assert result["files_changed"] == 0
 
     def test_basic_diff(self, tmp_path):
+        """A branch with an edited file reports changed files and added lines."""
         subprocess.run(["git", "init"], cwd=str(tmp_path), capture_output=True)
         subprocess.run(["git", "config", "user.email", "test@test.com"],
                        cwd=str(tmp_path), capture_output=True)
@@ -421,9 +453,12 @@ class TestBranchDiff:
 # =========================================================================
 
 class TestPrerequisites:
+    """Import scanning, package checks, env/format detection, install commands, and CLI."""
+
     # --- scan_imports (2 tests) ---
 
     def test_scan_imports_tiny_resnet(self):
+        """Scanning the tiny-resnet fixture classifies third-party, stdlib, and local imports."""
         result = scan_imports(str(TINY_RESNET))
         assert "torch" in result["third_party"]
         assert "torchvision" in result["third_party"]
@@ -465,6 +500,7 @@ class TestPrerequisites:
     # --- check_missing_packages (2 tests) ---
 
     def test_check_packages(self):
+        """Installed packages land in 'installed' and unknown ones in 'missing'."""
         result = check_missing_packages(["os", "_nonexistent_abc_999"])
         assert "os" in result["installed"]
         assert "_nonexistent_abc_999" in result["missing"]
@@ -472,6 +508,7 @@ class TestPrerequisites:
         assert check_missing_packages([])["installed"] == []
 
     def test_check_packages_error_paths(self):
+        """A bad interpreter and a subprocess timeout both fall back to reporting the package missing."""
         r = check_missing_packages(["os"], python_executable="/nonexistent/python")
         assert r["missing"] == ["os"]
         with patch("prerequisites_check.subprocess.run",
@@ -489,6 +526,7 @@ class TestPrerequisites:
         ("sklearn", "scikit-learn"),
     ])
     def test_pip_name(self, import_name, expected_pip):
+        """pip_name maps an import name to its pip package name."""
         assert pip_name(import_name) == expected_pip
 
     # --- detect_env_manager (3 single-file + 1 priority) ---
@@ -499,10 +537,12 @@ class TestPrerequisites:
         ("uv.lock", "", "uv"),
     ])
     def test_env_detection_single_file(self, tmp_path, filename, content, expected_manager):
+        """A lone dependency file selects its corresponding environment manager."""
         (tmp_path / filename).write_text(content)
         assert detect_env_manager(str(tmp_path))["manager"] == expected_manager
 
     def test_env_priority_and_empty(self, tmp_path):
+        """conda outranks pip when both files exist; an empty dir is 'unknown'."""
         # conda > pip
         d1 = tmp_path / "d1"
         d1.mkdir()
@@ -522,9 +562,11 @@ class TestPrerequisites:
         (FIXTURES / "sample_csv_loader_script.py", "csv"),
     ])
     def test_format_detection_fixtures(self, fixture_path, expected_format):
+        """Each loader fixture is classified to its expected dataset format."""
         assert detect_dataset_format(str(fixture_path))["format"] == expected_format
 
     def test_format_detection_dynamic_and_error(self, tmp_path):
+        """An XGBoost loader is detected; a missing script reports 'unknown'."""
         script = tmp_path / "loader.py"
         script.write_text("import xgboost as xgb\ndtrain = xgb.DMatrix(data, label=labels)\n")
         assert detect_dataset_format(str(script))["format"] == "xgboost"
@@ -533,6 +575,7 @@ class TestPrerequisites:
     # --- detect_dataset_format_project ---
 
     def test_project_format_follows_imports(self, tmp_path):
+        """Project-level detection follows local imports into the module that loads data."""
         (tmp_path / "train.py").write_text(
             "import torch\nfrom data import get_loader\nloader = get_loader()\n"
         )
@@ -549,10 +592,12 @@ class TestPrerequisites:
     # --- validate_data_path (3 cases) ---
 
     def test_validate_nonexistent(self):
+        """Validating a nonexistent data path reports it does not exist."""
         result = validate_data_path("/nonexistent/data", "image_folder")
         assert result["exists"] is False
 
     def test_validate_image_folder(self, tmp_path):
+        """An ImageFolder-style tree matches the image_folder format and counts class dirs."""
         root = tmp_path / "dataset"
         root.mkdir()
         for cls_name in ["cat", "dog"]:
@@ -564,6 +609,7 @@ class TestPrerequisites:
         assert result["details"]["class_dirs"] == 2
 
     def test_validate_csv(self, tmp_path):
+        """A CSV file matches the csv format."""
         f = tmp_path / "data.csv"
         f.write_text("a,b,c\n1,2,3\n")
         assert validate_data_path(str(f), "csv")["format_matches"] is True
@@ -571,12 +617,14 @@ class TestPrerequisites:
     # --- GPU install (2 cases) ---
 
     def test_gpu_install_with_cuda(self, monkeypatch):
+        """With CUDA present, the torch install command carries the CUDA wheel tag."""
         monkeypatch.setattr("prerequisites_check._detect_cuda_version", lambda: "12.1")
         result = gpu_install_command("torch")
         assert result["gpu_detected"] is True
         assert "cu121" in result["install_command"]
 
     def test_gpu_install_no_cuda(self, monkeypatch):
+        """Without CUDA, the install command is a plain pip install."""
         monkeypatch.setattr("prerequisites_check._detect_cuda_version", lambda: None)
         assert gpu_install_command("numpy")["install_command"] == "pip install numpy"
 
@@ -588,11 +636,13 @@ class TestPrerequisites:
         (None, None),
     ])
     def test_best_torch_cuda_tag(self, version, expected_tag):
+        """A supported CUDA version maps to its wheel tag; unsupported or None maps to None."""
         assert _best_torch_cuda_tag(version) == expected_tag
 
     # --- _detect_cuda_version (2 cases) ---
 
     def test_detect_cuda_parses_nvidia_smi(self):
+        """The CUDA version is parsed from nvidia-smi output."""
         mock_result = MagicMock()
         mock_result.returncode = 0
         mock_result.stdout = "| NVIDIA-SMI 535   CUDA Version: 12.4 |\n"
@@ -600,12 +650,14 @@ class TestPrerequisites:
             assert _detect_cuda_version() == "12.4"
 
     def test_detect_cuda_returns_none_on_error(self):
+        """A missing nvidia-smi yields a None CUDA version."""
         with patch("prerequisites_check.subprocess.run", side_effect=FileNotFoundError):
             assert _detect_cuda_version() is None
 
     # --- _wrap_for_conda (2 cases) ---
 
     def test_wrap_for_conda(self):
+        """A command is wrapped in 'conda run' for conda, and left unchanged for pip."""
         assert _wrap_for_conda("pip install torch", "conda", "myenv") == \
                "conda run --no-banner -n myenv pip install torch"
         assert _wrap_for_conda("pip install torch", "pip", None) == "pip install torch"
@@ -617,30 +669,36 @@ class TestPrerequisites:
         ("environment.yml", "name: myenv\ndependencies:\n  - numpy\n", "conda", "conda"),
     ])
     def test_bulk_install(self, tmp_path, filename, content, manager, expected_in_cmd):
+        """A dependency file produces a manager-appropriate bulk install command."""
         (tmp_path / filename).write_text(content)
         result = bulk_install_command(str(tmp_path), manager)
         assert result["has_deps_file"] is True
         assert expected_in_cmd in result["install_command"]
 
     def test_bulk_install_no_deps(self, tmp_path):
+        """No dependency file yields no bulk install command."""
         assert bulk_install_command(str(tmp_path), "pip")["install_command"] is None
 
     # --- CLI tests (3 error + 3 success) ---
 
     @pytest.mark.parametrize("args", [[], ["bogus"], ["scan-imports"]])
     def test_cli_error_cases(self, run_main, args):
+        """The CLI exits 1 for missing, unknown, or incomplete subcommands."""
         assert run_main("prerequisites_check.py", *args).returncode == 1
 
     def test_cli_scan_imports(self, run_main):
+        """The scan-imports CLI returns JSON listing third-party imports."""
         r = run_main("prerequisites_check.py", "scan-imports", str(TINY_RESNET))
         assert r.returncode == 0
         assert "torch" in json.loads(r.stdout)["third_party"]
 
     def test_cli_detect_format(self, run_main):
+        """The detect-format CLI classifies the tiny-resnet loader as cifar."""
         r = run_main("prerequisites_check.py", "detect-format", str(TINY_RESNET / "train.py"))
         assert json.loads(r.stdout)["format"] == "cifar"
 
     def test_cli_gpu_install_cmd(self, run_main):
+        """The gpu-install-cmd CLI emits a pip install command for the package."""
         r = run_main("prerequisites_check.py", "gpu-install-cmd", "numpy")
         assert "pip install numpy" in json.loads(r.stdout)["install_command"]
 
@@ -648,15 +706,18 @@ class TestPrerequisites:
 
     @pytest.mark.parametrize("args", [[], ["analyze"], ["clone"]])
     def test_implement_cli_error_cases(self, run_main, args):
+        """The implement_utils CLI exits 1 and prints usage on bad arguments."""
         r = run_main("implement_utils.py", *args)
         assert r.returncode == 1
         assert "Usage" in r.stdout
 
     def test_implement_cli_parse_proposals(self, run_main):
+        """The default CLI mode parses the selected proposals from a findings file."""
         r = run_main("implement_utils.py", str(SAMPLE_FINDINGS), '[1,3]')
         assert len(json.loads(r.stdout)["proposals"]) == 2
 
     def test_implement_cli_analyze(self, run_main, tmp_path):
+        """The analyze CLI mode reports the Python files in a directory."""
         (tmp_path / "model.py").write_text("import torch\n")
         r = run_main("implement_utils.py", "analyze", str(tmp_path))
         assert "python_files" in json.loads(r.stdout)

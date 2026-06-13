@@ -1,8 +1,27 @@
 #!/usr/bin/env python3
 """JSON schema validation for pipeline data.
 
-Dependency-free validation of experiment results, baselines, and manifests.
-Schemas are defined as plain Python data structures.
+Validates pipeline JSON files (experiment results, baseline, manifest, prerequisites,
+HP proposals, rounds manifest) and inter-agent relay messages against their schemas.
+
+Usage:
+    python3 schema_validator.py <filepath> result                # Validate an experiment result JSON
+    python3 schema_validator.py <filepath> baseline              # Validate baseline.json
+    python3 schema_validator.py <filepath> manifest              # Validate implementation-manifest.json
+    python3 schema_validator.py <filepath> prerequisites         # Validate prerequisites.json
+    python3 schema_validator.py <filepath> hp_proposal           # Validate an HP tuning proposal JSON
+    python3 schema_validator.py <filepath> rounds_manifest       # Validate rounds-manifest.json
+    python3 schema_validator.py <filepath> result --strict       # Result validation with completeness enforced
+    python3 schema_validator.py relay <route> <json_data>        # Validate an inter-agent relay message
+
+--strict (result only) promotes completeness warnings to blocking errors. Relay
+routes: analyze_to_tuning, analyze_to_research, monitor_to_tuning,
+research_to_implement, experiments_to_analyze. Exit code 0 = valid, 1 = invalid.
+
+Examples:
+    python3 schema_validator.py <exp_root>/results/round-1-hp/exp-001.json result
+    python3 schema_validator.py <exp_root>/results/baseline.json baseline
+    python3 schema_validator.py relay analyze_to_tuning '{"recommendation": "continue", "batch_number": 2}'
 """
 
 import json

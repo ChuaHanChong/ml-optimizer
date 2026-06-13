@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """SubagentStop hook: verify agents produced their expected output files.
 
-Deterministic command hook. Uses output_contract.py as single source of truth
-for per-agent output requirements. Returns {"decision": "approve"} or
-{"decision": "block", "reason": "..."}.
-
-Input (stdin): JSON with agent context (cwd, optional agent metadata)
-Output (stdout): JSON decision
+Invoked by the Claude Code hook runner on the SubagentStop event, not as a CLI.
+It reads the hook payload as JSON on stdin (agent_type/subagent_type, agent_id,
+cwd), resolves exp_root from the .claude/ml-optimizer.json breadcrumb, checks the
+agent's output contract via output_contract.check_outputs(), and prints a JSON
+decision ({"decision": "approve"} or {"decision": "block", "reason": ...}) on
+stdout to block an agent from finishing with missing required outputs.
 """
 
 import json
@@ -61,7 +61,7 @@ def check_agent_output(cwd: str, agent_name: str, agent_id: str = "") -> dict:
         dev_notes = Path(exp_root) / "dev_notes.md"
         if dev_notes.is_file():
             try:
-                from dev_notes import last_agent as _last_agent
+                from dev_notes import last_agent as _last_agent  # lazy: optional sibling module
                 last = _last_agent(exp_root)
                 if last.get("agent_id") != agent_id:
                     return {

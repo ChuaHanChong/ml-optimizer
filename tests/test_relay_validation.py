@@ -1,11 +1,16 @@
-"""Tests for inter-agent relay message validation."""
+"""Tests for schema_validator.py inter-agent relay validation."""
+
 import json
-import sys, os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'scripts'))
+import subprocess
+
+from conftest import SCRIPTS_DIR
+
 from schema_validator import validate_relay, RELAY_SCHEMAS
 
 
 class TestRelaySchemas:
+    """Structural invariants every RELAY_SCHEMAS entry must satisfy."""
+
     def test_all_routes_have_required_key(self):
         """Every schema has a 'required' list."""
         for route, schema in RELAY_SCHEMAS.items():
@@ -26,7 +31,10 @@ class TestRelaySchemas:
 
 
 class TestValidateRelay:
+    """validate_relay checks relay payloads against their route schema."""
+
     def test_valid_analyze_to_tuning(self):
+        """A complete analyze_to_tuning payload validates with no errors."""
         result = validate_relay("analyze_to_tuning", {
             "recommendation": "continue",
             "batch_number": 3,
@@ -36,6 +44,7 @@ class TestValidateRelay:
         assert len(result["errors"]) == 0
 
     def test_missing_required_field(self):
+        """Omitting a required field invalidates the payload and names it."""
         result = validate_relay("analyze_to_tuning", {
             "batch_number": 3
         })
@@ -43,6 +52,7 @@ class TestValidateRelay:
         assert any("recommendation" in e for e in result["errors"])
 
     def test_type_mismatch(self):
+        """A field of the wrong type invalidates the payload and names it."""
         result = validate_relay("analyze_to_tuning", {
             "recommendation": "continue",
             "batch_number": "not_an_int"
@@ -51,10 +61,12 @@ class TestValidateRelay:
         assert any("batch_number" in e for e in result["errors"])
 
     def test_unknown_route(self):
+        """An unrecognized route name is invalid."""
         result = validate_relay("nonexistent_route", {"foo": "bar"})
         assert result["valid"] is False
 
     def test_extra_fields_produce_warnings(self):
+        """Unexpected extra fields warn but do not invalidate the payload."""
         result = validate_relay("analyze_to_tuning", {
             "recommendation": "continue",
             "batch_number": 3,
@@ -93,10 +105,11 @@ class TestValidateRelay:
 
 
 class TestRelayCliIntegration:
+    """The relay CLI subcommand validates payloads and signals via exit code."""
+
     def test_valid_cli_output(self, tmp_path):
         """CLI relay command returns valid JSON with exit code 0."""
-        import subprocess
-        script = os.path.join(os.path.dirname(__file__), '..', 'scripts', 'schema_validator.py')
+        script = str(SCRIPTS_DIR / "schema_validator.py")
         data = json.dumps({"recommendation": "continue", "batch_number": 1})
         result = subprocess.run(
             ['python3', script, 'relay', 'analyze_to_tuning', data],
@@ -108,8 +121,7 @@ class TestRelayCliIntegration:
 
     def test_invalid_cli_output(self, tmp_path):
         """CLI relay command returns exit code 1 for invalid data."""
-        import subprocess
-        script = os.path.join(os.path.dirname(__file__), '..', 'scripts', 'schema_validator.py')
+        script = str(SCRIPTS_DIR / "schema_validator.py")
         data = json.dumps({"batch_number": 1})  # missing recommendation
         result = subprocess.run(
             ['python3', script, 'relay', 'analyze_to_tuning', data],

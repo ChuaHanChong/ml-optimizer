@@ -1,11 +1,28 @@
 #!/usr/bin/env python3
 """Round lifecycle management and completeness checking.
 
-Manages hierarchical round directories under <exp_root>/results/.
-Each round is a directory like round-1-hp/ containing exp-*.json files.
-The rounds-manifest.json file is the single source of truth for round history.
+Manages the round directory lifecycle (rounds-manifest.json) and runs completeness
+checks over baseline, prerequisites, manifest, round results, and proposed configs.
 
-Dependency-free — uses only the Python standard library.
+Usage:
+    python3 round_manager.py <exp_root> create-round <type> [--branch <name>]  # Create a round dir + manifest entry
+    python3 round_manager.py <exp_root> current-round                          # Show the latest round
+    python3 round_manager.py <exp_root> register-experiment <round_dir> <exp_id>  # Register an exp-id in a round
+    python3 round_manager.py <exp_root> close-round [--summary <text>]         # Close the current round
+    python3 round_manager.py <exp_root> next-id                               # Globally unique next exp-id
+    python3 round_manager.py <exp_root> check-baseline                        # Validate baseline.json completeness
+    python3 round_manager.py <exp_root> check-prerequisites                   # Validate prerequisites.json
+    python3 round_manager.py <exp_root> check-manifest                        # Validate implementation-manifest.json
+    python3 round_manager.py <exp_root> check-round <round_dir>               # Validate a round's results + logs
+    python3 round_manager.py <exp_root> check-proposals <round_dir>           # Validate proposed configs in a round
+
+Valid round types: hp, evolved, research, stacked. Exit codes: 0 = success,
+1 = error, 2 = check failure (check-* command found incomplete output).
+
+Examples:
+    python3 round_manager.py <exp_root> create-round hp
+    python3 round_manager.py <exp_root> register-experiment round-1-hp exp-001
+    python3 round_manager.py <exp_root> check-round round-1-hp
 """
 
 import fcntl

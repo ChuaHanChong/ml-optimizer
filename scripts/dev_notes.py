@@ -1,26 +1,27 @@
 #!/usr/bin/env python3
 """Managed dev_notes.md writer — enforces consistent format.
 
-Agents call this script instead of writing to dev_notes.md directly.
-Each entry gets a timestamp, agent name, and structured message.
+Appends dated, agent-attributed entries to <exp_root>/dev_notes.md with
+file locking for concurrent-safe writes. Used by many agents to maintain a
+running session log.
 
 Usage:
-    python3 dev_notes.py <exp_root> append <agent_name> '<message>'
-    python3 dev_notes.py <exp_root> last-agent
-    python3 dev_notes.py <exp_root> init
+    python3 dev_notes.py <exp_root> init                                          # Create dev_notes.md with header
+    python3 dev_notes.py <exp_root> append <agent_name> '<message>' [--agent-id <id>]  # Append a dated, attributed entry
+    python3 dev_notes.py <exp_root> last-agent                                     # Report the last entry's agent/agent_id/timestamp
+
+The --agent-id is embedded as an HTML comment so SubagentStop can verify the
+specific agent invocation (not just the agent type) wrote the entry.
 
 Examples:
-    python3 dev_notes.py experiments append baseline-agent 'Established baseline: loss=0.82, accuracy=71.2%'
-    python3 dev_notes.py experiments append experiment-agent 'exp-001: lr=1e-4, loss=0.78 (+1.9% over baseline)'
-    python3 dev_notes.py experiments append tuning-agent 'Proposed 4 configs: LR sweep [1e-4 to 5e-3]'
-    python3 dev_notes.py experiments last-agent
+    python3 dev_notes.py <exp_root> init
+    python3 dev_notes.py <exp_root> append baseline-agent 'Established baseline loss=0.42' --agent-id abc123
+    python3 dev_notes.py <exp_root> last-agent
 """
 
 import fcntl
 import json
-import os
 import sys
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 

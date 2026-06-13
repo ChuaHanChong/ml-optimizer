@@ -1,5 +1,29 @@
 #!/usr/bin/env python3
-"""State validation and pipeline resumption utilities."""
+"""State validation and pipeline resumption utilities.
+
+Manages pipeline-state.json (phase, iteration, user choices, baseline checksum,
+agent registry), phase-gate validation/logging, baseline integrity verification,
+stale-experiment cleanup, and the decision log (with replay checks).
+
+Usage:
+    python3 pipeline_state.py <exp_root> validate <phase>                              # Check phase prerequisites are met
+    python3 pipeline_state.py <exp_root> save <phase> <iteration> [running_ids_json]   # Write pipeline-state.json
+    python3 pipeline_state.py <exp_root> load                                          # Print current pipeline state
+    python3 pipeline_state.py <exp_root> cleanup                                       # Mark stale running experiments as failed/interrupted
+    python3 pipeline_state.py <exp_root> verify-baseline                               # Verify baseline.json checksum (exit 1 on mismatch)
+    python3 pipeline_state.py <exp_root> gate <current_phase> <next_phase>             # Validate a phase transition is allowed
+    python3 pipeline_state.py <exp_root> log-gate <phase> <status> <summary>           # Append a phase-gate completion entry
+    python3 pipeline_state.py <exp_root> log-decision <json_data>                      # Append a decision-log entry
+    python3 pipeline_state.py <exp_root> replay-check <decision_id> <current_decision> # Compare a decision against a prior one with matching inputs
+    python3 pipeline_state.py <exp_root> decisions [--phase N] [--agent NAME] [--type TYPE]  # List logged decisions, optionally filtered
+
+Examples:
+    python3 pipeline_state.py <exp_root> validate 7
+    python3 pipeline_state.py <exp_root> save 7 2 '["exp-003"]'
+    python3 pipeline_state.py <exp_root> gate 6 7
+    python3 pipeline_state.py <exp_root> log-decision '{"phase": 7, "agent": "orchestrate", "decision_type": "pivot", "decision": "continue"}'
+    python3 pipeline_state.py <exp_root> decisions --phase 7 --type pivot
+"""
 
 import fcntl
 import hashlib

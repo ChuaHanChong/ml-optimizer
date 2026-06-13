@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PostToolUse hook for Bash: detect critical errors (OOM, segfault, disk full)
+# PostToolUse hook (Bash): detect critical errors (OOM, segfault, disk full).
 # in command output and log them to the error tracker.
 # Exit 0 always — this is advisory, never blocks.
 

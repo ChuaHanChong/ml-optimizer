@@ -1,5 +1,28 @@
 #!/usr/bin/env python3
-"""Helpers for implementing research proposals: branch management, validation, and manifest writing."""
+"""Helpers for implementing research proposals: branch management, validation, and manifest writing.
+
+Parses structured proposals out of research-findings.md, creates `ml-opt/<slug>`
+branches (or file backups for non-git projects), validates syntax/imports,
+detects file conflicts across proposals, and clones/analyzes reference repos for
+the from_reference implementation strategy. Also extracts branch diff summaries
+for the dashboard.
+
+Usage:
+    python3 implement_utils.py <findings_path> <selected_json>   # Parse proposals (selected = JSON array of 1-based indices)
+    python3 implement_utils.py clone <repo_url> <dest_dir>       # Clone a GitHub/GitLab reference repo (shallow)
+    python3 implement_utils.py analyze <repo_path>               # Analyze a cloned repo's framework/structure
+    python3 implement_utils.py diff <project_root> <branch>      # Extract a branch diff summary vs the current branch
+
+selected_json selects which proposals to return by their 1-based index; pass
+"[]" or omit to return all. clone only permits https://github.com/ and
+https://gitlab.com/ URLs.
+
+Examples:
+    python3 implement_utils.py <exp_root>/reports/research-findings.md '[1,3]'
+    python3 implement_utils.py clone https://github.com/owner/repo /tmp/ref-repo
+    python3 implement_utils.py analyze /tmp/ref-repo
+    python3 implement_utils.py diff /path/to/project ml-opt/perceptual-loss
+"""
 
 import json
 import os

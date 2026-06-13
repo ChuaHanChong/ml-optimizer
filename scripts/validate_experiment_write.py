@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""PostToolUse hook: validates Write/Edit operations to experiment result files.
+"""PreToolUse hook: validates Write/Edit operations to experiment result files.
 
-Called by the Claude Code harness after every Write or Edit tool call.
-Ensures experiment JSON files are written to the correct round directory
-and conform to the expected schema.
-
-Input (stdin): JSON with tool_input.file_path (and tool_input.content for Write)
-Output (stdout): {"decision": "approve"} or {"decision": "block", "reason": "..."}
+Invoked by the Claude Code hook runner on the PreToolUse event for Write/Edit, not
+as a CLI. It reads the hook payload as JSON on stdin (tool_name, tool_input with
+file_path and content), resolves exp_root from the .claude/ml-optimizer.json
+breadcrumb, and enforces that exp-*.json results live in round-N-<type>/ directories
+(and proposed configs in proposed-configs/round-N-<type>/), that root-level files
+(baseline/prerequisites/manifest/rounds-manifest) sit directly in results/, plus
+schema, completeness, and goal-compliance (frozen params, OOM limits) checks. Prints
+a JSON decision ({"decision": "approve"|"block", "reason": ...}) on stdout.
 """
 
 import json

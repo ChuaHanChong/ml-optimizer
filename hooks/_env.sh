@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared environment for ml-optimizer hooks.
+# Shared helper: common environment for ml-optimizer hooks.
 # Source this at the top of every hook that needs PLUGIN_ROOT or EXP_DIR.
 #
 # Provides:

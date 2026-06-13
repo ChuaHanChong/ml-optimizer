@@ -1,27 +1,12 @@
-"""Integration tests for the 3-checkpoint enforcement hooks.
-
-Unlike tests/test_output_contract.py which tests the Python functions
-directly, these tests exercise the actual hook scripts via subprocess
-with real JSON stdin — the same way Claude Code invokes them. This
-catches runtime bugs that unit tests miss: stdin format mismatches,
-exit code vs decision-JSON confusion, environment variable handling,
-and script-level errors.
-
-Run:
-
-    python -m pytest tests/test_hook_integration.py -v
-"""
+"""Tests for the 3-checkpoint enforcement hooks — subprocess integration."""
 
 import json
 import os
 import subprocess
-from pathlib import Path
 
 import pytest  # noqa: F401  (enables pytest fixture discovery)
 
-PLUGIN_ROOT = Path(__file__).parent.parent.resolve()
-HOOKS_DIR = PLUGIN_ROOT / "hooks"
-SCRIPTS_DIR = PLUGIN_ROOT / "scripts"
+from conftest import HOOKS_DIR, PLUGIN_ROOT, SCRIPTS_DIR
 
 SUBAGENT_START_HOOK = HOOKS_DIR / "subagent-start-inject-goals.sh"
 VALIDATE_WRITE_SCRIPT = SCRIPTS_DIR / "validate_experiment_write.py"
@@ -100,6 +85,7 @@ class TestLayer1Injection:
     """SubagentStart hook injects the per-agent contract into the prompt."""
 
     def test_baseline_agent_injection(self, exp_root):
+        """Baseline agent receives its required output paths in the injected contract."""
         exit_code, stdout, _ = _run_hook(
             SUBAGENT_START_HOOK,
             {"cwd": str(exp_root), "subagent_type": "ml-optimizer:baseline-agent"},
@@ -109,6 +95,7 @@ class TestLayer1Injection:
         assert "logs/baseline/train.log" in stdout
 
     def test_analysis_agent_any_of_rendering(self, exp_root):
+        """Analysis agent contract renders the any-of choice between batch and review outputs."""
         exit_code, stdout, _ = _run_hook(
             SUBAGENT_START_HOOK,
             {"cwd": str(exp_root), "subagent_type": "ml-optimizer:analysis-agent"},
@@ -119,6 +106,7 @@ class TestLayer1Injection:
         assert "session-review.md" in stdout
 
     def test_prerequisites_agent_required_if_rendering(self, exp_root):
+        """Prerequisites agent contract renders the conditional prepared-data requirement."""
         exit_code, stdout, _ = _run_hook(
             SUBAGENT_START_HOOK,
             {"cwd": str(exp_root), "subagent_type": "ml-optimizer:prerequisites-agent"},
@@ -179,6 +167,7 @@ class TestLayer2WriteValidation:
     """PreToolUse hook blocks invalid writes and approves valid ones."""
 
     def test_valid_round_based_result_approved(self, exp_root):
+        """A complete result written to a round subdirectory is approved."""
         payload = _write_payload(exp_root, "results/round-1-hp/exp-001.json", {
             "exp_id": "exp-001", "status": "completed",
             "config": {"lr": 0.01}, "metrics": {"loss": 0.4},
@@ -189,6 +178,7 @@ class TestLayer2WriteValidation:
         assert decision["decision"] == "approve"
 
     def test_flat_results_path_blocked(self, exp_root):
+        """A result written directly under results/ instead of a round subdirectory is blocked."""
         payload = _write_payload(exp_root, "results/exp-002.json", {
             "exp_id": "exp-002", "status": "completed",
             "config": {}, "metrics": {"loss": 0.4},
@@ -200,6 +190,7 @@ class TestLayer2WriteValidation:
         assert "round subdirectory" in decision["reason"]
 
     def test_completed_missing_completeness_fields_blocked(self, exp_root):
+        """A completed result missing mandatory completeness fields is blocked."""
         payload = _write_payload(exp_root, "results/round-1-hp/exp-003.json", {
             "exp_id": "exp-003", "status": "completed",
             "config": {}, "metrics": {"loss": 0.4},
@@ -212,6 +203,7 @@ class TestLayer2WriteValidation:
             assert field in decision["reason"]
 
     def test_stacked_tier_missing_code_branches_blocked(self, exp_root):
+        """A stacked-tier result missing code_branches and stacking_order is blocked."""
         payload = _write_payload(exp_root, "results/round-1-stacked/exp-004.json", {
             "exp_id": "exp-004", "status": "completed",
             "config": {}, "metrics": {"loss": 0.3},
@@ -224,6 +216,7 @@ class TestLayer2WriteValidation:
         assert "stacking_order" in decision["reason"]
 
     def test_failed_without_notes_blocked(self, exp_root):
+        """A failed result without a notes explanation is blocked."""
         payload = _write_payload(exp_root, "results/round-1-hp/exp-005.json", {
             "exp_id": "exp-005", "status": "failed",
             "config": {}, "metrics": {},
@@ -234,6 +227,7 @@ class TestLayer2WriteValidation:
         assert "notes" in decision["reason"]
 
     def test_diverged_with_notes_approved(self, exp_root):
+        """A diverged result that includes notes is approved."""
         payload = _write_payload(exp_root, "results/round-1-hp/exp-006.json", {
             "exp_id": "exp-006", "status": "diverged",
             "config": {}, "metrics": {}, "notes": "NaN at step 50",
@@ -243,6 +237,7 @@ class TestLayer2WriteValidation:
         assert decision["decision"] == "approve"
 
     def test_placeholder_running_approved(self, exp_root):
+        """A running placeholder result is exempt from completeness checks and approved."""
         payload = _write_payload(exp_root, "results/round-1-hp/exp-007.json", {
             "exp_id": "exp-007", "status": "running",
             "config": {}, "metrics": {},
@@ -252,6 +247,7 @@ class TestLayer2WriteValidation:
         assert decision["decision"] == "approve"
 
     def test_frozen_parameter_violation_blocked(self, exp_root):
+        """A result whose config touches a frozen parameter is blocked."""
         goals = exp_root / "experiments" / "optimization-goals.json"
         goals.write_text(json.dumps(
             {"constraints": {"frozen_parameters": ["model_size", "dataset"]}}
@@ -269,6 +265,7 @@ class TestLayer2WriteValidation:
         assert "model_size" in decision["reason"]
 
     def test_oom_batch_size_cap_blocked(self, exp_root):
+        """A result whose batch size exceeds the learned OOM cap is blocked."""
         behaviors = exp_root / "experiments" / "learned-behaviors.json"
         behaviors.write_text(json.dumps(
             {"resource_constraints": [{"max_batch_size": 128}]}
@@ -285,6 +282,7 @@ class TestLayer2WriteValidation:
         assert "512" in decision["reason"]
 
     def test_valid_proposed_config_approved(self, exp_root):
+        """A valid proposed-config written to a round subdirectory is approved."""
         payload = _write_payload(exp_root, "proposed-configs/round-1-hp/exp-010.json", {
             "exp_id": "exp-010",
             "config": {"lr": 0.005, "batch_size": 64},
@@ -323,6 +321,7 @@ class TestLayer3OutputVerification:
     """SubagentStop hook blocks agents that didn't produce required outputs."""
 
     def _stop_payload(self, exp_root, agent_type, agent_id=""):
+        """Build a SubagentStop hook_input for the given agent type and id."""
         return {
             "cwd": str(exp_root),
             "subagent_type": f"ml-optimizer:{agent_type}",
@@ -330,6 +329,7 @@ class TestLayer3OutputVerification:
         }
 
     def test_baseline_agent_with_both_outputs_approved(self, exp_root):
+        """Baseline agent that produced both its result JSON and training log is approved."""
         exp = exp_root / "experiments"
         (exp / "results" / "baseline.json").write_text('{"exp_id":"baseline"}')
         (exp / "logs" / "baseline").mkdir()
@@ -342,6 +342,7 @@ class TestLayer3OutputVerification:
         assert decision["decision"] == "approve"
 
     def test_baseline_agent_missing_log_blocked(self, exp_root):
+        """Baseline agent missing its training log is blocked from finishing."""
         exp = exp_root / "experiments"
         (exp / "results" / "baseline.json").write_text('{"exp_id":"baseline"}')
         # No log file
@@ -354,6 +355,7 @@ class TestLayer3OutputVerification:
         assert "train.log" in decision["reason"]
 
     def test_analysis_agent_any_of_batch_report(self, exp_root):
+        """Analysis agent that produced a batch analysis report satisfies the any-of requirement."""
         (exp_root / "experiments" / "reports" / "batch-1-analysis.md").write_text("# Batch 1")
         _, stdout, _ = _run_hook(
             VALIDATE_OUTPUT_SCRIPT,
@@ -363,6 +365,7 @@ class TestLayer3OutputVerification:
         assert decision["decision"] == "approve"
 
     def test_analysis_agent_any_of_session_review(self, exp_root):
+        """Analysis agent that produced a session review satisfies the any-of requirement."""
         (exp_root / "experiments" / "reports" / "session-review.md").write_text("# Review")
         _, stdout, _ = _run_hook(
             VALIDATE_OUTPUT_SCRIPT,
@@ -372,6 +375,7 @@ class TestLayer3OutputVerification:
         assert decision["decision"] == "approve"
 
     def test_analysis_agent_any_of_neither_blocked(self, exp_root):
+        """Analysis agent producing neither any-of output is blocked from finishing."""
         _, stdout, _ = _run_hook(
             VALIDATE_OUTPUT_SCRIPT,
             self._stop_payload(exp_root, "analysis-agent"),
@@ -380,6 +384,7 @@ class TestLayer3OutputVerification:
         assert decision["decision"] == "block"
 
     def test_prerequisites_required_if_prepared_false_approved(self, exp_root):
+        """Prerequisites agent is approved without prepared-data when prepared is false."""
         exp = exp_root / "experiments"
         (exp / "results" / "prerequisites.json").write_text(json.dumps(
             {"status": "ready", "dataset": {"prepared": False, "train_path": "/data"}}
@@ -392,6 +397,7 @@ class TestLayer3OutputVerification:
         assert decision["decision"] == "approve"
 
     def test_prerequisites_required_if_prepared_true_dir_missing_blocked(self, exp_root):
+        """Prerequisites agent is blocked when prepared is true but prepared-data is missing."""
         exp = exp_root / "experiments"
         (exp / "results" / "prerequisites.json").write_text(json.dumps(
             {"status": "ready", "dataset": {"prepared": True, "train_path": "/data"}}
@@ -405,6 +411,7 @@ class TestLayer3OutputVerification:
         assert "prepared-data" in decision["reason"]
 
     def test_prerequisites_required_if_prepared_true_dir_exists_approved(self, exp_root):
+        """Prerequisites agent is approved when prepared is true and prepared-data exists."""
         exp = exp_root / "experiments"
         (exp / "results" / "prerequisites.json").write_text(json.dumps(
             {"status": "ready", "dataset": {"prepared": True, "train_path": "/data"}}
@@ -418,6 +425,7 @@ class TestLayer3OutputVerification:
         assert decision["decision"] == "approve"
 
     def test_experiment_agent_all_outputs_approved(self, exp_root):
+        """Experiment agent that produced all four round-scoped outputs is approved."""
         exp = exp_root / "experiments"
         (exp / "results" / "round-1-hp").mkdir()
         (exp / "results" / "round-1-hp" / "exp-001.json").write_text('{"exp_id":"exp-001"}')
@@ -433,6 +441,7 @@ class TestLayer3OutputVerification:
         assert decision["decision"] == "approve"
 
     def test_dev_notes_agent_id_mismatch_blocked(self, exp_root):
+        """Agent is blocked when its dev_notes entry was tagged with a different agent_id."""
         exp = exp_root / "experiments"
         (exp / "results" / "baseline.json").write_text('{"exp_id":"baseline"}')
         (exp / "logs" / "baseline").mkdir()
@@ -453,6 +462,7 @@ class TestLayer3OutputVerification:
         assert "dev_notes.md" in decision["reason"]
 
     def test_dev_notes_agent_id_match_approved(self, exp_root):
+        """Agent is approved when its dev_notes entry matches the stopping agent_id."""
         exp = exp_root / "experiments"
         (exp / "results" / "baseline.json").write_text('{"exp_id":"baseline"}')
         (exp / "logs" / "baseline").mkdir()

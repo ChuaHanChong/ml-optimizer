@@ -1,51 +1,34 @@
-#!/usr/bin/env python3
-"""Prompt contract tests for skill .md files.
-
-Static analysis tests that read skill and agent .md files and verify they
-reference required reliability protocols (phase gates, relay validation,
-context budget, decision logging).
-
-These tests verify the *contracts* defined in Markdown, not Python code.
-"""
+"""Tests for skill/agent .md prompt contracts — reliability protocols."""
 
 import json
-import os
 import re
-import sys
+from pathlib import Path
 
 import pytest
 
-# ---------------------------------------------------------------------------
-# Constants and helpers
-# ---------------------------------------------------------------------------
+from conftest import PLUGIN_ROOT, SKILLS_DIR, AGENTS_DIR, REFERENCES_DIR, FIXTURES
 
-PLUGIN_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-SKILLS_DIR = os.path.join(PLUGIN_ROOT, "skills")
-AGENTS_DIR = os.path.join(PLUGIN_ROOT, "agents")
-REFERENCES_DIR = os.path.join(SKILLS_DIR, "orchestrate", "references")
-FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
-
-# Add scripts to path for imports
-sys.path.insert(0, os.path.join(PLUGIN_ROOT, "scripts"))
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 
 def _read_file(path):
     """Read a file and return its content, or None if not found."""
     try:
-        with open(path) as f:
-            return f.read()
+        return Path(path).read_text()
     except FileNotFoundError:
         return None
 
 
 def _list_agent_files():
     """Return sorted list of .md file paths in agents/."""
-    if not os.path.isdir(AGENTS_DIR):
+    if not AGENTS_DIR.is_dir():
         return []
     return sorted(
-        os.path.join(AGENTS_DIR, f)
-        for f in os.listdir(AGENTS_DIR)
-        if f.endswith(".md")
+        AGENTS_DIR / f.name
+        for f in AGENTS_DIR.iterdir()
+        if f.name.endswith(".md")
     )
 
 
@@ -55,14 +38,13 @@ def _list_skill_dirs():
     Only includes directories that actually exist on disk (resolves symlinks).
     Broken symlinks are excluded.
     """
-    if not os.path.isdir(SKILLS_DIR):
+    if not SKILLS_DIR.is_dir():
         return []
     result = []
-    for entry in sorted(os.listdir(SKILLS_DIR)):
-        full = os.path.join(SKILLS_DIR, entry)
-        # os.path.isdir follows symlinks; broken symlinks return False
-        if os.path.isdir(full):
-            result.append(entry)
+    for entry in sorted(SKILLS_DIR.iterdir()):
+        # Path.is_dir follows symlinks; broken symlinks return False
+        if entry.is_dir():
+            result.append(entry.name)
     return result
 
 
@@ -165,7 +147,7 @@ class TestRelaySchemaCompleteness:
         """
         from schema_validator import RELAY_SCHEMAS
 
-        content = _read_file(os.path.join(SKILLS_DIR, "orchestrate", "SKILL.md"))
+        content = _read_file(SKILLS_DIR / "orchestrate" / "SKILL.md")
         assert content is not None, "orchestrate/SKILL.md not found"
 
         # Extract the "Key relay routes" section
@@ -197,7 +179,7 @@ class TestAgentRelayAcknowledgment:
     @pytest.mark.parametrize("agent_name", PERSISTENT_AGENTS)
     def test_persistent_agents_have_relay_ack(self, agent_name):
         """Each persistent agent .md file contains RELAY_ACK somewhere."""
-        path = os.path.join(AGENTS_DIR, f"{agent_name}.md")
+        path = AGENTS_DIR / f"{agent_name}.md"
         content = _read_file(path)
         assert content is not None, f"Agent file not found: {path}"
         assert "RELAY_ACK" in content, (
@@ -216,7 +198,7 @@ class TestPhaseGateReferences:
 
     def test_orchestrate_skill_mentions_gate_protocol(self):
         """The orchestrate SKILL.md references phase gating for transitions."""
-        content = _read_file(os.path.join(SKILLS_DIR, "orchestrate", "SKILL.md"))
+        content = _read_file(SKILLS_DIR / "orchestrate" / "SKILL.md")
         assert content is not None, "orchestrate/SKILL.md not found"
 
         # Check for any of: "Phase Gate Protocol", "validate_phase_gate",
@@ -250,7 +232,7 @@ class TestPhaseGateReferences:
     def test_phase_references_mention_gates(self, phase_num):
         """Each phase reference file (phase-2 through phase-9) mentions gate checking."""
         filename = f"phase-{phase_num}-{['prerequisites', 'baseline', 'checkpoint', 'research', 'implement', 'experiment-loop', 'stacking', 'report'][phase_num - 2]}.md"
-        path = os.path.join(REFERENCES_DIR, filename)
+        path = REFERENCES_DIR / filename
         content = _read_file(path)
         if content is None:
             pytest.skip(f"Reference file not found: {filename}")
@@ -314,11 +296,8 @@ class TestGoldenDecisions:
         """Golden decision fixtures can be logged via log_decision without error."""
         from pipeline_state import log_decision
 
-        fixture_path = os.path.join(
-            FIXTURES_DIR, "golden_decisions", fixture_name
-        )
-        with open(fixture_path) as f:
-            decision_data = json.load(f)
+        fixture_path = FIXTURES / "golden_decisions" / fixture_name
+        decision_data = json.loads(fixture_path.read_text())
 
         # log_decision should succeed (returns an id string)
         decision_id = log_decision(decision_exp_root, decision_data)
@@ -331,11 +310,8 @@ class TestGoldenDecisions:
     ])
     def test_golden_decision_has_required_fields(self, fixture_name):
         """Golden decision fixtures contain all required fields."""
-        fixture_path = os.path.join(
-            FIXTURES_DIR, "golden_decisions", fixture_name
-        )
-        with open(fixture_path) as f:
-            data = json.load(f)
+        fixture_path = FIXTURES / "golden_decisions" / fixture_name
+        data = json.loads(fixture_path.read_text())
 
         required = ["phase", "agent", "decision_type", "decision"]
         for field in required:
@@ -347,11 +323,8 @@ class TestGoldenDecisions:
         """Logged decisions can be retrieved via get_decisions."""
         from pipeline_state import log_decision, get_decisions
 
-        fixture_path = os.path.join(
-            FIXTURES_DIR, "golden_decisions", "phase7_continue.json"
-        )
-        with open(fixture_path) as f:
-            decision_data = json.load(f)
+        fixture_path = FIXTURES / "golden_decisions" / "phase7_continue.json"
+        decision_data = json.loads(fixture_path.read_text())
 
         log_decision(decision_exp_root, decision_data)
 
@@ -378,9 +351,9 @@ class TestSkillStructuralIntegrity:
         for path in agent_files:
             content = _read_file(path)
             if content is None:
-                missing_frontmatter.append(f"{os.path.basename(path)} (not readable)")
+                missing_frontmatter.append(f"{path.name} (not readable)")
             elif not content.startswith("---"):
-                missing_frontmatter.append(os.path.basename(path))
+                missing_frontmatter.append(path.name)
 
         assert not missing_frontmatter, (
             f"Agent files without YAML frontmatter: {missing_frontmatter}"
@@ -399,17 +372,17 @@ class TestSkillStructuralIntegrity:
             frontmatter = _extract_frontmatter(content)
             skills = _extract_skills_from_frontmatter(frontmatter)
 
-            agent_name = os.path.basename(path)
+            agent_name = path.name
             for skill_ref in skills:
                 # Only check ml-optimizer skills (not claude-mem, superpowers, etc.)
                 if not skill_ref.startswith("ml-optimizer:"):
                     continue
                 skill_name = skill_ref.split(":", 1)[1]
-                skill_dir = os.path.join(SKILLS_DIR, skill_name)
+                skill_dir = SKILLS_DIR / skill_name
 
                 # Accept the directory existing as either a real dir or a symlink
                 # (even broken symlinks count -- the directory is *declared*)
-                if not os.path.isdir(skill_dir) and not os.path.islink(skill_dir):
+                if not skill_dir.is_dir() and not skill_dir.is_symlink():
                     missing_skills.append(
                         f"{agent_name} references '{skill_ref}' "
                         f"but skills/{skill_name}/ does not exist"
@@ -437,8 +410,8 @@ class TestSkillStructuralIntegrity:
         # Check each real skill directory (with SKILL.md) is referenced
         orphans = []
         for skill_name in _list_skill_dirs():
-            skill_md = os.path.join(SKILLS_DIR, skill_name, "SKILL.md")
-            if not os.path.isfile(skill_md):
+            skill_md = SKILLS_DIR / skill_name / "SKILL.md"
+            if not skill_md.is_file():
                 continue  # No SKILL.md -> not a real skill, skip
             if skill_name not in referenced_skills:
                 orphans.append(skill_name)
@@ -460,7 +433,7 @@ class TestSkillStructuralIntegrity:
                 continue  # Already caught by test_all_agent_files_have_frontmatter
             skills = _extract_skills_from_frontmatter(frontmatter)
             if not skills:
-                missing.append(os.path.basename(path))
+                missing.append(path.name)
 
         assert not missing, (
             f"Agent files without skills in frontmatter: {missing}"
@@ -482,7 +455,7 @@ class TestSkillStructuralIntegrity:
                 for line in frontmatter.splitlines()
             )
             if not has_name:
-                missing.append(os.path.basename(path))
+                missing.append(path.name)
 
         assert not missing, (
             f"Agent files without 'name:' in frontmatter: {missing}"

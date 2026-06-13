@@ -19,14 +19,14 @@ import math
 import sys
 from pathlib import Path
 
-# Allow importing sibling modules when run directly
-sys.path.insert(0, str(Path(__file__).parent))
-
-from result_analyzer import build_experiment_description, load_results, rank_by_metric
-
+# third-party
 import matplotlib
 matplotlib.use("Agg")  # Non-interactive backend for file output
 import matplotlib.pyplot as plt
+
+# Allow importing sibling modules when run directly
+sys.path.insert(0, str(Path(__file__).parent))
+from result_analyzer import build_experiment_description, load_results, rank_by_metric
 
 
 def ascii_bar_chart(

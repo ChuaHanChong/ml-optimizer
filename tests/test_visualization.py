@@ -1,4 +1,4 @@
-"""Tests for dashboard.py and excalidraw_gen.py (visualization utilities)."""
+"""Tests for dashboard.py and excalidraw_gen.py — visualization utilities."""
 
 import json
 import sys
@@ -521,6 +521,7 @@ class TestResultsTable:
     """Tests for generate_results_table() — Markdown results table."""
 
     def test_basic_table(self, tmp_path):
+        """Table includes a header, the experiment rows, and a results section."""
         exp_root = tmp_path / "experiments"
         _create_experiments(exp_root, num=3)
         path = generate_results_table(str(exp_root))
@@ -533,6 +534,7 @@ class TestResultsTable:
         assert "| #" in content
 
     def test_includes_summary(self, tmp_path):
+        """Table carries a summary section with completed count and best result."""
         exp_root = tmp_path / "experiments"
         _create_experiments(exp_root, num=3)
         path = generate_results_table(str(exp_root))
@@ -542,6 +544,7 @@ class TestResultsTable:
         assert "Best result:" in content
 
     def test_delta_vs_baseline(self, tmp_path):
+        """Table reports each experiment's percentage delta against the baseline."""
         exp_root = tmp_path / "experiments"
         _create_experiments(exp_root, num=2)
         path = generate_results_table(str(exp_root))
@@ -549,6 +552,7 @@ class TestResultsTable:
         assert "%" in content
 
     def test_empty_results(self, tmp_path):
+        """An empty results directory yields a table reporting zero experiments."""
         exp_root = tmp_path / "experiments"
         exp_root.mkdir(parents=True)
         (exp_root / "results").mkdir()
@@ -558,6 +562,7 @@ class TestResultsTable:
         assert "Total experiments: 0" in content
 
     def test_reads_pipeline_state(self, tmp_path):
+        """Table header reflects the phase and iteration from pipeline state."""
         exp_root = tmp_path / "experiments"
         _create_experiments(exp_root, num=2)
         path = generate_results_table(str(exp_root))
@@ -566,6 +571,7 @@ class TestResultsTable:
         assert "Iteration:** 3" in content
 
     def test_cli_table_flag(self, tmp_path):
+        """The --table CLI flag writes results-table.md."""
         exp_root = tmp_path / "experiments"
         _create_experiments(exp_root, num=2)
         with mock.patch.object(sys, "argv", ["d", str(exp_root), "--table"]):

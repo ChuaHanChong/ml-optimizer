@@ -1,5 +1,24 @@
 #!/usr/bin/env python3
-"""Set up experiment directory structure and generate configs/scripts."""
+"""Set up experiment directory structure and generate configs/scripts.
+
+Allocates the next globally-unique experiment ID (scanning flat and round
+directories), creates the `<exp_root>/` subdirectory layout, writes a pending
+config JSON, and generates a self-contained bash training script.
+
+Usage:
+    python3 experiment_setup.py <exp_root> <train_command>                              # Next exp on GPU 0, no config, flat results/
+    python3 experiment_setup.py <exp_root> <train_command> <gpu_id>                     # Pin to a specific GPU index
+    python3 experiment_setup.py <exp_root> <train_command> <gpu_id> <config_json>       # Embed an HP config dict in the result JSON
+    python3 experiment_setup.py <exp_root> <train_command> <gpu_id> <config_json> <round_dir>  # Write under results/<round_dir>/
+
+gpu_id defaults to 0; config_json defaults to {}; round_dir routes output into
+the round-based layout (results/<round_dir>/, logs/<round_dir>/, scripts/<round_dir>/).
+
+Examples:
+    python3 experiment_setup.py <exp_root> "python train.py --lr 0.01"
+    python3 experiment_setup.py <exp_root> "python train.py" 1 '{"lr": 0.001, "batch_size": 64}'
+    python3 experiment_setup.py <exp_root> "python train.py" 0 '{"lr": 0.01}' round-1-hp
+"""
 
 import json
 import re

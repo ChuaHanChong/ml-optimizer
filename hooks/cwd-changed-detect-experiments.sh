@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CwdChanged hook: auto-detect when user enters a project with existing experiments.
+# CwdChanged hook: auto-detect a project with existing experiments.
 # Outputs a context message so Claude knows about the existing optimization state.
 set -euo pipefail
 

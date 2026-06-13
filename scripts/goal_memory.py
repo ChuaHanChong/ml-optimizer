@@ -1,11 +1,31 @@
 #!/usr/bin/env python3
 """Goal anchoring and behavioral memory for the ML optimizer plugin.
 
-Maintains optimization-goals.json (goal anchor) and learned-behaviors.json
-(accumulated behavioral memory) per target project.  Provides validation
-of agent outputs against goals, and a compact summary for agent briefings.
+Maintains two project-scoped files under `<exp_root>/`: optimization-goals.json
+(the goal anchor, written once at Phase 0) and learned-behaviors.json
+(accumulated constraints, method outcomes, divergence patterns). Validates agent
+output against goals to catch drift (frozen-param changes, scope breaches,
+dead-end re-proposals, metric mismatches) and emits a compact agent briefing.
 
-Dependency-free — uses only the Python standard library.
+Usage:
+    python3 goal_memory.py <exp_root> init-goals <goals_json>                # Write optimization-goals.json
+    python3 goal_memory.py <exp_root> update-goals <updates_json>            # Merge partial updates into goals (mid-run)
+    python3 goal_memory.py <exp_root> read-goals                            # Print goals to stdout
+    python3 goal_memory.py <exp_root> log-behavior <category> <entry_json>  # Append a learned behavior
+    python3 goal_memory.py <exp_root> query-behaviors [category] [recent]   # Query behaviors (filter by category, last N)
+    python3 goal_memory.py <exp_root> validate-output <agent> <output_json> # Validate agent output against goals
+    python3 goal_memory.py <exp_root> summary                              # Compact agent briefing (goals + behaviors + dead-ends)
+    python3 goal_memory.py <exp_root> sync-from-errors                     # Pull OOM/divergence patterns from error_tracker
+
+Categories: hp_constraint, method_outcome, divergence_pattern,
+            resource_constraint, training_insight, scope_violation, goal_update.
+validate-output exits 0 = valid, 1 = script error, 2 = violations found.
+
+Examples:
+    python3 goal_memory.py <exp_root> init-goals '{"objective": {"primary_metric": "accuracy", "lower_is_better": false}}'
+    python3 goal_memory.py <exp_root> log-behavior resource_constraint '{"max_batch_size": 32, "notes": "OOM above 32"}'
+    python3 goal_memory.py <exp_root> validate-output hp-tune '{"configs": [{"lr": 0.1}]}'
+    python3 goal_memory.py <exp_root> summary
 """
 
 import fcntl
@@ -367,7 +387,7 @@ def _validate_hp_tune(output, frozen, behaviors, exp_root, violations, warnings)
         _scripts = Path(__file__).parent
         if str(_scripts) not in sys.path:
             sys.path.insert(0, str(_scripts))
-        from error_tracker import is_dead_end
+        from error_tracker import is_dead_end  # lazy: avoid circular dep with error_tracker
         for i, cfg in enumerate(configs):
             if not isinstance(cfg, dict):
                 continue
@@ -416,7 +436,7 @@ def _validate_research(output, scope, exp_root, violations, warnings):
                 _scripts = Path(__file__).parent
                 if str(_scripts) not in sys.path:
                     sys.path.insert(0, str(_scripts))
-                from error_tracker import is_dead_end
+                from error_tracker import is_dead_end  # lazy: avoid circular dep with error_tracker
                 if is_dead_end(exp_root, technique):
                     violations.append(
                         f"Proposal {i}: re-proposes dead-end technique '{technique}'"
@@ -579,7 +599,7 @@ def generate_summary(exp_root: str) -> str:
         _scripts = Path(__file__).parent
         if str(_scripts) not in sys.path:
             sys.path.insert(0, str(_scripts))
-        from error_tracker import get_dead_ends
+        from error_tracker import get_dead_ends  # lazy: avoid circular dep with error_tracker
         dead_ends = get_dead_ends(exp_root)
     except ImportError:
         pass
@@ -641,7 +661,7 @@ def generate_summary(exp_root: str) -> str:
 
     # --- Research agenda (top untried) ---
     try:
-        from error_tracker import get_agenda
+        from error_tracker import get_agenda  # lazy: avoid circular dep with error_tracker
         agenda = get_agenda(exp_root)
         untried = [a for a in agenda if a.get("status") == "untried"]
         untried.sort(key=lambda x: x.get("priority", 0), reverse=True)
@@ -674,7 +694,7 @@ def sync_from_errors(exp_root: str) -> dict:
         _scripts = Path(__file__).parent
         if str(_scripts) not in sys.path:
             sys.path.insert(0, str(_scripts))
-        from error_tracker import get_events, get_dead_ends
+        from error_tracker import get_events, get_dead_ends  # lazy: avoid circular dep with error_tracker
     except ImportError:
         return {"synced": 0, "skipped": 0, "error": "error_tracker not found"}
 

@@ -15,6 +15,12 @@ Agent(
 - `ready_for_baseline = true` → proceed to Phase 3
 - `status = "partial"` → log warnings to `<exp_root>/dev_notes.md`: "Prerequisites partial — proceeding anyway." Proceed to Phase 3.
 - `status = "failed"` → Classify the failure reason from `prerequisites.json`:
+  - **GitNexus missing or target index failed** (`code_graph.available = false` or `code_graph.target_indexed = false`): **Unrecoverable BLOCK** — GitNexus is a hard prerequisite (on par with "Phase 2 failed blocks the pipeline"); there is no grep/analyze fallback for code understanding. Do NOT proceed to Phase 3. Surface the install/repair guidance to the user:
+    ```
+    npm install -g gitnexus && gitnexus setup
+    ```
+    `gitnexus setup` auto-registers the gitnexus MCP server for Claude Code; the manual MCP fallback is `claude mcp add --transport stdio --scope user gitnexus gitnexus mcp`. If `code_graph.available` is true but `code_graph.target_indexed` is false, relay the `code_graph.notes` / error text as repair guidance (re-run the wrapper index: `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py index <project_root>`, optionally with `--force` to rebuild a stale index). Halt until the user installs/fixes GitNexus and re-runs Phase 2.
+  - **GitNexus MCP server not registered** (`code_graph.available = true`, `code_graph.mcp_registered = false`): **NOT a block** — `status` will not be `failed` for this alone. The CLI is installed but the MCP server is not registered with Claude Code; because querying the code graph is MCP-only, downstream agents (implement, research) will be unable to query it. Surface a warning and guide the user to run `gitnexus setup` (or `claude mcp add --transport stdio --scope user gitnexus gitnexus mcp`) and restart the Claude Code session so the MCP tools load. Log to dev_notes and proceed. (`code_graph.mcp_registered = null` means the check could not run — the `claude` CLI is absent — proceed silently.)
   - **Data path invalid / not found:** Attempt auto-recovery: search the project for data files, check the training script for auto-download patterns (CIFAR, MNIST, HuggingFace `load_dataset`). If a plausible path is found, update `train_data_path`/`val_data_path` and re-run Phase 2. If not found: BLOCK with AskUserQuestion.
   - **Dependency install failed:** Retry install once with `--no-deps`, then check if import still fails. If still fails: BLOCK with AskUserQuestion.
   - **Environment not found:** If env_manager is conda, auto-create the environment. If creation also fails: BLOCK.

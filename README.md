@@ -44,6 +44,7 @@ Inspired by [SakanaAI ShinkaEvolve](https://github.com/SakanaAI/ShinkaEvolve) an
 | **Goal Anchoring** | `optimization-goals.json` written at Phase 0; all agents read it before acting. Post-dispatch validation catches frozen param changes, scope breaches, dead-end re-proposals |
 | **Cross-Session Learning** | claude-mem recalls insights from prior sessions. Behavioral memory tracks what works across runs |
 | **Behavioral Memory** | `learned-behaviors.json` accumulates HP constraints, method outcomes, divergence patterns. All agents have `memory: local` for persistent role-specific learning |
+| **GitNexus Code Graph** | **Required** MCP + CLI that indexes a repo into a queryable code knowledge graph. The pipeline indexes every code repo (target + every cloned reference repo); implement/research agents must query structure, call-graph, and blast-radius before editing. No grep/analyze fallback — Phase 2 verifies it and blocks if absent |
 | **Resumable Subagents** | 5 persistent agents (research, implement, tuning, analysis, monitor) resumed via `SendMessage` — preserving accumulated context across the pipeline |
 | **Inter-Agent Relay** | Orchestrator relays findings between agents via `CONTEXT FROM OTHER AGENTS:` sections — analyze findings reach hp-tune, monitor OOM info reaches hp-tune, research proposals reach implement |
 
@@ -54,22 +55,36 @@ Inspired by [SakanaAI ShinkaEvolve](https://github.com/SakanaAI/ShinkaEvolve) an
 - **Python 3.10+**
 - **Claude Code** — the plugin runs inside Claude Code sessions
 - **git** — used for branch isolation when implementing research proposals
+- **GitNexus** — **required** for code understanding. The pipeline indexes every code repo (the target project and every cloned reference repo) into a queryable code knowledge graph, and the implement/research agents must query it (MCP-only — via `mcp__gitnexus__context`/`query`/`impact`; there is no CLI-query fallback) before adapting or editing code. There is **no grep/analyze fallback**. Phase 2 verifies the CLI is installed and blocks the pipeline if absent. Install:
+  ```bash
+  npm install -g gitnexus && gitnexus setup
+  ```
+  `gitnexus setup` auto-registers the gitnexus MCP server for Claude Code (manual fallback for MCP registration only: `claude mcp add --transport stdio --scope user gitnexus gitnexus mcp`). `gitnexus setup` also installs gitnexus's own global skills (7) and PreToolUse/PostToolUse hooks into `~/.claude/`, affecting all Claude Code projects. A freshly-registered MCP server becomes available only after a Claude Code session restart. Indexing is non-invasive (`gitnexus analyze --index-only`) — it doesn't modify the indexed repo's CLAUDE.md/AGENTS.md or install `.claude/` skills there. The `.gitnexus/` index artifacts are auto-excluded from git, but don't commit them.
 - **Your ML project** — the plugin brings its own orchestration (stdlib only); your training code brings its own stack (PyTorch, TensorFlow, scikit-learn, XGBoost, LightGBM, etc.)
 
-#### MCP Servers (Recommended)
+#### MCP Servers (gitnexus required; alphaxiv/context7/claude-mem recommended)
 
-These MCP servers enhance the plugin's capabilities. The plugin works without them but benefits significantly from their presence. Install them separately — they are **not** bundled with the plugin.
+These MCP servers integrate with the plugin. **gitnexus is required** (see [Prerequisites](#prerequisites)); the rest are recommended — the plugin works without them but benefits significantly from their presence. Install them separately — they are **not** bundled with the plugin.
 
-| MCP Server | What it enables | Used by |
-|------------|-----------------|---------|
-| **alphaxiv** | arXiv paper search, paper content extraction, PDF Q&A, GitHub repo exploration | research-agent (6 tools), implement-agent (2 tools) |
-| **context7** | Framework API documentation lookup (PyTorch, TensorFlow, etc.) | research-agent, implement-agent |
-| **claude-mem** | Cross-session memory — recalls past optimization sessions, avoids re-proposing failed techniques | research-agent, orchestrator |
+| MCP Server | What it enables | Used by | Required? |
+|------------|-----------------|---------|-----------|
+| **alphaxiv** | arXiv paper search, paper content extraction, PDF Q&A, GitHub repo exploration | research-agent (6 tools), implement-agent (2 tools) | No — falls back to WebSearch/WebFetch |
+| **gitnexus** | Code knowledge graph — index a repo and query its structure, call-graph, and blast-radius (`context`/`query`/`impact`) | implement-agent (3 tools), research-agent (3 tools) | **Yes** — required; the pipeline indexes every code repo and agents must query it to understand code |
+| **context7** | Framework API documentation lookup (PyTorch, TensorFlow, etc.) | research-agent, implement-agent | No — falls back to WebSearch |
+| **claude-mem** | Cross-session memory — recalls past optimization sessions, avoids re-proposing failed techniques | research-agent, orchestrator | No — works without but loses cross-session learning |
 
 **Install alphaxiv:**
 ```bash
 claude mcp add --transport http --scope user alphaxiv https://api.alphaxiv.org/mcp/v1
 ```
+
+**Install gitnexus (required):**
+```bash
+npm install -g gitnexus && gitnexus setup
+```
+`gitnexus setup` auto-registers the gitnexus MCP server for Claude Code (manual fallback for MCP registration only: `claude mcp add --transport stdio --scope user gitnexus gitnexus mcp`). It also installs gitnexus's own global skills (7) and PreToolUse/PostToolUse hooks into `~/.claude/`, affecting all Claude Code projects; a freshly-registered MCP server becomes available only after a Claude Code session restart.
+
+GitNexus is **required** — there is no grep/analyze fallback for code understanding. Phase 2 verifies the CLI is installed and blocks the pipeline if absent (if the CLI is present but the MCP server isn't registered, Phase 2 only WARNS — recovery is `gitnexus setup` then a session restart). The pipeline indexes every code repo (the target project and every cloned reference repo); the implement/research agents must query the graph (MCP-only — via `mcp__gitnexus__context`/`query`/`impact`; no CLI-query fallback) before adapting or editing code. Indexing is non-invasive (`gitnexus analyze --index-only`) — it doesn't modify the indexed repo's CLAUDE.md/AGENTS.md or install `.claude/` skills there. The `.gitnexus/` index artifacts are auto-excluded from git, but don't commit them.
 
 **Install context7:** Install from the official Claude Code marketplace via `/plugin` → Discover → search for "context7".
 
@@ -172,8 +187,8 @@ Ten agent types in `agents/`. The plugin ships `settings.json` with `"agent": "m
 | Agent | Tools | Model | Effort | Preloaded Skill |
 |-------|-------|-------|--------|-----------------|
 | **`orchestrator-agent`** | Agent, Read, Write, Edit, Bash, Glob, Grep, Skill, WebSearch, WebFetch | **opus[1m]** | xhigh | `ml-optimizer:orchestrate` + verification |
-| `research-agent` | WebSearch, WebFetch, Read, Write, Bash, Glob, Grep, Skill + alphaxiv MCP (6) | opus[1m] | xhigh | `ml-optimizer:research` + mem-search + verification |
-| `implement-agent` | Bash, Read, Write, Edit, LSP, Glob, Grep, Skill, WebSearch, WebFetch + alphaxiv MCP (2) | opus[1m] | xhigh | `ml-optimizer:implement` + evolve + shinka-* + debugging + verification + karpathy-guidelines |
+| `research-agent` | WebSearch, WebFetch, Read, Write, Bash, Glob, Grep, Skill + alphaxiv MCP (6) + gitnexus MCP (3) | opus[1m] | xhigh | `ml-optimizer:research` + mem-search + verification |
+| `implement-agent` | Bash, Read, Write, Edit, LSP, Glob, Grep, Skill, WebSearch, WebFetch + alphaxiv MCP (2) + gitnexus MCP (3) | opus[1m] | xhigh | `ml-optimizer:implement` + evolve + shinka-* + debugging + verification + karpathy-guidelines |
 | `tuning-agent` | Read, Write, Bash, Glob, Grep, Skill, WebSearch, WebFetch | opus[1m] | xhigh | `ml-optimizer:hp-tune` + mem-search + verification |
 | `analysis-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | opus[1m] | xhigh | `ml-optimizer:analyze` + mem-search + verification |
 | `report-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | opus[1m] | xhigh | `ml-optimizer:report` + verification |
@@ -196,6 +211,7 @@ All scripts in `scripts/` use only the standard library and work as both importa
 | `scripts/result_analyzer.py` | `python3 scripts/result_analyzer.py <results_dir> <metric> [baseline_id] [lower_is_better]` — also: `compare <exp_id_1> <exp_id_2> [metric]` |
 | `scripts/experiment_setup.py` | `python3 scripts/experiment_setup.py <project_root> <train_command> [gpu_id] [config_json]` |
 | `scripts/implement_utils.py` | `python3 scripts/implement_utils.py <findings.md> '<indices_json>'` — also: `clone <url> <dest>`, `analyze <path>`, `diff <project_root> <branch>` |
+| `scripts/gitnexus_utils.py` | `python3 scripts/gitnexus_utils.py available\|mcp-registered\|require\|index <path> [--force]\|is-indexed <path>` — required GitNexus code-graph helper. `available` checks the CLI is on PATH; `mcp-registered` reports whether the gitnexus MCP server is registered (`{"registered": true\|false\|null}`, always exits 0); `require` reports availability plus `mcp_registered` and exits nonzero only when the CLI is absent; `index` runs `gitnexus analyze <path> --index-only` (non-invasive — no edits to the indexed repo's CLAUDE.md/AGENTS.md, no `.claude/` skill install; auto-adds `.gitnexus/` to git exclude; skips already-indexed paths unless `--force`); `is-indexed` checks for an existing index. Never raises — failures reported via the returned dict. The skills treat `available()==False` / index `success: false` as a hard error (halt with install/repair guidance), not a fallback |
 | `scripts/pipeline_state.py` | `python3 scripts/pipeline_state.py <exp_root> validate\|save\|load\|cleanup\|verify-baseline\|gate\|log-gate\|log-decision\|replay-check\|decisions` |
 | `scripts/schema_validator.py` | `python3 scripts/schema_validator.py <filepath> result\|baseline\|manifest\|prerequisites [--strict]` — also: `relay <route> <json>` for inter-agent relay validation. `--strict` enforces completeness |
 | `scripts/plot_results.py` | `python3 scripts/plot_results.py <results_dir> <metric> comparison\|timeline\|sensitivity <hp>\|progress [--higher-is-better]` |
@@ -403,6 +419,7 @@ Hooks read `active` to resolve the current run. Old single-run format (`{"exp_ro
 
 ### Key Design Patterns
 
+- **GitNexus code-graph understanding (required)**: **Required** MCP + CLI that indexes a repo into a queryable code knowledge graph (mirrors the alphaxiv integration). It is a hard prerequisite — on par with git and dynamic workflows — with **no grep/analyze fallback for code understanding**. **Querying is MCP-only by design**: agents query exclusively via `mcp__gitnexus__context`/`mcp__gitnexus__query`/`mcp__gitnexus__impact` — there is no CLI-query fallback. If the MCP server isn't registered or fails, code understanding fails; recovery is `gitnexus setup` then a Claude Code session restart (MCP tools load at session start). Phase 2 verifies the CLI (`gitnexus_utils.py available`) and blocks the pipeline as an unrecoverable prerequisite failure if it's absent; it is best-effort about MCP registration — if the CLI is present but the MCP server isn't registered (`mcp-registered`/`require` reports `mcp_registered: false`), it WARNS rather than hard-blocking. Every code repo is indexed: the target project once at Phase 2 (`gitnexus_utils.py index <project_root>`), and every reference repo immediately after clone. Indexing is **non-invasive** (`gitnexus analyze --index-only`): it doesn't modify the indexed repo's CLAUDE.md/AGENTS.md or install `.claude/` skills there. The implement agent indexes the cloned reference repo and the target repo, then **must** query structure/call-graph (`context`/`query`) and blast-radius (`impact`) before editing; the research agent indexes candidate repos and **must** query them for a feasibility read. `scripts/gitnexus_utils.py` (`available`/`mcp-registered`/`require`/`index`/`is-indexed`) never raises — but the skills treat `available()==False` / index `success: false` as a hard error (halt with install/repair guidance), not a fallback. `implement_utils.py analyze` remains only for framework detection — not a gitnexus fallback. `.gitnexus/` index artifacts are auto-excluded from git by the wrapper but still must not be committed.
 - **Non-git fallback**: If the project isn't a git repo, file backups replace branch isolation. Experiments run sequentially.
 - **Metric routing**: Monitor/divergence always uses loss. Analyze/hp-tune use the user's `primary_metric`.
 - **OOM feedback loop**: When experiments OOM, batch size is recorded. Next hp-tune call receives `max_batch_size` to avoid re-proposing failing configs.
@@ -427,9 +444,10 @@ Hooks read `active` to resolve the current run. Old single-run format (`{"exp_ro
 ### Gotchas
 
 - `scripts/detect_divergence.py` CLI takes a **JSON string**, not a file path: `'[0.5, 0.4, 100.0]'`
-- `scripts/implement_utils.py` has **three CLI modes**: default (parse proposals), `clone <url> <dest>`, and `analyze <path>`
+- `scripts/implement_utils.py` has **four CLI modes**: default (parse proposals), `clone <url> <dest>`, `analyze <path>`, and `diff <project_root> <branch>`
 - **Metric routing is split**: monitor uses loss, analyze uses primary_metric. Mixing these up causes silent wrong behavior.
 - **Branch experiments are independent**: results on `ml-opt/branch-a` don't predict what works on `ml-opt/branch-b`.
+- **GitNexus querying is MCP-only**: agents query the code graph via `mcp__gitnexus__context`/`query`/`impact` — there is no CLI-query fallback. If the MCP server isn't registered or fails, code understanding fails; recovery is `gitnexus setup` then a Claude Code session restart (MCP tools load at session start). Phase 2 hard-blocks only on a missing CLI; an unregistered MCP server only triggers a warning. Indexing goes through `scripts/gitnexus_utils.py index` (`gitnexus analyze --index-only`) and is non-invasive — it doesn't touch the indexed repo's CLAUDE.md/AGENTS.md. `.gitnexus/` is auto-excluded from git but must not be committed.
 - **Tabular ML frameworks** (sklearn, XGBoost, LightGBM) skip divergence monitoring entirely.
 - **Multiple research findings files**: `research-findings.md` (Phase 5), `research-findings-method-proposals.md` (pre-loop), `research-findings-method-proposals-iter<N>.md` (mid-loop). Deduplication checks all of them.
 - **`scripts/goal_memory.py validate-output` returns exit code 2** for violations (0=valid, 1=script error, 2=violations). Imports `scripts/error_tracker.py` lazily for dead-end checks — both must be in `scripts/`.

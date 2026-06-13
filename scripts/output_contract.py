@@ -1,29 +1,23 @@
 #!/usr/bin/env python3
 """Per-agent output contracts — single source of truth.
 
-Defines expected output files for each agent, provides injection text for
-SubagentStart hooks, and verifies outputs exist for SubagentStop hooks.
-
-Dependency-free — uses only the Python standard library.
+Defines the required output files for each pipeline agent and shares them
+between SubagentStart (injection) and SubagentStop (verification). Supports
+glob/dir/any_of/required_if entries for mode-dependent and conditional outputs.
 
 Usage:
-    # Injection text (for SubagentStart hook)
-    python3 output_contract.py inject <exp_root> <agent_name> [--round-dir X] [--exp-id X]
+    python3 output_contract.py inject <exp_root> <agent_name> [--round-dir X] [--exp-id X]  # Print the output contract as injection text
+    python3 output_contract.py check <exp_root> <agent_name> [--round-dir X] [--exp-id X]   # Verify contracted outputs exist (exit 2 if missing)
 
-    # Check outputs exist (for SubagentStop hook)
-    python3 output_contract.py check <exp_root> <agent_name> [--round-dir X] [--exp-id X]
-
-Exit codes:
-    0  — success (inject) or all outputs present (check)
-    1  — usage error or unknown command
-    2  — missing outputs (check only)
+Examples:
+    python3 output_contract.py inject <exp_root> experiment-agent --round-dir round-1-hp --exp-id exp-001
+    python3 output_contract.py check <exp_root> baseline-agent
 """
 
 import glob as glob_mod
 import json
 import os
 import sys
-from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Contracts

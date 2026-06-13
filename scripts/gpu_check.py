@@ -1,22 +1,26 @@
 #!/usr/bin/env python3
 """Check GPU availability via nvidia-smi.
 
-Parses nvidia-smi output into JSON with per-GPU info (index, name, memory, utilization).
-Flags idle GPUs (below threshold% memory usage) as available for experiments.
+Runs nvidia-smi, parses its CSV output, and marks each GPU available or busy
+based on utilization and memory-usage thresholds. Returns the per-GPU status,
+the indices of free GPUs, and a free count for parallel-experiment scheduling.
 
 Usage:
-    python3 gpu_check.py               # Default: 30% memory threshold
-    python3 gpu_check.py <threshold>   # Custom memory threshold (percent)
+    python3 gpu_check.py                                  # Defaults: util < 30%, memory < 80%
+    python3 gpu_check.py <util_threshold>                 # Override utilization-percent cutoff (integer)
+    python3 gpu_check.py <util_threshold> <memory_threshold>  # Also override memory-percent cutoff (float)
+
+A GPU is "available" when utilization is below util_threshold AND memory usage
+is below memory_threshold. Output is JSON on stdout.
 
 Examples:
-    python3 gpu_check.py        # Idle = memory usage < 30%
-    python3 gpu_check.py 50     # Idle = memory usage < 50%
-
-Output: JSON with "gpus" list and "available" indices.
+    python3 gpu_check.py
+    python3 gpu_check.py 20
+    python3 gpu_check.py 20 70.0
 """
 
-import subprocess
 import json
+import subprocess
 import sys
 
 

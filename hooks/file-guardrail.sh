@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# File path guardrail hook for ml-optimizer.
+# PreToolUse hook: file-path write guardrail for ml-optimizer.
 # Prevents writes outside the project directory and protects critical files.
 # Exit 0 = allow, Exit 2 = block.
 

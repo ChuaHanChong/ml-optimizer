@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stop hook: verify final report exists if experiments were run.
+# Stop hook: verify the final report exists if experiments were run.
 # Exit 0 = allow stop, Exit 2 = block stop.
 
 set -euo pipefail

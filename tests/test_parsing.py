@@ -1,9 +1,4 @@
-"""Consolidated tests for parse_logs.py and detect_divergence.py.
-
-Covers: log parsing (kv, json, csv, hf_trainer, xgboost, lightgbm, tqdm,
-python_logging), format auto-detection, divergence detection (NaN, Inf,
-explosion, plateau, drift), model-category thresholds, edge cases, and CLI.
-"""
+"""Tests for parse_logs.py and detect_divergence.py."""
 
 import json
 import math
@@ -13,6 +8,7 @@ import warnings
 import pytest
 
 from conftest import FIXTURES
+
 from detect_divergence import (
     MODEL_CATEGORY_DEFAULTS,
     check_divergence,
@@ -54,6 +50,7 @@ class TestLogParsing:
         ("loss=abc lr=0.001", {"lr": 0.001}),  # non-numeric skipped
     ])
     def test_parse_kv_line(self, line, expected):
+        """key=value lines parse numeric fields and skip non-numeric ones."""
         metrics = parse_kv_line(line)
         for k, v in expected.items():
             assert abs(metrics[k] - v) < 1e-6
@@ -77,6 +74,7 @@ class TestLogParsing:
         ("not json", {}, []),
     ])
     def test_parse_json_line(self, line, expected_keys, excluded):
+        """JSON lines parse numeric fields and exclude non-numeric ones; bad JSON yields empty."""
         metrics = parse_json_line(line)
         for k, v in expected_keys.items():
             assert metrics[k] == v
@@ -93,6 +91,7 @@ class TestLogParsing:
         ([], 0, []),  # empty
     ])
     def test_parse_csv_lines(self, lines, exp_len, checks):
+        """CSV lines parse header-keyed float columns and skip non-float values."""
         results = parse_csv_lines(lines)
         assert len(results) == exp_len
         for key, idx, val in checks:
@@ -108,6 +107,7 @@ class TestLogParsing:
         ("loss: 0.5", {}),  # not hf_trainer format
     ])
     def test_parse_hf_trainer_line(self, line, expected):
+        """HuggingFace Trainer dict lines parse numeric fields and filter the rest."""
         assert parse_hf_trainer_line(line) == expected
 
     # -- xgboost/lightgbm format --
@@ -120,6 +120,7 @@ class TestLogParsing:
         ("epoch=1 loss=0.5", {}),  # non-bracket
     ])
     def test_parse_xgboost_line(self, line, expected):
+        """Bracketed XGBoost/LightGBM lines parse iteration and metric fields."""
         assert parse_xgboost_line(line) == expected
 
     # -- tqdm format --
@@ -131,6 +132,7 @@ class TestLogParsing:
          {"acc": 85.2}, ["loss"]),
     ])
     def test_parse_tqdm_line(self, line, expected_keys, excluded):
+        """tqdm progress-bar postfix metrics parse, skipping non-numeric values."""
         metrics = parse_tqdm_line(line)
         for k, v in expected_keys.items():
             assert metrics[k] == v
@@ -147,6 +149,7 @@ class TestLogParsing:
         ("Just some random text", {}, False),
     ])
     def test_parse_python_logging_line(self, line, expected_keys, has_wall_time):
+        """Timestamped logging lines parse metrics and derive a wall_time."""
         metrics = parse_python_logging_line(line)
         for k, v in expected_keys.items():
             assert abs(metrics[k] - v) < 1e-6
@@ -177,6 +180,7 @@ class TestLogParsing:
          3, [("iteration", 0, 0.0), ("train-logloss", 2, 0.600)]),
     ])
     def test_parse_log_formats(self, tmp_path, write_content, exp_len, checks):
+        """parse_log auto-detects and parses each supported file format end-to-end."""
         f = tmp_path / "log.txt"
         f.write_text(write_content)
         records = parse_log(str(f))
@@ -252,9 +256,11 @@ class TestFormatDetection:
           "[1]\ttrain-auc:0.55\tval-auc:0.52"], "xgboost"),
     ])
     def test_detect_format(self, lines, expected_format):
+        """Each sample line set is classified into its expected format."""
         assert detect_format(lines) == expected_format
 
     def test_detect_format_empty(self):
+        """Detecting format on empty input returns a string."""
         result = detect_format([])
         assert isinstance(result, str)
 
@@ -274,6 +280,7 @@ class TestDivergenceDetection:
         ([1.0, 0.9, float("inf"), 0.7], "Inf detected", 2),
     ])
     def test_detect_nan_inf(self, values, expected_reason, expected_step):
+        """NaN/Inf detection reports divergence at the offending step."""
         result = detect_nan_inf(values)
         assert result is not None
         assert result["diverged"] is True
@@ -281,6 +288,7 @@ class TestDivergenceDetection:
         assert result["step"] == expected_step
 
     def test_detect_nan_inf_clean_and_empty(self):
+        """Clean and empty sequences report no NaN/Inf divergence."""
         assert detect_nan_inf([1.0, 0.9, 0.8, 0.7]) is None
         assert detect_nan_inf([]) is None
 
@@ -296,6 +304,7 @@ class TestDivergenceDetection:
         ([0.01] * 15 + [1.0], 10, 5.0, True, True),  # real explosion
     ])
     def test_detect_explosion(self, values, window, threshold, lower, should_explode):
+        """Explosion detection fires on metric spikes and ignores healthy/short series."""
         result = detect_explosion(values, window=window, threshold=threshold,
                                   lower_is_better=lower)
         if should_explode:
@@ -304,6 +313,7 @@ class TestDivergenceDetection:
             assert result is None
 
     def test_detect_explosion_boundary_window(self):
+        """Explosion needs a full window; one fewer point does not trigger."""
         window = 10
         values = [1.0] * window + [50.0]
         assert detect_explosion(values, window=window, threshold=5.0) is not None
@@ -319,6 +329,7 @@ class TestDivergenceDetection:
         ([50, 55, 60, 65, 70, 75, 80] + [80] * 25, 20, False, True),  # flat HIB
     ])
     def test_detect_plateau(self, values, patience, lower, should_plateau):
+        """Plateau detection fires on flat metrics and ignores improving/short series."""
         result = detect_plateau(values, patience=patience, lower_is_better=lower)
         if should_plateau:
             assert result is not None and result["diverged"] is True
@@ -327,6 +338,7 @@ class TestDivergenceDetection:
             assert result is None
 
     def test_detect_plateau_boundary_patience(self):
+        """Plateau needs patience flat steps; one fewer does not trigger."""
         patience = 20
         values = [1.0] + [1.0] * patience
         assert detect_plateau(values, patience=patience, min_delta=1e-6) is not None
@@ -341,6 +353,7 @@ class TestDivergenceDetection:
         ([80 - i * 0.3 for i in range(60)], False, True),  # decreasing accuracy
     ])
     def test_detect_gradual_drift(self, values, lower, should_drift):
+        """Gradual-drift detection fires on a sustained adverse slope only."""
         result = detect_gradual_drift(values, window=50, min_slope_ratio=0.1,
                                       lower_is_better=lower)
         if should_drift:
@@ -387,6 +400,7 @@ class TestDivergenceDetection:
         ([0.5] * 25, {"plateau_patience": 20}, True, "plateau"),
     ])
     def test_check_divergence(self, values, kwargs, expected_diverged, reason_contains):
+        """The composite check reports the expected divergence type or health."""
         result = check_divergence(values, **kwargs)
         assert result["diverged"] is expected_diverged
         assert reason_contains.lower() in result["reason"].lower()
@@ -411,6 +425,7 @@ class TestDivergenceDetection:
         ("lightgbm_session_log.txt", "valid_1_binary_logloss", True),
     ])
     def test_tree_fixture_no_divergence(self, fixture, metric, lower):
+        """Healthy tree-model training fixtures report no divergence."""
         records = parse_log(str(FIXTURES / fixture))
         values = extract_metric_trajectory(records, metric)
         assert check_divergence(values, lower_is_better=lower)["diverged"] is False
@@ -430,6 +445,7 @@ class TestModelCategoryThresholds:
         (None, {}),
     ])
     def test_get_thresholds(self, category, expected):
+        """Each model category returns its threshold overrides; None returns empty."""
         t = get_thresholds_for_category(category)
         for k, v in expected.items():
             assert t[k] == v
@@ -496,6 +512,7 @@ class TestEdgeCases:
         parse_log(str(f_met))
 
     def test_kv_fallback_warns_on_empty(self, tmp_path):
+        """A metric-free log yields no records and warns about the kv fallback."""
         f = tmp_path / "weird.log"
         f.write_text("This is just a plain text log\nNo metrics here\nJust words\n")
         with warnings.catch_warnings(record=True) as w:
@@ -521,6 +538,7 @@ class TestEdgeCases:
         ([1.0] * 30, True, "plateau"),  # constant values
     ])
     def test_divergence_edge_cases(self, values, expected_diverged, reason_contains):
+        """Short, NaN/Inf, and constant series produce the expected divergence verdict."""
         result = check_divergence(values, plateau_patience=20)
         assert result["diverged"] is expected_diverged
         assert reason_contains.lower() in result["reason"].lower()
@@ -549,6 +567,7 @@ class TestCLI:
           "--model-category", "rl", "--explosion-threshold", "3.0"], True),
     ])
     def test_detect_divergence_cli(self, run_main, args, expected_diverged):
+        """The divergence CLI honors metric polarity and threshold flags."""
         r = run_main("detect_divergence.py", *args)
         assert r.returncode == 0
         assert json.loads(r.stdout)["diverged"] is expected_diverged
@@ -569,6 +588,7 @@ class TestOverfittingDetection:
     """Tests for check_overfitting()."""
 
     def test_classic_overfitting(self):
+        """Improving train with worsening val is flagged as overfitting with a severity."""
         train = [0.5, 0.4, 0.3, 0.2, 0.15, 0.1, 0.08, 0.06]
         val = [0.5, 0.42, 0.38, 0.40, 0.45, 0.50, 0.55, 0.60]
         result = check_overfitting(train, val, patience=5)
@@ -576,57 +596,67 @@ class TestOverfittingDetection:
         assert result["severity"] in ("mild", "moderate", "severe")
 
     def test_both_improving(self):
+        """When train and val both improve, no overfitting is reported."""
         train = [0.5, 0.4, 0.3, 0.2, 0.15, 0.1]
         val = [0.6, 0.5, 0.4, 0.35, 0.3, 0.25]
         result = check_overfitting(train, val, patience=3)
         assert result["overfitting"] is False
 
     def test_below_patience(self):
+        """Fewer worsening val steps than patience does not trigger overfitting."""
         train = [0.5, 0.4, 0.3, 0.2]
         val = [0.5, 0.55, 0.6, 0.65]
         result = check_overfitting(train, val, patience=5)
         assert result["overfitting"] is False
 
     def test_exactly_at_patience(self):
+        """Exactly patience worsening val steps triggers overfitting."""
         train = [0.5, 0.4, 0.3, 0.2, 0.15, 0.1]
         val = [0.5, 0.55, 0.6, 0.65, 0.7, 0.75]
         result = check_overfitting(train, val, patience=5)
         assert result["overfitting"] is True
 
     def test_interrupted_pattern(self):
+        """A val improvement mid-run resets the worsening streak, so no overfitting."""
         train = [0.5, 0.4, 0.3, 0.35, 0.3, 0.2, 0.15]
         val = [0.5, 0.55, 0.6, 0.55, 0.6, 0.65, 0.7]
         result = check_overfitting(train, val, patience=5)
         assert result["overfitting"] is False  # pattern interrupted at step 3
 
     def test_higher_is_better(self):
+        """For a higher-is-better metric, rising train with falling val is overfitting."""
         train = [50, 60, 70, 80, 85, 90, 92]
         val = [48, 55, 60, 58, 55, 52, 50]
         result = check_overfitting(train, val, patience=4, lower_is_better=False)
         assert result["overfitting"] is True
 
     def test_empty_sequences(self):
+        """Empty train/val sequences report no overfitting with an insufficient-data reason."""
         result = check_overfitting([], [], patience=3)
         assert result["overfitting"] is False
         assert "Insufficient" in result["reason"]
 
     def test_short_sequences(self):
+        """Sequences shorter than patience report no overfitting."""
         result = check_overfitting([0.5, 0.4], [0.5, 0.6], patience=5)
         assert result["overfitting"] is False
 
     def test_nan_filtering(self):
+        """NaN-containing step pairs are filtered before the overfitting check."""
         train = [0.5, float('nan'), 0.3, 0.2, 0.15, 0.1, 0.08, 0.06]
         val = [0.5, float('nan'), 0.38, 0.40, 0.45, 0.50, 0.55, 0.60]
         result = check_overfitting(train, val, patience=4)
         assert result["overfitting"] is True  # NaN pairs filtered, enough remain
 
     def test_mismatched_lengths(self):
+        """Train and val of different lengths are truncated to the shorter one."""
         train = [0.5, 0.4, 0.3, 0.2, 0.15, 0.1, 0.08, 0.06, 0.05, 0.04]
         val = [0.5, 0.55, 0.6, 0.65, 0.7, 0.75]  # shorter
         result = check_overfitting(train, val, patience=5)
         assert result["overfitting"] is True
 
     def test_severity_mild(self):
+        """Small val worsening relative to train improvement is classified mild."""
         # Val worsens less than 2x train improvement
         train = [0.5, 0.45, 0.4, 0.35, 0.3, 0.25]
         val = [0.5, 0.52, 0.54, 0.56, 0.58, 0.60]
@@ -635,6 +665,7 @@ class TestOverfittingDetection:
         assert result["severity"] == "mild"
 
     def test_min_gap_filter(self):
+        """A val worsening below min_gap is ignored and reports no overfitting."""
         # Tiny val worsening (0.001 per step) doesn't trigger with min_gap=0.01
         train = [0.5, 0.45, 0.4, 0.35, 0.3, 0.25]
         val = [0.5, 0.501, 0.502, 0.503, 0.504, 0.505]
@@ -642,6 +673,7 @@ class TestOverfittingDetection:
         assert result["overfitting"] is False
 
     def test_cli_overfitting(self, run_main):
+        """The overfitting CLI flags worsening val against improving train."""
         r = run_main("detect_divergence.py", "--check-overfitting",
                      "[0.5,0.4,0.3,0.2,0.15,0.1]", "[0.5,0.55,0.6,0.65,0.7,0.75]")
         assert r.returncode == 0
@@ -649,6 +681,7 @@ class TestOverfittingDetection:
         assert data["overfitting"] is True
 
     def test_cli_overfitting_healthy(self, run_main):
+        """The overfitting CLI reports no overfitting when train and val match."""
         r = run_main("detect_divergence.py", "--check-overfitting",
                      "[0.5,0.4,0.3,0.2]", "[0.5,0.4,0.3,0.2]")
         assert r.returncode == 0

@@ -1,9 +1,4 @@
-"""End-to-end pipeline integration tests using Tiny ResNet on CIFAR-10.
-
-Exercises key pipeline phases against a real ML model, verifying that the
-existing Python scripts (parse_logs, detect_divergence, experiment_setup,
-result_analyzer, gpu_check) work correctly with real training output.
-"""
+"""Tests for the end-to-end pipeline — Tiny ResNet on CIFAR-10 integration."""
 
 import hashlib
 import importlib.util
@@ -23,10 +18,13 @@ import pytest
 import torch
 import yaml
 
+from conftest import (
+    FIXTURES, HOOKS_DIR, PLUGIN_ROOT, SCRIPTS_DIR,
+    create_experiment_dirs, setup_experiment, _write_result,
+)
 from parse_logs import parse_log, extract_metric_trajectory
 from detect_divergence import check_divergence, check_overfitting
 from experiment_setup import generate_script, next_experiment_id
-from conftest import create_experiment_dirs, setup_experiment
 from result_analyzer import (
     analyze, load_results, rank_by_metric, compute_deltas,
     rank_methods_for_stacking, group_by_method_tier,
@@ -36,7 +34,6 @@ from result_analyzer import (
 from pipeline_state import save_state, load_state, validate_phase_requirements, cleanup_stale
 from schema_validator import validate_result, validate_baseline, validate_manifest, validate_file, validate_prerequisites
 from plot_results import plot_metric_comparison, plot_improvement_timeline, plot_hp_sensitivity, plot_progress_chart
-from conftest import FIXTURES, _write_result
 from implement_utils import (
     parse_research_proposals, detect_conflicts, validate_syntax,
     write_manifest, backup_files, is_git_repo,
@@ -45,6 +42,7 @@ from error_tracker import (
     create_event, log_event, get_events, detect_patterns,
     log_suggestion, get_suggestion_history, summarize_session,
     compute_success_metrics, rank_suggestions,
+    log_dead_end, is_dead_end,
 )
 from prerequisites_check import scan_imports, detect_dataset_format_project, detect_env_manager
 from goal_memory import init_goals, load_goals, generate_summary, validate_agent_output
@@ -52,6 +50,20 @@ from dashboard import generate_results_table
 
 
 RESNET_FIXTURE = FIXTURES / "tiny_resnet_cifar10"
+
+
+def _load_fixture_model_module():
+    """Load the tiny-resnet fixture's model.py from its path without touching sys.path.
+
+    Uses importlib so the fixture module resolves by file location rather than
+    requiring the fixture directory to be importable on sys.path.
+    """
+    spec = importlib.util.spec_from_file_location(
+        "tiny_resnet_model", str(RESNET_FIXTURE / "model.py")
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def has_gpu():
@@ -151,23 +163,25 @@ class TestPhase1ModelUnderstanding:
     """Phase 1: Verify project files are discoverable and parseable."""
 
     def test_model_file_exists(self):
+        """The fixture's model.py is present."""
         assert (RESNET_FIXTURE / "model.py").exists()
 
     def test_model_has_nn_module(self):
+        """The fixture model defines a TinyResNet nn.Module."""
         content = (RESNET_FIXTURE / "model.py").read_text()
         assert "nn.Module" in content
         assert "class TinyResNet" in content
 
     def test_config_parseable(self):
+        """The fixture config.yaml parses and carries the expected model and training keys."""
         config = yaml.safe_load((RESNET_FIXTURE / "config.yaml").read_text())
         assert config["model"]["type"] == "tiny_resnet"
         assert config["training"]["lr"] == 0.01
         assert config["data"]["dataset"] == "cifar10"
 
     def test_model_instantiates(self):
-        sys.path.insert(0, str(RESNET_FIXTURE))
-        from model import get_model
-        model = get_model()
+        """The fixture model instantiates with a plausible param count and correct forward shape."""
+        model = _load_fixture_model_module().get_model()
         # Verify parameter count is in expected range
         num_params = sum(p.numel() for p in model.parameters())
         assert 50_000 < num_params < 150_000, f"Param count {num_params} outside expected range"
@@ -179,7 +193,7 @@ class TestPhase1ModelUnderstanding:
     def test_gpu_check_script(self):
         """gpu_check.py should return valid JSON with gpus key."""
         result = subprocess.run(
-            [_python, str(Path(__file__).parent.parent / "scripts" / "gpu_check.py")],
+            [_python, str(SCRIPTS_DIR / "gpu_check.py")],
             capture_output=True, text=True, timeout=15,
         )
         assert result.returncode == 0
@@ -196,6 +210,7 @@ class TestPhase3Baseline:
     """Phase 3: Run baseline training and verify log parsing + divergence check."""
 
     def test_baseline_training(self, project_dir, shared_data_dir, tmp_path):
+        """Real baseline training produces parseable logs, a healthy loss, and a checkpoint."""
         # Create experiment dirs
         exp_root = create_experiment_dirs(str(tmp_path / "exp_project"))
         results_dir = str(Path(exp_root) / "results")
@@ -253,6 +268,7 @@ class TestPhase4UserCheckpoint:
     """Phase 4: Verify baseline.json has all required checkpoint keys."""
 
     def test_baseline_schema(self, tmp_path):
+        """A baseline JSON carries all keys the user checkpoint requires."""
         baseline = {
             "exp_id": "baseline",
             "config": {"lr": 0.01, "batch_size": 64},
@@ -280,6 +296,7 @@ class TestPhase6ExperimentLoop:
     """Phase 6: Run multiple experiments and verify analysis."""
 
     def test_experiment_loop(self, project_dir, shared_data_dir, tmp_path):
+        """Two real experiments against a baseline rank correctly and yield correlations."""
         exp_project = tmp_path / "exp_project"
         exp_root = create_experiment_dirs(str(exp_project))
         results_dir = str(Path(exp_root) / "results")
@@ -369,6 +386,7 @@ class TestPhase6DivergenceDetection:
     """Phase 6: Verify divergence detection with extreme learning rate."""
 
     def test_divergent_training(self, project_dir, shared_data_dir, tmp_path):
+        """An extreme learning rate is flagged as diverged or leaves loss pathologically high."""
         output_dir = tmp_path / "divergent_out"
         rc, stdout, stderr = run_training(
             project_dir, output_dir, shared_data_dir,
@@ -404,6 +422,7 @@ class TestPhase7Report:
     """Phase 7: Verify analysis output has correct schema for reporting."""
 
     def test_analysis_report_schema(self, tmp_path):
+        """Analysis output has a sorted ranking, well-formed deltas, and renderable charts."""
         results_dir = tmp_path / "results"
         results_dir.mkdir()
 
@@ -450,6 +469,7 @@ class TestFullPipelineIntegration:
     """End-to-end: all phases sequentially."""
 
     def test_full_pipeline(self, project_dir, shared_data_dir, tmp_path):
+        """All phases run end to end: dirs, state, goals, baseline, experiments, analysis, report."""
         exp_project = tmp_path / "full_pipeline"
         exp_project.mkdir()
 
@@ -692,6 +712,7 @@ class TestPipelineStateIntegration:
     """Test state persistence, resumption, phase validation, and cleanup."""
 
     def test_save_load_roundtrip(self, tmp_path):
+        """Saved pipeline state reloads with its phase, iteration, and running experiments."""
         exp_root = str(tmp_path / "exp")
         save_state(phase=2, iteration=0, running_exp_ids=["exp-001"], exp_root=exp_root)
         state = load_state(exp_root)
@@ -703,9 +724,11 @@ class TestPipelineStateIntegration:
         assert "timestamp" in state
 
     def test_load_state_missing(self, tmp_path):
+        """Loading state from a directory without a state file returns None."""
         assert load_state(str(tmp_path / "nonexistent")) is None
 
     def test_cleanup_stale_marks_old_pipeline_interrupted(self, tmp_path):
+        """A stale-timestamped pipeline is marked interrupted by cleanup."""
         exp_root = str(tmp_path / "exp")
         save_state(phase=5, iteration=1, running_exp_ids=["exp-001"], exp_root=exp_root)
         # Patch the timestamp to be 3 hours ago so cleanup triggers
@@ -721,6 +744,7 @@ class TestPipelineStateIntegration:
         assert reloaded["status"] == "interrupted"
 
     def test_cleanup_stale_ignores_fresh_state(self, tmp_path):
+        """A freshly saved pipeline is left running by cleanup."""
         exp_root = str(tmp_path / "exp")
         save_state(phase=5, iteration=1, running_exp_ids=[], exp_root=exp_root)
         cleaned = cleanup_stale(exp_root, timeout_hours=2.0)
@@ -728,6 +752,7 @@ class TestPipelineStateIntegration:
         assert load_state(exp_root)["status"] == "running"
 
     def test_cleanup_stale_marks_old_experiments_failed(self, tmp_path):
+        """A stale running experiment is marked failed by cleanup."""
         exp_root = tmp_path / "exp"
         results_dir = exp_root / "results"
         results_dir.mkdir(parents=True)
@@ -742,6 +767,7 @@ class TestPipelineStateIntegration:
         assert data["status"] == "failed"
 
     def test_validate_phase_sequence(self, tmp_path):
+        """Phase gates pass only once their required files and metrics exist."""
         exp_root = str(tmp_path / "exp")
         # Phase 2 (prerequisites) — always valid, no file requirements
         result = validate_phase_requirements(2, exp_root)
@@ -767,6 +793,7 @@ class TestPipelineStateIntegration:
         assert validate_phase_requirements(6, exp_root)["valid"]
 
     def test_invalid_phase6_without_baseline(self, tmp_path):
+        """The Phase 6 gate fails when baseline.json is absent."""
         exp_root = str(tmp_path / "exp")
         (tmp_path / "exp" / "results").mkdir(parents=True)
         result = validate_phase_requirements(6, exp_root)
@@ -819,6 +846,7 @@ Two optimization proposals identified.
 """
 
     def test_parse_proposals(self, tmp_path):
+        """Mock findings parse into two proposals with the right names and strategies."""
         findings = tmp_path / "research-findings.md"
         findings.write_text(self.MOCK_FINDINGS)
         proposals = parse_research_proposals(str(findings))
@@ -831,6 +859,7 @@ Two optimization proposals identified.
         assert proposals[1]["reference_repo"] == "https://github.com/example/perceptual-loss"
 
     def test_parse_proposals_selected(self, tmp_path):
+        """selected_indices returns only the requested proposal."""
         findings = tmp_path / "research-findings.md"
         findings.write_text(self.MOCK_FINDINGS)
         proposals = parse_research_proposals(str(findings), selected_indices=[2])
@@ -838,6 +867,7 @@ Two optimization proposals identified.
         assert proposals[0]["index"] == 2
 
     def test_detect_conflicts_overlapping(self, tmp_path):
+        """Proposals that both edit train.py are reported as conflicting."""
         findings = tmp_path / "research-findings.md"
         findings.write_text(self.MOCK_FINDINGS)
         proposals = parse_research_proposals(str(findings))
@@ -848,6 +878,7 @@ Two optimization proposals identified.
         assert "train.py" in conflict_files
 
     def test_validate_syntax_on_fixtures(self):
+        """All fixture source files pass syntax validation."""
         fixture_files = [
             str(RESNET_FIXTURE / "model.py"),
             str(RESNET_FIXTURE / "train.py"),
@@ -859,6 +890,7 @@ Two optimization proposals identified.
             assert r["passed"], f"Syntax validation failed for {r['file']}: {r['error']}"
 
     def test_validate_syntax_bad_file(self, tmp_path):
+        """A syntactically broken file fails validation with an error."""
         bad_file = tmp_path / "bad.py"
         bad_file.write_text("def broken(\n")
         results = validate_syntax([str(bad_file)])
@@ -867,6 +899,7 @@ Two optimization proposals identified.
         assert results[0]["error"] is not None
 
     def test_write_and_validate_manifest(self, tmp_path):
+        """A written manifest persists and passes both dict and file schema validation."""
         manifest_data = {
             "original_branch": "main",
             "strategy": "git_branch",
@@ -905,6 +938,7 @@ class TestWorktreeRaceSafety:
     """
 
     def _init_repo(self, repo: Path) -> None:
+        """Initialize a git repo with two ml-opt/* branches for the race test."""
         subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
         subprocess.run(
             ["git", "-c", "user.email=test@test", "-c", "user.name=test",
@@ -1040,17 +1074,20 @@ class TestNonGitFallback:
     """Test file backup strategy for non-git projects."""
 
     def test_is_git_repo_false(self, tmp_path):
+        """A project without .git is not a git repo."""
         project = tmp_path / "non_git_project"
         project.mkdir()
         assert not is_git_repo(str(project))
 
     def test_is_git_repo_true(self, tmp_path):
+        """A project containing .git is a git repo."""
         project = tmp_path / "git_project"
         project.mkdir()
         (project / ".git").mkdir()
         assert is_git_repo(str(project))
 
     def test_backup_files_creates_copies(self, tmp_path):
+        """File backup copies each source file and preserves the directory layout."""
         project = tmp_path / "project"
         project.mkdir()
         (project / "train.py").write_text("print('train')")
@@ -1086,6 +1123,7 @@ class TestPlotIntegration:
 
     @pytest.fixture
     def results_dir(self, tmp_path):
+        """A results dir with a baseline and four experiments varying lr and batch size."""
         d = tmp_path / "results"
         d.mkdir()
         for name, loss, acc, lr, bs in [
@@ -1099,22 +1137,26 @@ class TestPlotIntegration:
         return str(d)
 
     def test_metric_comparison_chart(self, results_dir):
+        """The comparison chart marks the baseline and lists experiments."""
         chart = plot_metric_comparison(results_dir, "loss")
         assert chart
         assert "[B]" in chart  # baseline marker
         assert "exp-001" in chart
 
     def test_improvement_timeline(self, results_dir):
+        """The improvement timeline renders a best-so-far series."""
         chart = plot_improvement_timeline(results_dir, "loss")
         assert chart
         assert "Best-so-far" in chart
 
     def test_hp_sensitivity_existing_hp(self, results_dir):
+        """The sensitivity chart renders for a hyperparameter present in the configs."""
         chart = plot_hp_sensitivity(results_dir, "loss", "lr")
         assert chart
         assert "Sensitivity" in chart
 
     def test_hp_sensitivity_nonexistent_hp(self, results_dir):
+        """A hyperparameter absent from all configs yields a 'no numeric data' message."""
         result = plot_hp_sensitivity(results_dir, "loss", "nonexistent_hp")
         assert "No numeric data" in result
 
@@ -1127,6 +1169,7 @@ class TestSchemaValidationIntegration:
     """Test cross-schema validation of pipeline data files."""
 
     def test_validate_baseline_file(self, tmp_path):
+        """A well-formed baseline file passes baseline schema validation."""
         data = {
             "exp_id": "baseline", "status": "completed",
             "config": {"lr": 0.01}, "metrics": {"loss": 1.5},
@@ -1137,6 +1180,7 @@ class TestSchemaValidationIntegration:
         assert result["valid"], f"Errors: {result['errors']}"
 
     def test_validate_result_file(self, tmp_path):
+        """A well-formed result file passes result schema validation."""
         data = {
             "exp_id": "exp-001", "status": "completed",
             "config": {"lr": 0.001}, "metrics": {"loss": 1.2, "accuracy": 55.0},
@@ -1147,6 +1191,7 @@ class TestSchemaValidationIntegration:
         assert result["valid"], f"Errors: {result['errors']}"
 
     def test_validate_manifest_file(self, tmp_path):
+        """A well-formed manifest file passes manifest schema validation."""
         data = {
             "original_branch": "main",
             "strategy": "git_branch",
@@ -1160,6 +1205,7 @@ class TestSchemaValidationIntegration:
         assert result["valid"], f"Errors: {result['errors']}"
 
     def test_corrupted_baseline_missing_key(self, tmp_path):
+        """A baseline missing the metrics key fails validation."""
         data = {"exp_id": "baseline", "status": "completed", "config": {"lr": 0.01}}
         path = tmp_path / "baseline.json"
         path.write_text(json.dumps(data))
@@ -1168,6 +1214,7 @@ class TestSchemaValidationIntegration:
         assert any("metrics" in e for e in result["errors"])
 
     def test_corrupted_result_bad_status(self, tmp_path):
+        """A result with an invalid status value fails validation."""
         data = {
             "exp_id": "exp-001", "status": "INVALID",
             "config": {}, "metrics": {"loss": 1.0},
@@ -1179,6 +1226,7 @@ class TestSchemaValidationIntegration:
         assert any("status" in e.lower() for e in result["errors"])
 
     def test_validate_nonexistent_file(self, tmp_path):
+        """Validating a missing file fails with a 'not found' error."""
         result = validate_file(str(tmp_path / "missing.json"), "result")
         assert not result["valid"]
         assert any("not found" in e.lower() for e in result["errors"])
@@ -1192,6 +1240,7 @@ class TestDivergenceFromFixture:
     """Divergence detection using the pre-built fixture log."""
 
     def test_divergent_log_fixture(self):
+        """The pre-built divergent log is parsed and flagged as diverged on NaN."""
         log_path = str(FIXTURES / "divergent_log.txt")
         records = parse_log(log_path)
         assert len(records) >= 10
@@ -1210,6 +1259,7 @@ class TestExperimentIdSequencing:
     """Verify sequential experiment ID generation and config file creation."""
 
     def test_sequential_ids(self, tmp_path):
+        """Repeated setup yields sequential exp-ids, each written to its own config file."""
         project = str(tmp_path / "project")
         expected_ids = ["exp-001", "exp-002", "exp-003", "exp-004", "exp-005"]
         actual_ids = []
@@ -1227,6 +1277,7 @@ class TestExperimentIdSequencing:
             assert data["exp_id"] == exp_id
 
     def test_next_id_respects_existing(self, tmp_path):
+        """The next exp-id follows the highest existing id in the results dir."""
         results_dir = tmp_path / "results"
         results_dir.mkdir()
         (results_dir / "exp-003.json").write_text("{}")
@@ -1520,6 +1571,7 @@ class TestProgressChart:
 
     @pytest.fixture
     def results_dir(self, tmp_path):
+        """A results dir with a baseline and three experiments varying lr."""
         d = tmp_path / "results"
         d.mkdir()
         for name, loss, acc, lr in [
@@ -1671,9 +1723,6 @@ class TestErrorTrackerIntegration:
 # E2E Full Workflow Test
 # ---------------------------------------------------------------------------
 
-HOOKS_DIR = Path(__file__).parent.parent / "hooks"
-SCRIPTS_DIR_ABS = Path(__file__).parent.parent / "scripts"
-
 
 def _hook_input(tool_input: dict, tool_name: str = "Bash") -> str:
     """Build the JSON payload that Claude Code pipes into hook scripts."""
@@ -1761,7 +1810,7 @@ class TestFullWorkflowE2E:
 
         # GPU check returns valid JSON
         result = subprocess.run(
-            [_python, str(SCRIPTS_DIR_ABS / "gpu_check.py")],
+            [_python, str(SCRIPTS_DIR / "gpu_check.py")],
             capture_output=True, text=True, timeout=15,
         )
         assert result.returncode == 0
@@ -2069,6 +2118,7 @@ class TestHookBashSafety:
         ("ls -la", False),
     ])
     def test_bash_safety(self, cmd, should_block):
+        """Dangerous commands are blocked (exit 2) and safe ones pass (exit 0)."""
         stdin = _hook_input({"command": cmd})
         rc = _run_hook("bash-safety.sh", stdin)
         if should_block:
@@ -2077,6 +2127,7 @@ class TestHookBashSafety:
             assert rc == 0, f"Expected allow (exit 0) for: {cmd}"
 
     def test_empty_command_passes(self):
+        """An empty command payload is allowed."""
         stdin = _hook_input({})
         rc = _run_hook("bash-safety.sh", stdin)
         assert rc == 0
@@ -2100,6 +2151,7 @@ class TestHookFileGuardrail:
         ("/project/experiments/results/exp-001.json", False),
     ])
     def test_file_guardrail(self, path, should_block):
+        """Writes to sensitive paths are blocked and writes to safe paths are allowed."""
         stdin = _hook_input({"file_path": path}, tool_name="Write")
         rc = _run_hook("file-guardrail.sh", stdin)
         if should_block:
@@ -2108,6 +2160,7 @@ class TestHookFileGuardrail:
             assert rc == 0, f"Expected allow for: {path}"
 
     def test_empty_path_passes(self):
+        """An empty file-path payload is allowed."""
         stdin = _hook_input({}, tool_name="Write")
         rc = _run_hook("file-guardrail.sh", stdin)
         assert rc == 0
@@ -2136,6 +2189,7 @@ class TestHookDetectCriticalErrors:
         assert rc == 0  # hook never blocks, always advisory
 
     def test_segfault_detected(self, tmp_path):
+        """A segfault in output is handled advisorily without blocking."""
         exp_dir = tmp_path / "experiments"
         exp_dir.mkdir()
         stdin = _hook_result_input(
@@ -2146,6 +2200,7 @@ class TestHookDetectCriticalErrors:
         assert rc == 0
 
     def test_disk_full_detected(self, tmp_path):
+        """A disk-full error in output is handled advisorily without blocking."""
         exp_dir = tmp_path / "experiments"
         exp_dir.mkdir()
         stdin = _hook_result_input(
@@ -2181,15 +2236,12 @@ class TestHookDetectCriticalErrors:
 # ---------------------------------------------------------------------------
 
 
-_EVOLVE_PLUGIN_ROOT = Path(__file__).parent.parent
-
-
 class TestEvolveE2E:
     """End-to-end tests for the ShinkaEvolve integration."""
 
     def test_evolve_skill_content_valid(self):
         """Evolve SKILL.md has all required sections for pipeline orchestrator."""
-        skill_path = _EVOLVE_PLUGIN_ROOT / "skills" / "evolve" / "SKILL.md"
+        skill_path = PLUGIN_ROOT / "skills" / "evolve" / "SKILL.md"
         content = skill_path.read_text()
 
         # Required sections (pipeline steps — no mode detection, no direct fallback)
@@ -2216,7 +2268,7 @@ class TestEvolveE2E:
 
     def test_code_evolution_in_analyze_pivot(self):
         """Analyze skill includes code_evolution as a valid pivot type."""
-        analyze_path = _EVOLVE_PLUGIN_ROOT / "skills" / "analyze" / "SKILL.md"
+        analyze_path = PLUGIN_ROOT / "skills" / "analyze" / "SKILL.md"
         content = analyze_path.read_text()
         assert "code_evolution" in content
         assert "pivot_type" in content
@@ -2225,7 +2277,7 @@ class TestEvolveE2E:
 
     def test_implement_agent_has_evolve_instructions(self):
         """Implement-agent has explicit Skill() invocation instructions for evolve."""
-        agent_path = _EVOLVE_PLUGIN_ROOT / "agents" / "implement-agent.md"
+        agent_path = PLUGIN_ROOT / "agents" / "implement-agent.md"
         content = agent_path.read_text()
         assert 'Skill("ml-optimizer:evolve")' in content
         assert 'Skill("ml-optimizer:shinka-setup")' in content
@@ -2234,7 +2286,7 @@ class TestEvolveE2E:
 
     def test_phase7_has_code_evolution_dispatch(self):
         """Phase 7 dispatches tuning → evolve → tuning → experiment for code_evolution."""
-        phase7_path = (_EVOLVE_PLUGIN_ROOT / "skills" / "orchestrate" / "references"
+        phase7_path = (PLUGIN_ROOT / "skills" / "orchestrate" / "references"
                       / "phase-7-experiment-loop.md")
         content = phase7_path.read_text()
         assert "code_evolution" in content
@@ -2247,7 +2299,7 @@ class TestEvolveE2E:
 
     def test_mock_evolution_three_generations(self, tmp_path):
         """Simulate 3 generations of evolution, each with 2 mutations."""
-        provider_path = str(_EVOLVE_PLUGIN_ROOT / "skills" / "evolve" / "ShinkaEvolve"
+        provider_path = str(PLUGIN_ROOT / "skills" / "evolve" / "ShinkaEvolve"
                            / "shinka" / "llm" / "file_handoff_provider.py")
         spec = importlib.util.spec_from_file_location("fhp", provider_path)
         mod = importlib.util.module_from_spec(spec)
@@ -2265,6 +2317,7 @@ class TestEvolveE2E:
         for gen in range(3):
             # Simulate orchestrator
             def orchestrator():
+                """Poll the pending dir and answer each mutation request for this generation."""
                 responded = set()
                 for _ in range(30):
                     time.sleep(0.1)
@@ -2279,6 +2332,7 @@ class TestEvolveE2E:
             # 2 mutations per generation
             results = [None, None]
             def request(idx):
+                """Issue one mutation handoff request and store its result."""
                 results[idx] = mod.query_file_handoff(
                     "opus", f"Gen {gen} mut {idx}", "sys", timeout_seconds=5
                 )
@@ -2300,7 +2354,7 @@ class TestEvolveE2E:
 
     def test_evolve_skill_scope_constraints(self):
         """Evolve SKILL.md documents scope_level constraints for each level."""
-        skill_path = _EVOLVE_PLUGIN_ROOT / "skills" / "evolve" / "SKILL.md"
+        skill_path = PLUGIN_ROOT / "skills" / "evolve" / "SKILL.md"
         content = skill_path.read_text()
         # Scope levels are documented
         assert '"training"' in content
@@ -2314,8 +2368,6 @@ class TestEvolveE2E:
 
     def test_dead_end_fuzzy_matching_in_evolve_context(self, tmp_path):
         """Dead-end fuzzy matching catches variant spellings used in evolve feedback."""
-        from error_tracker import log_dead_end, is_dead_end
-
         exp_root = str(tmp_path)
         log_dead_end(exp_root, {
             "technique": "label-smoothing",
@@ -2335,7 +2387,7 @@ class TestEvolveE2E:
 
     def test_code_evolution_pivot_conditions(self):
         """Analyze SKILL.md documents conditions and scope gating for code_evolution."""
-        analyze_path = _EVOLVE_PLUGIN_ROOT / "skills" / "analyze" / "SKILL.md"
+        analyze_path = PLUGIN_ROOT / "skills" / "analyze" / "SKILL.md"
         content = analyze_path.read_text()
         # code_evolution conditions documented
         assert "code_evolution" in content
@@ -2349,7 +2401,7 @@ class TestEvolveE2E:
 
     def test_phase8_stacking_has_analysis_driven_evolve_loop(self):
         """Phase 8 loops evolve + HP-tune until analysis confirms improvement or stops."""
-        phase8_path = (_EVOLVE_PLUGIN_ROOT / "skills" / "orchestrate" / "references"
+        phase8_path = (PLUGIN_ROOT / "skills" / "orchestrate" / "references"
                       / "phase-8-stacking.md")
         content = phase8_path.read_text()
         # Analysis agent dispatched to assess stacked result
@@ -2372,7 +2424,7 @@ class TestEvolveE2E:
 
     def test_evolve_skill_reads_tuning_agent_recommendations(self):
         """Evolve SKILL.md reads evolve HPs from tuning agent."""
-        skill_path = _EVOLVE_PLUGIN_ROOT / "skills" / "evolve" / "SKILL.md"
+        skill_path = PLUGIN_ROOT / "skills" / "evolve" / "SKILL.md"
         content = skill_path.read_text()
         # Reads evolve_recommendation from tuning agent
         assert "evolve_recommendation" in content
@@ -2385,7 +2437,7 @@ class TestEvolveE2E:
 
     def test_analyze_skill_delegates_evolve_hps_to_tuning(self):
         """Analyze SKILL.md does NOT set evolve HPs — tuning agent does."""
-        analyze_path = _EVOLVE_PLUGIN_ROOT / "skills" / "analyze" / "SKILL.md"
+        analyze_path = PLUGIN_ROOT / "skills" / "analyze" / "SKILL.md"
         content = analyze_path.read_text()
         # Analyze recommends code_evolution but delegates HP tuning
         assert "code_evolution" in content
@@ -2393,7 +2445,7 @@ class TestEvolveE2E:
 
     def test_phase7_dispatches_tuning_before_evolve(self):
         """Phase 7 dispatches tuning agent for evolve HPs before implement agent."""
-        phase7_path = (_EVOLVE_PLUGIN_ROOT / "skills" / "orchestrate" / "references"
+        phase7_path = (PLUGIN_ROOT / "skills" / "orchestrate" / "references"
                       / "phase-7-experiment-loop.md")
         content = phase7_path.read_text()
         # Tuning agent proposes evolve HPs
@@ -2403,7 +2455,7 @@ class TestEvolveE2E:
 
     def test_phase8_uses_stack_base_branch(self):
         """Phase 8 uses stack_base_branch variable, not hardcoded branch names."""
-        phase8_path = (_EVOLVE_PLUGIN_ROOT / "skills" / "orchestrate" / "references"
+        phase8_path = (PLUGIN_ROOT / "skills" / "orchestrate" / "references"
                       / "phase-8-stacking.md")
         content = phase8_path.read_text()
         # Branch creation uses stack_base_branch (not hardcoded ml-opt/stack-<order-1>)

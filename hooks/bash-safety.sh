@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bash command safety hook for ml-optimizer.
+# PreToolUse hook (Bash): command-safety guardrail for ml-optimizer.
 # Blocks dangerous commands that could damage the system or project.
 # Exit 0 = allow, Exit 2 = block (reason fed back to Claude via stderr).
 

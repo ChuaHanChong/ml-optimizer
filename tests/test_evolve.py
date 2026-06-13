@@ -6,9 +6,12 @@ import os
 import re
 import threading
 import time
+import time as _time
 from pathlib import Path
 
 import pytest
+
+from conftest import PLUGIN_ROOT
 
 
 # Import the handoff provider directly (stdlib only, no ShinkaEvolve deps)
@@ -45,6 +48,7 @@ class TestFileHandoffProvider:
 
         # Simulate orchestrator responding after a short delay
         def respond():
+            """Validate the single pending request and write a response for it."""
             time.sleep(0.5)
             files = list(pending_dir.glob("*.json"))
             assert len(files) == 1
@@ -90,6 +94,7 @@ class TestFileHandoffProvider:
         completed_dir = tmp_path / "evolve" / "completed"
 
         def respond():
+            """Write a response for the pending request after a short delay."""
             time.sleep(0.3)
             files = list(pending_dir.glob("*.json"))
             response_path = completed_dir / files[0].name
@@ -124,6 +129,7 @@ class TestFileHandoffProvider:
         completed_dir = tmp_path / "evolve" / "completed"
 
         def respond_all():
+            """Respond to every in-flight pending request, echoing its id."""
             time.sleep(0.5)
             for f in pending_dir.glob("*.json"):
                 req = json.loads(f.read_text())
@@ -134,6 +140,7 @@ class TestFileHandoffProvider:
         results = [None, None]
 
         def run_query(idx, msg):
+            """Issue one handoff query and store its result by index."""
             results[idx] = query_file_handoff("m", msg, "sys", timeout_seconds=5)
 
         t_respond = threading.Thread(target=respond_all)
@@ -249,10 +256,10 @@ class TestHandoffTimeoutConfig:
         # way to test the marker-extension logic reliably: the provider's
         # hardcoded 1s poll interval combined with the 1-second extension
         # window is too tight for wall-clock testing under typical OS jitter.
-        import time as _time
         _real_sleep = _time.sleep
 
         def _fast_sleep(seconds):
+            """Compress long poll sleeps 10x while leaving short sleeps unchanged."""
             if seconds >= 0.5:
                 _real_sleep(0.1)
             else:
@@ -265,6 +272,7 @@ class TestHandoffTimeoutConfig:
         completed_dir = tmp_path / "evolve" / "completed"
 
         def responder():
+            """Detect the request, write a delayed .inprogress marker, then a late response."""
             # Poll for the pending file (short sleeps = unaffected)
             files: list = []
             for _ in range(200):
@@ -349,6 +357,7 @@ class TestHandoffTimeoutConfig:
         completed_dir = tmp_path / "evolve" / "completed"
 
         def respond_with_marker():
+            """Write an .inprogress marker and then a response for the pending request."""
             time.sleep(0.5)
             files = [f for f in pending_dir.glob("*.json")
                      if not f.name.endswith((".heartbeat", ".inprogress"))]
@@ -386,10 +395,12 @@ class TestEvolveSkillStructure:
     """Verify evolve skill and ShinkaEvolve submodule are correctly structured."""
 
     def test_evolve_skill_exists(self):
+        """The evolve skill's SKILL.md is present."""
         plugin_root = Path(__file__).parent.parent
         assert (plugin_root / "skills" / "evolve" / "SKILL.md").exists()
 
     def test_shinka_submodule_exists(self):
+        """The ShinkaEvolve submodule provides query.py and the handoff provider."""
         plugin_root = Path(__file__).parent.parent
         shinka_dir = plugin_root / "skills" / "evolve" / "ShinkaEvolve"
         assert shinka_dir.is_dir()
@@ -397,6 +408,7 @@ class TestEvolveSkillStructure:
         assert (shinka_dir / "shinka" / "llm" / "file_handoff_provider.py").exists()
 
     def test_query_patched_for_claude_code(self):
+        """query.py carries the Claude Code mode patch and handoff-provider routing."""
         plugin_root = Path(__file__).parent.parent
         query_py = plugin_root / "skills" / "evolve" / "ShinkaEvolve" / "shinka" / "llm" / "query.py"
         content = query_py.read_text()
@@ -405,12 +417,14 @@ class TestEvolveSkillStructure:
         assert "SHINKA_PROVIDER" in content
 
     def test_setup_script_exists_and_executable(self):
+        """setup_evolve.sh exists and is executable."""
         plugin_root = Path(__file__).parent.parent
         setup = plugin_root / "scripts" / "setup_evolve.sh"
         assert setup.exists()
         assert os.access(str(setup), os.X_OK)
 
     def test_symlinks_point_to_submodule(self):
+        """Each shinka skill symlink exists and exposes a SKILL.md."""
         plugin_root = Path(__file__).parent.parent
         for skill in ["shinka-setup", "shinka-convert", "shinka-run", "shinka-inspect"]:
             p = plugin_root / "skills" / skill
@@ -463,6 +477,7 @@ class TestMockShinkaEvolveSimulation:
 
         # Simulate orchestrator that responds to each request
         def orchestrator():
+            """Poll pending requests and answer each with a mutation once."""
             responded = set()
             for _ in range(30):  # poll for 3 seconds
                 time.sleep(0.1)
@@ -479,6 +494,7 @@ class TestMockShinkaEvolveSimulation:
         results = [None, None, None]
 
         def shinka_request(idx):
+            """Issue one mutation handoff request and store its result by index."""
             results[idx] = query_file_handoff(
                 "claude-opus", f"Mutate code variant {idx}",
                 "You are an evolutionary code optimizer",
@@ -508,6 +524,7 @@ class TestMockShinkaEvolveSimulation:
         completed_dir = tmp_path / "evolve" / "completed"
 
         def respond():
+            """Assert the request's structure, then write a minimal response."""
             time.sleep(0.3)
             files = list(pending_dir.glob("*.json"))
             req = json.loads(files[0].read_text())
@@ -530,6 +547,7 @@ class TestMockShinkaEvolveSimulation:
         completed_dir = tmp_path / "evolve" / "completed"
 
         def respond():
+            """Write a code response for each pending request."""
             time.sleep(0.3)
             for f in pending_dir.glob("*.json"):
                 (completed_dir / f.name).write_text(json.dumps({"content": "code"}))
@@ -553,9 +571,6 @@ class TestMockShinkaEvolveSimulation:
 # ======================================================================
 
 
-_PLUGIN_ROOT = Path(__file__).parent.parent
-
-
 class TestFileHandoffEdgeCases:
     """Edge cases and error paths in the file-based handoff provider."""
 
@@ -566,6 +581,7 @@ class TestFileHandoffEdgeCases:
         completed_dir = tmp_path / "evolve" / "completed"
 
         def respond():
+            """Write malformed JSON first, then a valid response so the provider recovers."""
             time.sleep(0.3)
             files = list(pending_dir.glob("*.json"))
             resp_path = completed_dir / files[0].name
@@ -589,6 +605,7 @@ class TestFileHandoffEdgeCases:
         completed_dir = tmp_path / "evolve" / "completed"
 
         def respond():
+            """Write an empty file first, then a valid response so the provider recovers."""
             time.sleep(0.3)
             files = list(pending_dir.glob("*.json"))
             resp_path = completed_dir / files[0].name
@@ -612,6 +629,7 @@ class TestFileHandoffEdgeCases:
         completed_dir = tmp_path / "evolve" / "completed"
 
         def respond():
+            """Write valid JSON that omits the 'content' key."""
             time.sleep(0.3)
             files = list(pending_dir.glob("*.json"))
             # Valid JSON but no "content" key
@@ -645,6 +663,7 @@ class TestFileHandoffEdgeCases:
         completed_dir = tmp_path / "evolve" / "completed"
 
         def respond():
+            """Create then delete a response to simulate a race, then write a stable one."""
             time.sleep(0.3)
             files = list(pending_dir.glob("*.json"))
             resp_path = completed_dir / files[0].name
@@ -683,6 +702,7 @@ class TestFileHandoffEdgeCases:
             completed_dir = tmp_path / "evolve" / "completed"
 
             def respond():
+                """Write an 'auto-detected' response for each pending request."""
                 time.sleep(0.3)
                 for f in pending_dir.glob("*.json"):
                     (completed_dir / f.name).write_text(
@@ -720,7 +740,7 @@ class TestQueryRoutingRuntime:
     def _get_mode_expression(self):
         """Extract the _CLAUDE_CODE_MODE expression from query.py source."""
         query_py = (
-            _PLUGIN_ROOT / "skills" / "evolve" / "ShinkaEvolve"
+            PLUGIN_ROOT / "skills" / "evolve" / "ShinkaEvolve"
             / "shinka" / "llm" / "query.py"
         )
         for line in query_py.read_text().splitlines():
@@ -793,7 +813,7 @@ class TestShinkaSkillContent:
     ])
     def test_shinka_skills_have_required_frontmatter(self, skill):
         """All 4 shinka skills have name and description in frontmatter."""
-        skill_path = _PLUGIN_ROOT / "skills" / skill / "SKILL.md"
+        skill_path = PLUGIN_ROOT / "skills" / skill / "SKILL.md"
         fm, _ = self._parse_frontmatter(skill_path)
         assert "name" in fm, f"{skill} missing 'name'"
         assert fm["name"] == skill, f"{skill} name mismatch: {fm['name']}"
@@ -802,7 +822,7 @@ class TestShinkaSkillContent:
 
     def test_shinka_setup_has_evaluator_contract(self):
         """shinka-setup SKILL.md references evaluator scoring fields."""
-        content = (_PLUGIN_ROOT / "skills" / "shinka-setup" / "SKILL.md").read_text()
+        content = (PLUGIN_ROOT / "skills" / "shinka-setup" / "SKILL.md").read_text()
         # The evaluator contract uses combined_score for ranking
         assert "EVOLVE-BLOCK" in content or "evolve" in content.lower()
         assert "evaluate.py" in content
@@ -810,19 +830,19 @@ class TestShinkaSkillContent:
 
     def test_shinka_run_has_required_cli_args(self):
         """shinka-run SKILL.md references --results_dir and generation count."""
-        content = (_PLUGIN_ROOT / "skills" / "shinka-run" / "SKILL.md").read_text()
+        content = (PLUGIN_ROOT / "skills" / "shinka-run" / "SKILL.md").read_text()
         assert "results_dir" in content
         assert "generation" in content.lower()
 
     def test_shinka_inspect_has_load_programs(self):
         """shinka-inspect SKILL.md references load_programs_to_df."""
-        content = (_PLUGIN_ROOT / "skills" / "shinka-inspect" / "SKILL.md").read_text()
+        content = (PLUGIN_ROOT / "skills" / "shinka-inspect" / "SKILL.md").read_text()
         assert "load_programs_to_df" in content
         assert "combined_score" in content
 
     def test_shinka_convert_has_evolve_blocks(self):
         """shinka-convert SKILL.md references EVOLVE-BLOCK markers."""
-        content = (_PLUGIN_ROOT / "skills" / "shinka-convert" / "SKILL.md").read_text()
+        content = (PLUGIN_ROOT / "skills" / "shinka-convert" / "SKILL.md").read_text()
         assert "EVOLVE-BLOCK" in content or "evolve" in content.lower()
         assert "evaluate.py" in content
 
@@ -837,7 +857,7 @@ class TestSetupScriptValidation:
 
     def test_setup_script_references_all_symlinks(self):
         """setup_evolve.sh creates symlinks for all 4 shinka skills."""
-        content = (_PLUGIN_ROOT / "scripts" / "setup_evolve.sh").read_text()
+        content = (PLUGIN_ROOT / "scripts" / "setup_evolve.sh").read_text()
         for skill in ["shinka-setup", "shinka-convert", "shinka-run", "shinka-inspect"]:
             assert skill in content, f"Missing symlink for {skill}"
         # Verify relative symlink target path
@@ -845,7 +865,7 @@ class TestSetupScriptValidation:
 
     def test_setup_script_has_safety_check(self):
         """setup_evolve.sh doesn't overwrite existing directories."""
-        content = (_PLUGIN_ROOT / "scripts" / "setup_evolve.sh").read_text()
+        content = (PLUGIN_ROOT / "scripts" / "setup_evolve.sh").read_text()
         # Script checks for existing directory and skips
         assert "-d" in content, "Missing directory existence check"
         assert "Skipping" in content or "skip" in content.lower(), \

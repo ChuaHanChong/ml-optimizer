@@ -1,18 +1,25 @@
 #!/usr/bin/env python3
 """Generate Excalidraw-compatible JSON diagrams for ML optimization results.
 
-Produces .excalidraw files that can be opened in excalidraw.com or the
-desktop app.  Stdlib-only — no external dependencies.
+Renders optimization data as Excalidraw JSON written under
+<exp_root>/artifacts/. Supports four diagram modes: a pipeline journey
+flowchart, a two-experiment comparison, an HP-vs-metric landscape scatter,
+and a before/after architecture diagram for a proposal.
 
 Usage:
-    python3 excalidraw_gen.py <exp_root> pipeline <primary_metric>
-    python3 excalidraw_gen.py <exp_root> comparison <exp_id_1> <exp_id_2>
-    python3 excalidraw_gen.py <exp_root> hp-landscape <hp_name> <metric>
-    python3 excalidraw_gen.py <exp_root> architecture <proposal_name>
+    python3 excalidraw_gen.py <exp_root> pipeline <metric>             # Optimization journey flowchart
+    python3 excalidraw_gen.py <exp_root> comparison <id1> <id2>        # Side-by-side comparison of two experiments
+    python3 excalidraw_gen.py <exp_root> hp-landscape <hp> <metric>    # Scatter of tried HP values vs metric
+    python3 excalidraw_gen.py <exp_root> architecture <proposal>       # Before/after architecture diagram for a proposal
+
+Examples:
+    python3 excalidraw_gen.py <exp_root> pipeline loss
+    python3 excalidraw_gen.py <exp_root> comparison exp-001 exp-007
+    python3 excalidraw_gen.py <exp_root> hp-landscape lr accuracy
+    python3 excalidraw_gen.py <exp_root> architecture label-smoothing
 """
 
 import json
-import math
 import sys
 import uuid
 from pathlib import Path

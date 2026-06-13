@@ -170,8 +170,16 @@ Apply the appropriate workflow based on the research context:
 **4. Code Analysis** — when evaluating `from_reference` proposals (see also Step 3 sub-step 4):
 - Locate the paper via search tools
 - Extract the GitHub URL from search results or paper content
-- Use `mcp__alphaxiv__read_files_from_github_repository(githubUrl, path: "/")` to explore repo structure
-- Drill into implementation directories to identify core files and assess code quality
+- Use `mcp__alphaxiv__read_files_from_github_repository(githubUrl, path: "/")` to explore repo structure (lightweight first pass to locate the implementation)
+- **Code-graph feasibility check (GitNexus — REQUIRED for any `from_reference` proposal):** GitNexus is a HARD PREREQUISITE verified at Phase 2 — every candidate GitHub repo that informs a `from_reference` proposal MUST be cloned, indexed, and understood through the code graph before you set `implementation_strategy`. Use the graph to judge whether the technique's implementation is isolated (favoring `from_reference`) or entangled across the codebase (favoring `from_scratch`). There is NO grep/alphaxiv-only substitute for this assessment. Index through the wrapper (it runs `gitnexus analyze <repo_path> --index-only`, which keeps the cloned reference repo uncontaminated — it does NOT inject a GitNexus section into the repo's CLAUDE.md/AGENTS.md and does NOT install `.claude/` skills), guarded by an `is-indexed` check for consistency with the implement skill (the wrapper also skips internally — belt-and-suspenders):
+  ```bash
+  python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py available || { echo "HALT: gitnexus unavailable — was guaranteed by Phase 2"; exit 1; }
+  python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py is-indexed <repo_path> || \
+    python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py index <repo_path>
+  ```
+  After indexing, query the graph with `mcp__gitnexus__context`/`mcp__gitnexus__query`/`mcp__gitnexus__impact` to assess feasibility and set `implementation_strategy`. **HARD ERROR (not a fallback):** if `available` exits non-zero or indexing returns `success: false`, **halt** with install/repair guidance: `npm install -g gitnexus && gitnexus setup` (`gitnexus setup` auto-registers the gitnexus MCP server for Claude Code; manual MCP-registration fallback: `claude mcp add --transport stdio --scope user gitnexus gitnexus mcp`). gitnexus was guaranteed by Phase 2, so its absence here is an error state — do NOT route around it with alphaxiv-only exploration for the feasibility decision. Do not commit any generated `.gitnexus/` artifact (the wrapper auto-adds it to the repo's git exclude).
+
+  **MCP-query-failure recovery:** Querying the code graph is MCP-only by design. If a `mcp__gitnexus__*` tool call FAILS *after* a successful index, it is a HARD ERROR — there is NO grep fallback and NO gitnexus-CLI query fallback. Recovery: (1) ensure the gitnexus MCP server is registered — run `gitnexus setup` (or the manual `claude mcp add --transport stdio --scope user gitnexus gitnexus mcp`); (2) MCP tools load at session start, so restart the Claude Code session for a freshly-registered server to become available; (3) retry the query. If it still fails, halt and surface this to the user.
 
 ### Tabular ML search queries (for scikit-learn, XGBoost, LightGBM)
 

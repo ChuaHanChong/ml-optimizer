@@ -6,7 +6,7 @@ user-invocable: false
 
 # Prerequisites Check
 
-Verify that the user's project is ready for training experiments. This skill validates dataset paths and format, then checks and sets up the Python environment.
+Verify that the user's project is ready for training experiments. This skill validates the required GitNexus code-graph tooling, dataset paths and format, then checks and sets up the Python environment.
 
 > **Path convention:** All paths written as `<exp_root>/...` refer to the `exp_root` parameter from your dispatch. The plugin does not hardcode the output directory name.
 
@@ -23,6 +23,46 @@ The orchestrator provides:
 - Config file path (from Phase 1, if found)
 - User-provided data paths (from Phase 0 Q10: `train_data_path`, `val_data_path`)
 - User-specified environment manager (from Phase 0 Q11: `env_manager`, `env_name`)
+
+## Step 0: Verify GitNexus (REQUIRED) and Index the Target Project
+
+GitNexus is a **hard prerequisite** — on par with git and a working training command. It is **not optional** and there is **no grep/analyze fallback** for code understanding. Every downstream code-understanding agent (implement, research) relies on the GitNexus code graph to reason about the codebase before editing or adapting it.
+
+**Step 0.1 — Check availability (BLOCKING):**
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py available
+```
+If the output reports `"available": false`, this is an **unrecoverable prerequisite failure** — treat it exactly like "Phase 2 failed blocks the pipeline". Do NOT continue and do NOT fall back to grep/analyze. Set `status: "failed"` and `ready_for_baseline: false`, record the failure in the report (`code_graph.available: false`), log an error event (see Error Tracking), and halt with these install instructions for the user:
+```
+GitNexus is a required dependency for ML-Optimizer and was not found on PATH.
+Install it, then re-run:
+
+  npm install -g gitnexus && gitnexus setup
+```
+`gitnexus setup` auto-registers the gitnexus MCP server for Claude Code (and also installs gitnexus's own global skills and PreToolUse/PostToolUse hooks into `~/.claude/`). If MCP registration needs to be done manually, the fallback is `claude mcp add --transport stdio --scope user gitnexus gitnexus mcp`.
+
+**Step 0.2 — Check MCP-server registration (BEST-EFFORT WARNING, not a block):**
+The CLI being on PATH does not guarantee the gitnexus MCP server is registered with Claude Code. Because querying the code graph is **MCP-only** (agents query via the `mcp__gitnexus__context` / `mcp__gitnexus__query` / `mcp__gitnexus__impact` tools — there is no CLI query path), an unregistered server means downstream agents cannot query the graph. After the CLI check passes, run:
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py mcp-registered
+```
+Interpret the `{"registered": ...}` output:
+- `false` → emit a **WARNING** (do NOT fail): the gitnexus CLI is installed but its MCP server is not registered with Claude Code, so downstream agents will not be able to query the code graph. Guide the user to run `gitnexus setup` (or the manual fallback `claude mcp add --transport stdio --scope user gitnexus gitnexus mcp`). A freshly-registered MCP server only becomes available after a Claude Code session restart. Proceed to Step 0.3.
+- `null` → cannot determine (the `claude` CLI is not on PATH); proceed silently. The real failure, if any, is caught downstream as a hard error.
+- `true` → good; proceed.
+
+Record the probe result under `code_graph.mcp_registered` (`true`/`false`/`null`) in the prerequisites report (Step 7).
+
+**Step 0.3 — Index the target project (BLOCKING):**
+Once availability passes, index the target project **once** so the code graph is available to all downstream agents:
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py index <project_root>
+```
+The wrapper runs `gitnexus analyze <project_root> --index-only`, which writes the code knowledge graph to `<project_root>/.gitnexus`. Indexing is **non-invasive**: `--index-only` keeps the index pure — it does NOT inject a GitNexus section into the project's `CLAUDE.md` / `AGENTS.md` and does NOT install `.claude/` skills, so the target project is never contaminated. If the output reports `"success": false`, treat it as a **prerequisite failure** (halt with the script's `error` text as repair guidance): set `status: "failed"`, `ready_for_baseline: false`, record `code_graph.target_indexed: false` in the report, log an error event, and do not proceed. Common repairs: ensure `gitnexus` runs cleanly on `<project_root>` (check the reported error), confirm disk space, then re-run the wrapper index command (optionally with `--force` to rebuild a stale index).
+
+**Do NOT commit `<project_root>/.gitnexus`.** The code graph is a local build artifact — the wrapper auto-adds it to the repo git exclude on success; never `git add` it.
+
+Record the GitNexus availability and target-index status in the prerequisites report (Step 7) under the `code_graph` key so downstream phases know the index exists.
 
 ## Step 1: Gather Phase 1 Context
 
@@ -222,6 +262,13 @@ Write `<exp_root>/results/prerequisites.json`:
 ```json
 {
   "status": "ready|partial|failed",
+  "code_graph": {
+    "available": true|false,
+    "mcp_registered": true|false|null,
+    "target_indexed": true|false,
+    "graph_path": "<project_root>/.gitnexus",
+    "notes": "<any issues or info>"
+  },
   "dataset": {
     "train_path": "<original data path>",
     "val_path": "<original data path, or null>",
@@ -244,6 +291,8 @@ Write `<exp_root>/results/prerequisites.json`:
 }
 ```
 
+GitNexus is required: if `code_graph.available` is `false` or `code_graph.target_indexed` is `false`, `status` MUST be `failed` and `ready_for_baseline` MUST be `false`.
+
 ## Step 7.1: Validate Output
 
 ```bash
@@ -257,6 +306,7 @@ Append to `<exp_root>/dev_notes.md`:
 ```markdown
 ## <date> — Prerequisites Check
 
+- **GitNexus:** [available/MISSING] — MCP server [registered/NOT registered/unknown] — target indexed at <project_root>/.gitnexus [yes/no]
 - **Dataset:** [format] at [path] — [validated/prepared/skipped]
 - **Environment:** [manager] — [N] packages installed, [M] failed
 - **Status:** [ready/partial/failed]
@@ -273,6 +323,9 @@ Return to the orchestrator:
 
 ## Error Handling
 
+- **GitNexus not available:** Unrecoverable — set `status: "failed"`, `ready_for_baseline: false`, halt with install instructions: `npm install -g gitnexus && gitnexus setup` (`gitnexus setup` auto-registers the gitnexus MCP server for Claude Code; manual MCP fallback `claude mcp add --transport stdio --scope user gitnexus gitnexus mcp`). No grep/analyze fallback.
+- **GitNexus MCP server not registered:** Best-effort WARNING only (not a block) — the CLI is installed but agents cannot query the MCP-only code graph; guide the user to run `gitnexus setup` (or `claude mcp add --transport stdio --scope user gitnexus gitnexus mcp`) and restart the Claude Code session. Proceed.
+- **GitNexus target indexing fails:** Unrecoverable — set `status: "failed"`, `ready_for_baseline: false`, halt with the script's `error` text as repair guidance.
 - **Data path doesn't exist:** Set `status: "failed"`, report to user
 - **Format detection unknown:** Ask user, fall back to "use as-is"
 - **Package install fails:** Record error, classify as critical/non-critical
@@ -282,6 +335,16 @@ Return to the orchestrator:
 ## Error Tracking
 
 At the following points, log an error event using the error tracker:
+
+### When GitNexus is not available (REQUIRED dependency missing):
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"category":"config_error","severity":"critical","source":"prerequisites","message":"GitNexus not installed (required dependency)","phase":2,"context":{"dependency":"gitnexus","install":"npm install -g gitnexus && gitnexus setup"}}'
+```
+
+### When GitNexus target-project indexing fails:
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"category":"config_error","severity":"critical","source":"prerequisites","message":"GitNexus failed to index target project: <error>","phase":2,"context":{"dependency":"gitnexus","project_root":"<project_root>","error":"<error>"}}'
+```
 
 ### When data path doesn't exist or validation fails:
 ```bash

@@ -1,10 +1,37 @@
 #!/usr/bin/env python3
 """Error tracking and self-improvement for the ML optimizer plugin.
 
-Captures, persists, and analyzes errors from skills and agents.
-Supports per-project error logs.
+Maintains the structured error log, pattern detection, success/proposal
+metrics, suggestion ranking and history, the dead-end catalog, and the
+living research agenda under <exp_root>/reports/. Writes are concurrency-safe
+via file locking.
 
-Dependency-free — uses only the Python standard library.
+Usage:
+    python3 error_tracker.py <exp_root> log <event_json>                        # Append a structured error/event
+    python3 error_tracker.py <exp_root> show [category]                         # Show logged events, optionally filtered
+    python3 error_tracker.py <exp_root> patterns                                # Detect recurring error patterns
+    python3 error_tracker.py <exp_root> summary                                 # Summarize the session's errors
+    python3 error_tracker.py <exp_root> success <metric> <lower_is_better>      # Compute success metrics vs baseline
+    python3 error_tracker.py <exp_root> proposals <metric> <lower_is_better>    # Compute per-proposal outcomes
+    python3 error_tracker.py <exp_root> rank [total]                            # Rank suggestions from detected patterns
+    python3 error_tracker.py <exp_root> log-suggestion <pattern_id> [scope]     # Record a suggestion was surfaced
+    python3 error_tracker.py <exp_root> suggestion-history                      # Show suggestion feedback history
+    python3 error_tracker.py <exp_root> dead-end add <entry_json>               # Add a technique to the dead-end catalog
+    python3 error_tracker.py <exp_root> dead-end list                           # List catalogued dead ends
+    python3 error_tracker.py <exp_root> dead-end check <technique_name>         # Fuzzy-check if a technique is a dead end
+    python3 error_tracker.py <exp_root> agenda init <ideas_json>                # Initialize the research agenda
+    python3 error_tracker.py <exp_root> agenda update <idea_id> <updates_json>  # Update an agenda item
+    python3 error_tracker.py <exp_root> agenda list                             # List agenda ideas
+    python3 error_tracker.py <exp_root> agenda add <idea_json>                  # Add a single idea to the agenda
+
+<lower_is_better> accepts true/1/yes (case-insensitive) for lower-is-better metrics.
+JSON arguments are JSON strings, not file paths — quote them.
+
+Examples:
+    python3 error_tracker.py <exp_root> log '{"category":"oom","severity":"high","source":"experiment","message":"CUDA OOM"}'
+    python3 error_tracker.py <exp_root> success accuracy false
+    python3 error_tracker.py <exp_root> dead-end check "heavy augmentation"
+    python3 error_tracker.py <exp_root> agenda update idea-3 '{"status":"dead-end"}'
 """
 
 import fcntl

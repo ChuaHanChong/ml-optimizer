@@ -1,8 +1,25 @@
 #!/usr/bin/env python3
-"""Prerequisites validation: import scanning, package checking, environment
-detection, dataset format detection, and data path validation.
+"""Prerequisites validation: import scanning, package checking, environment detection, dataset format detection, and data path validation.
 
-All functions use only the Python standard library.
+Also generates GPU-aware (CUDA-tagged) install commands for PyTorch/TensorFlow/JAX
+and bulk install commands from dependency files (requirements.txt, environment.yml,
+pyproject.toml), env-manager-aware (pip/conda/uv/poetry/venv).
+
+Usage:
+    python3 prerequisites_check.py scan-imports <project_root>                              # Classify imports as stdlib/third_party/local
+    python3 prerequisites_check.py check-packages '<json_list>' [python_executable]         # Report which packages are installed/missing
+    python3 prerequisites_check.py detect-env <project_root>                                # Detect the env manager (conda/uv/poetry/pip/venv)
+    python3 prerequisites_check.py detect-format <training_script>                          # Detect dataset format from a training script
+    python3 prerequisites_check.py detect-format-project <project_root> <training_script>   # Detect dataset format across script + local imports
+    python3 prerequisites_check.py validate-data <path> <format>                           # Validate a data path matches an expected format
+    python3 prerequisites_check.py gpu-install-cmd <package> [env_manager] [env_name]       # Build a GPU-aware install command
+    python3 prerequisites_check.py bulk-install-cmd <project_root> <env_manager> [env_name] # Build a bulk install command from dependency files
+
+Examples:
+    python3 prerequisites_check.py scan-imports <project_root>
+    python3 prerequisites_check.py check-packages '["torch", "transformers"]'
+    python3 prerequisites_check.py detect-format-project <project_root> <project_root>/train.py
+    python3 prerequisites_check.py gpu-install-cmd torch conda myenv
 """
 
 import ast

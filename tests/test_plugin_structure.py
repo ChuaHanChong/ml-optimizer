@@ -1,18 +1,23 @@
-"""Comprehensive plugin structure validation.
+"""Tests for plugin structure — agents, skills, hooks, and scripts."""
 
-Validates all 10 agents, 16 skills, hooks, and scripts are correctly
-configured for the agent-based dispatch architecture. Run anytime:
-
-    python -m pytest tests/test_plugin_structure.py -v
-"""
-
+import importlib
 import json
+import os
 import re
 from pathlib import Path
 
 import pytest
 
-from conftest import FIXTURES, _write_result
+from conftest import (
+    AGENTS_DIR,
+    FIXTURES,
+    HOOKS_DIR,
+    PLUGIN_JSON,
+    PLUGIN_ROOT,
+    SCRIPTS_DIR,
+    SKILLS_DIR,
+    _write_result,
+)
 
 from detect_divergence import check_divergence
 from implement_utils import parse_research_proposals
@@ -31,13 +36,6 @@ from error_tracker import (
     get_suggestion_history,
     VALID_CATEGORIES,
 )
-
-PLUGIN_ROOT = Path(__file__).parent.parent
-AGENTS_DIR = PLUGIN_ROOT / "agents"
-SKILLS_DIR = PLUGIN_ROOT / "skills"
-HOOKS_DIR = PLUGIN_ROOT / "hooks"
-SCRIPTS_DIR = PLUGIN_ROOT / "scripts"
-PLUGIN_JSON = PLUGIN_ROOT / ".claude-plugin" / "plugin.json"
 
 
 # ---------------------------------------------------------------------------
@@ -278,6 +276,7 @@ class TestSkillAgentMapping:
     """Verify every non-orchestrate skill has exactly one agent that loads it."""
 
     def test_every_skill_has_an_agent(self):
+        """Each non-orchestrate skill is loaded by exactly one agent (shared skills by at least one)."""
         skill_to_agents: dict[str, list[str]] = {s: [] for s in NON_ORCHESTRATE_SKILLS}
         for agent_file in AGENTS_DIR.glob("*.md"):
             for skill in _parse_skills(agent_file):
@@ -320,7 +319,7 @@ class TestHooks:
 
     @pytest.mark.parametrize("hook_file", EXPECTED_HOOKS)
     def test_hook_script_exists_and_executable(self, hook_file):
-        import os
+        """Each expected hook script exists and is executable."""
         path = HOOKS_DIR / hook_file
         assert path.exists(), f"Missing hook script: {path}"
         assert os.access(path, os.X_OK), f"{hook_file} is not executable"
@@ -346,7 +345,7 @@ EXPECTED_SCRIPTS = [
     "result_analyzer.py", "experiment_setup.py", "implement_utils.py",
     "pipeline_state.py", "schema_validator.py", "plot_results.py",
     "error_tracker.py", "prerequisites_check.py", "dashboard.py",
-    "excalidraw_gen.py", "goal_memory.py",
+    "excalidraw_gen.py", "goal_memory.py", "gitnexus_utils.py",
 ]
 
 
@@ -355,7 +354,7 @@ class TestScripts:
 
     @pytest.mark.parametrize("script", EXPECTED_SCRIPTS)
     def test_script_exists_and_importable(self, script):
-        import importlib
+        """Each expected script exists and imports without error."""
         assert (SCRIPTS_DIR / script).exists(), f"Missing script: {script}"
         module_name = script.replace(".py", "")
         try:
@@ -372,6 +371,7 @@ class TestPluginManifest:
     """Validate plugin.json."""
 
     def test_plugin_json_valid(self):
+        """plugin.json exists with a valid name, version, and description."""
         assert PLUGIN_JSON.exists()
         data = json.loads(PLUGIN_JSON.read_text())
         assert data.get("name") == "ml-optimizer"
@@ -422,7 +422,7 @@ class TestOrchestrateDispatch:
         return "\n".join(parts)
 
     def test_dispatch_patterns(self):
-        """Named agent dispatch, no bare skill invocations, all 10 agents referenced."""
+        """Orchestrate uses named agent dispatch, no bare skill invocations, and references all dispatched agents."""
         text = self._orchestrate_full_text()
         named_dispatches = re.findall(r'subagent_type.*ml-optimizer:', text)
         assert len(named_dispatches) >= 5
@@ -613,18 +613,22 @@ class TestDocumentation:
         "immutable baseline",
     ])
     def test_claude_md_documents_feature(self, keyword):
+        """CLAUDE.md mentions each documented architecture feature keyword."""
         text = (PLUGIN_ROOT / ".claude" / "CLAUDE.md").read_text()
         assert keyword.lower() in text.lower(), f"CLAUDE.md should mention '{keyword}'"
 
     def test_implement_skill_mentions_unit_tests(self):
+        """The implement skill documents unit test writing."""
         text = (SKILLS_DIR / "implement" / "SKILL.md").read_text()
         assert "unit test" in text.lower()
 
     def test_implement_agent_mentions_test_writing(self):
+        """The implement agent definition documents a Test Writing responsibility."""
         text = (AGENTS_DIR / "implement-agent.md").read_text()
         assert "Test Writing" in text
 
     def test_readme_mentions_orchestrate_entry_point(self):
+        """The README documents orchestrate as the entry point."""
         text = (PLUGIN_ROOT / "README.md").read_text()
         assert "orchestrate" in text.lower()
 
@@ -648,10 +652,12 @@ class TestSkillContracts:
         ("report", "verify claims"),
     ])
     def test_skill_mentions_feature(self, skill, keyword):
+        """Each skill mentions the autoresearch-inspired feature it consumes."""
         text = (SKILLS_DIR / skill / "SKILL.md").read_text().lower()
         assert keyword.lower() in text, f"Skill '{skill}' should mention '{keyword}'"
 
     def test_phase7_has_baseline_verification_and_dashboard(self):
+        """Phase 7 references baseline checksum verification and the dashboard generator."""
         text = (SKILLS_DIR / "orchestrate" / "references" / "phase-7-experiment-loop.md").read_text()
         assert "verify-baseline" in text
         assert "dashboard.py" in text

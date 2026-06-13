@@ -1,4 +1,4 @@
-"""Consolidated tests for error_tracker.py and review workflow."""
+"""Tests for error_tracker.py and the review workflow."""
 
 import json
 import sys
@@ -150,6 +150,7 @@ class TestEventCreation:
 
     @pytest.mark.parametrize("category", ["research_failure", "timeout", "resource_error"])
     def test_new_categories_valid(self, category):
+        """Newer event categories are accepted by validation."""
         ev = create_event(category, "warning", "orchestrate", "msg")
         assert validate_event(ev)["valid"] is True
 
@@ -171,6 +172,7 @@ class TestEventCreation:
         ("source", ("agent_failure", "critical", "unknown_src", "x")),
     ], ids=["bad_category", "bad_severity", "bad_source"])
     def test_invalid_field_raises(self, field, args):
+        """An invalid category, severity, or source raises ValueError naming the field."""
         with pytest.raises(ValueError, match=field):
             create_event(*args)
 
@@ -239,6 +241,7 @@ class TestEventLogging:
         errors = []
 
         def log_events(thread_id):
+            """Log five events for one thread, recording any exception."""
             try:
                 for i in range(5):
                     ev = create_event(
@@ -258,12 +261,14 @@ class TestEventLogging:
         assert len(get_events(str(tmp_path))) == 20
 
     def test_duration_stored_and_retrievable(self, tmp_path):
+        """A logged event's duration_seconds survives a load round-trip."""
         log_event(str(tmp_path), create_event(
             "timeout", "critical", "orchestrate", "Timed out",
             duration_seconds=3600.5))
         assert load_error_log(str(tmp_path))["events"][0]["duration_seconds"] == 3600.5
 
     def test_atomic_write_json_exception(self, tmp_path):
+        """Non-serializable content raises TypeError from the atomic writer."""
         path = tmp_path / "reports" / "error-log.json"
         path.parent.mkdir(parents=True)
         with pytest.raises(TypeError):
@@ -353,6 +358,7 @@ class TestPatternDetection:
     """Tests for detect_patterns."""
 
     def test_empty(self):
+        """No events yields no detected patterns."""
         assert detect_patterns([]) == []
 
     @pytest.mark.parametrize("events,expected_pattern", [
@@ -372,6 +378,7 @@ class TestPatternDetection:
         "redundant_configs", "branch_underperformance",
     ])
     def test_pattern_detected(self, events, expected_pattern):
+        """Each event cluster surfaces its expected failure pattern."""
         ids = [p["pattern_id"] for p in detect_patterns(events)]
         assert expected_pattern in ids
 
@@ -393,16 +400,19 @@ class TestPatternDetection:
          "timeout_pattern"),
     ], ids=["single_divergence", "phase5_excluded", "spread_iters", "single_timeout"])
     def test_no_false_positive(self, events, absent_pattern):
+        """Insufficient or spread-out events do not raise a false pattern."""
         ids = [p["pattern_id"] for p in detect_patterns(events)]
         assert absent_pattern not in ids
 
     def test_from_fixture(self):
+        """The sample error-log fixture yields known divergence and OOM patterns."""
         data = json.loads((FIXTURES / "sample_error_log.json").read_text())
         ids = [p["pattern_id"] for p in detect_patterns(data["events"])]
         assert "high_lr_divergence" in ids
         assert "oom_batch_size" in ids
 
     def test_nan_inf_lr_excluded(self):
+        """NaN/Inf learning rates are excluded from the high-lr divergence pattern."""
         events = [
             create_event("divergence", "warning", "monitor", "NaN",
                          config={"lr": lr, "batch_size": 32})
@@ -481,6 +491,7 @@ class TestSuccessMetrics:
         assert m2["total_experiments"] == 0
 
     def test_all_failed(self, tmp_path):
+        """When every experiment fails, the success rate is zero."""
         results = tmp_path / "results"
         results.mkdir()
         _write_result(results, "baseline", "completed", {"lr": 0.001}, {"loss": 1.0})
@@ -489,6 +500,7 @@ class TestSuccessMetrics:
         assert m["success_rate"] == 0.0
 
     def test_duration_analysis(self, tmp_path):
+        """Average completed duration and time-wasted-on-failures are computed."""
         results = tmp_path / "results"
         results.mkdir()
         _write_result(results, "baseline", "completed", {}, {"loss": 1.0})
@@ -533,6 +545,7 @@ class TestSuccessMetrics:
         ("acc", False, 70.0, 77.0, 10.0),
     ], ids=["lower_is_better", "higher_is_better"])
     def test_improvement_pct_sign(self, tmp_path, metric, lower, baseline_val, exp_val, expected_pct):
+        """Improvement percentage has the correct sign for both metric polarities."""
         exp_root = tmp_path / "experiments"
         results = exp_root / "results"
         results.mkdir(parents=True)
@@ -683,12 +696,14 @@ class TestDeadEndCatalog:
     """Tests for dead-end catalog: log, get, is_dead_end, fuzzy matching."""
 
     def test_log_basic(self, tmp_path):
+        """Logging a dead end persists it with a timestamp."""
         path = log_dead_end(str(tmp_path), {"technique": "perceptual-loss", "reason": "5% worse"})
         assert "dead-ends.json" in path
         de = get_dead_ends(str(tmp_path))
         assert len(de) == 1 and "timestamp" in de[0]
 
     def test_log_multiple_with_details(self, tmp_path):
+        """Multiple dead ends, including detailed entries, are stored in order."""
         log_dead_end(str(tmp_path), {"technique": "mixup", "reason": "no improvement"})
         log_dead_end(str(tmp_path), {
             "technique": "focal-loss", "reason": "worse on all configs",
@@ -700,6 +715,7 @@ class TestDeadEndCatalog:
         assert de[1]["branch"] == "ml-opt/focal-loss"
 
     def test_get_empty_and_corrupt(self, tmp_path):
+        """Missing or corrupt dead-end catalogs return an empty list."""
         assert get_dead_ends(str(tmp_path)) == []
         reports = tmp_path / "reports"
         reports.mkdir(parents=True)
@@ -718,19 +734,23 @@ class TestDeadEndCatalog:
         "substring_of_cataloged", "reverse_substring", "no_match",
     ])
     def test_fuzzy_match(self, tmp_path, query, expected):
+        """Dead-end matching is case-, separator-, and substring-tolerant."""
         log_dead_end(str(tmp_path), {"technique": "Perceptual-Loss", "reason": "bad"})
         assert is_dead_end(str(tmp_path), query) is expected
 
     def test_empty_query(self, tmp_path):
+        """An empty or whitespace query never matches a dead end."""
         log_dead_end(str(tmp_path), {"technique": "test", "reason": "bad"})
         assert is_dead_end(str(tmp_path), "") is False
         assert is_dead_end(str(tmp_path), "  ") is False
 
     def test_normalize_technique(self):
+        """Technique names normalize to lowercase, space-separated, trimmed form."""
         assert _normalize_technique("Perceptual-Loss") == "perceptual loss"
         assert _normalize_technique("  label_smoothing  ") == "label smoothing"
 
     def test_generates_markdown(self, tmp_path):
+        """Logging a dead end also renders a human-readable markdown companion."""
         log_dead_end(str(tmp_path), {
             "technique": "mixup", "reason": "no improvement on this dataset",
             "branch": "ml-opt/mixup", "experiments_tried": 3,
@@ -748,6 +768,7 @@ class TestResearchAgenda:
     """Tests for research agenda: init, get, update, add."""
 
     def test_init(self, tmp_path):
+        """Initializing the agenda seeds ideas as untried with their initial priority."""
         ideas = [
             {"id": "idea-1", "name": "CutMix augmentation", "priority": 8},
             {"id": "idea-2", "name": "Cosine annealing", "priority": 6},
@@ -761,6 +782,7 @@ class TestResearchAgenda:
         assert agenda[0]["evidence"] == []
 
     def test_get_empty_and_corrupt(self, tmp_path):
+        """Missing or corrupt research agendas return an empty list."""
         assert get_agenda(str(tmp_path)) == []
         reports = tmp_path / "reports"
         reports.mkdir(parents=True)
@@ -768,6 +790,7 @@ class TestResearchAgenda:
         assert get_agenda(str(tmp_path)) == []
 
     def test_update_status_and_evidence(self, tmp_path):
+        """Updating an agenda item changes status/priority and appends evidence."""
         init_agenda(str(tmp_path), [{"id": "idea-1", "name": "Test", "priority": 7}])
         assert update_agenda_item(str(tmp_path), "idea-1", {
             "status": "tried", "priority": 4,
@@ -787,6 +810,7 @@ class TestResearchAgenda:
         assert update_agenda_item(str(tmp_path), "nonexistent", {"status": "tried"}) is False
 
     def test_add_idea(self, tmp_path):
+        """Adding an idea appends it, and adding to a fresh path creates the agenda."""
         init_agenda(str(tmp_path), [{"id": "idea-1", "name": "Original"}])
         add_agenda_idea(str(tmp_path), {"id": "idea-2", "name": "New idea", "priority": 9})
         agenda = get_agenda(str(tmp_path))
@@ -797,6 +821,7 @@ class TestResearchAgenda:
         assert len(get_agenda(str(tmp_path / "new"))) == 1
 
     def test_generates_markdown_with_sections(self, tmp_path):
+        """The agenda markdown groups ideas into active, successful, and dead-end sections."""
         init_agenda(str(tmp_path), [
             {"id": "a", "name": "Active", "status": "untried"},
             {"id": "b", "name": "Tried", "status": "tried"},
@@ -810,6 +835,7 @@ class TestResearchAgenda:
         assert "too slow" in md
 
     def test_priority_preserved_on_update(self, tmp_path):
+        """A status-only update preserves the existing and initial priority."""
         init_agenda(str(tmp_path), [{"id": "idea-1", "name": "Test", "priority": 8}])
         update_agenda_item(str(tmp_path), "idea-1", {"status": "tried"})
         idea = get_agenda(str(tmp_path))[0]
@@ -848,6 +874,7 @@ class TestReviewWorkflow:
             assert ranked[i]["score"] >= ranked[i + 1]["score"]
 
     def test_new_categories(self, tmp_path):
+        """Research-failure, timeout, and resource-error events are counted by category."""
         exp_root = tmp_path / "experiments"
         exp_root.mkdir()
         log_event(str(exp_root), create_event("research_failure", "warning", "research", "No results", phase=4))
@@ -858,6 +885,7 @@ class TestReviewWorkflow:
             assert summary["by_category"][cat] == 1
 
     def test_empty_session(self, tmp_path):
+        """An empty session reports zero events and zero experiments."""
         exp_root = tmp_path / "experiments"
         exp_root.mkdir()
         (exp_root / "results").mkdir()
@@ -871,15 +899,10 @@ class TestReviewWorkflow:
 
 
 class TestGoalMetricConsistency:
-    """Tests for pipeline_state._check_goal_metric_consistency (Issue 5).
-
-    The orchestrator writes optimization-goals.json once and pipeline-state
-    user_choices separately. If they disagree on primary_metric, analysis
-    and HP tuning silently key off the stale value. save_state() now
-    surfaces the mismatch via stderr + an error_tracker event.
-    """
+    """Tests for the goal-metric consistency check in pipeline_state.save_state."""
 
     def _write_goals(self, tmp_path, primary_metric):
+        """Write an optimization-goals.json with the given primary metric."""
         goals = {
             "objective": {
                 "primary_metric": primary_metric,
@@ -949,6 +972,7 @@ class TestCLI:
     """Tests for the CLI interface of error_tracker.py."""
 
     def test_no_args(self, run_main):
+        """The CLI with no arguments exits non-zero."""
         r = run_main("error_tracker.py")
         assert r.returncode == 1
 
@@ -970,6 +994,7 @@ class TestCLI:
         assert all(e["category"] == "divergence" for e in events)
 
     def test_patterns_and_summary(self, run_main, tmp_path):
+        """The patterns and summary CLI actions report detected events."""
         for lr in [0.1, 0.2, 0.05]:
             log_event(str(tmp_path), create_event(
                 "divergence", "warning", "monitor", "NaN",
@@ -981,6 +1006,7 @@ class TestCLI:
         assert r.returncode == 0 and json.loads(r.stdout)["total_events"] == 3
 
     def test_success_and_proposals(self, run_main, tmp_path):
+        """The success and proposals CLI actions return their respective metrics."""
         results = tmp_path / "results"
         results.mkdir()
         _write_result(results, "baseline", "completed", {}, {"acc": 70.0})
@@ -992,6 +1018,7 @@ class TestCLI:
         assert r.returncode == 0 and "implementation_stats" in json.loads(r.stdout)
 
     def test_rank(self, run_main, tmp_path):
+        """The rank CLI scores suggestions and adds significance when given a total."""
         for lr in [0.1, 0.2, 0.05]:
             log_event(str(tmp_path), create_event(
                 "divergence", "warning", "monitor", "NaN",
@@ -1053,10 +1080,12 @@ class TestCLI:
         "dead_end_add_invalid_json", "agenda_init_missing_json",
     ])
     def test_cli_error_handling(self, run_main, tmp_path, action, extra_args):
+        """Invalid CLI actions and arguments exit non-zero."""
         r = run_main("error_tracker.py", str(tmp_path), action, *extra_args)
         assert r.returncode == 1
 
     def test_cli_log_invalid_validation(self, tmp_path):
+        """Logging an event that fails validation exits with code 1."""
         with mock.patch.object(sys, "argv", [
             "et", str(tmp_path), "log",
             '{"category":"divergence","severity":"bad_sev","source":"monitor","message":"m"}'

@@ -1,5 +1,24 @@
 #!/usr/bin/env python3
-"""Analyze and compare experiment results."""
+"""Analyze and compare experiment results.
+
+Loads experiment result JSONs (baseline + round-N-<type>/exp-*.json), ranks them
+by a metric, computes deltas vs baseline, and finds HP-metric correlations.
+
+Usage:
+    python3 result_analyzer.py <results_dir> <metric>                                  # Full analysis vs default baseline id
+    python3 result_analyzer.py <results_dir> <metric> <baseline_id>                    # Full analysis vs a named baseline
+    python3 result_analyzer.py <results_dir> <metric> <baseline_id> <lower_is_better>  # ... with explicit polarity
+    python3 result_analyzer.py <results_dir> compare <exp_id_1> <exp_id_2>             # Pairwise config/metric comparison
+    python3 result_analyzer.py <results_dir> compare <exp_id_1> <exp_id_2> <metric> <lower_is_better>  # ... with metric + polarity
+
+The trailing lower_is_better arg defaults to true; pass false/0/no for accuracy-like
+metrics. baseline_id defaults to "baseline"; compare's metric defaults to "loss".
+
+Examples:
+    python3 result_analyzer.py <exp_root>/results accuracy baseline false
+    python3 result_analyzer.py <exp_root>/results loss
+    python3 result_analyzer.py <exp_root>/results compare exp-001 exp-007 accuracy false
+"""
 
 import json
 import math

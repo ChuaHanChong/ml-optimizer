@@ -1,21 +1,25 @@
 #!/usr/bin/env python3
 """Generate a self-contained HTML dashboard for ML optimization progress.
 
-Stdlib-only — no Streamlit, Flask, or external JS libraries.
+Reads results, pipeline state, errors, dead ends, and the research agenda
+from <exp_root> and renders <exp_root>/reports/dashboard.html (overview,
+progress timeline, results table, HP sensitivity, agenda, errors, method
+explanations). Can also emit <exp_root>/results-table.md and serve the
+dashboard over HTTP.
 
 Usage:
-    python3 dashboard.py <exp_root>                         # Static HTML dashboard
-    python3 dashboard.py <exp_root> --live                  # HTML with 30s auto-refresh
-    python3 dashboard.py <exp_root> --table                 # Markdown results table only
-    python3 dashboard.py <exp_root> --live --table          # Both HTML (live) + Markdown
-    python3 dashboard.py <exp_root> --serve --port 8080     # Serve via local HTTP
-    python3 dashboard.py <exp_root> --live --serve --port 8080  # Served live dashboard
+    python3 dashboard.py <exp_root>                          # Generate reports/dashboard.html
+    python3 dashboard.py <exp_root> --table                  # Generate results-table.md only
+    python3 dashboard.py <exp_root> --live                   # Dashboard with 30s auto-refresh meta tag
+    python3 dashboard.py <exp_root> --serve --port <PORT>     # Generate then serve over HTTP (default port 8080)
 
-Output: <exp_root>/reports/dashboard.html (and/or <exp_root>/results-table.md)
+--live also activates automatically when the pipeline status is "running".
+--table can be combined with the dashboard run to emit both outputs.
 
-Note: The orchestrator runs this automatically after each experiment batch in Phase 7
-(with --live) and at Phase 9 (static). Manual invocation is only needed if you want
-to regenerate or serve the dashboard outside the pipeline.
+Examples:
+    python3 dashboard.py <exp_root>
+    python3 dashboard.py <exp_root> --live --table
+    python3 dashboard.py <exp_root> --serve --port 8080
 """
 
 import html as html_mod

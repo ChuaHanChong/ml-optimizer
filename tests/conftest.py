@@ -1,18 +1,33 @@
-"""Shared test fixtures."""
+"""Shared test fixtures and common paths for the ml-optimizer test suite."""
 
 import io
 import json
+import os
+import re
 import runpy
 import sys
+import time
 from contextlib import redirect_stdout, redirect_stderr
 from pathlib import Path
 
 import pytest
 
-# Make scripts importable from all test files
-SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
-FIXTURES = Path(__file__).parent / "fixtures"
+# ---------------------------------------------------------------------------
+# Shared paths — the single source for all test modules. scripts/ is placed on
+# sys.path here (the ONE place), so test files import scripts modules flat and
+# never need their own sys.path manipulation.
+# ---------------------------------------------------------------------------
+PLUGIN_ROOT = Path(__file__).parent.parent
+SCRIPTS_DIR = PLUGIN_ROOT / "scripts"
+AGENTS_DIR = PLUGIN_ROOT / "agents"
+SKILLS_DIR = PLUGIN_ROOT / "skills"
+HOOKS_DIR = PLUGIN_ROOT / "hooks"
+REFERENCES_DIR = SKILLS_DIR / "orchestrate" / "references"
+PLUGIN_JSON = PLUGIN_ROOT / ".claude-plugin" / "plugin.json"
+FIXTURES = PLUGIN_ROOT / "tests" / "fixtures"
 sys.path.insert(0, str(SCRIPTS_DIR))
+
+from experiment_setup import next_experiment_id, generate_script
 
 
 def pytest_configure(config):
@@ -73,11 +88,6 @@ def _write_results(results_dir, experiments: dict):
 # Test helpers moved from scripts/experiment_setup.py — these are only used
 # by the test suite, not by the plugin runtime.
 # ---------------------------------------------------------------------------
-
-import os
-import re
-import time
-from experiment_setup import next_experiment_id, generate_script
 
 _EXP_SUBDIRS = ["logs", "reports", "scripts", "results", "artifacts"]
 

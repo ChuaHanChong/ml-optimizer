@@ -16,7 +16,8 @@ Use extended thinking for all analytical reasoning in this skill. Ultrathink. Th
 
 - Implementation patterns: `${CLAUDE_SKILL_DIR}/references/implementation-patterns.md` (in this skill's directory)
 - Validation checklist: `${CLAUDE_SKILL_DIR}/references/validation-checklist.md` (in this skill's directory)
-- Python helpers: `${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py`
+- Python helpers: `${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py` (`analyze` is for framework detection only — NOT a gitnexus fallback)
+- GitNexus code-graph wrapper (REQUIRED): `${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py` (`available`/`index`/`is-indexed`). GitNexus is a HARD PREREQUISITE verified at Phase 2 — there is NO grep/`analyze` fallback for code understanding. The wrapper never raises, but this skill treats `available()==False` or an indexing failure as a HARD ERROR (halt with install/repair guidance), not a silent fallback. `index <path>` runs `gitnexus analyze <path> --index-only` — indexing is NON-INVASIVE: it does NOT inject a GitNexus section into the indexed repo's CLAUDE.md/AGENTS.md and does NOT install `.claude/` skills, and it auto-adds `.gitnexus/` to the repo's git exclude (you still must never `git add` it). Querying the resulting graph is MCP-only (`mcp__gitnexus__context`/`query`/`impact`) — there is no gitnexus-CLI query path in this plugin.
 
 ## Inputs Expected
 
@@ -121,6 +122,26 @@ For each proposal:
 
 3. **Remove preflight-failed proposals** from the active list before implementing (Step 4). Include them in the manifest with `status: "preflight_failed"`.
 
+## Step 3.3: Use the GitNexus Code Graph for the Target Project (REQUIRED)
+
+The target `<project_root>` was already indexed at Phase 2 (graph at `<project_root>/.gitnexus`) — GitNexus is a HARD PREREQUISITE guaranteed by Phase 2. Before modifying any code you MUST use the gitnexus MCP tools to understand the code and scope edits precisely — confirm what depends on the code each proposal will change before touching it. There is NO grep/`analyze` substitute for this code understanding.
+
+First confirm the graph is available (it should be, from Phase 2). If it is somehow missing, re-index the **main `<project_root>`** (read-only structural analysis — it does not modify source), not the throwaway worktree:
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py available || { echo "HALT: gitnexus unavailable — was guaranteed by Phase 2"; exit 1; }
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py is-indexed <project_root> || \
+  python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py index <project_root>
+```
+
+Before editing each proposal's `files_to_modify` you MUST use `mcp__gitnexus__impact` to assess the blast radius of the planned change and `mcp__gitnexus__context` (and `mcp__gitnexus__query` as needed) to understand the surrounding code, so edits stay minimal and don't break callers.
+
+**HARD ERROR (not a fallback):** if `gitnexus_utils.py available` exits non-zero, or re-indexing returns `success: false`, **halt** and report it as a prerequisite/repair error — gitnexus was guaranteed installed and the target indexed at Phase 2, so its absence here is an error state, not a condition to silently route around. Surface the install/repair guidance: `npm install -g gitnexus && gitnexus setup` (`gitnexus setup` auto-registers the gitnexus MCP server for Claude Code; manual MCP-registration fallback: `claude mcp add --transport stdio --scope user gitnexus gitnexus mcp`), then re-index via `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py index <project_root>`. Do NOT fall back to `Read`/`Grep`/`Glob`/`analyze` for code understanding. (`implement_utils.py analyze` remains available only for framework detection, never as a code-graph substitute.)
+
+**MCP-query-failure recovery:** Querying the code graph is MCP-only by design. If a `mcp__gitnexus__*` tool call FAILS *after* a successful index, it is a HARD ERROR — there is NO grep fallback and NO gitnexus-CLI query fallback. Recovery: (1) ensure the gitnexus MCP server is registered — run `gitnexus setup` (or the manual `claude mcp add --transport stdio --scope user gitnexus gitnexus mcp`); (2) MCP tools load at session start, so restart the Claude Code session for a freshly-registered server to become available; (3) retry the query. If it still fails, halt and surface this to the user.
+
+**Do not commit `.gitnexus/`:** indexing writes `<project_root>/.gitnexus/` (the wrapper auto-adds it to the repo's git exclude on success). It is a generated artifact — do not `git add` it, and ensure it is never included in any `ml-opt/<slug>` branch commit (Step 4g commits only the proposal's `<modified_files>`, so this is satisfied by committing explicit paths, not `git add .`).
+
 ## Step 4: Implement Each Proposal (Sequential)
 
 For each selected proposal, in order.
@@ -174,25 +195,40 @@ Follow `${CLAUDE_SKILL_DIR}/references/implementation-patterns.md` Section 9.
    ```
    If multiple proposals share the same repo, clone once and reuse.
 
-2. **Analyze repo structure:**
+2. **Detect framework (narrow use of `analyze`):**
    ```bash
    python3 ${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py analyze <exp_root>/reference-repos/<slug>
    ```
+   This is for framework detection only — it is NOT a substitute for the code-graph understanding below.
 
-3. **Read reference code:** Read the files listed in the proposal's `reference_files`. Identify the core implementation, internal dependencies, and external packages.
+3. **Index the reference repo with GitNexus and understand it via the code graph (REQUIRED):** EVERY reference repo MUST be indexed immediately after clone. Index it through the wrapper (it runs `gitnexus analyze <path> --index-only`, which keeps the cloned reference repo uncontaminated — it does NOT inject a GitNexus section into the repo's CLAUDE.md/AGENTS.md and does NOT install `.claude/` skills) and use the gitnexus MCP tools to locate the core implementation and its internal dependencies — you MUST understand the reference repo through the code graph before adapting any code (no `analyze`/`Read`/`Grep` substitute for this understanding):
+   ```bash
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py available || { echo "HALT: gitnexus unavailable — was guaranteed by Phase 2"; exit 1; }
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py is-indexed <exp_root>/reference-repos/<slug> || \
+     python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py index <exp_root>/reference-repos/<slug>
+   ```
+   After indexing, use `mcp__gitnexus__context`, `mcp__gitnexus__query`, and `mcp__gitnexus__impact` to understand the repo's structure and dependency edges before extracting/adapting code.
 
-4. **Read target files:** Read every file listed in the proposal's `files_to_modify` to understand the existing code structure.
+   **HARD ERROR (not a fallback):** if `available` exits non-zero or indexing returns `success: false`, **halt** with install/repair guidance: `npm install -g gitnexus && gitnexus setup` (`gitnexus setup` auto-registers the gitnexus MCP server for Claude Code; manual MCP-registration fallback: `claude mcp add --transport stdio --scope user gitnexus gitnexus mcp`), then re-index via `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py index <exp_root>/reference-repos/<slug>`. gitnexus was guaranteed by Phase 2, so its absence here is an error state — do NOT route around it with `analyze`/`Read`/`Grep` for code understanding.
 
-5. **Adapt and apply:**
+   **MCP-query-failure recovery:** Querying the code graph is MCP-only by design. If a `mcp__gitnexus__*` tool call FAILS *after* a successful index, it is a HARD ERROR — there is NO grep fallback and NO gitnexus-CLI query fallback. Recovery: (1) ensure the gitnexus MCP server is registered — run `gitnexus setup` (or the manual `claude mcp add --transport stdio --scope user gitnexus gitnexus mcp`); (2) MCP tools load at session start, so restart the Claude Code session for a freshly-registered server to become available; (3) retry the query. If it still fails, halt and surface this to the user.
+
+   **Do not commit the generated `<exp_root>/reference-repos/<slug>/.gitnexus/` artifact** (the wrapper auto-adds it to the repo's git exclude, and the repo is cleaned up in step 8 anyway).
+
+4. **Read reference code:** Read the files listed in the proposal's `reference_files` (guided by the gitnexus code graph from step 3). Identify the core implementation, internal dependencies, and external packages.
+
+5. **Read target files:** Read every file listed in the proposal's `files_to_modify` to understand the existing code structure.
+
+6. **Adapt and apply:**
    - Extract only the relevant functions/classes from the reference
    - Adapt imports, framework calls, and tensor conventions to the target project
    - Apply changes using Edit, keeping modifications minimal
    - Add provenance comments: `# [ml-opt] Adapted from <url>, file: <original_path>`
    - Add license comment: `# [ml-opt] License: <license_type>`
 
-6. **Check license:** Read the LICENSE file in the cloned repo. If missing or restrictive, note `license_warning` for the manifest.
+7. **Check license:** Read the LICENSE file in the cloned repo. If missing or restrictive, note `license_warning` for the manifest.
 
-7. **Cleanup:** Remove the cloned repo:
+8. **Cleanup:** Remove the cloned repo:
    ```bash
    python3 -c "
    import sys; # sys.path: add the plugin's scripts/ directory

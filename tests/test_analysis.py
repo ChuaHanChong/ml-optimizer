@@ -1,11 +1,10 @@
-"""Consolidated tests for result_analyzer.py, schema_validator.py, and plot_results.py."""
+"""Tests for result_analyzer.py, schema_validator.py, and plot_results.py."""
 
 import json
 
 import pytest
 
 from conftest import _write_result, _write_results
-
 from result_analyzer import (
     analyze,
     build_experiment_description,
@@ -45,8 +44,7 @@ from plot_results import (
 
 
 class TestResultAnalyzer:
-    """Tests for result_analyzer.py: loading, ranking, correlation,
-    three-tier grouping, stacking, and CLI."""
+    """Tests for result_analyzer.py loading, ranking, correlation, grouping, stacking, and CLI."""
 
     # ---------- load_results ----------
 
@@ -62,10 +60,12 @@ class TestResultAnalyzer:
         assert set(results.keys()) == {"baseline", "exp-001"}
 
     def test_load_results_empty_and_nonexistent(self, tmp_path):
+        """Empty and nonexistent directories both yield an empty dict."""
         assert load_results(str(tmp_path)) == {}
         assert load_results("/nonexistent/dir") == {}
 
     def test_load_results_skips_corrupt_json(self, tmp_path):
+        """Corrupt result JSON is skipped while valid files load."""
         (tmp_path / "exp-001.json").write_text('{"metrics": {"loss": 0.5}}')
         (tmp_path / "exp-002.json").write_text("{bad json")
         results = load_results(str(tmp_path))
@@ -75,6 +75,7 @@ class TestResultAnalyzer:
     # ---------- rank_by_metric ----------
 
     def test_rank_by_metric_ordering(self):
+        """Lowest-loss experiment ranks first when lower is better."""
         results = {
             "baseline": {"metrics": {"loss": 1.0}},
             "exp-001": {"metrics": {"loss": 0.5}},
@@ -96,6 +97,7 @@ class TestResultAnalyzer:
         assert ranked[0]["status"] == "completed"
 
     def test_rank_by_metric_partial_and_empty(self):
+        """Experiments lacking the metric are dropped; empty input ranks empty."""
         results = {
             "exp-001": {"metrics": {"loss": 0.5, "accuracy": 90.0}},
             "exp-002": {"metrics": {"loss": 0.3}},
@@ -111,6 +113,7 @@ class TestResultAnalyzer:
         (0, [("exp-001", 0.5, {"lr": 0.001})], True),
     ])
     def test_compute_deltas(self, baseline_val, exp_vals, expected_pct_none):
+        """Deltas vs baseline computed; percentage is None when baseline is zero."""
         results = {"baseline": {"metrics": {"loss": baseline_val}}}
         for eid, val, cfg in exp_vals:
             results[eid] = {"metrics": {"loss": val}, "config": cfg}
@@ -124,6 +127,7 @@ class TestResultAnalyzer:
             assert exp2["delta_pct"] == pytest.approx(-40.0)
 
     def test_compute_deltas_missing_baseline(self):
+        """Absent baseline yields no deltas."""
         assert compute_deltas({"exp-001": {"metrics": {"loss": 0.8}}}, "baseline", "loss") == []
 
     # ---------- spearman_correlation (3 cases) ----------
@@ -134,11 +138,13 @@ class TestResultAnalyzer:
         ([1, 1, 2, 3], [10, 10, 20, 30], lambda r: r > 0.9),
     ])
     def test_spearman_correlation(self, x, y, check):
+        """Rank correlation matches expectations for monotonic, random, and tied data."""
         assert check(spearman_correlation(x, y))
 
     # ---------- identify_correlations ----------
 
     def test_identify_correlations_basic(self):
+        """Numeric HP-metric correlations are surfaced when enough data exists."""
         results = {
             "exp-001": {"metrics": {"loss": 0.3}, "config": {"lr": 0.0001, "batch_size": 32}},
             "exp-002": {"metrics": {"loss": 0.5}, "config": {"lr": 0.001, "batch_size": 16}},
@@ -149,6 +155,7 @@ class TestResultAnalyzer:
         assert len(corr["correlations"]) > 0
 
     def test_identify_correlations_too_few(self):
+        """Too few experiments returns no correlations plus an explanatory note."""
         results = {f"exp-{i:03d}": {"metrics": {"loss": 0.3 + i * 0.1},
                                      "config": {"lr": 0.0001 * (i + 1)}}
                    for i in range(2)}
@@ -157,6 +164,7 @@ class TestResultAnalyzer:
         assert "note" in corr
 
     def test_identify_correlations_categorical(self):
+        """Categorical HPs report top and bottom common values instead of correlation."""
         results = {
             "exp-001": {"metrics": {"loss": 0.3}, "config": {"optimizer": "adam"}, "status": "completed"},
             "exp-002": {"metrics": {"loss": 0.5}, "config": {"optimizer": "sgd"}, "status": "completed"},
@@ -170,6 +178,7 @@ class TestResultAnalyzer:
     # ---------- analyze ----------
 
     def test_analyze_basic(self, tmp_path):
+        """Full analysis reports experiment count, ranking, and deltas."""
         _write_results(tmp_path, {
             "baseline": {"metrics": {"loss": 1.0}, "config": {"lr": 0.001}},
             "exp-001": {"metrics": {"loss": 0.5}, "config": {"lr": 0.0001}},
@@ -180,11 +189,13 @@ class TestResultAnalyzer:
         assert len(result["deltas"]) == 1
 
     def test_analyze_empty(self, tmp_path):
+        """Analyzing a directory with no results returns an error."""
         assert "error" in analyze(str(tmp_path / "nonexistent"), "loss")
 
     # ---------- group_by_method_tier ----------
 
     def test_group_by_method_tier(self):
+        """Experiments are bucketed by their method_tier field."""
         results = {
             "baseline": {"method_tier": "baseline", "metrics": {"loss": 1.0}},
             "exp-001": {"method_tier": "method_default_hp", "metrics": {"loss": 0.8}},
@@ -197,12 +208,14 @@ class TestResultAnalyzer:
         assert len(groups["method_tuned_hp"]) == 1
 
     def test_group_by_method_tier_empty_and_unknown(self):
+        """Empty input yields no groups; tier-less experiments fall under 'unknown'."""
         assert group_by_method_tier({}) == {}
         groups = group_by_method_tier({"e1": {"metrics": {"loss": 0.5}}})
         assert len(groups["unknown"]) == 1
         assert groups["unknown"][0]["exp_id"] == "e1"
 
     def test_group_by_method_tier_stacked(self, tmp_path):
+        """Stacked experiments are grouped under their stacked tier."""
         _write_results(tmp_path, {
             "baseline": {"metrics": {"loss": 1.0}, "method_tier": "baseline"},
             "exp-stack-001": {"metrics": {"loss": 0.6}, "method_tier": "stacked_default_hp",
@@ -226,12 +239,14 @@ class TestResultAnalyzer:
          None, 30, lambda d: len(d) <= 30 and d.endswith("...")),
     ])
     def test_build_experiment_description(self, data, baseline_cfg, max_len, check):
+        """Description reflects proposal/branch/config diff and respects max length."""
         desc = build_experiment_description("exp-001", data, baseline_cfg, max_len=max_len)
         assert check(desc)
 
     # ---------- rank_methods_for_stacking ----------
 
     def test_rank_methods_for_stacking_basic(self, tmp_path):
+        """Improving methods are ranked best-first for stacking."""
         _write_results(tmp_path, {
             "baseline": {"metrics": {"loss": 1.0}, "config": {"lr": 0.01}},
             "exp-001": {"metrics": {"loss": 0.8}, "config": {"lr": 0.01},
@@ -246,6 +261,7 @@ class TestResultAnalyzer:
         assert ranked[0]["code_proposal"] == "method-b"
 
     def test_rank_methods_excludes_non_improvements(self, tmp_path):
+        """Methods that do not beat baseline are excluded from stacking."""
         _write_results(tmp_path, {
             "baseline": {"metrics": {"loss": 1.0}, "config": {"lr": 0.01}},
             "exp-001": {"metrics": {"loss": 1.2}, "config": {"lr": 0.001},
@@ -256,6 +272,7 @@ class TestResultAnalyzer:
         assert ranked == []
 
     def test_rank_methods_picks_best_per_branch(self, tmp_path):
+        """Each branch contributes only its single best experiment to the ranking."""
         _write_results(tmp_path, {
             "baseline": {"metrics": {"loss": 1.0}, "config": {"lr": 0.01}},
             "exp-001": {"metrics": {"loss": 0.9}, "config": {"lr": 0.01},
@@ -272,6 +289,7 @@ class TestResultAnalyzer:
     # ---------- CLI ----------
 
     def test_cli_analyze(self, run_main, tmp_path):
+        """CLI analyze prints valid JSON with the experiment count."""
         _write_results(tmp_path, {
             "baseline": {"metrics": {"loss": 1.0}, "config": {"lr": 0.001}},
             "exp-001": {"metrics": {"loss": 0.5}, "config": {"lr": 0.0001}},
@@ -281,6 +299,7 @@ class TestResultAnalyzer:
         assert json.loads(r.stdout)["num_experiments"] == 2
 
     def test_cli_no_args(self, run_main):
+        """CLI with no arguments exits non-zero and prints usage."""
         r = run_main("result_analyzer.py")
         assert r.returncode == 1
         assert "Usage" in r.stdout
@@ -292,8 +311,7 @@ class TestResultAnalyzer:
 
 
 class TestSchemaValidator:
-    """Tests for schema_validator.py: result, baseline, manifest,
-    prerequisites validation, and CLI."""
+    """Tests for schema_validator.py result, baseline, manifest, and prerequisites validation."""
 
     # ---------- validate_result (6 cases) ----------
 
@@ -345,6 +363,7 @@ class TestSchemaValidator:
          True),
     ])
     def test_validate_result(self, data, expect_valid):
+        """Result validity matches expectations across required fields and constraints."""
         assert validate_result(data)["valid"] is expect_valid
 
     def test_validate_result_valid_method_tiers(self):
@@ -373,6 +392,7 @@ class TestSchemaValidator:
          False),
     ])
     def test_validate_baseline(self, data, expect_valid):
+        """Baseline validity matches expectations for status and metric values."""
         assert validate_baseline(data)["valid"] is expect_valid
 
     # ---------- validate_manifest (4 cases) ----------
@@ -392,6 +412,7 @@ class TestSchemaValidator:
          False),
     ])
     def test_validate_manifest(self, data, expect_valid):
+        """Manifest validity matches expectations for proposals, strategy, and fields."""
         assert validate_manifest(data)["valid"] is expect_valid
 
     # ---------- validate_prerequisites (3 cases) ----------
@@ -409,9 +430,11 @@ class TestSchemaValidator:
          False),
     ])
     def test_validate_prerequisites(self, data, expect_valid):
+        """Prerequisites validity matches expectations for required sections."""
         assert validate_prerequisites(data)["valid"] is expect_valid
 
     def test_validate_prerequisites_warnings(self):
+        """A missing train_path produces a warning but remains valid."""
         data = {"status": "ready", "dataset": {"format_detected": "csv"},
                 "environment": {"manager": "conda"}, "ready_for_baseline": True}
         result = validate_prerequisites(data)
@@ -421,6 +444,7 @@ class TestSchemaValidator:
     # ---------- non-dict input ----------
 
     def test_validate_non_dict_input(self):
+        """Every validator rejects non-dict input with a dict-related error."""
         for validator in [validate_result, validate_baseline, validate_manifest, validate_prerequisites]:
             result = validator("not a dict")
             assert result["valid"] is False
@@ -437,6 +461,7 @@ class TestSchemaValidator:
                             "ready_for_baseline": True}),
     ])
     def test_validate_file_dispatch(self, tmp_path, schema, content):
+        """validate_file dispatches to the correct schema validator for each type."""
         f = tmp_path / f"{schema}.json"
         f.write_text(json.dumps(content))
         assert validate_file(str(f), schema)["valid"] is True
@@ -454,6 +479,7 @@ class TestSchemaValidator:
     # ---------- all validators return warnings key ----------
 
     def test_all_validators_return_warnings_key(self):
+        """Every validator returns a list-valued 'warnings' key."""
         cases = [
             (validate_result, {"exp_id": "e", "status": "completed", "config": {}, "metrics": {}}),
             (validate_baseline, {"exp_id": "b", "status": "completed", "config": {}, "metrics": {}}),
@@ -468,6 +494,7 @@ class TestSchemaValidator:
     # ---------- CLI ----------
 
     def test_cli_validate_valid(self, run_main, tmp_path):
+        """CLI validates a well-formed result file and reports valid."""
         f = tmp_path / "exp.json"
         f.write_text(json.dumps({"exp_id": "exp-001", "status": "completed",
                                  "config": {}, "metrics": {}}))
@@ -476,6 +503,7 @@ class TestSchemaValidator:
         assert json.loads(r.stdout)["valid"] is True
 
     def test_cli_no_args(self, run_main):
+        """CLI with no arguments exits non-zero."""
         r = run_main("schema_validator.py")
         assert r.returncode == 1
 
@@ -486,8 +514,7 @@ class TestSchemaValidator:
 
 
 class TestPlotResults:
-    """Tests for plot_results.py: ASCII charts, comparison, timeline,
-    sensitivity, progress chart, and CLI."""
+    """Tests for plot_results.py ASCII charts, comparison, timeline, sensitivity, and progress chart."""
 
     # ---------- ascii_bar_chart (3 cases) ----------
 
@@ -499,6 +526,7 @@ class TestPlotResults:
          lambda c: "a" in c and "-10" in c),
     ])
     def test_ascii_bar_chart(self, labels, values, title, check):
+        """Bar chart renders labels and bars; empty input yields an empty string."""
         chart = ascii_bar_chart(labels, values, title=title) if title else ascii_bar_chart(labels, values)
         assert check(chart)
 
@@ -511,6 +539,7 @@ class TestPlotResults:
         ([5.0, 5.0, 5.0, 5.0], 5, lambda c: "*" in c),
     ])
     def test_ascii_line_chart(self, values, height, check):
+        """Line chart plots points; empty input yields an empty string."""
         kwargs = {}
         if height is not None:
             kwargs["height"] = height
@@ -518,6 +547,7 @@ class TestPlotResults:
         assert check(chart)
 
     def test_ascii_line_chart_resampling(self):
+        """Long series are resampled to fit the requested width."""
         values = [i * 0.1 for i in range(100)]
         chart = ascii_line_chart(values, width=60)
         assert chart and "*" in chart
@@ -539,12 +569,14 @@ class TestPlotResults:
         assert chart and "*" in chart
 
     def test_plot_no_results(self, tmp_path):
+        """Plots over an empty directory report 'No results'."""
         assert "No results" in plot_metric_comparison(str(tmp_path / "nonexistent"), "loss")
         assert "No results" in plot_improvement_timeline(str(tmp_path / "nonexistent"), "loss")
 
     # ---------- plot_progress_chart ----------
 
     def test_progress_chart_basic(self, tmp_path):
+        """Progress chart writes a non-empty PNG to the requested path."""
         _write_results(tmp_path, {
             "baseline": {"metrics": {"loss": 1.0}, "config": {"lr": 0.01}},
             "exp-001": {"metrics": {"loss": 0.7}, "config": {"lr": 0.001}},
@@ -555,9 +587,11 @@ class TestPlotResults:
         assert path == str(out) and out.exists() and out.stat().st_size > 0
 
     def test_progress_chart_no_results(self, tmp_path):
+        """Progress chart returns None when there are no results."""
         assert plot_progress_chart(str(tmp_path / "nonexistent"), "loss") is None
 
     def test_progress_chart_annotations(self, tmp_path):
+        """Progress chart annotates proposal and stacking experiments."""
         _write_results(tmp_path, {
             "baseline": {"metrics": {"loss": 1.0}, "config": {"lr": 0.01}},
             "exp-001": {"metrics": {"loss": 0.7}, "config": {"lr": 0.01},
@@ -575,11 +609,13 @@ class TestPlotResults:
     # ---------- CLI ----------
 
     def test_cli_comparison(self, run_main, tmp_path):
+        """CLI comparison chart runs successfully on a results directory."""
         _write_results(tmp_path, {"exp-001": {"metrics": {"loss": 0.5}, "config": {}}})
         r = run_main("plot_results.py", str(tmp_path), "loss", "comparison")
         assert r.returncode == 0
 
     def test_cli_no_args(self, run_main):
+        """CLI with no arguments exits non-zero and prints usage."""
         r = run_main("plot_results.py")
         assert r.returncode == 1 and "Usage" in r.stdout
 
@@ -593,6 +629,7 @@ class TestHPInteractions:
     """Tests for detect_hp_interactions()."""
 
     def test_clear_interaction(self, tmp_path):
+        """An lr x batch_size interaction scenario returns an interactions key."""
         results_dir = tmp_path / "results"
         results_dir.mkdir()
         # Create experiments where lr*batch_size interaction matters
@@ -614,6 +651,7 @@ class TestHPInteractions:
         assert "interactions" in out
 
     def test_insufficient_data(self, tmp_path):
+        """Too few experiments returns no interactions with an explanatory note."""
         results_dir = tmp_path / "results"
         results_dir.mkdir()
         _write_result(results_dir, "baseline", "completed", {"lr": 0.01}, {"loss": 1.0})
@@ -624,6 +662,7 @@ class TestHPInteractions:
         assert "Need at least" in out["note"]
 
     def test_categorical_excluded(self, tmp_path):
+        """Interactions need two numeric HPs; a lone numeric HP yields none."""
         results_dir = tmp_path / "results"
         results_dir.mkdir()
         _write_result(results_dir, "baseline", "completed", {"lr": 0.01}, {"loss": 1.0})
@@ -636,6 +675,7 @@ class TestHPInteractions:
         assert out["interactions"] == []
 
     def test_analyze_includes_interactions(self, tmp_path):
+        """analyze() output includes interactions and branch_scores keys."""
         results_dir = tmp_path / "results"
         results_dir.mkdir()
         _write_result(results_dir, "baseline", "completed", {"lr": 0.01}, {"loss": 1.0})
@@ -657,6 +697,7 @@ class TestBranchScores:
     """Tests for compute_branch_scores()."""
 
     def test_basic_scoring(self, tmp_path):
+        """Better-performing branches score higher; sample counts are tracked."""
         results_dir = tmp_path / "results"
         results_dir.mkdir()
         _write_result(results_dir, "baseline", "completed", {"lr": 0.01}, {"loss": 1.0})
@@ -671,6 +712,7 @@ class TestBranchScores:
         assert scores["ml-opt/method-a"]["sample_count"] == 2
 
     def test_null_branch(self, tmp_path):
+        """Branchless experiments are grouped under the synthetic baseline branch."""
         results_dir = tmp_path / "results"
         results_dir.mkdir()
         _write_result(results_dir, "baseline", "completed", {"lr": 0.01}, {"loss": 1.0})
@@ -679,6 +721,7 @@ class TestBranchScores:
         assert "__baseline__" in scores
 
     def test_all_worse(self, tmp_path):
+        """A branch worse than baseline scores zero."""
         results_dir = tmp_path / "results"
         results_dir.mkdir()
         _write_result(results_dir, "baseline", "completed", {"lr": 0.01}, {"loss": 1.0})
@@ -688,6 +731,7 @@ class TestBranchScores:
         assert scores["ml-opt/a"]["score"] == 0.0  # worse than baseline gets zero
 
     def test_excludes_failed(self, tmp_path):
+        """Diverged experiments are excluded from a branch's sample count."""
         results_dir = tmp_path / "results"
         results_dir.mkdir()
         _write_result(results_dir, "baseline", "completed", {"lr": 0.01}, {"loss": 1.0})
@@ -699,6 +743,7 @@ class TestBranchScores:
         assert scores["ml-opt/a"]["sample_count"] == 1
 
     def test_higher_is_better(self, tmp_path):
+        """A higher-is-better metric yields positive improvement for a better branch."""
         results_dir = tmp_path / "results"
         results_dir.mkdir()
         _write_result(results_dir, "baseline", "completed", {"lr": 0.01}, {"accuracy": 70.0})
@@ -724,6 +769,7 @@ class TestBranchScores:
         assert scores.get("__baseline__") is None  # no phantom baseline group
 
     def test_empty_results(self, tmp_path):
+        """Only a baseline (no branch experiments) yields no branch scores."""
         results_dir = tmp_path / "results"
         results_dir.mkdir()
         _write_result(results_dir, "baseline", "completed", {"lr": 0.01}, {"loss": 1.0})
@@ -740,6 +786,7 @@ class TestExperimentComparison:
     """Tests for compare_experiments() and format_comparison_table()."""
 
     def test_basic_comparison(self, tmp_path):
+        """Pairwise comparison reports config diffs, metric deltas, and the winner."""
         results_dir = tmp_path / "results"
         results_dir.mkdir()
         _write_result(results_dir, "baseline", "completed", {"lr": 0.01}, {"loss": 1.0})
@@ -755,6 +802,7 @@ class TestExperimentComparison:
         assert result["winner"]["exp_id"] == "exp-2"  # lower loss wins
 
     def test_higher_is_better(self, tmp_path):
+        """For a higher-is-better metric, the larger value wins the comparison."""
         results_dir = tmp_path / "results"
         results_dir.mkdir()
         _write_result(results_dir, "exp-1", "completed", {"lr": 0.001}, {"accuracy": 80.0})
@@ -764,6 +812,7 @@ class TestExperimentComparison:
         assert result["winner"]["exp_id"] == "exp-2"
 
     def test_missing_experiment(self, tmp_path):
+        """Comparing against a nonexistent experiment returns an error."""
         results_dir = tmp_path / "results"
         results_dir.mkdir()
         _write_result(results_dir, "exp-1", "completed", {"lr": 0.001}, {"loss": 0.5})
@@ -771,6 +820,7 @@ class TestExperimentComparison:
         assert "error" in result
 
     def test_same_config_no_diff(self, tmp_path):
+        """Identical config values are reported as not differing."""
         results_dir = tmp_path / "results"
         results_dir.mkdir()
         _write_result(results_dir, "exp-1", "completed", {"lr": 0.001}, {"loss": 0.5})
@@ -779,6 +829,7 @@ class TestExperimentComparison:
         assert result["config_diff"]["lr"]["differs"] is False
 
     def test_format_table(self, tmp_path):
+        """The comparison table renders experiment IDs, header, and winner."""
         results_dir = tmp_path / "results"
         results_dir.mkdir()
         _write_result(results_dir, "exp-1", "completed",
@@ -793,6 +844,7 @@ class TestExperimentComparison:
         assert "Winner" in table
 
     def test_format_table_error(self):
+        """Formatting an error result returns the error message verbatim."""
         table = format_comparison_table({"error": "Not found"})
         assert table == "Not found"
 
@@ -806,6 +858,7 @@ class TestCompletenessWarnings:
     """Tests for status-aware completeness checks in validate_result()."""
 
     def test_completed_with_all_fields(self):
+        """A completed result with all completeness fields produces no warnings."""
         data = {"exp_id": "exp-1", "status": "completed",
                 "config": {"lr": 0.001}, "metrics": {"loss": 0.5},
                 "iteration": 1, "method_tier": "baseline", "duration_seconds": 60}
@@ -814,6 +867,7 @@ class TestCompletenessWarnings:
         assert r["warnings"] == []
 
     def test_completed_empty_metrics_warns(self):
+        """A completed result with empty metrics is valid but warns."""
         data = {"exp_id": "exp-1", "status": "completed",
                 "config": {"lr": 0.001}, "metrics": {}}
         r = validate_result(data)
@@ -821,6 +875,7 @@ class TestCompletenessWarnings:
         assert any("empty metrics" in w for w in r["warnings"])
 
     def test_completed_missing_iteration_warns(self):
+        """A completed result missing iteration/method_tier warns on both."""
         data = {"exp_id": "exp-1", "status": "completed",
                 "config": {"lr": 0.001}, "metrics": {"loss": 0.5}}
         r = validate_result(data)
@@ -829,6 +884,7 @@ class TestCompletenessWarnings:
         assert any("method_tier" in w for w in r["warnings"])
 
     def test_failed_missing_notes_warns(self):
+        """A failed result without notes warns."""
         data = {"exp_id": "exp-1", "status": "failed",
                 "config": {"lr": 0.001}, "metrics": {}}
         r = validate_result(data)
@@ -836,12 +892,14 @@ class TestCompletenessWarnings:
         assert any("notes" in w for w in r["warnings"])
 
     def test_diverged_missing_notes_warns(self):
+        """A diverged result without notes warns."""
         data = {"exp_id": "exp-1", "status": "diverged",
                 "config": {"lr": 0.001}, "metrics": {}}
         r = validate_result(data)
         assert any("notes" in w for w in r["warnings"])
 
     def test_stacked_missing_fields_warns(self):
+        """A stacked result missing code_branches/stacking_order warns on both."""
         data = {"exp_id": "exp-1", "status": "completed",
                 "config": {"lr": 0.001}, "metrics": {"loss": 0.5},
                 "method_tier": "stacked_default_hp", "iteration": 1,
@@ -851,6 +909,7 @@ class TestCompletenessWarnings:
         assert any("stacking_order" in w for w in r["warnings"])
 
     def test_strict_mode_fails(self):
+        """Strict validation upgrades empty-metrics warnings to errors."""
         data = {"exp_id": "exp-1", "status": "completed",
                 "config": {}, "metrics": {}}
         r = validate_result_strict(data)
@@ -858,6 +917,7 @@ class TestCompletenessWarnings:
         assert any("empty metrics" in e for e in r["errors"])
 
     def test_running_no_warnings(self):
+        """A running placeholder result is exempt from completeness warnings."""
         data = {"exp_id": "exp-1", "status": "running",
                 "config": {"lr": 0.001}, "metrics": {}}
         r = validate_result(data)

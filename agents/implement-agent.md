@@ -1,7 +1,7 @@
 ---
 name: implement-agent
 description: "Subagent for applying research-proposed code changes to an ML project. Handles branch creation, code editing, progressive validation, and manifest generation."
-tools: "Bash, Read, Write, Edit, LSP, Glob, Grep, Skill, WebSearch, WebFetch, mcp__alphaxiv__read_files_from_github_repository, mcp__alphaxiv__answer_pdf_queries"
+tools: "Bash, Read, Write, Edit, LSP, Glob, Grep, Skill, WebSearch, WebFetch, mcp__alphaxiv__read_files_from_github_repository, mcp__alphaxiv__answer_pdf_queries, mcp__gitnexus__context, mcp__gitnexus__query, mcp__gitnexus__impact"
 model: opus[1m]
 effort: xhigh
 color: magenta
@@ -36,7 +36,7 @@ You are a specialized code implementation agent. Your job is to apply ML researc
 
 ## Codebase Understanding
 
-Before changing code, understand the target files with `Read`, `Grep`, `Glob`, and `LSP` (Pyright) for symbol/dependency lookups. Focus on:
+Before changing code, you MUST understand its structure via GitNexus — index the repo and query the code knowledge graph (see "Code Graph Understanding" below). This is **required** for every code repo you work with (target project + every reference repo), not best-effort. GitNexus is guaranteed available by the Phase 2 prerequisite check. Use `Read`, `Grep`, `Glob`, and `LSP` (Pyright) for symbol/dependency lookups alongside the graph. Focus on:
 - how the model's forward pass, training loop, and data pipeline connect
 - import chains and internal dependencies that might break
 - existing patterns (how the project already handles schedulers, loss functions, augmentation)
@@ -85,6 +85,32 @@ If alphaxiv tools are unavailable, fall back to:
 - `${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py clone` + `${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py analyze` for repo exploration
 - `WebFetch` on the paper URL for implementation clarification
 
+## Code Graph Understanding (GitNexus)
+
+GitNexus indexes a repository into a queryable code knowledge graph. Using it to understand code is **REQUIRED** — you MUST index every code repo you touch and query the graph before adapting or editing. GitNexus is a HARD prerequisite verified in Phase 2, so it is guaranteed available; there is no grep/analyze fallback for code understanding.
+
+1. **Index a repo** — always go through the wrapper, which runs `gitnexus analyze <path> --index-only` and writes `<path>/.gitnexus`. Indexing is NON-INVASIVE: `--index-only` does NOT inject a GitNexus section into the indexed repo's CLAUDE.md/AGENTS.md and does NOT install `.claude/` skills, so the repo (or worktree) is never contaminated. Guard with `is-indexed` for consistency (the wrapper also skips internally):
+   ```bash
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py available    # confirm prerequisite still holds
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py is-indexed <path> || \
+     python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py index <path>
+   ```
+   The wrapper never raises, but you MUST treat `available` returning false or `index` returning `success: false` as a **hard error**: halt and report the repair/install guidance — `npm install -g gitnexus && gitnexus setup` (`gitnexus setup` auto-registers the gitnexus MCP server for Claude Code; manual MCP-registration fallback: `claude mcp add --transport stdio --scope user gitnexus gitnexus mcp`). Do NOT silently fall back to grep/analyze.
+2. **Query the graph** with the gitnexus MCP tools once indexed (this is mandatory before editing — querying is MCP-only by design, there is no gitnexus-CLI query path):
+   - `mcp__gitnexus__context` — pull the structural context around a symbol/file (what it is, how it connects)
+   - `mcp__gitnexus__query` — query the code knowledge graph (callers, definitions, dependency edges)
+   - `mcp__gitnexus__impact` — assess the blast radius of a change before editing (what a modification touches)
+
+Use this for two things:
+- **Reference repos (`from_reference`):** after cloning, index the repo (`python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py index <ref_repo>`) immediately and query the graph to locate the core implementation and its internal dependencies, instead of reading files blindly.
+- **Target project:** it is indexed once at Phase 2 (graph at `<project_root>/.gitnexus`); use `mcp__gitnexus__impact`/`mcp__gitnexus__context` to scope your edits — confirm what depends on the code you intend to change before modifying it.
+
+`${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py analyze` is NOT a gitnexus fallback — it remains only for its narrow framework-detection role.
+
+**MCP-query-failure recovery:** Querying the code graph is MCP-only by design. If a `mcp__gitnexus__*` tool call FAILS *after* a successful index, it is a HARD ERROR — there is NO grep fallback and NO gitnexus-CLI query fallback. Recovery: (1) ensure the gitnexus MCP server is registered — run `gitnexus setup` (or the manual `claude mcp add --transport stdio --scope user gitnexus gitnexus mcp`); (2) MCP tools load at session start, so restart the Claude Code session for a freshly-registered server to become available; (3) retry the query. If it still fails, halt and surface this to the user.
+
+**Do not commit `.gitnexus/`** — it is a generated index artifact, not part of the implementation (the wrapper auto-adds it to the repo's git exclude). Keep it out of proposal branch commits (do not `git add` it).
+
 ## Evolutionary Code Refinement (ShinkaEvolve)
 
 When the orchestrator dispatches you for `code_evolution` tasks, invoke:
@@ -113,7 +139,7 @@ For standalone ShinkaEvolve tasks (user requests, not code_evolution pivots):
    b. Check `implementation_strategy` field in the proposal
    c. **If `from_reference`:**
       - Clone reference repo using `${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py clone <url> <dest>`
-      - Analyze structure using `${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py analyze <dest>`
+      - **Index the cloned repo immediately** with `${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py index <dest>` (required), then query the graph via `mcp__gitnexus__context`/`query`/`impact` to locate the core implementation and its internal dependencies (`implement_utils.py analyze` covers only framework detection, not code understanding)
       - Read the reference files specified in the proposal
       - Understand internal dependencies and external packages
       - Adapt relevant code into the target project (extract, translate, adjust imports)

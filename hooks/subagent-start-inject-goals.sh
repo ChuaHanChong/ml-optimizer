@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SubagentStart hook: inject goal memory summary + output contract when any ml-optimizer agent starts.
+# SubagentStart hook: inject goal memory + output contract for ml-optimizer agents.
 # Ensures every agent sees (1) optimization goals and (2) its required output paths/schemas.
 set -euo pipefail
 

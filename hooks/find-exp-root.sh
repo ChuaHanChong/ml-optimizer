@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared helper: find the exp_root directory.
+# Shared helper: resolve the active exp_root directory.
 #
 # Resolution: walk up parent directories from $CWD looking for a
 # .claude/ml-optimizer.json breadcrumb. The breadcrumb is the authoritative

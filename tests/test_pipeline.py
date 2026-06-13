@@ -1,8 +1,4 @@
-"""Consolidated tests for pipeline_state.py and experiment_setup.py.
-
-Covers phase validation, state persistence, baseline checksum integrity,
-stale experiment cleanup, experiment setup, and CLI interfaces.
-"""
+"""Tests for pipeline_state.py and experiment_setup.py."""
 
 import concurrent.futures
 import json
@@ -16,6 +12,12 @@ from unittest import mock
 
 import pytest
 
+from conftest import (
+    cleanup_stale_experiments,
+    create_experiment_dirs,
+    setup_experiment,
+    write_experiment_config,
+)
 from pipeline_state import (
     PHASE_TRANSITIONS,
     RECOVERY_INSTRUCTIONS,
@@ -34,12 +36,6 @@ from pipeline_state import (
     verify_baseline_integrity,
 )
 from experiment_setup import generate_script, next_experiment_id
-from conftest import (
-    cleanup_stale_experiments,
-    create_experiment_dirs,
-    setup_experiment,
-    write_experiment_config,
-)
 
 
 # ---------------------------------------------------------------------------
@@ -47,12 +43,14 @@ from conftest import (
 # ---------------------------------------------------------------------------
 
 def _make_results_dir(tmp_path):
+    """Create and return the results/ subdirectory under tmp_path."""
     d = tmp_path / "results"
     d.mkdir(exist_ok=True)
     return d
 
 
 def _write_baseline(tmp_path, metrics=None, config=None):
+    """Write a baseline.json with optional metrics and config, returning results/."""
     d = _make_results_dir(tmp_path)
     data = {}
     if metrics is not None:
@@ -64,6 +62,7 @@ def _write_baseline(tmp_path, metrics=None, config=None):
 
 
 def _write_prerequisites(tmp_path, ready, status="ready"):
+    """Write a prerequisites.json with the given readiness and status."""
     d = _make_results_dir(tmp_path)
     (d / "prerequisites.json").write_text(json.dumps(
         {"status": status, "dataset": {}, "environment": {},
@@ -98,6 +97,7 @@ class TestPhaseValidation:
         assert result["valid"] is True
 
     def test_phase2_always_valid(self, tmp_path):
+        """Phase 2 has no prerequisites and is always valid."""
         result = validate_phase_requirements(2, str(tmp_path))
         assert result["valid"] is True and result["missing"] == []
 
@@ -110,10 +110,12 @@ class TestPhaseValidation:
 
     @pytest.mark.parametrize("ready, expect_valid", [(True, True), (False, False)])
     def test_phase3_prerequisites_gating(self, tmp_path, ready, expect_valid):
+        """Phase 3 validity follows the prerequisites readiness flag."""
         _write_prerequisites(tmp_path, ready, status="ready" if ready else "failed")
         assert validate_phase_requirements(3, str(tmp_path))["valid"] is expect_valid
 
     def test_phase3_prereq_corrupt_warns(self, tmp_path):
+        """A corrupt prerequisites.json warns but does not fail Phase 3."""
         d = _make_results_dir(tmp_path)
         (d / "prerequisites.json").write_text("{bad json")
         r = validate_phase_requirements(3, str(tmp_path))
@@ -125,6 +127,7 @@ class TestPhaseValidation:
         ({"config": {"lr": 0.001}}, "metrics"),
     ])
     def test_phase4_missing_keys(self, tmp_path, data, missing_key):
+        """Phase 4 fails when baseline.json lacks config or metrics."""
         d = _make_results_dir(tmp_path)
         (d / "baseline.json").write_text(json.dumps(data))
         r = validate_phase_requirements(4, str(tmp_path))
@@ -155,12 +158,14 @@ class TestPhaseValidation:
         assert r["valid"] is True and any("not valid JSON" in w for w in r["warnings"])
 
     def test_phase8_requires_manifest(self, tmp_path):
+        """Phase 8 fails without an implementation manifest."""
         _write_baseline(tmp_path, {"loss": 1.0}, {"lr": 0.001})
         r = validate_phase_requirements(8, str(tmp_path))
         assert r["valid"] is False
         assert any("implementation-manifest" in m for m in r["missing"])
 
     def test_undefined_phase_warns(self, tmp_path):
+        """An undefined phase number warns but is treated as valid."""
         r = validate_phase_requirements(99, str(tmp_path))
         assert r["valid"] is True
         assert any("No validation rules" in w for w in r["warnings"])
@@ -174,6 +179,7 @@ class TestStatePersistence:
     """save_state / load_state roundtrips and edge cases."""
 
     def test_save_and_load_roundtrip(self, tmp_path):
+        """A saved state round-trips phase, iteration, running experiments, and status."""
         exp_ids = ["exp-001", "exp-002"]
         path = save_state(3, 2, exp_ids, str(tmp_path))
         assert Path(path).exists()
@@ -219,6 +225,7 @@ class TestStatePersistence:
         ("stuck_protocol_triggered", True, False),
     ])
     def test_root_field_persist_preserve_reset(self, tmp_path, field, value, reset_val):
+        """Root-level fields persist, survive a save without the arg, and can be reset."""
         save_state(7, 3, [], str(tmp_path), **{field: value})
         assert load_state(str(tmp_path))[field] == value
         save_state(7, 4, [], str(tmp_path))  # preserved
@@ -227,6 +234,7 @@ class TestStatePersistence:
         assert load_state(str(tmp_path))[field] == reset_val
 
     def test_stuck_protocol_absent_when_never_set(self, tmp_path):
+        """The stuck-protocol flag is absent until it is explicitly set."""
         save_state(7, 1, [], str(tmp_path))
         assert "stuck_protocol_triggered" not in load_state(str(tmp_path))
 
@@ -247,6 +255,7 @@ class TestStatePersistence:
         assert load_state(str(tmp_path))["agent_registry"] == {}
 
     def test_agent_registry_absent_when_never_set(self, tmp_path):
+        """The agent registry is absent until it is explicitly set."""
         save_state(7, 1, [], str(tmp_path))
         assert "agent_registry" not in load_state(str(tmp_path))
 
@@ -271,9 +280,7 @@ class TestStatePersistence:
         assert state["user_choices"]["primary_metric"] == "loss"
 
     def test_agent_registry_clearing_simulates_resumption(self, tmp_path):
-        """On pipeline resumption (new session), registry must be clearable
-        while preserving user_choices — simulates the orchestrate skill's
-        session-start clearing logic."""
+        """Clearing the agent registry on resumption preserves user_choices."""
         full_registry = {
             "research": "agent-old-1", "implement": "agent-old-2",
             "tuning": "agent-old-3", "analysis": "agent-old-4",
@@ -292,6 +299,7 @@ class TestStatePersistence:
         assert state["user_choices"] == choices  # preserved
 
     def test_stacking_state_roundtrip(self, tmp_path):
+        """Nested stacking state inside user_choices survives save/load."""
         stacking = {
             "ranked_methods": ["perceptual-loss", "cosine-scheduler", "mixup"],
             "current_stack_order": 2, "stack_base_branch": "ml-opt/stack-2",
@@ -321,6 +329,7 @@ class TestStatePersistence:
         assert state["status"] == "recovered" and state["user_choices"] == choices
 
     def test_save_state_write_failure(self, tmp_path):
+        """A write failure raises OSError and leaves no temp files behind."""
         exp_root = tmp_path / "exp"
         exp_root.mkdir()
         with pytest.raises(OSError):
@@ -329,10 +338,12 @@ class TestStatePersistence:
         assert not list(exp_root.glob("*.tmp"))
 
     def test_backup_write_failure_main_still_succeeds(self, tmp_path):
+        """A backup write failure does not prevent the main state from saving."""
         exp_root = tmp_path / "exp"
         original_mkstemp = tempfile.mkstemp
         call_count = [0]
         def mock_mkstemp(*args, **kwargs):
+            """Fail on the second mkstemp call to simulate a backup write error."""
             call_count[0] += 1
             if call_count[0] == 2:
                 raise OSError("backup failed")
@@ -355,6 +366,7 @@ class TestBaselineChecksum:
         ({"loss": 0.5}, {"loss": 0.6}, False),
     ], ids=["deterministic", "key_order_independent", "different_values"])
     def test_checksum_properties(self, ma, mb, eq):
+        """Checksums are deterministic, key-order-independent, and value-sensitive."""
         assert (_compute_baseline_checksum(ma) == _compute_baseline_checksum(mb)) is eq
 
     def test_checksum_format_and_persistence(self, tmp_path):
@@ -391,6 +403,7 @@ class TestBaselineChecksum:
          False),
     ], ids=["no_state", "legacy_no_checksum", "missing_file", "corrupt_json"])
     def test_verify_edge_cases(self, tmp_path, setup_fn, expect_valid):
+        """Integrity verification handles no-state, legacy, missing, and corrupt cases."""
         setup_fn(tmp_path)
         result = verify_baseline_integrity(str(tmp_path))
         assert result["valid"] is expect_valid
@@ -430,10 +443,12 @@ class TestCleanup:
                      "status": "running"}),
     ], ids=["corrupt", "invalid_ts", "missing_ts"])
     def test_cleanup_stale_graceful_on_bad_state(self, tmp_path, body):
+        """Corrupt or timestamp-less state files are skipped without error."""
         (tmp_path / "pipeline-state.json").write_text(body)
         assert cleanup_stale(str(tmp_path), timeout_hours=2.0) == []
 
     def test_cleanup_stale_naive_timestamp(self, tmp_path):
+        """A naive (tz-less) stale timestamp is still treated as interrupted."""
         naive = (datetime.now(timezone.utc) - timedelta(hours=3)).replace(tzinfo=None)
         state = {"phase": 6, "iteration": 1, "running_experiments": [],
                  "timestamp": naive.isoformat(), "status": "running"}
@@ -465,6 +480,7 @@ class TestCleanup:
 
     @pytest.mark.parametrize("target", ["pipeline", "exp_result"])
     def test_cleanup_write_failure_reraises(self, tmp_path, target):
+        """A write failure during cleanup is re-raised rather than swallowed."""
         exp = tmp_path / "exp"
         exp.mkdir()
         stale_ts = (datetime.now(tz=timezone.utc) - timedelta(hours=10)).isoformat()
@@ -479,6 +495,7 @@ class TestCleanup:
                 "exp_id": "exp-001", "status": "running", "timestamp": stale_ts,
                 "config": {}, "metrics": {}}))
         def mock_fdopen(fd, *a, **kw):
+            """Close the fd and raise OSError to simulate a failed write."""
             os.close(fd)
             raise OSError("disk full")
         with mock.patch("pipeline_state.os.fdopen", side_effect=mock_fdopen):
@@ -514,6 +531,7 @@ class TestExperimentSetup:
     """Experiment ID generation, directory structure, config, and script generation."""
 
     def test_create_experiment_dirs_idempotent(self, tmp_path):
+        """Creating the experiment directory tree twice is safe and idempotent."""
         for _ in range(2):
             exp_root = create_experiment_dirs(str(tmp_path))
         for subdir in ["logs", "reports", "scripts", "results", "artifacts"]:
@@ -527,14 +545,17 @@ class TestExperimentSetup:
         (["exp-001.json", "experiment-summary.json", "baseline.json"], "exp-002"),
     ], ids=["empty", "sequential", "ignores_non_exp"])
     def test_next_experiment_id(self, tmp_path, existing, expected):
+        """The next experiment ID increments past existing exp files, ignoring others."""
         for f in existing:
             (tmp_path / f).write_text("{}")
         assert next_experiment_id(str(tmp_path)) == expected
 
     def test_next_experiment_id_nonexistent_dir(self):
+        """A nonexistent results directory yields the first experiment ID."""
         assert next_experiment_id("/nonexistent/dir") == "exp-001"
 
     def test_write_experiment_config(self, tmp_path):
+        """Writing an experiment config persists it as readable JSON."""
         path = write_experiment_config(str(tmp_path), "exp-001", {"lr": 0.001})
         assert json.loads(Path(path).read_text())["lr"] == 0.001
 
@@ -557,6 +578,7 @@ class TestExperimentSetup:
             generate_script(str(tmp_path), "exp-002", "python train.py", gpu_id=0)
 
     def test_generate_script_path_with_spaces(self, tmp_path):
+        """A log path containing spaces is quoted in the generated script."""
         path = generate_script(str(tmp_path), "exp-001", "python train.py",
                                      gpu_id=0, log_file="logs/my experiment/train.log")
         content = Path(path).read_text()
@@ -566,6 +588,7 @@ class TestExperimentSetup:
         (120, True), (None, False), (0, False),
     ], ids=["with_budget", "none", "zero"])
     def test_generate_script_time_budget(self, tmp_path, budget, expect_timeout):
+        """A positive time budget wraps the command in timeout; zero/None does not."""
         path = generate_script(str(tmp_path), "exp-001", "python train.py",
                                      gpu_id=0, log_file="logs/round-1-hp/exp-001/train.log",
                                      time_budget=budget)
@@ -576,13 +599,16 @@ class TestExperimentSetup:
             assert "timeout --signal=SIGTERM" not in content
 
     def test_setup_increments_ids(self, tmp_path):
+        """Sequential setups produce incrementing IDs and create config/script files."""
         r1 = setup_experiment(str(tmp_path), "python train.py", gpu_id=0, config={"lr": 0.001})
         assert r1["exp_id"] == "exp-001"
         assert Path(r1["config_path"]).exists() and Path(r1["script_path"]).exists()
         assert setup_experiment(str(tmp_path), "python train.py", gpu_id=1)["exp_id"] == "exp-002"
 
     def test_concurrent_setup_unique_ids(self, tmp_path):
+        """Concurrent setups never collide on experiment IDs."""
         def do_setup(i):
+            """Run a single experiment setup for the given seed index."""
             return setup_experiment(str(tmp_path), f"python train.py --seed {i}", config={"seed": i})
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
             futures = [pool.submit(do_setup, i) for i in range(8)]
@@ -610,6 +636,7 @@ class TestCLI:
     ], ids=["pipe_no_args", "pipe_unknown", "pipe_bad_phase", "pipe_bad_iter",
             "pipe_bad_json", "setup_no_args", "setup_bad_gpu", "setup_bad_config"])
     def test_cli_errors(self, run_main, tmp_path, script, args, rc, check):
+        """Malformed CLI invocations exit non-zero with the expected message."""
         resolved = [str(tmp_path) if a == "{tmp}" else a for a in args]
         r = run_main(script, *resolved)
         assert r.returncode == rc
@@ -629,11 +656,13 @@ class TestCLI:
         assert r.returncode == 0
 
     def test_cli_load_missing(self, run_main, tmp_path):
+        """Loading absent state reports 'no pipeline state' and exits cleanly."""
         r = run_main("pipeline_state.py", str(tmp_path), "load")
         assert r.returncode == 0 and "no pipeline state" in r.stdout.lower()
 
     @pytest.mark.parametrize("checksum, expect_rc", [("__REAL__", 0), ("wrong", 1)])
     def test_cli_verify_baseline(self, run_main, tmp_path, checksum, expect_rc):
+        """The verify-baseline CLI exits zero on a matching checksum, non-zero otherwise."""
         metrics = {"loss": 0.5}
         cs = _compute_baseline_checksum(metrics) if checksum == "__REAL__" else checksum
         save_state(3, 0, [], str(tmp_path), baseline_checksum=cs)
@@ -642,6 +671,7 @@ class TestCLI:
         assert run_main("pipeline_state.py", str(tmp_path), "verify-baseline").returncode == expect_rc
 
     def test_cli_experiment_setup(self, run_main, tmp_path):
+        """The experiment_setup CLI provisions the first experiment and prints its ID."""
         r = run_main("experiment_setup.py", str(tmp_path), "python train.py")
         assert r.returncode == 0 and json.loads(r.stdout)["exp_id"] == "exp-001"
 

@@ -1,7 +1,7 @@
 ---
 name: research-agent
 description: "Subagent for ML paper search and analysis. Finds relevant papers, extracts actionable techniques with implementation details, and ranks proposals by expected impact and feasibility."
-tools: "WebSearch, WebFetch, Read, Write, Bash, Glob, Grep, Skill, mcp__alphaxiv__embedding_similarity_search, mcp__alphaxiv__full_text_papers_search, mcp__alphaxiv__agentic_paper_retrieval, mcp__alphaxiv__get_paper_content, mcp__alphaxiv__answer_pdf_queries, mcp__alphaxiv__read_files_from_github_repository"
+tools: "WebSearch, WebFetch, Read, Write, Bash, Glob, Grep, Skill, mcp__alphaxiv__embedding_similarity_search, mcp__alphaxiv__full_text_papers_search, mcp__alphaxiv__agentic_paper_retrieval, mcp__alphaxiv__get_paper_content, mcp__alphaxiv__answer_pdf_queries, mcp__alphaxiv__read_files_from_github_repository, mcp__gitnexus__context, mcp__gitnexus__query, mcp__gitnexus__impact"
 model: opus[1m]
 effort: xhigh
 color: magenta
@@ -138,6 +138,23 @@ When searching for ML papers and techniques, use the alphaxiv MCP tools for acad
 ### Fallback Behavior
 
 If any alphaxiv tool call fails (MCP server unavailable, timeout, or error), fall back to the equivalent WebSearch/WebFetch workflow. Do not abort the search — alphaxiv is an enhancement, not a requirement.
+
+## Reference Repo Feasibility (GitNexus)
+
+When assessing whether a candidate GitHub repo is a viable `from_reference` source, using GitNexus to understand its code is **REQUIRED**. GitNexus is a HARD prerequisite verified in Phase 2, so it is guaranteed available; there is no grep/analyze fallback for code understanding. You MUST index every reference repo you clone and query its code knowledge graph before judging feasibility — alphaxiv's `read_files_from_github_repository` remains a useful lightweight first look, but the structural feasibility judgment must be backed by the graph.
+
+1. **Index the repo** — clone it first, then index it immediately through the wrapper (it runs `gitnexus analyze <ref_repo> --index-only`, which keeps the cloned reference repo uncontaminated — it does NOT inject a GitNexus section into the repo's CLAUDE.md/AGENTS.md and does NOT install `.claude/` skills). Guard with `is-indexed` for consistency with the implement skill (the wrapper also skips internally):
+   ```bash
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py available   # confirm prerequisite still holds
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py is-indexed <ref_repo> || \
+     python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py index <ref_repo>
+   ```
+   The wrapper never raises, but treat `available` returning false or `index` returning `success: false` as a **hard error**: halt and report the repair/install guidance — `npm install -g gitnexus && gitnexus setup` (`gitnexus setup` auto-registers the gitnexus MCP server for Claude Code; manual MCP-registration fallback: `claude mcp add --transport stdio --scope user gitnexus gitnexus mcp`). Do NOT silently fall back to grep/analyze.
+2. **Query the graph** with `mcp__gitnexus__context`/`mcp__gitnexus__query`/`mcp__gitnexus__impact` (mandatory) to judge whether the technique's implementation is isolated in a few files (favoring `from_reference`) or entangled across the codebase (favoring `from_scratch`).
+
+**MCP-query-failure recovery:** Querying the code graph is MCP-only by design. If a `mcp__gitnexus__*` tool call FAILS *after* a successful index, it is a HARD ERROR — there is NO grep fallback and NO gitnexus-CLI query fallback. Recovery: (1) ensure the gitnexus MCP server is registered — run `gitnexus setup` (or the manual `claude mcp add --transport stdio --scope user gitnexus gitnexus mcp`); (2) MCP tools load at session start, so restart the Claude Code session for a freshly-registered server to become available; (3) retry the query. If it still fails, halt and surface this to the user.
+
+`${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py analyze` is NOT a gitnexus fallback — it covers only framework detection. Do not commit any `.gitnexus/` index artifacts (the wrapper auto-adds `.gitnexus/` to the repo's git exclude; never `git add` them).
 
 ## Cross-Session Memory (claude-mem)
 

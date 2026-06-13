@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PreCompact hook: log pipeline state persistence before context compaction.
+# PreCompact hook: log pipeline-state persistence before context compaction.
 # Outputs a reminder message that gets injected into Claude's context post-compaction.
 
 set -euo pipefail

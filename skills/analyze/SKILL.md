@@ -45,6 +45,7 @@ Before analysis, filter out non-completed experiments:
 - Note: `rank_by_metric()` includes all experiments (with a `status` field for filtering); only `identify_correlations()` auto-filters to completed experiments
 - **Branch-aware grouping:** when computing HP correlations (Step 2), group by `code_branch`. Experiments on different branches are analyzed separately — identical HPs may behave differently on different code. If `code_branch` is null or missing, treat as baseline code group.
 - **Warm-start segregation:** segregate results whose config has `checkpoint_source` set (warm-started) from from-scratch results when declaring the best experiment under a fixed budget — a warm-started run consumed its parent's training on top of its own budget, so it is NOT budget-comparable to a from-scratch run. Report the best of each group separately and label warm-started bests as not budget-fair.
+- **Same-protocol comparisons only:** compare `metrics.<primary_metric>` values **only** between experiments sharing the same `eval_protocol`. A held-out-eval number and a train-report number for the same metric can differ by several points on identical code — a cross-protocol delta is invalid. If a batch mixes protocols, normalize to the canonical held-out-eval value (or refuse the delta and flag it) before ranking; never declare an improvement/dead-end/tie across protocols.
 
 ## Step 2: Deep Analysis
 
@@ -189,7 +190,14 @@ You (the analysis agent) evaluate evidence and advise a DIRECTION. The orchestra
 | `method_stacking` | Enters Phase 8: merges methods sequentially, resolves interference via ShinkaEvolve |
 
 ### Stop
-**When:** target metric achieved. This is the ONLY automatic stop condition. The loop is autonomous — it runs until the goal is reached or the user manually stops. Even if progress is slow, keep trying different approaches. Never recommend stop just because improvement is small — breakthroughs can come after plateaus.
+**When:** target metric **robustly** achieved. This is the ONLY automatic stop condition. The loop is autonomous — it runs until the goal is reached or the user manually stops. Even if progress is slow, keep trying different approaches. Never recommend stop just because improvement is small — breakthroughs can come after plateaus.
+
+**Do NOT stop on a within-noise, single-seed target-hit.** A "target achieved" call is only valid on evidence that survives the measured noise floor (Step 2.3):
+- If the best experiment's margin over target is **≥ the measured seed-noise floor**, and it is a real result on the canonical `eval_protocol` → stop is legitimate.
+- If the margin is **within the noise floor**, or the best result is a single unreplicated seed, or it changed >1 variable vs the prior best → do **NOT** stop. Recommend `continue` with a cheap seed-confirmation batch (≥3 seeds on one protocol, champion config held fixed) and a stop-rule of `seed_mean ≥ target`. Gate the stop on `best_seed_mean ≥ target`, never `best_single_seed ≥ target`.
+- **Exit block:** if any `untried` item in `research-agenda.json` outranks (priority) the best-executed idea, exit-to-Phase-9 is blocked — recommend `continue` and run that item first. Never leave the single highest-priority in-scope idea untried at exit.
+
+Include in the stop/continue output: `"noise_floor"`, `"best_seed_mean"` (or null if unreplicated), and `"margin_over_target"` so the orchestrator's fixpoint judgment can audit the call.
 
 Output:
 ```json

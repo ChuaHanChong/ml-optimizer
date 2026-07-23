@@ -170,6 +170,9 @@ const EVOLVE_RESULT_SCHEMA = {
 
 // Workflow body
 
+// Workflow runtime may deliver `args` as a JSON string — parse-if-string so
+// destructured fields + arg reads don't silently become undefined.
+const A = typeof args === 'string' ? JSON.parse(args) : (args || {})
 const {
   exp_root,
   project_root,
@@ -182,33 +185,33 @@ const {
   hp_batches_per_round,
   method_proposal_scope,
   method_proposal_iterations,
-} = args;
+} = A;
 
 const PLUGIN = "${CLAUDE_PLUGIN_ROOT}";
 const lowerIsBetter = lower_is_better === true;
-const divergenceLowerIsBetter = args.divergence_lower_is_better;
+const divergenceLowerIsBetter = A.divergence_lower_is_better;
 const cadence = Number(hp_batches_per_round) || 3;
 // Secondary metrics: [{name, lower_is_better, role}] from Phase 0 — threaded into the analysis Step 2.3 guardrail check.
-const secondaryMetrics = Array.isArray(args.secondary_metrics) ? args.secondary_metrics : [];
+const secondaryMetrics = Array.isArray(A.secondary_metrics) ? A.secondary_metrics : [];
 
 // Seed replicates: pre-authorized at Phase 4 — hp-tune proposes each config seeds_per_config times with distinct random_seed values.
-const seedsPerConfig = args.seeds_per_config || null;
+const seedsPerConfig = A.seeds_per_config || null;
 
 // Training budget — the SAME fixed cap the baseline used, so experiment metrics stay comparable.
-// Read via args.* and NEVER destructured as `budget`: that identifier is the runtime's token-budget
+// Read via A.* and NEVER destructured as `budget`: that identifier is the runtime's token-budget
 // global the loop uses to self-bound (budget.remaining()). Accept typed fields; also tolerate a
 // legacy scalar `budget` (seconds). Forwarded into every experiment-agent prompt via budgetClause.
 const fixedTimeBudget =
-  args.fixed_time_budget != null
-    ? args.fixed_time_budget
-    : typeof args.budget === "number"
-    ? args.budget
-    : (args.budget && args.budget.fixed_time_budget) || null;
+  A.fixed_time_budget != null
+    ? A.fixed_time_budget
+    : typeof A.budget === "number"
+    ? A.budget
+    : (A.budget && A.budget.fixed_time_budget) || null;
 const fixedEpochBudget =
-  args.fixed_epoch_budget != null
-    ? args.fixed_epoch_budget
-    : (args.budget && args.budget.fixed_epoch_budget) || null;
-const fixedStepBudget = args.fixed_step_budget != null ? args.fixed_step_budget : null;
+  A.fixed_epoch_budget != null
+    ? A.fixed_epoch_budget
+    : (A.budget && A.budget.fixed_epoch_budget) || null;
+const fixedStepBudget = A.fixed_step_budget != null ? A.fixed_step_budget : null;
 const budgetClause =
   fixedStepBudget != null
     ? `Training budget: cap this run at fixed_step_budget=${fixedStepBudget} environment timesteps — map it to the framework's timestep flag (e.g. --total_timesteps), the SAME cap the baseline used so metrics are comparable. Record step_budget in the result JSON.`
@@ -286,13 +289,13 @@ let searchSpace = pre.search_space || {};
 const strategy = pre.strategy || "hp_only";
 const sequential = strategy === "file_backup" || pre.sequential === true;
 // model_category: orchestrator-supplied user_choices value wins; baseline.json (pre-loop) is the fallback.
-const modelCategory = args.model_category || pre.model_category || null;
+const modelCategory = A.model_category || pre.model_category || null;
 const originalBranch = pre.original_branch || (baseline && baseline.original_branch) || null;
 const numGpus = Math.max(1, Number(pre.num_gpus) || 1);
 const warmStartEnabled = pre.warm_start_enabled === true;
 // CPU-bound parallelism: Phase-4-authorized experiments_per_gpu (default 1) multiplies the
 // per-round batch size; each experiment then gets a CPU-core slice via env_vars.
-const experimentsPerGpu = Math.max(1, Number(args.experiments_per_gpu) || 1);
+const experimentsPerGpu = Math.max(1, Number(A.experiments_per_gpu) || 1);
 // number of configs per batch = numGpus * experiments_per_gpu; file_backup forces 1 at a time.
 const configsPerBatch = sequential ? 1 : numGpus * experimentsPerGpu;
 const cpuClause =

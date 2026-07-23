@@ -182,6 +182,9 @@ async function verifyStackStep(expRoot, plugin, keptExpId, stepOrder) {
 
 phase("Pre-check");
 
+// Workflow runtime may deliver `args` as a JSON string — parse-if-string so
+// destructured fields + arg reads don't silently become undefined.
+const A = typeof args === 'string' ? JSON.parse(args) : (args || {})
 const {
   exp_root,
   project_root,
@@ -193,7 +196,7 @@ const {
   divergence_metric,
   divergence_lower_is_better,
   model_category
-} = args;
+} = A;
 
 const lowerIsBetter = !!lower_is_better;
 const PLUGIN = "${CLAUDE_PLUGIN_ROOT}";
@@ -201,15 +204,15 @@ const PLUGIN = "${CLAUDE_PLUGIN_ROOT}";
 // "architecture"-scope run never triggers ShinkaEvolve.
 const codeEvolutionEnabled = scope_level === "full";
 // Training budget — the SAME cap baseline/phase-7 used so stacked metrics stay comparable
-// (read via args.*; a legacy scalar `budget` is tolerated as seconds).
+// (read via A.*; a legacy scalar `budget` is tolerated as seconds).
 const fixedTimeBudget =
-  args.fixed_time_budget != null ? args.fixed_time_budget
-    : typeof args.budget === "number" ? args.budget
-    : (args.budget && args.budget.fixed_time_budget) || null;
+  A.fixed_time_budget != null ? A.fixed_time_budget
+    : typeof A.budget === "number" ? A.budget
+    : (A.budget && A.budget.fixed_time_budget) || null;
 const fixedEpochBudget =
-  args.fixed_epoch_budget != null ? args.fixed_epoch_budget
-    : (args.budget && args.budget.fixed_epoch_budget) || null;
-const fixedStepBudget = args.fixed_step_budget != null ? args.fixed_step_budget : null;
+  A.fixed_epoch_budget != null ? A.fixed_epoch_budget
+    : (A.budget && A.budget.fixed_epoch_budget) || null;
+const fixedStepBudget = A.fixed_step_budget != null ? A.fixed_step_budget : null;
 const budgetClause =
   fixedStepBudget != null
     ? `Training budget: cap this run at fixed_step_budget=${fixedStepBudget} environment timesteps — map it to the framework's timestep flag (e.g. --total_timesteps), the SAME cap the baseline used so metrics are comparable. Record step_budget in the result JSON.`
@@ -335,7 +338,7 @@ for (let i = 1; i < ranked.length; i++) {
   const stackReviews = (await parallel([
     () => agent(
       `${stackReviewCtx} Focus: bugs, logic errors, incorrect tensor/shape handling, and whether the merge preserved BOTH methods' functionality. Set critical=true for a real bug that would corrupt training/eval. Return the schema.`,
-      { agentType: "feature-dev:code-reviewer", label: `stack-review-code-${stackOrder}`, phase: "Accumulate", schema: STACK_REVIEW_SCHEMA }),
+      { agentType: "pr-review-toolkit:code-reviewer", label: `stack-review-code-${stackOrder}`, phase: "Accumulate", schema: STACK_REVIEW_SCHEMA }),
     () => agent(
       `${stackReviewCtx} Focus: silent failures introduced by the merge/conflict resolution — swallowed NaN/Inf losses, failed CUDA/optimizer ops that fall through, bare except/except:pass around training or eval, or a resolution that dropped one method's error handling. Any of these silently invalidates the stacked metric, so set critical=true. Return the schema.`,
       { agentType: "pr-review-toolkit:silent-failure-hunter", label: `stack-review-silent-${stackOrder}`, phase: "Accumulate", schema: STACK_REVIEW_SCHEMA }),

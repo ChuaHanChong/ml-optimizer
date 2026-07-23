@@ -10,11 +10,13 @@ export const meta = {
 
 // -------------------- args (CONTRACT phase-6-implement) --------------------
 // { exp_root, project_root, findings_path, selected_indices:[int], strategy }
-const expRoot = args.exp_root
-const projectRoot = args.project_root
-const findingsPath = args.findings_path || `${expRoot}/reports/research-findings.md`
-const selectedIndices = Array.isArray(args.selected_indices) ? args.selected_indices : []
-const strategy = args.strategy || 'git_branch'
+// Workflow runtime may deliver `args` as a JSON string — parse-if-string.
+const A = typeof args === 'string' ? JSON.parse(args) : (args || {})
+const expRoot = A.exp_root
+const projectRoot = A.project_root
+const findingsPath = A.findings_path || `${expRoot}/reports/research-findings.md`
+const selectedIndices = Array.isArray(A.selected_indices) ? A.selected_indices : []
+const strategy = A.strategy || 'git_branch'
 const manifestPath = `${expRoot}/results/implementation-manifest.json`
 
 // file_backup (non-git) projects share one working tree (restore-before-apply validation against
@@ -89,7 +91,11 @@ const ASSEMBLE_SCHEMA = {
 }
 
 const IMPLEMENT_AGENT = 'ml-optimizer:implement-agent'
-const CODE_REVIEWER = 'feature-dev:code-reviewer'
+// git-capable reviewer required: the branch is reviewed after its implement worktree is torn
+// down, so the reviewer MUST run `git diff <original>..<branch>` (Bash/git) to see the change.
+// feature-dev:code-reviewer lacks Bash and can only Read the main tree at its (unchanged) base,
+// so it reviews blind. pr-review-toolkit:code-reviewer has full tools incl. git.
+const CODE_REVIEWER = 'pr-review-toolkit:code-reviewer'
 const SILENT_HUNTER = 'pr-review-toolkit:silent-failure-hunter'
 const TEST_ANALYZER = 'pr-review-toolkit:pr-test-analyzer'
 

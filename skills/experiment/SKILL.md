@@ -347,6 +347,11 @@ After training completes:
    - Training duration
    - Any other relevant metrics
 
+   **Canonical evaluation protocol (avoid cross-protocol comparisons).** Two numbers for the "same" metric are NOT comparable if they come from different protocols — a held-out eval (the `eval_command` on a test/val split) and a training-loop print (the last train-batch/epoch metric) can differ by several points on identical code, silently flipping a method-vs-base delta. Rule:
+   - `metrics.<primary_metric>` is **always** the held-out eval value (from `eval_command`) — the single canonical number every downstream comparison uses. If there is no eval command, fall back to the training-output metric AND set `eval_protocol` accordingly so analyze knows.
+   - When a training-loop print for the same metric is also available, record it separately as `metrics.train_report_<primary_metric>` — never overwrite the canonical key with it.
+   - Set `"eval_protocol"`: `"held_out_eval"` (from eval_command), `"train_report"` (training-loop print fallback), or `"rl_final_eval"` (RL rollout mean). Analyze compares only within the same `eval_protocol`.
+
 4. **Validate required metrics:** ensure `metrics` includes the `divergence_metric` (for monitor) and `primary_metric` (for analyze/hp-tune). If either is missing from parsed output, check the raw log for alternative names (e.g., `train_loss`, `val_loss`). If a match is found, include it under both the original and canonical name. If not found, set to `null` and log a warning.
 
 ### RL Evaluation Symmetry
@@ -374,9 +379,11 @@ Write experiment results to `<exp_root>/results/<round_dir>/<exp_id>.json`:
   },
   "metrics": {
     "loss": <final_loss>,
-    "<primary_metric>": <best_value>,
+    "<primary_metric>": <canonical_held_out_eval_value>,
+    "train_report_<primary_metric>": <training_loop_print_value_if_available>,
     ...
   },
+  "eval_protocol": "<held_out_eval|train_report|rl_final_eval>",
   "gpu_id": <gpu_id>,
   "duration_seconds": <training_time>,
   "log_file": "<exp_root>/logs/<round_dir>/<exp_id>/train.log",

@@ -117,7 +117,7 @@ Build the args from the confirmed selection and launch the workflow:
 ```
 Workflow({ scriptPath: "${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/workflows/phase-6-implement.js", args: { exp_root, project_root, findings_path, selected_indices, strategy } })
 ```
-The workflow dispatches `ml-optimizer:implement-agent` (worktree-isolated) plus the reviewers (`feature-dev:code-reviewer`, `pr-review-toolkit:silent-failure-hunter`) internally, writes `results/implementation-manifest.json` + git branches, and returns `{ manifest_path, branches }`. After it returns, check the manifest: handle dependencies, license warnings, conflicts (user checkpoints as needed).
+The workflow dispatches `ml-optimizer:implement-agent` (worktree-isolated) plus the reviewers (`pr-review-toolkit:code-reviewer`, `pr-review-toolkit:silent-failure-hunter`) internally, writes `results/implementation-manifest.json` + git branches, and returns `{ manifest_path, branches }`. After it returns, check the manifest: handle dependencies, license warnings, conflicts (user checkpoints as needed).
 
 ## Phase 7: Experiment Loop (Workflow)
 

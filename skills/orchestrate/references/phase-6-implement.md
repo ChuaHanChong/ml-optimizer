@@ -52,7 +52,7 @@ If the user selected research proposals that require code changes (not just HP t
 
 6. **Post-implementation quality review (run inside the workflow):**
    The phase-6 workflow dispatches two reviewers per validated implementation branch (in parallel, via `agentType`) to catch problems before running experiments on broken implementations — the results are folded into each branch's `reviews` field in the returned manifest:
-   - `feature-dev:code-reviewer` — bugs, logic errors, and general code quality issues.
+   - `pr-review-toolkit:code-reviewer` — bugs, logic errors, and general code quality issues.
    - `pr-review-toolkit:silent-failure-hunter` — swallowed errors, inadequate error handling, and inappropriate fallbacks. Especially important for ML code: silently-caught NaN losses, failed CUDA/optimizer ops that fall through, or `except: pass` around training/eval steps will corrupt experiment results without surfacing.
 
    The workflow applies the findings:

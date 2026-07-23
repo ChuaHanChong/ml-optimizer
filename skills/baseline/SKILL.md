@@ -131,6 +131,8 @@ The baseline must use the same training budget as experiments for fair compariso
 
 **If neither is set:** run training with the original epoch count from `train_command`.
 
+**Budget-utilization check (any fixed budget):** confirm the baseline actually consumed the budget — its duration/step-count should match what the experiments will use, not fall well short (a hardcoded epoch/step cap the override didn't lift, or a budget applied only to experiments). An under-trained baseline confounds every vs-baseline delta with training duration ("trained longer", not "better method"). Don't accept it silently: fix so the budget binds and re-run the baseline, or — if it genuinely can't — record `"budget_underutilized": true` + the utilization ratio in `baseline.json` and warn the error tracker, so the report and analyze treat vs-baseline deltas as duration-confounded and lean on matched-budget comparisons.
+
 ## Step 2.3: Detect Headless Simulator Env Vars
 
 If `model_category` is `"rl"` (or the prerequisites import scan found a simulator stack), determine the env vars required for headless rendering and record them for reuse by every experiment:

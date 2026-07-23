@@ -144,7 +144,7 @@ def _wf(name):
 
 def test_phase7_model_category_arg_precedence():
     """Phase 7 reads model_category from args first, baseline pre-loop second."""
-    assert "args.model_category || pre.model_category" in _wf("phase-7-experiment.js")
+    assert "model_category || pre.model_category" in _wf("phase-7-experiment.js")
 
 
 def test_phase7_prompts_thread_model_category():
@@ -236,7 +236,7 @@ def test_phase7_routes_hp_tune_research_request():
 def test_phase7_threads_seeds_per_config():
     """seeds_per_config is read from args and passed to the tuning-agent prompt."""
     text = (WORKFLOWS_DIR / "phase-7-experiment.js").read_text()
-    assert "args.seeds_per_config" in text
+    assert "seeds_per_config" in text
     assert "seeds_per_config: ${seedsPerConfig" in text
 
 
@@ -261,7 +261,7 @@ class TestPhase5ResearchAngles:
 def test_phase7_threads_secondary_metrics():
     """secondary_metrics flow from args into the analysis-agent prompt."""
     text = (WORKFLOWS_DIR / "phase-7-experiment.js").read_text()
-    assert "args.secondary_metrics" in text
+    assert "secondary_metrics" in text
     assert "secondary_metrics: ${JSON.stringify(secondaryMetrics)}" in text
 
 
@@ -275,7 +275,7 @@ class TestPhase7CpuParallelism:
 
     def test_configs_per_batch_uses_experiments_per_gpu(self):
         text = (WORKFLOWS_DIR / "phase-7-experiment.js").read_text()
-        assert "args.experiments_per_gpu" in text
+        assert "experiments_per_gpu" in text
         assert "numGpus * experimentsPerGpu" in text
 
     def test_cpu_core_slice_via_env_vars(self):

@@ -725,18 +725,23 @@ For each agent, verify:
 
 Report results in a table.
 
-## Step 6: Full pipeline via live Agent() dispatch
+## Step 6: Full pipeline (Agent dispatch + dynamic workflows)
 
-Core diagnostic — you act as the orchestrator, dispatching agents directly with pre-defined parameters. Tests the full optimization flow including all autoresearch-inspired features and goal memory.
+Core diagnostic — the runner drives the full optimization flow end to end, exactly as the orchestrator does. Phases 0/1, 2, 3, 4, 9 dispatch via `Agent()` (interactive/trivial, correctly direct-dispatch per the architecture); phases 5, 6, 7, 8 launch the bundled dynamic workflows via `Workflow({scriptPath: "${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/workflows/phase-N-<name>.js", args})` — the workflow script owns that phase's fan-out/loop and dispatches its agents internally via `agentType`. The runner reads each workflow's structured return plus the files it wrote under `<exp_root>/`, and runs the user checkpoint between phases. This exercises the ACTUAL workflow scripts (Step 4 only node-checks them). Tests the full optimization flow including all autoresearch-inspired features and goal memory.
 
-**Error handling:** After each phase, verify expected outputs exist. If a phase fails, log it FAILED, skip to Step 5.8 (feature checklist) with partial results, and include the failure in the final report.
+**Error handling:** After each phase, verify expected outputs exist. If a phase fails, log it FAILED, skip to Step 6.8 (feature checklist) with partial results, and include the failure in the final report.
 
 ### 6.1: Set up test project
 
 ```bash
 rm -rf /tmp/ml-opt-diagnostic
 cp -r $FIX/tiny_resnet_cifar10/ /tmp/ml-opt-diagnostic/
-cd /tmp/ml-opt-diagnostic && git init && git add . && git commit -m "initial"
+cd /tmp/ml-opt-diagnostic
+# gitignore experiments/ BEFORE the first commit — Step 6.6c creates method branches
+# with `git add -A`, which would otherwise sweep the untracked run artifacts into a
+# branch and let a later `git checkout` wipe them from the working tree.
+echo "experiments/" > .gitignore
+git init && git add . && git commit -m "initial"
 mkdir -p /tmp/ml-opt-diagnostic/experiments/{results,reports,logs,scripts,artifacts}
 ```
 
@@ -825,25 +830,33 @@ python3 $SCRIPTS/pipeline_state.py /tmp/ml-opt-diagnostic/experiments verify-bas
 
 If exit code is non-zero, log Phase 3 as FAILED.
 
-### 6.4: Phase 5 — Research (all 3 source modes)
+### 6.4: Phase 5 — Research (dynamic workflow)
 
-**Before dispatching:** Read `experiments/results/baseline.json`, note the actual baseline loss, substitute it into the prompts below.
+Phase 5 launches the **actual** research workflow. The workflow fans research-agent out across domain angles, dedups + adversarially vets candidates, writes `reports/research-findings.md`, and initializes the research agenda — internally handling the web / knowledge / HP-only source fallback, so the former three source-mode dispatches collapse into one launch (no manual per-mode dispatch).
 
-The research skill supports 3 source modes. Test all 3 in sequence:
-
-#### 5.4a: source: "web" (WebSearch + alphaxiv MCP)
+**Launch the Phase 5 workflow** (args contract verified from `phase-5-research.js`):
 
 ```text
-Agent(
-  description: "Diagnostic: research (source: web — WebSearch + alphaxiv)",
-  prompt: "Research ML optimization techniques. Parameters: source: web, model_type: CNN (ResNet), task: image classification (CIFAR-10), current_metrics: {loss: <ACTUAL_BASELINE_LOSS>}, problem_description: Improve classification accuracy on CIFAR-10 with a tiny ResNet. Search for techniques like label smoothing, mixup augmentation, and cosine annealing. Use alphaxiv MCP tools (embedding_similarity_search, full_text_papers_search, agentic_paper_retrieval — all 3 in parallel) alongside WebSearch. If alphaxiv MCP is unavailable, continue with WebSearch only. scope_level: training, exp_root: /tmp/ml-opt-diagnostic/experiments, output_path: /tmp/ml-opt-diagnostic/experiments/reports/research-findings.md. After completing, update your agent memory with effective search strategies, query formulations, and technique compatibility patterns for this model type.",
-  subagent_type: "ml-optimizer:research-agent"
-)
+Workflow({
+  scriptPath: "${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/workflows/phase-5-research.js",
+  args: {
+    exp_root: "/tmp/ml-opt-diagnostic/experiments",
+    primary_metric: "loss",
+    model_category: "supervised",
+    scope_level: "training",
+    source: "web",
+    user_papers: null
+  }
+})
 ```
 
-**Verify:** `experiments/reports/research-findings.md` exists with at least 1 proposal.
+Returns `{findings_path, proposals[], agenda_initialized}` — capture it; Phase 6 consumes `findings_path` and the returned proposal indices.
 
-**alphaxiv verification:**
+> CIFAR offline note: candidate training in Phases 7–8 must load CIFAR offline (the fixture's CIFAR host is throttled) — ensure the persisted `train_command` in `user_choices` carries `--data_dir <cached cifar>` before those workflows run.
+
+**Verify:** `experiments/reports/research-findings.md` exists with at least 1 proposal, and the return's `proposals[]` is non-empty.
+
+**alphaxiv-or-fallback note:**
 
 ```bash
 python3 -c "
@@ -852,76 +865,9 @@ has_arxiv = 'arxiv' in content.lower()
 print(f'alphaxiv MCP: {\"active (arxiv refs found)\" if has_arxiv else \"fallback to WebSearch only\"}')"
 ```
 
-#### 5.4b: source: "knowledge" (LLM knowledge only, no web)
+#### Research agenda (initialized by the workflow)
 
-```text
-Agent(
-  description: "Diagnostic: research (source: knowledge — LLM only, no web)",
-  prompt: "Research ML optimization techniques. Parameters: source: knowledge, model_type: CNN (ResNet), task: image classification (CIFAR-10), current_metrics: {loss: <ACTUAL_BASELINE_LOSS>}, problem_description: Improve classification accuracy on CIFAR-10 with a tiny ResNet, scope_level: training, exp_root: /tmp/ml-opt-diagnostic/experiments, output_path: /tmp/ml-opt-diagnostic/experiments/reports/research-findings-method-proposals.md.",
-  subagent_type: "ml-optimizer:research-agent"
-)
-```
-
-**Verify:**
-- `experiments/reports/research-findings-method-proposals.md` exists with at least 1 proposal
-- All proposals have `proposal_source: llm_knowledge`
-- Confidence values are capped at 7/10 (knowledge-mode cap)
-
-```bash
-python3 -c "
-content = open('/tmp/ml-opt-diagnostic/experiments/reports/research-findings-method-proposals.md').read()
-has_llm = 'llm_knowledge' in content.lower() or 'knowledge' in content.lower()
-print(f'Knowledge mode: {\"proposals marked as LLM knowledge\" if has_llm else \"WARNING: source not marked\"}')"
-```
-
-#### 5.4c: source: "both" (LLM proposals + web/alphaxiv validation)
-
-```text
-Agent(
-  description: "Diagnostic: research (source: both — LLM + web validation)",
-  prompt: "Research ML optimization techniques. Parameters: source: both, model_type: CNN (ResNet), task: image classification (CIFAR-10), current_metrics: {loss: <ACTUAL_BASELINE_LOSS>}, problem_description: Improve classification accuracy on CIFAR-10 with a tiny ResNet, scope_level: training, exp_root: /tmp/ml-opt-diagnostic/experiments, output_path: /tmp/ml-opt-diagnostic/experiments/reports/research-findings-method-proposals-both.md.",
-  subagent_type: "ml-optimizer:research-agent"
-)
-```
-
-**Verify:**
-- `experiments/reports/research-findings-method-proposals-both.md` exists
-- Contains both web-sourced (paper/arxiv references) and knowledge-sourced proposals
-
-```bash
-python3 -c "
-from pathlib import Path
-p = Path('/tmp/ml-opt-diagnostic/experiments/reports/research-findings-method-proposals-both.md')
-if p.exists() and p.stat().st_size > 100:
-    content = p.read_text()
-    has_web = 'arxiv' in content.lower() or 'http' in content.lower()
-    has_knowledge = 'knowledge' in content.lower() or 'llm' in content.lower()
-    print(f'Both mode: web={has_web}, knowledge={has_knowledge}')
-else:
-    print('Both mode: file missing or empty')
-"
-```
-
-#### Research deduplication check
-
-Verify the research agent's deduplication logic works — proposals from the `knowledge` run should not repeat proposals from the `web` run:
-
-```bash
-python3 -c "
-from pathlib import Path
-web = Path('/tmp/ml-opt-diagnostic/experiments/reports/research-findings.md')
-knowledge = Path('/tmp/ml-opt-diagnostic/experiments/reports/research-findings-method-proposals.md')
-if web.exists() and knowledge.exists():
-    print('✓ Research deduplication: both findings files exist for agent to check')
-else:
-    missing = []
-    if not web.exists(): missing.append('web')
-    if not knowledge.exists(): missing.append('knowledge')
-    print(f'— Research deduplication: {\" + \".join(missing)} findings missing')
-"
-```
-
-**Initialize research agenda** (if the research agent didn't create `research-agenda.json`):
+The workflow dedups across its research angles internally and initializes `research-agenda.json` from the vetted proposals (returning `agenda_initialized: true`). Confirm it, and self-heal from `research-findings.md` if the return reports it was not initialized:
 
 ```bash
 python3 -c "
@@ -930,7 +876,7 @@ sys.path.insert(0, os.path.expanduser('$SCRIPTS'))
 agenda_path = '/tmp/ml-opt-diagnostic/experiments/reports/research-agenda.json'
 if not os.path.exists(agenda_path):
     from implement_utils import parse_research_proposals
-    proposals = parse_research_proposals('/tmp/ml-opt-diagnostic/experiments/reports/research-findings-method-proposals.md')
+    proposals = parse_research_proposals('/tmp/ml-opt-diagnostic/experiments/reports/research-findings.md')
     ideas = json.dumps([{'id': f'idea-{i+1}', 'technique': p.get('name', 'unknown'), 'priority': 5, 'status': 'untried', 'source': 'research'} for i, p in enumerate(proposals)])
     subprocess.run([
         'python3', f'{os.environ["SCRIPTS"]}/error_tracker.py',
@@ -942,26 +888,35 @@ else:
 "
 ```
 
-**Verify:** `python3 $SCRIPTS/error_tracker.py /tmp/ml-opt-diagnostic/experiments agenda list` returns a non-empty list.
+**Verify:** the workflow return's `agenda_initialized` is true and `python3 $SCRIPTS/error_tracker.py /tmp/ml-opt-diagnostic/experiments agenda list` returns a non-empty list.
 
-### 6.5: Phase 6 — Implement
+### 6.5: Phase 6 — Implement (dynamic workflow)
 
-**Before dispatching:** Read `experiments/reports/research-findings-method-proposals.md` and note the proposal names/indices.
+**Before launching:** Use the Phase 5 return — `findings_path` (`research-findings.md`) and the proposal indices from `proposals[]`. Phase 6 launches the **actual** implement workflow, which dispatches implement-agent per proposal (one worktree-isolated `ml-opt/<slug>` branch each, in parallel), runs the code-reviewer + silent-failure-hunter reviewers internally, and assembles `results/implementation-manifest.json`.
 
-Dispatch the implement agent:
+**Launch the Phase 6 workflow** (args contract verified from `phase-6-implement.js`):
 
 ```text
-Agent(
-  description: "Diagnostic: implement research proposals",
-  prompt: "Implement research proposals. Parameters: project_root: /tmp/ml-opt-diagnostic, findings_path: /tmp/ml-opt-diagnostic/experiments/reports/research-findings-method-proposals.md, selected_indices: [1], exp_root: /tmp/ml-opt-diagnostic/experiments. After completing implementation, update your agent memory with what you learned about this project's code structure, file patterns, and any implementation pitfalls encountered.",
-  subagent_type: "ml-optimizer:implement-agent"
-)
+Workflow({
+  scriptPath: "${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/workflows/phase-6-implement.js",
+  args: {
+    exp_root: "/tmp/ml-opt-diagnostic/experiments",
+    project_root: "/tmp/ml-opt-diagnostic",
+    findings_path: "/tmp/ml-opt-diagnostic/experiments/reports/research-findings.md",
+    selected_indices: [1],
+    strategy: "git_branch"
+  }
+})
 ```
+
+Returns `{manifest_path, branches[]}` — `branches[]` carries `{slug, branch, status, validation, reviews}` per proposal.
+
+> CIFAR offline note: the branches this workflow produces are trained in Phases 7–8 — the persisted `train_command` must carry `--data_dir <cached cifar>` so candidate training loads CIFAR offline (throttled host).
 
 **Verify:**
 
 - `experiments/results/implementation-manifest.json` exists with `proposals` array
-- At least one proposal has `status: "validated"`
+- At least one proposal has `status: "validated"` (equivalently, some `branches[].status == "validated"` in the return)
 - Git branches exist: run `git -C /tmp/ml-opt-diagnostic branch --list "ml-opt/*"`
 
 **Schema validation:**
@@ -973,55 +928,54 @@ python3 $SCRIPTS/schema_validator.py \
 
 Confirm output shows `"valid": true`.
 
-### 6.6: Phase 7 — Experiment Loop (2 iterations)
+### 6.6: Phase 7 — Experiment Loop (dynamic workflow)
 
-**Before dispatching:** Read `experiments/results/implementation-manifest.json` and extract the validated branch names (e.g., `ml-opt/label-smoothing`).
+**Before launching:** Read `experiments/results/baseline.json` (the workflow's `baseline` arg is its parsed contents) and confirm the validated branches from the Phase 6 return / `implementation-manifest.json`. Phase 7 launches ONE **actual** experiment workflow that owns the entire autonomous loop internally: per round it dispatches tuning-agent (propose HP configs) → experiment-agents (parallel, worktree-isolated) → per-run divergence handling (the monitor role) → analysis-agent (writes `batch-N-analysis.md`, returns a decision), then acts on the decision tree (continue / branch_test / hp_expand / narrow_space / regularization / method_proposal / code_evolution / stop), including the code_evolution chain (tuning evolve-HPs → implement evolve skill → experiment on the evolved branch) and the stuck-protocol + fixpoint exit. There is no manual per-agent dispatch here — the workflow does it all.
 
-#### HP-Tune
-
-```text
-Agent(
-  description: "Diagnostic: propose HP configs",
-  prompt: "Propose HP configurations. Parameters: project_root: /tmp/ml-opt-diagnostic, num_gpus: 1, primary_metric: loss, lower_is_better: true, iteration: 1, fixed_time_budget: 30, code_branches: [<VALIDATED_BRANCHES>], exp_root: /tmp/ml-opt-diagnostic/experiments. After proposing configs, update your agent memory with HP ranges tried, search space insights, and interaction effects discovered for this model.",
-  subagent_type: "ml-optimizer:tuning-agent"
-)
-```
-
-**After hp-tune:** Read the proposed configs from `experiments/proposed-configs/round-1-hp/` (top-level, not under `results/`).
-
-#### Experiment (for each proposed config)
+**Launch the Phase 7 workflow** (args contract verified from `phase-7-experiment-loop.md` + `phase-7-experiment.js`):
 
 ```text
-Agent(
-  description: "Diagnostic: run experiment <EXP_ID>",
-  prompt: "Run experiment. Parameters: exp_id: <EXP_ID>, config: <CONFIG_JSON>, gpu_id: 0, project_root: /tmp/ml-opt-diagnostic, train_command: python train.py --epochs 2, eval_command: python eval.py, code_branch: <BRANCH_OR_NULL>, fixed_time_budget: 30, iteration: 1, method_tier: <TIER>, proposal_source: <SOURCE_OR_NULL>, exp_root: /tmp/ml-opt-diagnostic/experiments. After completing, update your agent memory with environment quirks, command fixes, and timing observations for this project.",
-  subagent_type: "ml-optimizer:experiment-agent"
-)
+Workflow({
+  scriptPath: "${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/workflows/phase-7-experiment.js",
+  args: {
+    exp_root: "/tmp/ml-opt-diagnostic/experiments",
+    project_root: "/tmp/ml-opt-diagnostic",
+    baseline: <parsed contents of experiments/results/baseline.json>,
+    primary_metric: "loss",
+    divergence_metric: "loss",
+    divergence_lower_is_better: true,
+    model_category: "supervised",
+    lower_is_better: true,
+    target_value: null,
+    scope_level: "full",
+    fixed_time_budget: 30,
+    fixed_epoch_budget: null,
+    fixed_step_budget: null,
+    hp_batches_per_round: 3,
+    method_proposal_scope: "architecture",
+    method_proposal_iterations: 1,
+    experiments_per_gpu: 1,
+    secondary_metrics: [],
+    seeds_per_config: 1,
+    budget: null
+  }
+})
 ```
 
-#### Monitor (concurrent with experiments)
+`scope_level: "full"` plus `method_proposal_scope`/`method_proposal_iterations` are set so the loop can exercise the method_proposal AND code_evolution pivots (their outputs are checked post-hoc below). Returns `{best_exp_id, best_metric, rounds_completed, exit_reason, stacking_candidates[]}` — capture `stacking_candidates[]`; Phase 8 launches only when it is non-empty.
 
-Dispatch the monitor agent in the background for each running experiment:
+> CIFAR offline note: the workflow's experiment-agents read the persisted `train_command` from `user_choices` — it MUST carry `--data_dir <cached cifar>` (e.g. `train_command: python train.py --epochs 2 --data_dir <cached cifar>`) so candidate training loads CIFAR offline (throttled host).
 
-```text
-Agent(
-  description: "Diagnostic: monitor experiment <EXP_ID>",
-  prompt: "Monitor experiment for divergence. Parameters: exp_id: <EXP_ID>, log_file: /tmp/ml-opt-diagnostic/experiments/logs/<EXP_ID>/train.log, metric_to_watch: loss, lower_is_better: true, exp_root: /tmp/ml-opt-diagnostic/experiments. After completing, update your agent memory with divergence signatures, log format patterns, and threshold observations for this project.",
-  subagent_type: "ml-optimizer:monitor-agent",
-  run_in_background: true
-)
-```
+#### Post-loop verification (reading the workflow's outputs)
 
-#### Post-experiment verification
-
-After experiments complete, before analyze:
+After the workflow returns, verify the outputs it wrote under `<exp_root>/` (no separate manual dispatches):
 
 **Placeholder result & metadata verification:**
 
 ```bash
 python3 -c "
 import json, glob
-results = glob.glob('/tmp/ml-opt-diagnostic/experiments/results/exp-*.json')
+results = glob.glob('/tmp/ml-opt-diagnostic/experiments/results/round-*/exp-*.json')
 issues = []
 for f in results:
     data = json.loads(open(f).read())
@@ -1041,7 +995,7 @@ else:
 **Schema validation on all results:**
 
 ```bash
-for f in /tmp/ml-opt-diagnostic/experiments/results/exp-*.json; do
+for f in /tmp/ml-opt-diagnostic/experiments/results/round-*/exp-*.json; do
   python3 $SCRIPTS/schema_validator.py "$f" result --strict 2>/dev/null
 done
 ```
@@ -1059,20 +1013,14 @@ else:
 "
 ```
 
-#### Analyze
+#### Analysis (owned by the workflow)
 
-```text
-Agent(
-  description: "Diagnostic: analyze results",
-  prompt: "Analyze experiment results. Parameters: project_root: /tmp/ml-opt-diagnostic, batch_number: 1, primary_metric: loss, lower_is_better: true, exp_root: /tmp/ml-opt-diagnostic/experiments. After completing, update your agent memory with correlation patterns, pivot decision reasoning, and metric signals that mattered for this project.",
-  subagent_type: "ml-optimizer:analysis-agent"
-)
-```
+The analysis-agent runs INSIDE the loop each batch — it writes `reports/batch-N-analysis.md` and returns the decision the workflow acts on. There is no manual analyze dispatch here; verify its outputs instead.
 
-**Verify after loop iteration:**
+**Verify after the loop:**
 
-- `experiments/results/exp-*.json` files exist with experiment results
-- `experiments/reports/batch-1-analysis.md` exists
+- `experiments/results/round-*/exp-*.json` files exist with experiment results
+- At least one `experiments/reports/batch-*-analysis.md` exists (the loop writes one per batch)
 - Research agenda updated: `python3 $SCRIPTS/error_tracker.py /tmp/ml-opt-diagnostic/experiments agenda list`
 - Baseline integrity still valid: `python3 $SCRIPTS/pipeline_state.py /tmp/ml-opt-diagnostic/experiments verify-baseline`
 - Goal memory sync and summary: `python3 $SCRIPTS/goal_memory.py /tmp/ml-opt-diagnostic/experiments sync-from-errors && python3 $SCRIPTS/goal_memory.py /tmp/ml-opt-diagnostic/experiments summary`
@@ -1087,28 +1035,9 @@ python3 $SCRIPTS/result_analyzer.py \
 
 Verify the output includes ranking information.
 
-#### Live Evolve Skill Dispatch (via Orchestrator)
+#### Phase 7 code_evolution (exercised inside the workflow)
 
-Tests the Phase 7 code evolution chain: orchestrator dispatches tuning-agent (evolve HPs) → implement-agent with evolve skill (shinka-convert → shinka-run → shinka-inspect) → experiment on evolved code.
-
-**Step 1: Dispatch implement-agent with evolve skill.**
-
-```text
-Agent(
-  description: "Diagnostic: code evolution (ShinkaEvolve)",
-  prompt: "Invoke Skill('ml-optimizer:evolve'). Run the full ShinkaEvolve pipeline on the best branch.
-
-  Follow the full chain:
-  1. shinka-convert: Create a ShinkaEvolve task from the best experiment branch
-  2. shinka-run: Run evolution (num_generations=5, population_size=2, SHINKA_PROVIDER=claude_code)
-  3. shinka-inspect: Extract the best mutation
-  4. Commit evolved branch as ml-opt/evolved-<slug>
-
-  Parameters: project_root: /tmp/ml-opt-diagnostic, exp_root: /tmp/ml-opt-diagnostic/experiments, primary_metric: loss, lower_is_better: true, scope_level: full, target_value: null.
-  If ShinkaEvolve is unavailable, report shinkaevolve_unavailable and skip.",
-  subagent_type: "ml-optimizer:implement-agent"
-)
-```
+The Phase 7 loop owns the code evolution chain: when analysis returns `code_evolution` (only at `scope_level: "full"`), the workflow dispatches tuning-agent (evolve HPs) → implement-agent with the evolve skill (shinka-convert → shinka-run → shinka-inspect) → experiment on the evolved branch, all internally. There is no manual evolve dispatch here — verify post-hoc whether the loop exercised it (report SKIPPED if analysis never pivoted to code_evolution or ShinkaEvolve is unavailable).
 
 **Verify Phase 7 evolve chain:**
 
@@ -1145,9 +1074,9 @@ Phase 7 Evolve (Orchestrator-Driven):
   If ShinkaEvolve unavailable: log as SKIPPED
 ```
 
-#### Iteration 2: OOM + Divergence Triggers
+#### Post-loop feature checks: OOM feedback + divergence detection
 
-Run a second iteration to exercise error recovery. Include one experiment with a deliberately extreme LR to trigger divergence, and log an OOM event to test the feedback loop.
+The loop runs multiple iterations internally, so there is no manual "iteration 2". These CLI/python checks confirm the error-recovery machinery the loop relies on works — the OOM feedback loop and the all-diverge pattern detection — without any manual experiment dispatch.
 
 **OOM feedback trigger:** Log OOM events from iteration 1 results, then sync to behavioral memory:
 
@@ -1179,15 +1108,7 @@ else:
 "
 ```
 
-**Divergent experiment:** Dispatch one experiment with extreme LR (100.0) to trigger divergence detection:
-
-```text
-Agent(
-  description: "Diagnostic: run divergent experiment (extreme LR)",
-  prompt: "Run experiment. Parameters: exp_id: exp-diverge-test, config: {\"lr\": 100.0, \"batch_size\": 32}, gpu_id: 0, project_root: /tmp/ml-opt-diagnostic, train_command: python train.py --epochs 2, code_branch: null, iteration: 2, method_tier: baseline, exp_root: /tmp/ml-opt-diagnostic/experiments.",
-  subagent_type: "ml-optimizer:experiment-agent"
-)
-```
+**Divergence detection:** Inside the loop the experiment-agents run `detect_divergence.py` per run and mark extreme-LR runs `diverged`. This check confirms the all-diverge cluster pattern fires on clustered divergence events, independent of a live run:
 
 **Verify divergence detection:**
 
@@ -1301,206 +1222,75 @@ else:
 ```
 
 
-### 6.6c: Phase 8 — Method Stacking (Orchestrator-Driven)
+### 6.6c: Phase 8 — Method Stacking (dynamic workflow)
 
-Tests Phase 8 method stacking. The orchestrator enters Phase 8 when the analysis agent recommends stacking (≥5 methods improve over baseline); methods are merged sequentially in improvement-ranked order.
+Phase 8 launches the **actual** stacking workflow — but ONLY when the Phase 7 return carried a non-empty `stacking_candidates[]` (branches that beat baseline). If Phase 7 returned no candidates (the short diagnostic loop may not surface an improving branch), Phase 8 is skipped exactly as the orchestrator skips it — log SKIPPED and go to Phase 9. The workflow ranks the candidates by improvement, seeds `ml-opt/stack-1` from the strongest, then accumulates the rest one at a time: implement-agent merges each into `ml-opt/stack-N` (resolving conflicts) in a worktree, the merged branch is reviewed (code-reviewer + silent-failure-hunter) at the merge boundary, experiment-agent runs it, and analysis-agent assesses interference — all internally. There is no manual branch creation, merge, or experiment dispatch here.
 
-#### Create method branches
-
-Create 4 additional branches from `master`, each with a small training-scope code change. Combined with the existing `ml-opt/weight-decay-tuning-l2-regularization` from Phase 6, this gives 5 branches for stacking.
-
-```bash
-cd /tmp/ml-opt-diagnostic
-
-# Branch 2: label smoothing
-git checkout master
-git checkout -b ml-opt/label-smoothing
-sed -i 's/nn.CrossEntropyLoss()/nn.CrossEntropyLoss(label_smoothing=0.1)/' train.py
-git add train.py && git commit -m "Add label smoothing 0.1"
-
-# Branch 3: cosine-lr (change max_epochs for cosine schedule)
-git checkout master
-git checkout -b ml-opt/cosine-lr
-sed -i 's/epochs: 10/epochs: 20/' config.yaml 2>/dev/null || true
-git add -A && git commit -m "Increase epochs for cosine LR" --allow-empty
-
-# Branch 4: warmup (add warmup to config)
-git checkout master
-git checkout -b ml-opt/warmup
-echo "warmup_epochs: 5" >> config.yaml
-git add config.yaml && git commit -m "Add warmup epochs"
-
-# Branch 5: dropout-tune (modify dropout)
-git checkout master
-git checkout -b ml-opt/dropout-tune
-sed -i 's/dropout=0.0/dropout=0.1/' model.py 2>/dev/null || sed -i 's/self.fc/self.dropout = nn.Dropout(0.1)\n        self.fc/' model.py 2>/dev/null || true
-git add -A && git commit -m "Add dropout 0.1" --allow-empty
-
-git checkout master
-echo "✓ Created 4 method branches for stacking"
-git branch --list "ml-opt/*"
-```
-
-#### Sequential merge: stack-1 and stack-2
-
-Following the stacking spec: best method → stack-1, then merge next method → stack-2.
-
-```bash
-cd /tmp/ml-opt-diagnostic
-
-# Stack-1: best method is weight-decay (from Phase 6)
-git checkout -b ml-opt/stack-1 ml-opt/weight-decay-tuning-l2-regularization
-echo "✓ stack-1 created from weight-decay branch"
-
-# Stack-2: merge label-smoothing into stack-1
-git checkout -b ml-opt/stack-2 ml-opt/stack-1
-git merge ml-opt/label-smoothing --no-ff --no-edit && echo "✓ stack-2: clean merge of label-smoothing" || echo "✗ stack-2: merge conflict (will attempt resolution)"
-
-git checkout master
-```
-
-#### Run stacked experiment
-
-Dispatch experiment-agent on the stack-2 branch to test the combined method:
+**Launch the Phase 8 workflow** (args contract verified from `phase-8-stacking.md` + `phase-8-stacking.js`; `stacking_candidates` and `baseline_metric` come from the Phase 7 return / baseline):
 
 ```text
-Agent(
-  description: "Phase 8: run stacked experiment (stack-2 = weight-decay + label-smoothing)",
-  prompt: "Run experiment. Parameters: exp_id: exp-stack-live, config: {\"lr\": 0.01, \"batch_size\": 64, \"weight_decay\": 0.0005, \"epochs\": 3}, gpu_id: 0, project_root: /tmp/ml-opt-diagnostic, train_command: python train.py --epochs 3, eval_command: python eval.py, code_branch: ml-opt/stack-2, fixed_time_budget: 30, iteration: 1, method_tier: stacked_default_hp, stacking_order: 2, code_branches: [\"ml-opt/weight-decay-tuning-l2-regularization\", \"ml-opt/label-smoothing\"], exp_root: /tmp/ml-opt-diagnostic/experiments.",
-  subagent_type: "ml-optimizer:experiment-agent"
-)
+Workflow({
+  scriptPath: "${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/workflows/phase-8-stacking.js",
+  args: {
+    exp_root: "/tmp/ml-opt-diagnostic/experiments",
+    project_root: "/tmp/ml-opt-diagnostic",
+    primary_metric: "loss",
+    lower_is_better: true,
+    scope_level: "full",
+    baseline_metric: <baseline loss value from experiments/results/baseline.json>,
+    stacking_candidates: <the Phase 7 return's stacking_candidates[] — [{branch, improvement_pct}, ...]>,
+    divergence_metric: "loss",
+    divergence_lower_is_better: true,
+    model_category: "supervised",
+    fixed_time_budget: 30,
+    fixed_epoch_budget: null,
+    fixed_step_budget: null,
+    budget: null
+  }
+})
 ```
+
+Returns `{best_stack_branch, best_stack_metric, steps[]}` (`steps[]` = the per-method `{method, branch, kept}` ledger).
+
+> CIFAR offline note: each stacked run trains on the merged branch — the persisted `train_command` must carry `--data_dir <cached cifar>` so stacked training loads CIFAR offline (throttled host).
 
 #### Verify stacking outputs
 
-```bash
-python3 -c "
-import json
-from pathlib import Path
-
-EXP = Path('/tmp/ml-opt-diagnostic/experiments')
-issues = []
-
-# Check stack branches exist
-import subprocess
-r = subprocess.run(['git', '-C', '/tmp/ml-opt-diagnostic', 'branch', '--list', 'ml-opt/stack-*'],
-                   capture_output=True, text=True)
-branches = [b.strip() for b in r.stdout.strip().split('\n') if b.strip()]
-if len(branches) >= 2:
-    print(f'✓ Stacking branches: {len(branches)} created ({', '.join(branches)})')
-else:
-    print(f'✗ Stacking branches: only {len(branches)} (need ≥2)')
-
-# Check stacked experiment result
-stack_result = EXP / 'results' / 'exp-stack-live.json'
-if stack_result.exists():
-    data = json.loads(stack_result.read_text())
-    tier = data.get('method_tier', '?')
-    order = data.get('stacking_order', '?')
-    status = data.get('status', '?')
-    print(f'✓ Stacked experiment: status={status}, tier={tier}, order={order}')
-else:
-    print('✗ Stacked experiment result not found')
-
-# Save stacking state to pipeline-state.json
-import sys, os
-sys.path.insert(0, os.path.expanduser('$SCRIPTS'))
-from pipeline_state import save_state, load_state
-state = load_state(str(EXP)) or {}
-save_state(
-    phase=8, iteration=0, running_exp_ids=[], exp_root=str(EXP),
-    user_choices={
-        **state.get('user_choices', {}),
-        'stacking': {
-            'ranked_methods': ['weight-decay', 'label-smoothing', 'cosine-lr', 'warmup', 'dropout-tune'],
-            'current_stack_order': 2,
-            'stack_base_branch': 'ml-opt/stack-2',
-            'stack_base_exp': 'exp-stack-live',
-            'skipped_methods': [],
-            'stacked_methods': ['weight-decay', 'label-smoothing'],
-        'evolved_methods': [],
-        }
-    }
-)
-state = load_state(str(EXP))
-if state and 'stacking' in state.get('user_choices', {}):
-    stacking = state['user_choices']['stacking']
-    print(f'✓ Stacking state persisted: {len(stacking[\"stacked_methods\"])} methods stacked, order={stacking[\"current_stack_order\"]}')
-else:
-    print('✗ Stacking state not persisted')
-"
-```
-
-#### Phase 8 — Evolve on Stacked Code (Orchestrator-Driven)
-
-Tests the Phase 8 evolve chain: when the stacked gain is less than the best individual method's gain (method interference), the orchestrator dispatches the implement-agent with the evolve skill to resolve conflicts.
-
-**Step 1: Analyze stacked result.** Dispatch analysis-agent to assess whether methods interfere:
-
-```text
-Agent(
-  description: "Phase 8: analyze stacked result for interference",
-  prompt: "Analyze stacked experiment. Compare the stacked gain to the best individual method gain. If stacked gain < best individual gain → methods interfere → recommend code_evolution pivot. Parameters: project_root: /tmp/ml-opt-diagnostic, exp_root: /tmp/ml-opt-diagnostic/experiments, primary_metric: loss, lower_is_better: true.",
-  subagent_type: "ml-optimizer:analysis-agent"
-)
-```
-
-**Step 2: Evolve stacked code (if interference detected).** Dispatch implement-agent with evolve skill:
-
-```text
-Agent(
-  description: "Phase 8: evolve stacked code to resolve interference",
-  prompt: "Invoke Skill('ml-optimizer:evolve'). Resolve method interference on ml-opt/stack-2 via ShinkaEvolve.
-
-  Follow the full chain:
-  1. shinka-convert: Create task from ml-opt/stack-2
-  2. shinka-run: Run evolution (num_generations=5, population_size=2, SHINKA_PROVIDER=claude_code)
-  3. shinka-inspect: Extract best mutation
-  4. Commit evolved branch
-
-  Parameters: project_root: /tmp/ml-opt-diagnostic, exp_root: /tmp/ml-opt-diagnostic/experiments, primary_metric: loss, lower_is_better: true, scope_level: full.
-  If ShinkaEvolve unavailable: report shinkaevolve_unavailable.",
-  subagent_type: "ml-optimizer:implement-agent"
-)
-```
-
-**Verify Phase 8 evolve chain:**
+The Phase 8 workflow did the ranking, sequential merges, per-boundary reviews (code-reviewer + silent-failure-hunter), stacked experiments, interference analysis, and — on detected interference — the evolve-on-stack chain, all internally. Read its outputs; do NOT re-run any of it manually.
 
 ```bash
 python3 -c "
-import subprocess, json, sys, glob
-
-# Check evolved stack branch
-r = subprocess.run(['git', '-C', '/tmp/ml-opt-diagnostic', 'branch', '--list', 'ml-opt/*evolved*stack*'],
-                   capture_output=True, text=True)
-branches = [b.strip() for b in r.stdout.strip().split('\n') if b.strip()]
-if branches:
-    print(f'✓ Evolved stack branch: {branches[0]}')
-else:
-    print('— No evolved stack branch (ShinkaEvolve may be unavailable or no interference)')
-
-# Check experiment on evolved stack
+import json, glob, subprocess
 EXP = '/tmp/ml-opt-diagnostic/experiments'
-evolved_stack = [f for f in glob.glob(f'{EXP}/results/round-*-evolved/exp-*stack*.json')]
-if evolved_stack:
-    data = json.loads(open(evolved_stack[0]).read())
-    print(f'✓ Experiment on evolved stack: status={data.get(\"status\")}, tier={data.get(\"method_tier\")}')
+
+# Stack branches the workflow created
+r = subprocess.run(['git','-C','/tmp/ml-opt-diagnostic','branch','--list','ml-opt/stack-*'], capture_output=True, text=True)
+branches = [b.strip() for b in r.stdout.strip().split('\n') if b.strip()]
+print(f'{\"✓\" if branches else \"—\"} Stacking branches: {len(branches)} ({\", \".join(branches)})')
+
+# Stacked experiment results (workflow writes results/round-N-stacked/exp-*.json)
+stacked = glob.glob(f'{EXP}/results/round-*-stacked/exp-*.json')
+if stacked:
+    d = json.loads(open(stacked[0]).read())
+    print(f'✓ Stacked experiment: {len(stacked)} result(s), tier={d.get(\"method_tier\")}, order={d.get(\"stacking_order\")}, code_branches={len(d.get(\"code_branches\",[]))}')
 else:
-    print('— No evolved stack experiment (may not have been needed)')
+    print('— No stacked experiment result (Phase 8 skipped: Phase 7 returned <2 improving candidates)')
+
+# Evolve-on-stack (the workflow evolves only when its analysis detects interference)
+evolved_stack = glob.glob(f'{EXP}/results/round-*-evolved/exp-*.json')
+print(f'{\"✓\" if evolved_stack else \"—\"} Evolve-on-stack: {len(evolved_stack)} result(s) (runs only on detected interference)')
 "
 ```
 
 ```
-Phase 8 Evolve (Orchestrator-Driven):
-  1. Analysis of stack:        [passed/failed]
-  2. Interference detected:    [yes/no]
-  3. Evolve HPs tuned:         [passed/failed/skipped]
-  4. ShinkaEvolve on stack:    [passed/failed/skipped]
-  5. Evolved stack branch:     [passed/failed/skipped]
-  6. HP tuning evolved stack:  [passed/failed/skipped]
-  7. Experiment on evolved:    [passed/failed/skipped]
-  If no interference: Steps 3-7 skipped (clean stack)
-  If ShinkaEvolve unavailable: log as SKIPPED
+Phase 8 Stacking (workflow-driven — all steps internal to phase-8-stacking.js):
+  Candidates from Phase 7:     [N, or 0 → whole phase SKIPPED as the orchestrator skips it]
+  Sequential merges → stack-N: [passed/failed]
+  Per-merge review:            [code-reviewer + silent-failure-hunter at each boundary]
+  Stacked experiment(s):       [passed/failed]
+  Interference analysis:       [analysis-agent, inside the workflow]
+  Evolve-on-stack:             [ran if interference detected, else skipped]
+  Return: {best_stack_branch, best_stack_metric, steps[]}
 ```
 
 ### 6.7: Phase 9 — Report + Review
@@ -2047,7 +1837,7 @@ Hook functional tests:      X/23 passed (9 hooks — all of hooks.json except th
 Workflow infrastructure:    X/Y checks passed (workflow files, meta header, node --check, Workflow( dispatch)
 Agent smoke tests:          9/9 worker agents dispatched (memory: local confirmed)
 
-Full Pipeline (live Agent() dispatch):
+Full Pipeline (phases 2/3/9 via Agent(); phases 5-8 via Workflow({scriptPath})):
   Phase 2 Prerequisites:    [passed/failed] — schema [valid/invalid]
   Phase 3 Baseline:         [passed/failed] — schema [valid/invalid], checksum [stored/missing]
   Phase 5 Research:         [passed/failed] — 3 modes tested:

@@ -10,12 +10,15 @@ export const meta = {
 
 // -------------------- args (CONTRACT phase-5-research) --------------------
 // { exp_root, primary_metric, model_category, scope_level, source, user_papers }
-const expRoot = args.exp_root
-const primaryMetric = args.primary_metric
-const modelCategory = args.model_category || 'supervised'
-const scopeLevel = args.scope_level || 'training'
-const source = args.source || 'web'
-const userPapers = Array.isArray(args.user_papers) ? args.user_papers : (args.user_papers ? [args.user_papers] : [])
+// The Workflow runtime may deliver `args` as a JSON string; parse-if-string so
+// arg reads don't silently become undefined (e.g. `undefined/reports/...` paths).
+const A = typeof args === 'string' ? JSON.parse(args) : (args || {})
+const expRoot = A.exp_root
+const primaryMetric = A.primary_metric
+const modelCategory = A.model_category || 'supervised'
+const scopeLevel = A.scope_level || 'training'
+const source = A.source || 'web'
+const userPapers = Array.isArray(A.user_papers) ? A.user_papers : (A.user_papers ? [A.user_papers] : [])
 const findingsPath = `${expRoot}/reports/research-findings.md`
 
 // -------------------- structured return schemas --------------------

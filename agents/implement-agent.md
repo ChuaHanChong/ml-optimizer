@@ -20,7 +20,7 @@ memory: local
 
 # Implement Agent
 
-Think deeply and carefully about each decision. Use maximum reasoning depth. Ultrathink.
+Think deeply and carefully about each decision.
 
 You are a specialized code implementation agent. Your job is to apply ML research proposals as actual code changes, validate them, and produce a structured manifest.
 
@@ -278,14 +278,11 @@ Key things to capture:
 
 Before implementing, run `${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py <exp_root> read-goals` to check scope constraints. Do not modify model architecture files when scope is 'training'.
 
-## Resumable Agent
+## Dispatch Model
 
-You are a persistent agent — the orchestrator resumes you via `SendMessage` instead of spawning a fresh instance for each task. When resumed:
-1. You retain your full conversation history from previous dispatches (codebase knowledge, branch layouts, validation patterns)
-2. The orchestrator includes a `CONTEXT FROM OTHER AGENTS:` section with findings from research, analyze, or experiment agents
-3. Use your accumulated codebase understanding to implement faster — reuse file locations, import patterns, and validation strategies you already discovered
-4. Continue writing to the same shared files (`<exp_root>/` directory)
+You are dispatched **fresh** every time — via `Agent()` for direct-phase work, or via the workflow runtime's `agent({agentType: "ml-optimizer:implement-agent"})` for the phase 5-8 workflows. You are NOT resumed; there is no conversation history carried over between dispatches. Each dispatch is self-contained:
+1. Pick up cross-agent context by reading the `<exp_root>/` files named in your prompt — e.g. `results/implementation-manifest.json`, the research findings files, prior `reports/batch-N-analysis.md`, `reports/dead-ends.json`, and `learned-behaviors.json`
+2. Re-establish codebase understanding via `Read`/`Grep`/`Glob`/`LSP`, rather than assuming prior knowledge of file locations or branch layouts
+3. Continue writing to the same shared files (`<exp_root>/` directory)
 
-## Relay Acknowledgment
-
-When you receive a `CONTEXT FROM OTHER AGENTS` section in your dispatch message, include `RELAY_ACK: <route>` in your output (e.g., `RELAY_ACK: research_to_implement`) to confirm you processed the relayed context. This enables the orchestrator to detect when context was silently dropped by context compression.
+Your `memory: local` store at `.claude/agent-memory-local/implement-agent/` persists role-specific knowledge (codebase patterns, merge strategies, implementation pitfalls) across dispatches and sessions.

@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
 """SubagentStop hook: verify agents produced their expected output files.
 
-Invoked by the Claude Code hook runner on the SubagentStop event, not as a CLI.
-It reads the hook payload as JSON on stdin (agent_type/subagent_type, agent_id,
-cwd), resolves exp_root from the .claude/ml-optimizer.json breadcrumb, checks the
-agent's output contract via output_contract.check_outputs(), and prints a JSON
-decision ({"decision": "approve"} or {"decision": "block", "reason": ...}) on
-stdout to block an agent from finishing with missing required outputs.
+Invoked by the hook runner on SubagentStop (not a CLI): reads the hook payload
+JSON on stdin (agent_type/subagent_type, agent_id, cwd), resolves exp_root from
+the .claude/ml-optimizer.json breadcrumb, checks the agent's output contract via
+output_contract.check_outputs(), and prints an approve/block decision on stdout.
 """
 
 import json
@@ -26,7 +24,7 @@ def _find_exp_root(cwd: str) -> str | None:
         if breadcrumb.is_file():
             try:
                 data = json.loads(breadcrumb.read_text())
-                exp_root = data.get("exp_root", "")
+                exp_root = data.get("active") or data.get("exp_root", "")
                 if exp_root and Path(exp_root).is_dir():
                     return exp_root
             except (json.JSONDecodeError, OSError):
@@ -35,12 +33,7 @@ def _find_exp_root(cwd: str) -> str | None:
 
 
 def check_agent_output(cwd: str, agent_name: str, agent_id: str = "") -> dict:
-    """Check if an agent produced its expected output files.
-
-    Uses output_contract.check_outputs() for consistency with SubagentStart injection.
-    The `agent_id` is used to key per-agent state files (dev_notes mtime marker)
-    so parallel subagent dispatches don't clobber each other.
-    """
+    """Approve/block based on whether an agent produced its contracted output files."""
     exp_root = _find_exp_root(cwd)
     if not exp_root:
         return {"decision": "approve"}
@@ -54,27 +47,6 @@ def check_agent_output(cwd: str, agent_name: str, agent_id: str = "") -> dict:
             "decision": "block",
             "reason": f"Agent {agent_name} did not produce expected output: {', '.join(result['missing'])}",
         }
-
-    # Check dev_notes.md — verify THIS agent invocation wrote the last entry
-    # by comparing the embedded agent_id comment.
-    if agent_id:
-        dev_notes = Path(exp_root) / "dev_notes.md"
-        if dev_notes.is_file():
-            try:
-                from dev_notes import last_agent as _last_agent  # lazy: optional sibling module
-                last = _last_agent(exp_root)
-                if last.get("agent_id") != agent_id:
-                    return {
-                        "decision": "block",
-                        "reason": (
-                            f"Agent {agent_name} did not append to dev_notes.md "
-                            f"(last entry's agent_id does not match this invocation). "
-                            f"Use: python3 ${{CLAUDE_PLUGIN_ROOT}}/scripts/dev_notes.py "
-                            f"<exp_root> append {agent_name} '<message>' --agent-id {agent_id}"
-                        ),
-                    }
-            except ImportError:
-                pass  # dev_notes module not available — skip check
 
     return {"decision": "approve"}
 
@@ -91,15 +63,14 @@ def _extract_agent_name(hook_input: dict) -> str:
                 agent_name = known
                 break
 
-    # Strip plugin prefix if present
     if agent_name:
-        agent_name = agent_name.replace("ml-optimizer:", "")
+        agent_name = agent_name.replace("ml-optimizer:", "")  # strip plugin prefix
 
     return agent_name
 
 
 def main() -> None:
-    """Entry point: read hook input from stdin, check outputs, output decision."""
+    """Read hook input from stdin, check outputs, print the decision."""
     try:
         raw = sys.stdin.read()
         if not raw.strip():

@@ -1,6 +1,6 @@
 # Progressive Validation Checklist
 
-Fail-fast validation for implemented code changes. Run checks in order — stop at the first failure and fix before continuing.
+Fail-fast validation for implemented code changes. Run checks in order — stop at the first failure, fix, then continue.
 
 ---
 
@@ -24,17 +24,18 @@ Attempt to import each modified module.
 
 ```python
 from implement_utils import validate_imports
-result = validate_imports(module_path, project_root)
+result = validate_imports(module_path, project_root, python_executable=project_env_python)
 ```
 
 **Pass criteria:** Module loads without ImportError or ModuleNotFoundError.
+**Simulator-runtime exception:** import failures on `omni.*`, `isaacgym`, `isaaclab`, `habitat_sim`, or `carb` return `status: "skipped_env_dependent"` (passed) — they only resolve inside the simulator runtime; syntax + LSP checks carry the gate.
 **Common failures:** New dependency not installed, wrong import path, circular import introduced.
 
-**If new dependencies are needed:** Flag them — do NOT install automatically. Report to user for confirmation.
+**If new dependencies are needed:** flag them — do NOT install automatically. Report to the user for confirmation.
 
-**Addendum for adapted reference code (`from_reference`):** If an import fails, distinguish between:
-- **Missing module from reference repo** (adaptation incomplete): The adapted code still references a module from the original repo. Fix by extracting the missing dependency or reimplementing the needed functionality.
-- **External package not installed** (new dependency): The reference code depends on a pip package not in the target project. Add to `new_dependencies` in the manifest.
+**Addendum for adapted reference code (`from_reference`):** if an import fails, distinguish:
+- **Missing module from reference repo** (adaptation incomplete): the adapted code still references a module from the original repo. Fix by extracting the missing dependency or reimplementing it.
+- **External package not installed** (new dependency): the reference code needs a pip package not in the target project. Add to `new_dependencies` in the manifest.
 
 ---
 
@@ -219,4 +220,4 @@ print(f"Peak GPU memory: {peak_mb:.0f} MiB")
 | Full validation before experiment | 1-7 |
 | Memory-sensitive changes | 1-8 |
 
-Levels 1-2 are mandatory and automated via `${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py`. Level 5 (unit tests) is written and run by the implement agent. Levels 3-4 and 6-8 require project-specific setup and are run as bash commands by the implement agent.
+Levels 1-2 are mandatory, automated via `${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py`. Level 5 (unit tests) is written and run by the implement agent. Levels 3-4 and 6-8 need project-specific setup and run as bash commands by the implement agent.

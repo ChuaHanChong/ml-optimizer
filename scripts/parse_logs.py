@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Parse training log files for metrics.
 
-Auto-detects the log format (json, csv, logging, tqdm, xgboost, hf_trainer, kv)
+Auto-detects the log format (json, csv, logging, tqdm, xgboost, hf_trainer, sb3, kv)
 and returns a list of per-step metric dicts. An explicit format can be forced.
 
 Usage:
     python3 parse_logs.py <logfile>           # Auto-detect format, print parsed metrics as JSON
-    python3 parse_logs.py <logfile> <format>  # Force a specific format (json|csv|logging|tqdm|xgboost|hf_trainer|kv)
+    python3 parse_logs.py <logfile> <format>  # Force a specific format (json|csv|logging|tqdm|xgboost|hf_trainer|sb3|kv)
 
 Examples:
     python3 parse_logs.py <exp_root>/logs/baseline/train.log
@@ -37,12 +37,7 @@ def parse_kv_line(line: str) -> dict:
 
 
 def parse_python_logging_line(line: str) -> dict:
-    """Parse a Python logging format line for metrics.
-
-    Matches lines like: 2024-01-15 10:30:45,123 INFO epoch=5 loss=0.234 accuracy=87.5
-    Extracts key=value or key: value metrics from the message part,
-    plus a wall_time field with the timestamp.
-    """
+    """Parse a Python logging line (e.g. `2024-01-15 10:30:45,123 INFO epoch=5 loss=0.234`) for metrics + wall_time timestamp."""
     m = re.match(r'^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.\d]*)(?:\s+(?:(?!DEBUG\b|INFO\b|WARNING\b|WARN\b|ERROR\b|CRITICAL\b|FATAL\b|TRACE\b)[A-Z]{2,5}|[+-]\d{4}))?\s+\S+\s+(.*)', line)
     if not m:
         return {}
@@ -54,12 +49,7 @@ def parse_python_logging_line(line: str) -> dict:
 
 
 def parse_tqdm_line(line: str) -> dict:
-    """Parse a tqdm progress bar line for metrics.
-
-    Matches lines like: 100%|████████| 50/50 [00:30<00:00, 1.67it/s, loss=0.5, acc=85.2]
-    Extracts key=value metrics from the trailing bracket section.
-    """
-    # Find trailing bracket content that contains key=value pairs
+    """Parse key=value metrics from a tqdm bar's trailing bracket (e.g. `[00:30<00:00, 1.67it/s, loss=0.5, acc=85.2]`)."""
     m = re.search(r'\[([^\]]*,\s*\w+\s*=\s*[^\]]+)\]\s*$', line)
     if not m:
         return {}
@@ -141,6 +131,43 @@ def parse_hf_trainer_line(line: str) -> dict:
     return {}
 
 
+def parse_sb3_lines(lines: list[str]) -> list[dict]:
+    """Parse Stable-Baselines3 / rsl_rl pipe-table logs.
+
+    Rows between two dashed rules accumulate into ONE record (one table = one step).
+    Section header rows ("rollout/", "train/") are skipped; section prefixes are
+    stripped (rollout/ep_rew_mean -> ep_rew_mean) and key whitespace -> underscores.
+    """
+    records: list[dict] = []
+    current: dict = {}
+    for line in lines:
+        stripped = line.strip()
+        if re.match(r'^-{4,}\s*$', stripped):
+            if current:
+                records.append(current)
+                current = {}
+            continue
+        m = re.match(r'^\|\s*([^|]+?)\s*\|\s*([^|]*?)\s*\|$', stripped)
+        if not m:
+            continue
+        key, value = m.group(1), m.group(2)
+        if key.endswith('/') and not value:
+            continue  # section header row
+        key = re.sub(r'\s+', '_', key.split('/')[-1].strip())
+        if not key or not value:
+            continue
+        try:
+            current[key] = float(value)
+        except ValueError:
+            if value.lower() == "nan":
+                current[key] = float("nan")
+            elif value.lower() in ("inf", "-inf"):
+                current[key] = float(value.lower())
+    if current:
+        records.append(current)
+    return records
+
+
 def parse_csv_lines(lines: list[str]) -> list[dict]:
     """Parse CSV-formatted lines (first line is header)."""
     if len(lines) < 2:
@@ -163,7 +190,7 @@ def parse_csv_lines(lines: list[str]) -> list[dict]:
 
 
 def detect_format(lines: list[str]) -> str:
-    """Auto-detect log format: 'json', 'csv', 'logging', 'tqdm', or 'kv'."""
+    """Auto-detect log format: json, logging, tqdm, xgboost, sb3, hf_trainer, csv, or kv."""
     for line in lines[:5]:
         stripped = line.strip()
         if not stripped:
@@ -188,6 +215,12 @@ def detect_format(lines: list[str]) -> str:
         stripped = line.strip()
         if stripped and re.match(r'^\[\d+\]\s+\S+.*?:', stripped):
             return "xgboost"
+    # Check for SB3/rsl_rl pipe-table format (dashed rules + "| key | value |" rows)
+    head = [line.strip() for line in lines[:20]]
+    has_rule = any(re.match(r'^-{4,}\s*$', s) for s in head)
+    has_pipe_row = any(re.match(r'^\|\s*\S[^|]*\|[^|]*\|$', s) for s in head)
+    if has_rule and has_pipe_row:
+        return "sb3"
     # Check for HuggingFace Trainer format (single-quote Python dicts)
     hf_count = 0
     for line in lines:
@@ -227,13 +260,10 @@ def parse_log(filepath: str, fmt: str | None = None) -> list[dict]:
         return [m for line in lines if (m := parse_tqdm_line(line))]
     elif fmt == "xgboost":
         return [m for line in lines if (m := parse_xgboost_line(line))]
+    elif fmt == "sb3":
+        return parse_sb3_lines(lines)
     elif fmt == "hf_trainer":
-        results = []
-        for line in lines:
-            parsed = parse_hf_trainer_line(line)
-            if parsed:
-                results.append(parsed)
-        return results
+        return [m for line in lines if (m := parse_hf_trainer_line(line))]
     else:
         result = [m for line in lines if (m := parse_kv_line(line))]
         if auto_detected and not result and lines:

@@ -69,14 +69,11 @@ Key things to capture:
 
 When divergence is detected and an experiment is killed, log the pattern with `${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py <exp_root> log-behavior divergence_pattern`.
 
-## Resumable Agent
+## Dispatch Model
 
-You are a persistent agent — the orchestrator resumes you via `SendMessage` instead of spawning a fresh instance for each task. When resumed:
-1. You retain your full conversation history from previous monitoring batches (divergence patterns, metric behavior, log format quirks)
-2. The orchestrator includes a `CONTEXT FROM OTHER AGENTS:` section with findings from hp-tune (proposed LR ranges, config details)
-3. Use your accumulated knowledge of divergence patterns to set better thresholds and recognize recurring failure modes faster
-4. Continue writing to the same shared files (`<exp_root>/` directory)
+You are dispatched **fresh** every time — via the workflow runtime's `agent({agentType: "ml-optimizer:monitor-agent"})` for the phase 5-8 workflows. You are NOT resumed; there is no conversation history carried over between dispatches. Each dispatch is self-contained:
+1. Pick up cross-agent context by reading the `<exp_root>/` files named in your prompt — e.g. the log file paths and experiment IDs to watch, proposed configs (LR ranges), `reports/error-log.json`, and `learned-behaviors.json`
+2. Re-establish divergence thresholds and metric expectations from your prompt and those files rather than assuming prior knowledge of failure modes
+3. Continue writing to the same shared files (`<exp_root>/` directory)
 
-## Relay Acknowledgment
-
-When you receive a `CONTEXT FROM OTHER AGENTS` section in your dispatch message, include `RELAY_ACK: <route>` in your output (e.g., `RELAY_ACK: orchestrator_to_monitor`) to confirm you processed the relayed context. This enables the orchestrator to detect when context was silently dropped by context compression.
+Your `memory: local` store at `.claude/agent-memory-local/monitor-agent/` persists role-specific knowledge (divergence signatures, false-positive patterns, log format quirks) across dispatches and sessions.

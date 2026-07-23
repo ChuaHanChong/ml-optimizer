@@ -1,22 +1,14 @@
 #!/usr/bin/env python3
 """Check GPU availability via nvidia-smi.
 
-Runs nvidia-smi, parses its CSV output, and marks each GPU available or busy
-based on utilization and memory-usage thresholds. Returns the per-GPU status,
-the indices of free GPUs, and a free count for parallel-experiment scheduling.
+Parses nvidia-smi CSV output and marks each GPU available/busy: available when
+utilization < util_threshold AND memory usage < memory_threshold. Prints JSON
+(per-GPU status, free indices, free count) on stdout.
 
 Usage:
-    python3 gpu_check.py                                  # Defaults: util < 30%, memory < 80%
-    python3 gpu_check.py <util_threshold>                 # Override utilization-percent cutoff (integer)
-    python3 gpu_check.py <util_threshold> <memory_threshold>  # Also override memory-percent cutoff (float)
+    python3 gpu_check.py [util_threshold] [memory_threshold]
 
-A GPU is "available" when utilization is below util_threshold AND memory usage
-is below memory_threshold. Output is JSON on stdout.
-
-Examples:
-    python3 gpu_check.py
-    python3 gpu_check.py 20
-    python3 gpu_check.py 20 70.0
+Defaults: util < 30%, memory < 80.0% (util_threshold=int, memory_threshold=float).
 """
 
 import json
@@ -44,9 +36,9 @@ def parse_nvidia_smi(output: str) -> list[dict]:
                     gpu["index"] = int(value)
                 elif "name" in key:
                     gpu["name"] = value
-                elif "memory_total" in key or "memory.total" in header.lower():
+                elif "memory_total" in key:
                     gpu["memory_total_mib"] = int(value.replace("MiB", "").strip())
-                elif "memory_used" in key or "memory.used" in header.lower():
+                elif "memory_used" in key:
                     gpu["memory_used_mib"] = int(value.replace("MiB", "").strip())
                 elif "utilization" in key:
                     gpu["utilization_pct"] = int(value.replace("%", "").strip())

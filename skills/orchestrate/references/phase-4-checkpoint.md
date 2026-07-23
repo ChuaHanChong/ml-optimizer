@@ -2,7 +2,7 @@
 
 **Phase gate:** Run `pipeline_state.py <exp_root> gate 3 4` before entering. On completion: `pipeline_state.py <exp_root> log-gate 4 completed "<summary>"`.
 
-**Multi-objective scenarios:** When the baseline reveals multiple improvement vectors (e.g., both metric performance and training stability need work), consider using `superpowers:brainstorming` to explore trade-offs before presenting options to the user.
+**Multi-objective scenarios:** When the baseline reveals multiple improvement vectors (e.g., both metric performance and training stability need work), consider `superpowers:brainstorming` to explore trade-offs before presenting options.
 
 Use AskUserQuestion to show baseline results and ask for direction:
 
@@ -23,26 +23,55 @@ How would you like to proceed?
 
 ## Phase 4, Option 1: Full Autonomous Optimization (default)
 
-If the user selects option 1 (or doesn't specify a preference): Set `scope_level = "full"`. Proceed to Phase 5 (research) with `source: "web"`. The analysis agent will use all available tools: research, HP tuning, code_evolution via ShinkaEvolve. The pipeline runs fully autonomously until the goal is reached.
+If the user selects option 1 (or doesn't specify): Set `scope_level = "full"`. Proceed to Phase 5 (research) with `source: "web"`. The analysis agent uses all tools: research, HP tuning, code_evolution via ShinkaEvolve. Runs fully autonomously until the goal is reached.
 
 ## Phase 4, Option 2: HP Tuning Only
 
-If the user selects option 2: Set `scope_level = "training"`. Skip Phases 5-6 (no research, no code changes). Proceed directly to Phase 7 (experiment loop) with HP tuning on the baseline code branch only. The analysis agent will NOT recommend research or code_evolution pivots.
+If option 2: Set `scope_level = "training"`. Skip Phases 5-6 (no research, no code changes). Proceed directly to Phase 7 (experiment loop) with HP tuning on the baseline code branch only. The analysis agent will NOT recommend research or code_evolution pivots.
 
 ## Phase 4, Option 3: Research First
 
-If the user selects option 3: Set `scope_level = "architecture"`. Proceed to Phase 5 (research) with `source: "web"`. The analysis agent can recommend research pivots but NOT code_evolution via ShinkaEvolve.
+If option 3: Set `scope_level = "architecture"`. Proceed to Phase 5 (research) with `source: "web"`. The analysis agent can recommend research pivots but NOT code_evolution via ShinkaEvolve.
 
 ## Phase 4, Option 4: User-Provided Papers
 
-If the user selects option 4:
-1. Set `scope_level = "architecture"` (or `"full"` if user wants evolve too)
+If option 4:
+1. Set `scope_level = "architecture"` (or `"full"` if the user wants evolve too)
 2. Use AskUserQuestion to collect paper URLs/paths (one per line)
 3. Store as `user_papers` list in pipeline state user_choices
-4. When invoking `ml-optimizer:research` in Phase 5, pass `user_papers`
-5. The research skill will analyze user papers FIRST before running web searches
+4. Pass `user_papers` when invoking `ml-optimizer:research` in Phase 5
+5. The research skill analyzes user papers FIRST, before web searches
 6. User-provided papers get a +2 confidence bonus in proposal ranking
 
 ## Phase 4, Option 5: Skip to Experiments
 
-If the user selects option 5: Use AskUserQuestion to collect their specific HP configs. Set `scope_level = "training"`. Skip Phases 5-6 (no research, no code changes). Proceed to Phase 7 with the user-specified configs as the first experiment batch.
+If option 5: Use AskUserQuestion to collect specific HP configs. Set `scope_level = "training"`. Skip Phases 5-6 (no research, no code changes). Proceed to Phase 7 with the user-specified configs as the first experiment batch.
+
+## Pre-Authorize Phase 7 Autonomy (MANDATORY before any workflow launches)
+
+Phases 5–8 run as dynamic workflows that take **no mid-run user input**; the Phase 7 experiment workflow runs fully autonomously to its fixpoint. So every user decision the loop would otherwise ask for must be pre-authorized **here**, at Phase 4, and persisted into `user_choices` so it can be passed as Phase 7 `args`. Do NOT defer these to mid-loop — no prompt is available once the workflow is running.
+
+Use AskUserQuestion (or auto-select in autonomous mode) to lock in:
+
+1. **`method_proposal_scope`** — the scope ceiling for any mid-loop method proposals the workflow generates (replaces the old mid-loop "Scope options 1/2/3/4" prompt). Choose one:
+   - `"training"` — training strategies only (optimizers, schedulers, regularization, augmentation, loss functions)
+   - `"architecture"` — training + architecture changes (attention, normalization, activations, block design)
+   - `"full"` — training + architecture + data pipeline, distillation, ensemble
+   - `null` — no method proposals; the workflow runs HP-only and never researches mid-loop
+   (Constrain the choice to at most the Phase-4 `scope_level`: option 2 → `null` only; option 3 → up to `"architecture"`; option 1 → up to `"full"`.)
+
+2. **`method_proposal_iterations`** — the budget/cadence for method-proposal rounds. Set `0` to disable, or a positive integer for how many mid-loop research→implement rounds the workflow may run. Together with `hp_batches_per_round`, this controls the cadence-based research trigger inside the workflow.
+
+3. **`hp_batches_per_round`** — how many HP-tuning batches run between cadence-based research rounds (default 3).
+
+4. **`budget`** — the training budget that bounds the loop: either `fixed_time_budget` (seconds) or `fixed_epoch_budget` (integer epochs), or `null` for the default per-experiment timeout. Pre-confirm so the workflow never needs to ask.
+
+5. **Auto-confirm method proposals.** The old mid-loop "Present proposals to user for confirmation" step cannot run inside the workflow. By pre-authorizing scope + iterations here, the user delegates proposal acceptance to the workflow (it auto-implements in-scope, non-dead-end proposals up to `method_proposal_iterations`). To review proposals individually, choose `method_proposal_scope = null` and run research as a separate pre-loop pass (Phase 5) with the post-research checkpoint.
+
+6. **`seeds_per_config`** — how many random seeds each proposed config runs with (default 1; suggest >1 for RL — single-seed RL results are noisy, and the measured replicate spread becomes the analysis noise floor). Replicates count against the per-batch GPU slots.
+
+Persist all of these into `user_choices` via `pipeline_state.py save` so they survive interruptions and are read straight into the Phase 7 workflow `args`:
+`{ method_proposal_scope, method_proposal_iterations, hp_batches_per_round, fixed_time_budget, fixed_epoch_budget, seeds_per_config }`.
+When building the phase-7 `args`, pass `fixed_time_budget` and `fixed_epoch_budget` through as the two typed fields (do NOT collapse them into a single scalar `budget` — the experiment agent needs to know whether to wrap `timeout` vs cap epochs). Either or both may be `null`.
+
+A genuine user-decision point (e.g., the user explicitly wants to inspect mid-run results) is handled as a **workflow boundary**: the workflow returns to the orchestrator, the orchestrator runs the checkpoint, then relaunches the continuation via `resumeFromRunId`. It is never an in-workflow prompt.

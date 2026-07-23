@@ -1,17 +1,12 @@
 #!/usr/bin/env python3
 """Per-agent output contracts — single source of truth.
 
-Defines the required output files for each pipeline agent and shares them
-between SubagentStart (injection) and SubagentStop (verification). Supports
+Defines the required output files for each pipeline agent and shares them between
+SubagentStart (injection) and SubagentStop (verification). Supports
 glob/dir/any_of/required_if entries for mode-dependent and conditional outputs.
 
-Usage:
-    python3 output_contract.py inject <exp_root> <agent_name> [--round-dir X] [--exp-id X]  # Print the output contract as injection text
-    python3 output_contract.py check <exp_root> <agent_name> [--round-dir X] [--exp-id X]   # Verify contracted outputs exist (exit 2 if missing)
-
-Examples:
-    python3 output_contract.py inject <exp_root> experiment-agent --round-dir round-1-hp --exp-id exp-001
-    python3 output_contract.py check <exp_root> baseline-agent
+CLI: python3 output_contract.py inject|check <exp_root> <agent_name>
+     [--round-dir X] [--exp-id X]   (check exits 2 if any contracted output is missing)
 """
 
 import glob as glob_mod
@@ -136,13 +131,8 @@ SCHEMA_EXAMPLES = {
 
 
 def _format_path(path_template, exp_root, **kwargs):
-    """Format a path template, preserving unresolved placeholders.
-
-    Used so that a missing `round_dir` / `exp_id` kwarg is kept as
-    `{round_dir}` / `{exp_id}` in the output, letting callers see
-    which placeholders weren't filled in (and letting glob matching
-    substitute `*` later).
-    """
+    """Format a path template, keeping a missing round_dir/exp_id as its {placeholder}
+    (so callers see what wasn't filled and glob matching can substitute * later)."""
     try:
         return path_template.format(exp_root=exp_root, **kwargs)
     except KeyError:
@@ -153,16 +143,9 @@ def _format_path(path_template, exp_root, **kwargs):
 
 
 def _condition_satisfied(required_if, exp_root, **kwargs):
-    """Evaluate a `required_if` predicate.
-
-    Reads the referenced JSON file, navigates the dotted jsonpath, and
-    compares the value to `equals`. Returns `True` if the conditional
-    output should be enforced, `False` if it should be skipped.
-
-    Any read/parse/navigation failure returns `False` (skip the entry) —
-    a missing or malformed reference file means the condition can't be
-    evaluated, so we default to "not required" rather than blocking.
-    """
+    """Evaluate a `required_if` predicate: read the referenced JSON, navigate the dotted
+    jsonpath, compare to `equals`. Any read/parse/navigation failure returns False
+    (can't evaluate → default to "not required" rather than blocking)."""
     ref_file = _format_path(required_if["file"], exp_root, **kwargs)
     if not os.path.isfile(ref_file):
         return False
@@ -179,15 +162,9 @@ def _condition_satisfied(required_if, exp_root, **kwargs):
 
 
 def get_contract(agent_name, exp_root, **kwargs):
-    """Resolve contract paths for an agent.
-
-    Returns a list of dicts with resolved `path`, `description`,
-    and optional `glob` / `dir` / `any_of` flags.  Returns `[]`
-    for unknown agents.
-
-    An `any_of` entry in a contract becomes a resolved list of paths
-    under the `any_of` key — at least one must exist to satisfy the
-    contract (used for mode-dependent outputs like analysis-agent).
+    """Resolve an agent's contract to dicts with `path`, `description`, and optional
+    `glob`/`dir`/`required_if` — or an `any_of` list (at least one must exist).
+    Returns [] for unknown agents.
     """
     templates = CONTRACTS.get(agent_name)
     if not templates:
@@ -213,10 +190,7 @@ def get_contract(agent_name, exp_root, **kwargs):
 
 
 def format_injection(agent_name, exp_root, **kwargs):
-    """Format contract as human-readable text for SubagentStart injection.
-
-    Returns an empty string for unknown agents.
-    """
+    """Format the contract as human-readable SubagentStart injection text ("" if unknown)."""
     contract = get_contract(agent_name, exp_root, **kwargs)
     if not contract:
         return ""
@@ -248,25 +222,18 @@ def format_injection(agent_name, exp_root, **kwargs):
 
     lines.append("The PreToolUse hook will BLOCK writes that don't match the schema or path.")
     lines.append("The SubagentStop hook will BLOCK you from finishing if any output is missing.")
-    agent_id = kwargs.get("agent_id", "<your agent_id from the hook context>")
     lines.append(
-        f"\nMANDATORY: Before finishing, log what you did:\n"
-        f"  python3 ${{CLAUDE_PLUGIN_ROOT}}/scripts/dev_notes.py {exp_root} append {agent_name} '<brief summary>' --agent-id {agent_id}\n"
-        f"The SubagentStop hook will BLOCK you if the last dev_notes.md entry's "
-        f"agent_id doesn't match your invocation."
+        f"\nBefore finishing, append a brief summary of what you did to the running log:\n"
+        f"  python3 ${{CLAUDE_PLUGIN_ROOT}}/scripts/dev_notes.py {exp_root} append {agent_name} '<brief summary>'"
     )
     return "\n".join(lines)
 
 
 def check_outputs(agent_name, exp_root, **kwargs):
-    """Verify all contracted outputs exist.
+    """Verify all contracted outputs exist -> {"complete", "missing", "found"}.
 
-    Returns `{"complete": bool, "missing": [...], "found": [...]}`.
-    Unknown agents are treated as having no contract (always complete).
-
-    When `round_dir` or `exp_id` kwargs are missing, unresolved
-    placeholders in paths are replaced with `*` wildcards so glob
-    matching can still verify that at least one matching file exists.
+    Unknown agents have no contract (always complete). Missing round_dir/exp_id
+    placeholders become `*` wildcards so glob matching can still find a match.
     """
     contract = get_contract(agent_name, exp_root, **kwargs)
     if not contract:

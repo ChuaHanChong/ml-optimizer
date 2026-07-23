@@ -6,7 +6,7 @@ user-invocable: false
 
 # Prerequisites Check
 
-Verify that the user's project is ready for training experiments. This skill validates the required GitNexus code-graph tooling, dataset paths and format, then checks and sets up the Python environment.
+Verify the user's project is ready for training. Validates the required GitNexus code-graph tooling, dataset paths and format, then checks and sets up the Python environment.
 
 > **Path convention:** All paths written as `<exp_root>/...` refer to the `exp_root` parameter from your dispatch. The plugin does not hardcode the output directory name.
 
@@ -21,34 +21,36 @@ The orchestrator provides:
 - ML framework detected in Phase 1 (pytorch, tensorflow, jax, etc.)
 - Training script path (from Phase 1)
 - Config file path (from Phase 1, if found)
-- User-provided data paths (from Phase 0 Q10: `train_data_path`, `val_data_path`)
-- User-specified environment manager (from Phase 0 Q11: `env_manager`, `env_name`)
+- User-provided data paths (from Phase 0 Q11: `train_data_path`, `val_data_path`; both `null` when the user chose "no dataset — simulator/RL environment")
+- User-specified environment manager (from Phase 0 Q12: `env_manager`, `env_name`)
+- `model_category` (from user_choices): `"supervised"`, `"rl"`, `"generative"`, or null — `"rl"` with null data paths triggers the Step 1.5 short-circuit
+- `exp_root`: Path to the experiment root directory
 
 ## Step 0: Verify GitNexus (REQUIRED) and Index the Target Project
 
-GitNexus is a **hard prerequisite** — on par with git and a working training command. It is **not optional** and there is **no grep/analyze fallback** for code understanding. Every downstream code-understanding agent (implement, research) relies on the GitNexus code graph to reason about the codebase before editing or adapting it.
+GitNexus is a **hard prerequisite** — on par with git and a working training command. **Not optional**; **no grep/analyze fallback** for code understanding. Downstream agents (implement, research) rely on the GitNexus code graph to reason about the codebase before editing or adapting it.
 
 **Step 0.1 — Check availability (BLOCKING):**
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py available
 ```
-If the output reports `"available": false`, this is an **unrecoverable prerequisite failure** — treat it exactly like "Phase 2 failed blocks the pipeline". Do NOT continue and do NOT fall back to grep/analyze. Set `status: "failed"` and `ready_for_baseline: false`, record the failure in the report (`code_graph.available: false`), log an error event (see Error Tracking), and halt with these install instructions for the user:
+If the output reports `"available": false`, this is an **unrecoverable prerequisite failure** — treat like "Phase 2 failed blocks the pipeline". Do NOT continue, do NOT fall back to grep/analyze. Set `status: "failed"` and `ready_for_baseline: false`, record the failure (`code_graph.available: false`), log an error event (see Error Tracking), and halt with these install instructions:
 ```
 GitNexus is a required dependency for ML-Optimizer and was not found on PATH.
 Install it, then re-run:
 
   npm install -g gitnexus && gitnexus setup
 ```
-`gitnexus setup` auto-registers the gitnexus MCP server for Claude Code (and also installs gitnexus's own global skills and PreToolUse/PostToolUse hooks into `~/.claude/`). If MCP registration needs to be done manually, the fallback is `claude mcp add --transport stdio --scope user gitnexus gitnexus mcp`.
+`gitnexus setup` auto-registers the gitnexus MCP server for Claude Code (and installs gitnexus's own global skills and PreToolUse/PostToolUse hooks into `~/.claude/`). Manual MCP-registration fallback: `claude mcp add --transport stdio --scope user gitnexus gitnexus mcp`.
 
 **Step 0.2 — Check MCP-server registration (BEST-EFFORT WARNING, not a block):**
-The CLI being on PATH does not guarantee the gitnexus MCP server is registered with Claude Code. Because querying the code graph is **MCP-only** (agents query via the `mcp__gitnexus__context` / `mcp__gitnexus__query` / `mcp__gitnexus__impact` tools — there is no CLI query path), an unregistered server means downstream agents cannot query the graph. After the CLI check passes, run:
+CLI on PATH does not guarantee the gitnexus MCP server is registered with Claude Code. Querying the code graph is **MCP-only** (agents query via `mcp__gitnexus__context` / `mcp__gitnexus__query` / `mcp__gitnexus__impact` — no CLI query path), so an unregistered server means downstream agents cannot query the graph. After the CLI check passes, run:
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py mcp-registered
 ```
 Interpret the `{"registered": ...}` output:
-- `false` → emit a **WARNING** (do NOT fail): the gitnexus CLI is installed but its MCP server is not registered with Claude Code, so downstream agents will not be able to query the code graph. Guide the user to run `gitnexus setup` (or the manual fallback `claude mcp add --transport stdio --scope user gitnexus gitnexus mcp`). A freshly-registered MCP server only becomes available after a Claude Code session restart. Proceed to Step 0.3.
-- `null` → cannot determine (the `claude` CLI is not on PATH); proceed silently. The real failure, if any, is caught downstream as a hard error.
+- `false` → emit a **WARNING** (do NOT fail): CLI installed but MCP server not registered, so downstream agents cannot query the code graph. Guide the user to run `gitnexus setup` (manual fallback `claude mcp add --transport stdio --scope user gitnexus gitnexus mcp`). A freshly-registered MCP server only becomes available after a Claude Code session restart. Proceed to Step 0.3.
+- `null` → cannot determine (`claude` CLI not on PATH); proceed silently. Any real failure is caught downstream as a hard error.
 - `true` → good; proceed.
 
 Record the probe result under `code_graph.mcp_registered` (`true`/`false`/`null`) in the prerequisites report (Step 7).
@@ -58,11 +60,11 @@ Once availability passes, index the target project **once** so the code graph is
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py index <project_root>
 ```
-The wrapper runs `gitnexus analyze <project_root> --index-only`, which writes the code knowledge graph to `<project_root>/.gitnexus`. Indexing is **non-invasive**: `--index-only` keeps the index pure — it does NOT inject a GitNexus section into the project's `CLAUDE.md` / `AGENTS.md` and does NOT install `.claude/` skills, so the target project is never contaminated. If the output reports `"success": false`, treat it as a **prerequisite failure** (halt with the script's `error` text as repair guidance): set `status: "failed"`, `ready_for_baseline: false`, record `code_graph.target_indexed: false` in the report, log an error event, and do not proceed. Common repairs: ensure `gitnexus` runs cleanly on `<project_root>` (check the reported error), confirm disk space, then re-run the wrapper index command (optionally with `--force` to rebuild a stale index).
+The wrapper runs `gitnexus analyze <project_root> --index-only`, writing the code knowledge graph to `<project_root>/.gitnexus`. Indexing is **non-invasive**: `--index-only` does NOT inject a GitNexus section into the project's `CLAUDE.md` / `AGENTS.md` and does NOT install `.claude/` skills — the target project is never contaminated. If the output reports `"success": false`, treat as a **prerequisite failure** (halt with the script's `error` text as repair guidance): set `status: "failed"`, `ready_for_baseline: false`, record `code_graph.target_indexed: false`, log an error event, do not proceed. Common repairs: ensure `gitnexus` runs cleanly on `<project_root>` (check the reported error), confirm disk space, re-run the wrapper index command (optionally `--force` to rebuild a stale index).
 
-**Do NOT commit `<project_root>/.gitnexus`.** The code graph is a local build artifact — the wrapper auto-adds it to the repo git exclude on success; never `git add` it.
+**Do NOT commit `<project_root>/.gitnexus`.** Local build artifact — the wrapper auto-adds it to the repo git exclude on success; never `git add` it.
 
-Record the GitNexus availability and target-index status in the prerequisites report (Step 7) under the `code_graph` key so downstream phases know the index exists.
+Record GitNexus availability and target-index status in the Step 7 report under the `code_graph` key so downstream phases know the index exists.
 
 ## Step 1: Gather Phase 1 Context
 
@@ -73,6 +75,26 @@ Read the training script and config file identified in Phase 1:
 - Look for preprocessing scripts (files matching `preprocess*`, `prepare*`, `setup_data*`) that may need to be run before training
 - Check `README.md` or `SETUP.md` for data preparation instructions
 
+## Step 1.5: RL / No-Dataset Short-Circuit
+
+If `model_category` is `"rl"` AND both `train_data_path` and `val_data_path` are `null` (the user chose "no dataset — training interacts with a simulator/RL environment" in Phase 0 Q11):
+
+1. **Skip Steps 2, 3, and 4 entirely** — there is no dataset to detect, validate, or prepare. Training data is generated online by environment interaction.
+2. In the Step 7 report, record the dataset block as:
+   ```json
+   "dataset": {
+     "train_path": null,
+     "val_path": null,
+     "format_detected": "rl_environment",
+     "prepared": false,
+     "prepared_train_path": null,
+     "prepared_val_path": null,
+     "validation_passed": true,
+     "notes": "online RL — training interacts with a simulator/RL environment; no dataset paths"
+   }
+   ```
+3. Continue at Step 4.1 (environment validation) — environment and dependency checks still apply.
+
 ## Step 2: Analyze Dataset Requirements
 
 Run the project-level format detection (follows imports to find data modules):
@@ -80,7 +102,7 @@ Run the project-level format detection (follows imports to find data modules):
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/prerequisites_check.py detect-format-project <project_root> <training_script>
 ```
 
-This scans the training script AND any local modules it imports for data-loading patterns. It returns the expected format (image_folder, csv, hdf5, cifar, etc.), patterns found, data-related CLI arguments, and confidence level.
+Scans the training script AND any local modules it imports for data-loading patterns. Returns the expected format (image_folder, csv, hdf5, cifar, etc.), patterns found, data-related CLI arguments, and confidence level.
 
 If confidence is "low" or format is "unknown":
 
@@ -152,7 +174,7 @@ Compare the detected manager with the user's specified manager (`env_manager` fr
   Which should I use for package installation?
   Options: [detected_manager, user_manager]
   ```
-- **User said "unknown" or skipped Q11:** Use the detected manager automatically
+- **User said "unknown" or skipped Q12:** Use the detected manager automatically
 - **Detected "unknown":** Trust the user's answer
 
 **Conda environment existence check:** If `env_manager` is `conda` and `env_name` is provided, verify the environment exists:
@@ -161,7 +183,9 @@ conda env list | grep -w <env_name>
 ```
 If the environment does not exist:
 
-Auto-create the conda environment with `conda create -n <env_name> python=<detected_python_version> -y`. Log to dev_notes: "Auto-created conda env '<env_name>'". If auto-creation fails, use AskUserQuestion:
+**Exception — RL/simulator projects (ask, do NOT auto-create):** If `model_category` is `"rl"` OR the import scan found a simulator-runtime import (any `NEVER_AUTO_INSTALL` import, `isaacgym`, or `mujoco`), do NOT auto-create the environment. Simulator stacks require a specific pre-built environment (Isaac Sim's bundled python, a habitat conda env, a ROS-sourced shell). Use AskUserQuestion to ask which existing environment to use first.
+
+Otherwise, auto-create the conda environment with `conda create -n <env_name> python=<detected_python_version> -y`. Log to dev_notes: "Auto-created conda env '<env_name>'". If auto-creation fails, use AskUserQuestion:
 ```
 Conda environment "<env_name>" does not exist.
 Options:
@@ -195,6 +219,8 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/prerequisites_check.py bulk-install-cmd <p
 ```
 Pass `<env_name>` when using conda so the generated install command targets the correct environment.
 
+The generated conda command is non-destructive (`conda env update -f ...`, no `--prune`); pruning a conda env (removing packages not in the deps file, e.g. `conda env update --prune`) is only ever done behind an explicit AskUserQuestion confirming the removal — never automatically.
+
 If `has_deps_file` is `true`:
 1. Run the `install_command` from the output
 2. Re-run the package check (Step 5) to see what's still missing
@@ -210,7 +236,7 @@ Before installing `torch`, `torchvision`, `torchaudio`, `tensorflow`, `jax`, or 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/prerequisites_check.py gpu-install-cmd <package> [env_manager] [env_name]
 ```
-Pass `<env_manager>` and `<env_name>` when using conda — the output command will be wrapped with `conda run --no-banner -n <env_name>` so the package installs into the correct environment. **Never use bare `pip install torch` or `pip install jax`** — these install CPU-only versions, causing silent performance failure on GPU machines.
+Pass `<env_manager>` and `<env_name>` when using conda — the output command is wrapped with `conda run --no-banner -n <env_name>` so the package installs into the correct environment. **Never use bare `pip install torch` or `pip install jax`** — these install CPU-only versions, causing silent performance failure on GPU machines.
 
 For all other packages, install using the user's preferred manager:
 
@@ -222,6 +248,11 @@ For all other packages, install using the user's preferred manager:
 | poetry  | `poetry add <package>` |
 
 **Note:** Some import names differ from pip package names. Use the `IMPORT_TO_PACKAGE` mapping in `${CLAUDE_PLUGIN_ROOT}/scripts/prerequisites_check.py` (e.g., `cv2` → `opencv-python`, `PIL` → `Pillow`, `yaml` → `PyYAML`).
+
+**Never-auto-install packages (simulator/robotics runtimes):** `check-packages` returns a `manual_install_required` dict for imports that must NOT be pip-installed: `omni`, `carb`, `pxr`, `isaacsim`, `isaaclab`, `habitat`, `habitat_sim`, `rclpy`, `rospy`, `warp`. These ship with a simulator or ROS runtime (or a bare pip install grabs the wrong package). Do NOT install them. Instead:
+1. Surface each entry's guidance string to the user.
+2. Record the dict under `environment.manual_install_required` in the Step 7 report.
+3. Classify: if the training script requires one of these and it is missing, set `status: "failed"` and `ready_for_baseline: false` with the guidance as the failure reason. If it is only optionally imported, warn and proceed.
 
 After installation, re-run the package check to verify:
 ```bash
@@ -238,7 +269,8 @@ After all dependencies are installed and data is prepared, verify the training c
 
 ```bash
 # Run the training command with minimal steps to check it works
-timeout 120 <train_command_with_minimal_steps>
+# Default timeout: 120s. RL/simulator projects: 300-600s (see Timeout selection below).
+timeout <dry_run_timeout> <train_command_with_minimal_steps>
 ```
 
 **How to limit steps:** Modify the training command based on the framework:
@@ -246,7 +278,11 @@ timeout 120 <train_command_with_minimal_steps>
 - **TensorFlow/Keras:** Add `--epochs 1` or modify config to set `epochs: 1`
 - **scikit-learn/XGBoost:** These are typically fast enough to run the full command
 
-If the script doesn't accept step-limiting flags, run it with a 120-second timeout — the goal is just to verify the process starts without errors, not to complete training.
+If the script doesn't accept step-limiting flags, run it with the timeout alone — the goal is just to verify the process starts without errors, not to complete training.
+
+**Timeout selection:** default `<dry_run_timeout>` is 120s. When `model_category` is `"rl"`, use 300-600s instead — simulator startup (Isaac Sim, habitat, MuJoCo EGL init) routinely exceeds 120s before the first training step.
+
+**Exit code 124 is a dry-run PASS when no Python traceback appeared:** `timeout` exiting 124 means the process started, imported its stack, and ran until the timeout stopped it — exactly what the dry run verifies. Scan the captured output for `Traceback (most recent call last)`; treat the dry run as failed only on a traceback or a non-zero exit code other than 124.
 
 **If dry-run fails:**
 - Parse the error message (FileNotFoundError, ModuleNotFoundError, SyntaxError, etc.)
@@ -284,6 +320,7 @@ Write `<exp_root>/results/prerequisites.json`:
     "python_version": "3.x.y",
     "packages_installed": ["<newly installed packages>"],
     "packages_failed": ["<packages that failed to install>"],
+    "manual_install_required": {"<import name>": "<guidance>"},
     "all_imports_resolved": true|false,
     "notes": "<any issues or info>"
   },

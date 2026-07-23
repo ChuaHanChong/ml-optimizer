@@ -23,7 +23,6 @@ from validate_experiment_write import (
     _find_exp_root,
 )
 from validate_agent_output import check_agent_output
-from dev_notes import append as dev_notes_append
 
 
 # ---------------------------------------------------------------------------
@@ -1003,78 +1002,3 @@ class TestAgentOutputValidation:
         assert result["decision"] == "block"
         assert "results/baseline.json" in result["reason"]
         assert "baseline-agent" in result["reason"]
-
-
-class TestDevNotesAgentIdCheck:
-    """SubagentStop blocks agents when last dev_notes.md entry's agent_id doesn't match."""
-
-    def _setup(self, tmp_path):
-        """Create an experiments dir with results/reports and a breadcrumb file."""
-        exp_root = tmp_path / "experiments"
-        exp_root.mkdir(parents=True)
-        (exp_root / "results").mkdir()
-        (exp_root / "reports").mkdir()
-        (tmp_path / ".claude").mkdir(exist_ok=True)
-        (tmp_path / ".claude" / "ml-optimizer.json").write_text(
-            json.dumps({"exp_root": str(exp_root)})
-        )
-        return exp_root
-
-    def test_blocks_agent_without_dev_notes_update(self, tmp_path):
-        """An agent that never appended to dev_notes.md is blocked."""
-        exp_root = self._setup(tmp_path)
-        agent_id = "test-agent-001"
-        # Create dev_notes with NO entries — agent didn't append
-        (exp_root / "dev_notes.md").write_text("# Dev Notes\n")
-        # Create required output so contract check passes
-        (exp_root / "results" / "prerequisites.json").write_text('{"status":"ready","dataset":{},"environment":{},"ready_for_baseline":true}')
-        # Agent "forgot" to call dev_notes.py
-        result = check_agent_output(str(tmp_path), "prerequisites-agent", agent_id=agent_id)
-        assert result["decision"] == "block"
-        assert "dev_notes" in result["reason"]
-
-    def test_allows_agent_with_dev_notes_update(self, tmp_path):
-        """An agent that appends a matching agent_id entry is approved."""
-        exp_root = self._setup(tmp_path)
-        agent_id = "test-agent-002"
-        (exp_root / "dev_notes.md").write_text("# Dev Notes\n\n")
-        (exp_root / "results" / "prerequisites.json").write_text('{"status":"ready","dataset":{},"environment":{},"ready_for_baseline":true}')
-        # Agent uses the script with its agent_id
-        dev_notes_append(str(exp_root), "prerequisites-agent", "All dependencies installed.", agent_id=agent_id)
-        result = check_agent_output(str(tmp_path), "prerequisites-agent", agent_id=agent_id)
-        assert result["decision"] == "approve"
-
-    def test_blocks_wrong_agent_id(self, tmp_path):
-        """Agent with wrong agent_id in the last entry is blocked."""
-        exp_root = self._setup(tmp_path)
-        (exp_root / "dev_notes.md").write_text("# Dev Notes\n\n")
-        (exp_root / "results" / "prerequisites.json").write_text('{"status":"ready","dataset":{},"environment":{},"ready_for_baseline":true}')
-        # Another agent wrote with a DIFFERENT agent_id
-        dev_notes_append(str(exp_root), "prerequisites-agent", "Some other invocation.", agent_id="different-agent-id")
-        # Current agent invocation checks — last entry has wrong agent_id
-        result = check_agent_output(str(tmp_path), "prerequisites-agent", agent_id="my-agent-id")
-        assert result["decision"] == "block"
-        assert "agent_id" in result["reason"]
-
-    def test_skips_without_agent_id(self, tmp_path):
-        """Without agent_id, dev_notes check is skipped (backward compat)."""
-        exp_root = self._setup(tmp_path)
-        (exp_root / "dev_notes.md").write_text("# Dev Notes\n")
-        (exp_root / "results" / "prerequisites.json").write_text('{"status":"ready","dataset":{},"environment":{},"ready_for_baseline":true}')
-        # No agent_id passed
-        result = check_agent_output(str(tmp_path), "prerequisites-agent")
-        assert result["decision"] == "approve"
-
-    def test_parallel_agents_same_type_different_ids(self, tmp_path):
-        """Two experiment-agent invocations with different agent_ids — only the matching one passes."""
-        exp_root = self._setup(tmp_path)
-        (exp_root / "dev_notes.md").write_text("# Dev Notes\n\n")
-        (exp_root / "results" / "prerequisites.json").write_text('{"status":"ready","dataset":{},"environment":{},"ready_for_baseline":true}')
-        # Agent A writes first
-        dev_notes_append(str(exp_root), "prerequisites-agent", "Agent A done.", agent_id="agent-A")
-        # Agent B (different invocation) checks — last entry is A's, should BLOCK B
-        result_b = check_agent_output(str(tmp_path), "prerequisites-agent", agent_id="agent-B")
-        assert result_b["decision"] == "block"
-        # Agent A checks — last entry matches A's agent_id, should APPROVE
-        result_a = check_agent_output(str(tmp_path), "prerequisites-agent", agent_id="agent-A")
-        assert result_a["decision"] == "approve"

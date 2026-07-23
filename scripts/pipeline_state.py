@@ -1,28 +1,16 @@
 #!/usr/bin/env python3
 """State validation and pipeline resumption utilities.
 
-Manages pipeline-state.json (phase, iteration, user choices, baseline checksum,
-agent registry), phase-gate validation/logging, baseline integrity verification,
-stale-experiment cleanup, and the decision log (with replay checks).
+Manages pipeline-state.json (phase, iteration, user choices, baseline checksum),
+phase-gate validation/logging, baseline integrity verification, stale-experiment
+cleanup, and the decision log (with replay checks).
 
-Usage:
-    python3 pipeline_state.py <exp_root> validate <phase>                              # Check phase prerequisites are met
-    python3 pipeline_state.py <exp_root> save <phase> <iteration> [running_ids_json]   # Write pipeline-state.json
-    python3 pipeline_state.py <exp_root> load                                          # Print current pipeline state
-    python3 pipeline_state.py <exp_root> cleanup                                       # Mark stale running experiments as failed/interrupted
-    python3 pipeline_state.py <exp_root> verify-baseline                               # Verify baseline.json checksum (exit 1 on mismatch)
-    python3 pipeline_state.py <exp_root> gate <current_phase> <next_phase>             # Validate a phase transition is allowed
-    python3 pipeline_state.py <exp_root> log-gate <phase> <status> <summary>           # Append a phase-gate completion entry
-    python3 pipeline_state.py <exp_root> log-decision <json_data>                      # Append a decision-log entry
-    python3 pipeline_state.py <exp_root> replay-check <decision_id> <current_decision> # Compare a decision against a prior one with matching inputs
-    python3 pipeline_state.py <exp_root> decisions [--phase N] [--agent NAME] [--type TYPE]  # List logged decisions, optionally filtered
-
-Examples:
-    python3 pipeline_state.py <exp_root> validate 7
-    python3 pipeline_state.py <exp_root> save 7 2 '["exp-003"]'
-    python3 pipeline_state.py <exp_root> gate 6 7
-    python3 pipeline_state.py <exp_root> log-decision '{"phase": 7, "agent": "orchestrate", "decision_type": "pivot", "decision": "continue"}'
-    python3 pipeline_state.py <exp_root> decisions --phase 7 --type pivot
+CLI: python3 pipeline_state.py <exp_root> <action> [args] where <action> is one of
+validate <phase> | save <phase> <iteration> [running_ids_json] | load | cleanup |
+verify-baseline (exit 1 on mismatch) | gate <current_phase> <next_phase> |
+log-gate <phase> <status> <summary> | log-decision <json_data> |
+replay-check <decision_id> <current_decision> |
+decisions [--phase N] [--agent NAME] [--type TYPE].
 """
 
 import fcntl
@@ -41,13 +29,23 @@ sys.path.insert(0, str(Path(__file__).parent))
 from error_tracker import create_event, log_event  # noqa: E402
 
 
+def _atomic_write_json(target_path, data, tmp_dir) -> None:
+    """Atomically write `data` as JSON to target_path (temp file + os.replace)."""
+    tmp_fd, tmp_path = tempfile.mkstemp(dir=str(tmp_dir), suffix=".tmp")
+    try:
+        with os.fdopen(tmp_fd, "w") as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp_path, str(target_path))
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
 
 def _compute_baseline_checksum(metrics: dict) -> str:
-    """Compute a deterministic SHA-256 checksum of a baseline metrics dict.
-
-    Uses canonical JSON serialization (sorted keys, compact separators)
-    so the hash is reproducible across runs.
-    """
+    """Deterministic SHA-256 of a baseline metrics dict (canonical JSON, reproducible)."""
     canonical = json.dumps(metrics, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
@@ -56,8 +54,7 @@ def verify_baseline_integrity(exp_root: str) -> dict:
     """Verify baseline.json metrics haven't changed since checksum was stored.
 
     Returns {"valid": bool, "error": str|None, "checksum": str|None}.
-    Backward-compatible: returns valid=True with warning for legacy pipelines
-    without checksums.
+    Legacy pipelines without a stored checksum return valid=True with a warning.
     """
     state = load_state(exp_root)
 
@@ -99,18 +96,42 @@ def verify_baseline_integrity(exp_root: str) -> dict:
     return {"valid": True, "error": None, "checksum": stored}
 
 
+def _check_baseline_metrics_config(root: Path, missing: list) -> None:
+    """Require results/baseline.json to exist with 'metrics' and 'config' keys."""
+    baseline_path = root / "results" / "baseline.json"
+    if not baseline_path.is_file():
+        missing.append("results/baseline.json does not exist")
+        return
+    try:
+        data = json.loads(baseline_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        missing.append("results/baseline.json is not valid JSON")
+        data = {}
+    if "metrics" not in data:
+        missing.append("results/baseline.json missing 'metrics' key")
+    if "config" not in data:
+        missing.append("results/baseline.json missing 'config' key")
+
+
+def _warn_manifest_proposals(manifest_path: Path, warnings: list) -> None:
+    """Warn if an existing implementation-manifest.json is invalid or lacks 'proposals'."""
+    try:
+        manifest = json.loads(manifest_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        warnings.append("implementation-manifest.json is not valid JSON")
+        manifest = {}
+    if "proposals" not in manifest:
+        warnings.append("implementation-manifest.json missing 'proposals' key")
+
+
 def validate_phase_requirements(phase: int, exp_root: str) -> dict:
     """Validate that prerequisites for a given pipeline phase are met.
 
-    Phase 2 (prerequisites): no file requirements.
-    Phase 3 (baseline): `<exp_root>/results/` directory must exist.
-        If prerequisites.json exists and ready_for_baseline is false, fail.
-    Phase 4 (checkpoint): `<exp_root>/results/baseline.json` must exist
-        with "metrics" and "config" keys.
-    Phase 5 (research): `<exp_root>/results/baseline.json` must exist.
-    Phase 6 (experiment loop): baseline.json must exist with metrics+config,
-        and if implementation-manifest.json exists it must have a "proposals"
-        key.
+    Phase 2: none. Phase 3: results/ dir (fail if prerequisites.json has
+    ready_for_baseline=false). Phases 4/6/7: baseline.json with metrics+config
+    (7 also needs optimization-goals.json). Phase 5: baseline.json exists.
+    Phase 6/8: manifest 'proposals' check (8 requires the manifest). Phase 9:
+    baseline.json + rounds-manifest + a round dir (last two are warnings).
     """
     root = Path(exp_root)
     missing: list[str] = []
@@ -137,74 +158,26 @@ def validate_phase_requirements(phase: int, exp_root: str) -> dict:
                     warnings.append("prerequisites.json is not valid JSON")
 
     elif phase == 4:
-        baseline_path = root / "results" / "baseline.json"
-        if not baseline_path.is_file():
-            missing.append("results/baseline.json does not exist")
-        else:
-            try:
-                data = json.loads(baseline_path.read_text())
-            except (json.JSONDecodeError, OSError):
-                missing.append("results/baseline.json is not valid JSON")
-                data = {}
-            if "metrics" not in data:
-                missing.append("results/baseline.json missing 'metrics' key")
-            if "config" not in data:
-                missing.append("results/baseline.json missing 'config' key")
+        _check_baseline_metrics_config(root, missing)
 
     elif phase == 5:
-        baseline_path = root / "results" / "baseline.json"
-        if not baseline_path.is_file():
+        if not (root / "results" / "baseline.json").is_file():
             missing.append("results/baseline.json does not exist")
 
     elif phase == 6:
-        baseline_path = root / "results" / "baseline.json"
-        if not baseline_path.is_file():
-            missing.append("results/baseline.json does not exist")
-        else:
-            try:
-                data = json.loads(baseline_path.read_text())
-            except (json.JSONDecodeError, OSError):
-                missing.append("results/baseline.json is not valid JSON")
-                data = {}
-            if "metrics" not in data:
-                missing.append("results/baseline.json missing 'metrics' key")
-            if "config" not in data:
-                missing.append("results/baseline.json missing 'config' key")
-
+        _check_baseline_metrics_config(root, missing)
         manifest_path = root / "results" / "implementation-manifest.json"
         if manifest_path.is_file():
-            try:
-                manifest = json.loads(manifest_path.read_text())
-            except (json.JSONDecodeError, OSError):
-                warnings.append("implementation-manifest.json is not valid JSON")
-                manifest = {}
-            if "proposals" not in manifest:
-                warnings.append("implementation-manifest.json missing 'proposals' key")
+            _warn_manifest_proposals(manifest_path, warnings)
 
     elif phase == 7:
-        # Experiment loop: baseline.json must exist with metrics+config
-        baseline_path = root / "results" / "baseline.json"
-        if not baseline_path.is_file():
-            missing.append("results/baseline.json does not exist")
-        else:
-            try:
-                data = json.loads(baseline_path.read_text())
-            except (json.JSONDecodeError, OSError):
-                missing.append("results/baseline.json is not valid JSON")
-                data = {}
-            if "metrics" not in data:
-                missing.append("results/baseline.json missing 'metrics' key")
-            if "config" not in data:
-                missing.append("results/baseline.json missing 'config' key")
-        # Goals file must exist
-        goals_path = root / "optimization-goals.json"
-        if not goals_path.is_file():
+        _check_baseline_metrics_config(root, missing)
+        if not (root / "optimization-goals.json").is_file():
             missing.append("optimization-goals.json does not exist")
 
     elif phase == 8:
         # Stacking: baseline.json + implementation-manifest.json required
-        baseline_path = root / "results" / "baseline.json"
-        if not baseline_path.is_file():
+        if not (root / "results" / "baseline.json").is_file():
             missing.append("results/baseline.json does not exist")
         manifest_path = root / "results" / "implementation-manifest.json"
         if not manifest_path.is_file():
@@ -213,15 +186,7 @@ def validate_phase_requirements(phase: int, exp_root: str) -> dict:
                 " (stacking requires method branches)"
             )
         else:
-            try:
-                manifest = json.loads(manifest_path.read_text())
-            except (json.JSONDecodeError, OSError):
-                warnings.append("implementation-manifest.json is not valid JSON")
-                manifest = {}
-            if "proposals" not in manifest:
-                warnings.append(
-                    "implementation-manifest.json missing 'proposals' key"
-                )
+            _warn_manifest_proposals(manifest_path, warnings)
 
     elif phase == 9:
         # Report: baseline.json + rounds-manifest.json must exist
@@ -251,13 +216,8 @@ def validate_phase_requirements(phase: int, exp_root: str) -> dict:
 
 
 def _check_goal_metric_consistency(exp_root: str, user_choices: dict) -> None:
-    """Warn if user_choices.primary_metric disagrees with optimization-goals.json.
-
-    The orchestrator writes `optimization-goals.json` at Phase 0 and persists
-    `user_choices` to `pipeline-state.json` separately. Nothing else checks
-    they agree — so a stale dispatch metric can propagate silently through the
-    whole pipeline. This helper surfaces the mismatch via stderr and, if
-    available, logs a warning to the error tracker.
+    """Warn (stderr + error tracker) if user_choices.primary_metric disagrees with
+    optimization-goals.json — a stale dispatch metric would drift silently otherwise.
 
     No-op when either side is absent (early Phase 0, no goals yet).
     """
@@ -283,10 +243,7 @@ def _check_goal_metric_consistency(exp_root: str, user_choices: dict) -> None:
     )
     print(f"[pipeline_state] WARNING: {msg}", file=sys.stderr)
 
-    # Log to error tracker. Use the closest existing category/source —
-    # error_tracker rejects unknown values by design.
-    # "pipeline_inefficiency" covers configuration drift;
-    # "orchestrate" is the pipeline-level source.
+    # Closest existing category/source (error_tracker rejects unknown values).
     try:
         event = create_event(
             category="pipeline_inefficiency",
@@ -310,32 +267,13 @@ def save_state(
     consecutive_stop_count: int | None = None,
     stuck_protocol_triggered: bool | None = None,
     baseline_checksum: str | None = None,
-    agent_registry: dict | None = None,
 ) -> str:
-    """Write pipeline-state.json to exp_root.
+    """Write pipeline-state.json to exp_root, returning its path.
 
-    Args:
-        user_choices: Optional dict of Phase 0 user choices to persist
-            (e.g., primary_metric, divergence_metric, divergence_lower_is_better,
-            lower_is_better, target_value, train_command, eval_command,
-            train_data_path, val_data_path, prepared_train_path,
-            prepared_val_path, env_manager, env_name, model_category,
-            user_papers, method_proposal_scope, method_proposal_iterations,
-            hp_batches_per_round). These are preserved across pipeline
-            resumptions.
-        consecutive_stop_count: Optional running count of consecutive stop
-            recommendations. Persisted at root level as a signal the
-            orchestrator weighs when judging whether the search is exhausted
-            — NOT a hardcoded exit threshold. Resets to 0 on any
-            improvement / continue / pivot.
-        stuck_protocol_triggered: Whether the stuck protocol has been
-            triggered this session. Prevents infinite recovery loops.
-        agent_registry: Optional dict mapping persistent agent roles to
-            their agentIds (e.g. {"research": "abc123", "tuning": "def456"}).
-            Used for resuming agents via SendMessage instead of fresh dispatch.
-            Session-scoped — cleared on new session, preserved within session.
-
-    Returns the path to the state file.
+    user_choices: Phase 0 choices (primary_metric, budgets, commands, etc.),
+        preserved across resumptions. consecutive_stop_count: orchestrator
+        exit-judgment signal (NOT a hardcoded threshold). stuck_protocol_triggered:
+        prevents infinite recovery loops. Any arg left None keeps its prior value.
     """
     root = Path(exp_root)
     root.mkdir(parents=True, exist_ok=True)
@@ -351,62 +289,33 @@ def save_state(
     existing = (
         load_state(exp_root)
         if (user_choices is None or consecutive_stop_count is None
-            or stuck_protocol_triggered is None or baseline_checksum is None
-            or agent_registry is None)
+            or stuck_protocol_triggered is None or baseline_checksum is None)
         else None
     )
 
-    # Preserve existing user_choices if not explicitly provided
+    # Preserve each field: use the passed value, else carry the existing one.
     if user_choices is not None:
         state["user_choices"] = user_choices
         _check_goal_metric_consistency(exp_root, user_choices)
     elif existing and existing.get("user_choices"):
         state["user_choices"] = existing["user_choices"]
-
-    # Preserve consecutive_stop_count (orchestrator exit-judgment signal)
-    if consecutive_stop_count is not None:
-        state["consecutive_stop_count"] = consecutive_stop_count
-    elif existing and "consecutive_stop_count" in existing:
-        state["consecutive_stop_count"] = existing["consecutive_stop_count"]
-
-    # Preserve stuck_protocol_triggered (prevents infinite recovery loops)
-    if stuck_protocol_triggered is not None:
-        state["stuck_protocol_triggered"] = stuck_protocol_triggered
-    elif existing and "stuck_protocol_triggered" in existing:
-        state["stuck_protocol_triggered"] = existing["stuck_protocol_triggered"]
-
-    # Preserve baseline_checksum (immutable baseline integrity)
-    if baseline_checksum is not None:
-        state["baseline_checksum"] = baseline_checksum
-    elif existing and "baseline_checksum" in existing:
-        state["baseline_checksum"] = existing["baseline_checksum"]
-
-    # Preserve agent_registry (resumable subagent IDs, session-scoped)
-    if agent_registry is not None:
-        state["agent_registry"] = agent_registry
-    elif existing and "agent_registry" in existing:
-        state["agent_registry"] = existing["agent_registry"]
+    for field, value in (("consecutive_stop_count", consecutive_stop_count),
+                         ("stuck_protocol_triggered", stuck_protocol_triggered),
+                         ("baseline_checksum", baseline_checksum)):
+        if value is not None:
+            state[field] = value
+        elif existing and field in existing:
+            state[field] = existing[field]
 
     state_path = root / "pipeline-state.json"
-    tmp_fd, tmp_path = tempfile.mkstemp(dir=str(root), suffix=".tmp")
-    try:
-        with os.fdopen(tmp_fd, "w") as f:
-            json.dump(state, f, indent=2)
-        os.replace(tmp_path, str(state_path))
-    except BaseException:
-        os.unlink(tmp_path)
-        raise
+    _atomic_write_json(state_path, state, root)
 
-    # Backup user_choices separately for recovery if main state corrupts
+    # Backup user_choices separately for recovery if main state corrupts (best-effort)
     if user_choices is not None:
-        backup_path = root / "user-choices-backup.json"
         try:
-            tmp_fd2, tmp_path2 = tempfile.mkstemp(dir=str(root), suffix=".tmp")
-            with os.fdopen(tmp_fd2, "w") as f:
-                json.dump(user_choices, f, indent=2)
-            os.replace(tmp_path2, str(backup_path))
+            _atomic_write_json(root / "user-choices-backup.json", user_choices, root)
         except OSError:
-            pass  # Best-effort backup — don't fail the main save
+            pass
 
     return str(state_path)
 
@@ -443,15 +352,21 @@ def load_state(exp_root: str) -> dict | None:
         return None
 
 
+def _elapsed_hours(ts_str: str, now: datetime) -> float:
+    """Hours between an ISO timestamp (assumed UTC if naive) and now; raises on bad input."""
+    ts = datetime.fromisoformat(ts_str)
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return (now - ts).total_seconds() / 3600.0
+
+
 def cleanup_stale(exp_root: str, timeout_hours: float = 2.0) -> list[str]:
-    """Mark stale running items as interrupted/failed.
+    """Mark stale "running" items as interrupted/failed.
 
-    Reads pipeline-state.json and checks if status is "running" with a
-    timestamp older than *timeout_hours* ago.  Also scans
-    <exp_root>/results/ for any exp-*.json with status "running" older
-    than the timeout.
-
-    Returns a list of cleaned-up item descriptions.
+    Checks pipeline-state.json against *timeout_hours*, and scans
+    results/round-*/exp-*.json (plus legacy flat results/exp-*.json) against each
+    result's own timeout — 3x time_budget_seconds when present (the existing
+    baseline_training_time*3 rule), else *timeout_hours*. Returns cleaned descriptions.
     """
     cleaned: list[str] = []
     now = datetime.now(timezone.utc)
@@ -466,58 +381,38 @@ def cleanup_stale(exp_root: str, timeout_hours: float = 2.0) -> list[str]:
             state = {}
 
         if state.get("status") == "running":
-            ts_str = state.get("timestamp", "")
             try:
-                ts = datetime.fromisoformat(ts_str)
-                if ts.tzinfo is None:
-                    ts = ts.replace(tzinfo=timezone.utc)
-                elapsed = (now - ts).total_seconds() / 3600.0
-                if elapsed > timeout_hours:
+                if _elapsed_hours(state.get("timestamp", ""), now) > timeout_hours:
                     state["status"] = "interrupted"
                     state["interrupted_at"] = now.isoformat()
-                    tmp_fd, tmp_path = tempfile.mkstemp(
-                        dir=str(root), suffix=".tmp"
-                    )
-                    try:
-                        with os.fdopen(tmp_fd, "w") as f:
-                            json.dump(state, f, indent=2)
-                        os.replace(tmp_path, str(state_path))
-                    except BaseException:
-                        os.unlink(tmp_path)
-                        raise
+                    _atomic_write_json(state_path, state, root)
                     cleaned.append("pipeline-state.json marked as interrupted")
             except (ValueError, TypeError):
                 pass
 
-    # --- <exp_root>/results/exp-*.json ---
+    # --- <exp_root>/results/round-*/exp-*.json (+ legacy flat exp-*.json) ---
     results_dir = root / "results"
     if results_dir.is_dir():
-        for exp_file in sorted(results_dir.glob("exp-*.json")):
+        exp_files = sorted(results_dir.glob("exp-*.json")) + sorted(
+            results_dir.glob("round-*/exp-*.json")
+        )
+        for exp_file in exp_files:
             try:
                 data = json.loads(exp_file.read_text())
             except (json.JSONDecodeError, OSError):
                 continue
             if data.get("status") != "running":
                 continue
-            ts_str = data.get("timestamp", "")
+            # Threshold from the experiment's own timeout when known, else default.
+            threshold_hours = timeout_hours
+            tb = data.get("time_budget_seconds")
+            if isinstance(tb, (int, float)) and not isinstance(tb, bool) and tb > 0:
+                threshold_hours = max(timeout_hours, 3.0 * tb / 3600.0)
             try:
-                ts = datetime.fromisoformat(ts_str)
-                if ts.tzinfo is None:
-                    ts = ts.replace(tzinfo=timezone.utc)
-                elapsed = (now - ts).total_seconds() / 3600.0
-                if elapsed > timeout_hours:
+                if _elapsed_hours(data.get("timestamp", ""), now) > threshold_hours:
                     data["status"] = "failed"
                     data["note"] = "Marked as stale: exceeded timeout"
-                    tmp_fd, tmp_path = tempfile.mkstemp(
-                        dir=str(results_dir), suffix=".tmp"
-                    )
-                    try:
-                        with os.fdopen(tmp_fd, "w") as f:
-                            json.dump(data, f, indent=2)
-                        os.replace(tmp_path, str(exp_file))
-                    except BaseException:
-                        os.unlink(tmp_path)
-                        raise
+                    _atomic_write_json(exp_file, data, exp_file.parent)
                     cleaned.append(f"{exp_file.name} marked as failed (stale)")
             except (ValueError, TypeError):
                 continue
@@ -549,10 +444,7 @@ _RECOVERY_DEFAULT = "Check error logs and retry the current phase"
 
 
 def validate_phase_gate(current_phase, next_phase, exp_root):
-    """Validate that a phase transition is allowed and prerequisites are met.
-
-    Returns {"valid": bool, "errors": list[str]}.
-    """
+    """Validate a phase transition is allowed and prerequisites met -> {valid, errors}."""
     errors = []
 
     # 1. Check transition legality
@@ -602,11 +494,7 @@ def validate_phase_gate(current_phase, next_phase, exp_root):
 
 
 def log_phase_gate(exp_root, phase, status, summary):
-    """Append a phase gate entry to <exp_root>/phase-gates.json.
-
-    Each entry: {"phase": int, "status": str, "summary": str, "timestamp": ISO8601}.
-    Creates the file if it does not exist. Uses atomic write with file locking.
-    """
+    """Append {phase, status, summary, timestamp} to phase-gates.json (atomic + flock)."""
     root = Path(exp_root)
     root.mkdir(parents=True, exist_ok=True)
     gate_path = root / "phase-gates.json"
@@ -631,27 +519,13 @@ def log_phase_gate(exp_root, phase, status, summary):
                 entries = []
 
             entries.append(entry)
-
-            tmp_fd, tmp_path = tempfile.mkstemp(dir=str(root), suffix=".tmp")
-            try:
-                with os.fdopen(tmp_fd, "w") as f:
-                    json.dump(entries, f, indent=2)
-                os.replace(tmp_path, str(gate_path))
-            except BaseException:
-                try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
-                raise
+            _atomic_write_json(gate_path, entries, root)
         finally:
             fcntl.flock(lock_fd, fcntl.LOCK_UN)
 
 
 def get_recovery_instruction(phase, failure_type):
-    """Return a recovery instruction for a given phase and failure type.
-
-    Falls back to a default instruction if no specific match is found.
-    """
+    """Recovery instruction for a (phase, failure_type), or a generic default."""
     return RECOVERY_INSTRUCTIONS.get((phase, failure_type), _RECOVERY_DEFAULT)
 
 
@@ -663,12 +537,7 @@ _DECISION_REQUIRED_FIELDS = ("phase", "agent", "decision_type", "decision")
 
 
 def _compute_inputs_hash(decision: dict) -> str:
-    """Compute SHA-256 hash of the input state that led to a decision.
-
-    Hashes the canonical JSON of the subset of fields that represent the
-    input context: phase, iteration, agent, decision_type, context_summary.
-    Only includes fields that are actually present in the decision dict.
-    """
+    """SHA-256 of canonical JSON of the input-context fields present in the decision."""
     input_keys = ("phase", "iteration", "agent", "decision_type", "context_summary")
     inputs = {k: decision[k] for k in input_keys if k in decision}
     canonical = json.dumps(inputs, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
@@ -690,38 +559,20 @@ def _load_decision_log(exp_root: str) -> list[dict]:
 
 
 def _save_decision_log(exp_root: str, entries: list[dict]) -> None:
-    """Atomically write decision-log.json (temp file + os.replace)."""
+    """Atomically write decision-log.json."""
     root = Path(exp_root)
     root.mkdir(parents=True, exist_ok=True)
-    log_path = root / "decision-log.json"
-    tmp_fd, tmp_path = tempfile.mkstemp(dir=str(root), suffix=".tmp")
-    try:
-        with os.fdopen(tmp_fd, "w") as f:
-            json.dump(entries, f, indent=2)
-        os.replace(tmp_path, str(log_path))
-    except BaseException:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
+    _atomic_write_json(root / "decision-log.json", entries, root)
 
 
 
 
 def log_decision(exp_root: str, decision: dict) -> str:
-    """Append a decision entry to <exp_root>/decision-log.json.
+    """Append a decision to decision-log.json and return its auto-incremented id.
 
-    The *decision* dict must contain at minimum: phase (int), agent (str),
-    decision_type (str), decision (str). Optional fields: iteration (int),
-    reasoning (str), context_summary (str).
-
-    The function:
-    1. Validates required fields — raises ValueError if missing.
-    2. Adds timestamp (ISO8601 UTC) and id (auto-incremented).
-    3. Computes inputs_hash: SHA-256 of canonical JSON of the input state.
-    4. Appends to the log file using atomic write.
-    5. Returns the decision id (str).
+    *decision* requires phase, agent, decision_type, decision (raises ValueError if
+    missing); optional iteration, reasoning, context_summary. Adds id, ISO8601 UTC
+    timestamp, and inputs_hash. Atomic write under flock.
     """
     missing = [f for f in _DECISION_REQUIRED_FIELDS if f not in decision]
     if missing:
@@ -766,10 +617,7 @@ def get_decisions(
     agent: str | None = None,
     decision_type: str | None = None,
 ) -> list[dict]:
-    """Load decision-log.json and filter by optional parameters.
-
-    Returns matching entries (all entries if no filters provided).
-    """
+    """Load decision-log.json, filtered by any of phase/agent/decision_type."""
     entries = _load_decision_log(exp_root)
     result = []
     for entry in entries:
@@ -784,17 +632,13 @@ def get_decisions(
 
 
 def replay_check(exp_root: str, decision_id: str, current_decision: str) -> dict:
-    """Compare a new decision against a logged one with the same inputs_hash.
+    """Compare *current_decision* against a prior logged decision with the same inputs_hash.
 
-    Finds the entry with the given *decision_id*, reads its stored inputs_hash,
-    then searches for any prior entry with the same inputs_hash to compare
-    the decision text.
-
-    Returns {"match": bool, "original_decision": str, "current_decision": str,
-             "divergence": str | None}.
-    If no matching inputs_hash found, returns
-    {"match": None, "divergence": "no_prior_decision_with_matching_inputs"}.
+    Finds the entry with *decision_id*, then any other entry sharing its inputs_hash.
+    Returns {match, original_decision, current_decision, divergence}; if no such prior
+    exists, {"match": None, "divergence": "no_prior_decision_with_matching_inputs"}.
     """
+    no_prior = {"match": None, "divergence": "no_prior_decision_with_matching_inputs"}
     entries = _load_decision_log(exp_root)
 
     # Find the target entry by id
@@ -805,19 +649,13 @@ def replay_check(exp_root: str, decision_id: str, current_decision: str) -> dict
             break
 
     if target is None:
-        return {
-            "match": None,
-            "divergence": "no_prior_decision_with_matching_inputs",
-        }
+        return no_prior
 
     target_hash = target.get("inputs_hash")
     if target_hash is None:
-        return {
-            "match": None,
-            "divergence": "no_prior_decision_with_matching_inputs",
-        }
+        return no_prior
 
-    # Search for other entries with the same inputs_hash (excluding this one)
+    # Search for another entry with the same inputs_hash
     original = None
     for entry in entries:
         if (entry.get("inputs_hash") == target_hash
@@ -826,10 +664,7 @@ def replay_check(exp_root: str, decision_id: str, current_decision: str) -> dict
             break
 
     if original is None:
-        return {
-            "match": None,
-            "divergence": "no_prior_decision_with_matching_inputs",
-        }
+        return no_prior
 
     original_decision = original.get("decision", "")
     if original_decision == current_decision:
@@ -851,6 +686,14 @@ def replay_check(exp_root: str, decision_id: str, current_decision: str) -> dict
     }
 
 
+def _int_arg(raw: str, name: str) -> int:
+    """Parse a CLI integer arg or print an error and exit 1."""
+    try:
+        return int(raw)
+    except ValueError:
+        print(f"Error: invalid {name} '{raw}' (expected integer)")
+        sys.exit(1)
+
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
@@ -870,27 +713,15 @@ if __name__ == "__main__":
         if len(sys.argv) < 4:
             print("Usage: pipeline_state.py <exp_root> validate <phase>")
             sys.exit(1)
-        try:
-            phase = int(sys.argv[3])
-        except ValueError:
-            print(f"Error: invalid phase '{sys.argv[3]}' (expected integer)")
-            sys.exit(1)
+        phase = _int_arg(sys.argv[3], "phase")
         print(json.dumps(validate_phase_requirements(phase, exp_root), indent=2))
 
     elif action == "save":
         if len(sys.argv) < 5:
             print("Usage: pipeline_state.py <exp_root> save <phase> <iteration> [running_ids_json]")
             sys.exit(1)
-        try:
-            phase = int(sys.argv[3])
-        except ValueError:
-            print(f"Error: invalid phase '{sys.argv[3]}' (expected integer)")
-            sys.exit(1)
-        try:
-            iteration = int(sys.argv[4])
-        except ValueError:
-            print(f"Error: invalid iteration '{sys.argv[4]}' (expected integer)")
-            sys.exit(1)
+        phase = _int_arg(sys.argv[3], "phase")
+        iteration = _int_arg(sys.argv[4], "iteration")
         try:
             running_ids = json.loads(sys.argv[5]) if len(sys.argv) > 5 else []
         except json.JSONDecodeError:
@@ -924,27 +755,15 @@ if __name__ == "__main__":
         if len(sys.argv) < 5:
             print("Usage: pipeline_state.py <exp_root> gate <current_phase> <next_phase>")
             sys.exit(1)
-        try:
-            current_phase = int(sys.argv[3])
-        except ValueError:
-            print(f"Error: invalid current_phase '{sys.argv[3]}' (expected integer)")
-            sys.exit(1)
-        try:
-            next_phase = int(sys.argv[4])
-        except ValueError:
-            print(f"Error: invalid next_phase '{sys.argv[4]}' (expected integer)")
-            sys.exit(1)
+        current_phase = _int_arg(sys.argv[3], "current_phase")
+        next_phase = _int_arg(sys.argv[4], "next_phase")
         print(json.dumps(validate_phase_gate(current_phase, next_phase, exp_root)))
 
     elif action == "log-gate":
         if len(sys.argv) < 6:
             print("Usage: pipeline_state.py <exp_root> log-gate <phase> <status> <summary>")
             sys.exit(1)
-        try:
-            phase = int(sys.argv[3])
-        except ValueError:
-            print(f"Error: invalid phase '{sys.argv[3]}' (expected integer)")
-            sys.exit(1)
+        phase = _int_arg(sys.argv[3], "phase")
         log_phase_gate(exp_root, phase, sys.argv[4], sys.argv[5])
         print(json.dumps({"logged": True, "phase": phase, "status": sys.argv[4]}))
 

@@ -6,46 +6,46 @@ user-invocable: false
 
 # Baseline Evaluation
 
-Establish baseline performance metrics for the ML model. This is always the first step in optimization.
+Establish baseline performance metrics for the ML model — always the first optimization step.
 
-> **Path convention:** All paths written as `<exp_root>/...` refer to the `exp_root` parameter from your dispatch. The plugin does not hardcode the output directory name.
+> **Path convention:** All `<exp_root>/...` paths refer to the `exp_root` dispatch parameter. The plugin does not hardcode the output directory name.
 
 ## Inputs Expected
 
 The orchestrator provides:
 - Project root path
 - Model/training details (from understanding phase)
-- `prepared_train_path` (optional): If prerequisites prepared data, use this path instead of the original data path in the training command
-- `prepared_val_path` (optional): Same for validation data
-- `model_category` (optional): From user_choices — `"supervised"`, `"rl"`, `"generative"`, or null. Controls RL-specific evaluation (see RL Baseline Evaluation section) and tabular ML GPU profiling skip.
+- `prepared_train_path` (optional): if prerequisites prepared data, use this instead of the original data path in the training command
+- `prepared_val_path` (optional): same for validation data
+- `model_category` (optional): from user_choices — `"supervised"`, `"rl"`, `"generative"`, or null. Controls RL-specific evaluation (see RL Baseline Evaluation) and tabular ML GPU profiling skip.
 
 ## Step 1: Identify Evaluation Command
 
 Search the project for evaluation scripts:
 
-1. Use Glob to find candidates:
+1. Use Glob for candidates:
    - `**/eval*.py`, `**/test*.py`, `**/infer*.py`, `**/validate*.py`
    - `**/scripts/eval*`, `**/scripts/test*`
    - `Makefile`, `**/*.sh` (look for eval targets)
 
-2. Read the training script to find validation/evaluation logic:
-   - Look for functions named `evaluate`, `validate`, `test`, `infer`
-   - Look for metric computation (PSNR, SSIM, loss, accuracy, F1, etc.)
-   - **Lightning projects:** Look for `validation_step()` / `test_step()` methods and `self.log()` calls. Metrics may be in TensorBoard logs (`lightning_logs/`) — parse with `${CLAUDE_PLUGIN_ROOT}/scripts/parse_logs.py`
-   - **HuggingFace Trainer:** Look for `compute_metrics` function passed to `Trainer`. Metrics are logged to `runs/` or `output_dir`. Use `trainer.evaluate()` as eval command
-   - **TF/Keras:** Look for `model.evaluate()` or custom callbacks. Metrics may be in `CSVLogger` output or TensorBoard
+2. Read the training script for validation/evaluation logic:
+   - Functions named `evaluate`, `validate`, `test`, `infer`
+   - Metric computation (PSNR, SSIM, loss, accuracy, F1, etc.)
+   - **Lightning:** `validation_step()` / `test_step()` methods and `self.log()` calls. Metrics may be in TensorBoard logs (`lightning_logs/`) — parse with `${CLAUDE_PLUGIN_ROOT}/scripts/parse_logs.py`
+   - **HuggingFace Trainer:** `compute_metrics` passed to `Trainer`. Metrics log to `runs/` or `output_dir`. Use `trainer.evaluate()` as eval command
+   - **TF/Keras:** `model.evaluate()` or custom callbacks. Metrics may be in `CSVLogger` output or TensorBoard
 
 3. If no clear eval command found:
 
    First try auto-fallback:
    - Set `eval_command = null`
-   - Use training output as the evaluation source — run training for the profiling duration and extract final metrics via `${CLAUDE_PLUGIN_ROOT}/scripts/parse_logs.py`
-   - If metrics containing the `primary_metric` keyword are found in training output: use those as baseline metrics
-   - If no recognizable metrics found: look for checkpoint/log files (TensorBoard events, CSV logs, JSON summaries) and parse those
+   - Use training output as the eval source — run training for the profiling duration and extract final metrics via `${CLAUDE_PLUGIN_ROOT}/scripts/parse_logs.py`
+   - If metrics containing the `primary_metric` keyword are found: use those as baseline metrics
+   - If none found: look for checkpoint/log files (TensorBoard events, CSV logs, JSON summaries) and parse those
    - Log to dev_notes: "No eval command found — using training output metrics as baseline"
    - Log to error tracker: `category: "config_error", severity: "info", source: "baseline", message: "No eval command — falling back to training output metrics"`
 
-   If auto-fallback fails to find metrics, use AskUserQuestion:
+   If auto-fallback finds no metrics, use AskUserQuestion:
    ```
    I couldn't automatically identify an evaluation command.
    How do I evaluate this model? Please provide:
@@ -57,15 +57,14 @@ Search the project for evaluation scripts:
 
 If the orchestrator passed `prepared_train_path` or `prepared_val_path`:
 1. Identify how the training command references data paths (CLI args like `--data_dir`, `--train_path`, `--val_path`, or config file entries)
-2. Substitute the prepared paths into the training/eval commands before running them
-3. If data paths are in a config file, create a modified copy at `<exp_root>/logs/baseline/config.yaml` with updated paths
+2. Substitute the prepared paths into the training/eval commands before running
+3. If paths are in a config file, create a modified copy at `<exp_root>/logs/baseline/config.yaml` with updated paths
 4. Log in dev_notes which paths were substituted
 
-If no prepared paths were provided, use the original commands as-is.
+Otherwise use the original commands as-is.
 
 ## Step 2: Set Up Experiment Directory
 
-Run the experiment setup script:
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/experiment_setup.py <project_root> "<train_command>"
 ```
@@ -84,34 +83,34 @@ This creates:
 
 When executing evaluation or training commands (Steps 3 and 4), apply this retry pattern:
 
-1. **Attempt 1:** Run the command normally
-2. **If the command fails (non-zero exit code):**
+1. **Attempt 1:** run the command normally
+2. **If it fails (non-zero exit code):**
    - Capture stderr and the last 50 lines of stdout
    - Log to error tracker: `category: "training_failure", severity: "warning", source: "baseline", message: "Command failed (attempt 1/3): <error_summary>", phase: 3, context: {"command": "<command>", "attempt": 1}`
-   - **Diagnose the error:**
+   - **Diagnose:**
      - `ModuleNotFoundError` / `ImportError` → install the missing package, retry
-     - `FileNotFoundError` → check if the path exists, fix path references, retry
-     - `CUDA out of memory` → reduce batch size by 50% in the command, retry
+     - `FileNotFoundError` → check the path exists, fix references, retry
+     - `CUDA out of memory` → reduce batch size 50% in the command, retry
      - `RuntimeError: CUDA` → try `CUDA_VISIBLE_DEVICES=0`, retry
-     - `PermissionError` → fix file permissions, retry
+     - `PermissionError` → fix permissions, retry
      - `SyntaxError` / `IndentationError` → **do NOT retry** (code bug, report to orchestrator)
      - `KeyboardInterrupt` / `SIGTERM` → **do NOT retry** (intentional stop)
-     - Other errors → read relevant source code, propose a fix, retry
-   - **Attempt 2:** Re-run with fix applied
+     - Other → read relevant source, propose a fix, retry
+   - **Attempt 2:** re-run with fix applied
 3. **If attempt 2 also fails:**
    - Log attempt 2 failure (same pattern, attempt: 2)
    - Try a different approach (different package version, broader file search, further batch reduction)
-   - **Attempt 3:** Re-run with new fix
+   - **Attempt 3:** re-run with new fix
 4. **If attempt 3 fails:**
    - Log with `severity: "critical"`, attempt: 3
    - Give up. Report full error history (all 3 attempts) to the orchestrator
    - The orchestrator's Phase 3 Failure Recovery table handles escalation
 
-**Loop detection:** If attempt 2 produces the same error message (first 200 chars) as attempt 1, skip attempt 3.
+**Loop detection:** if attempt 2 produces the same error message (first 200 chars) as attempt 1, skip attempt 3.
 
 ## Step 2.2: Apply Training Budget to Baseline
 
-The baseline must use the same training budget as experiments to ensure fair comparisons. Read `<exp_root>/pipeline-state.json` and check `user_choices` for either budget type:
+The baseline must use the same training budget as experiments for fair comparison. Read `<exp_root>/pipeline-state.json` and check `user_choices` for either budget type:
 
 **If `fixed_time_budget` is set** (seconds):
 1. Wrap the training command with `timeout`:
@@ -120,22 +119,44 @@ The baseline must use the same training budget as experiments to ensure fair com
    ```
 2. Set epochs high enough that timeout is the binding constraint (e.g., `--epochs 200`)
 3. Exit code 124 (timeout reached) is treated as **success** — training completed its time budget normally
+4. **Checkpoint pre-flight:** verify the training script saves checkpoints periodically (look for `save_freq`, `checkpoint_interval`, `ModelCheckpoint`, periodic `save_checkpoint` calls) or supports a framework-native time limit (Lightning `--max_time`, HF `TrainingArguments`). If NEITHER exists, the SIGTERM kill leaves no final checkpoint — warn in dev_notes and record `"eval_checkpoint_missing": true` in the baseline notes instead of scoring a stale/initial checkpoint.
 
 **If `fixed_epoch_budget` is set** (integer):
 1. Override the epoch count in the training command (e.g., replace `--epochs 2` with `--epochs <fixed_epoch_budget>`)
-2. If the training command doesn't have an epochs flag, add one appropriate to the framework
+2. If there is no epochs flag, add one appropriate to the framework
 
-**If neither is set:** Run training with the original epoch count as specified in `train_command`.
+**If `fixed_step_budget` is set** (integer — environment timesteps, RL):
+1. Map it to the framework's timestep flag instead of an epoch count — e.g., SB3 `--total_timesteps <fixed_step_budget>` (or `learn(total_timesteps=...)`), rsl_rl `--max_iterations <fixed_step_budget / (num_envs * num_steps_per_env)>`
+2. Do not wrap with `timeout` — the timestep cap is the binding constraint (the safety timeout from profiling still applies)
+
+**If neither is set:** run training with the original epoch count from `train_command`.
+
+## Step 2.3: Detect Headless Simulator Env Vars
+
+If `model_category` is `"rl"` (or the prerequisites import scan found a simulator stack), determine the env vars required for headless rendering and record them for reuse by every experiment:
+
+| Simulator import | Env vars |
+|------------------|----------|
+| `mujoco`, `dm_control` | `MUJOCO_GL=egl`, `PYOPENGL_PLATFORM=egl` |
+| `habitat_sim` | `MAGNUM_LOG=quiet`, `HABITAT_SIM_LOG=quiet` |
+| `pybullet` | (none — headless by default via DIRECT mode) |
+| `omni` / `isaacsim` / `isaaclab` | prefer the script's `--headless` CLI flag when exposed; otherwise `HEADLESS=1` |
+
+1. Read the import scan from `<exp_root>/results/prerequisites.json` (or re-run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/prerequisites_check.py scan-imports <project_root>`).
+2. Collect the applicable env vars, apply them when running the baseline training/profiling commands, and record them in `baseline.json` under `profiling.sim_env` (a dict of env var name → value; `{}` when none apply).
+3. If baseline training fails with a GL/EGL/display error (`GLFWError`, `cannot connect to X server`, `EGL`), add `MUJOCO_GL=egl` / `PYOPENGL_PLATFORM=egl` and retry via the auto-repair loop (Step 2.1).
+
+Experiments reuse these vars: the experiment skill reads `profiling.sim_env` and forwards it to `generate_script` (experiment Step 3).
 
 ## Step 3: Run Baseline Evaluation
 
 1. Execute the evaluation command via Bash (within the auto-repair loop above)
 2. Capture all output
-3. Parse output for metrics using the log parser:
+3. Parse output for metrics:
    ```bash
    python3 ${CLAUDE_PLUGIN_ROOT}/scripts/parse_logs.py <output_file>
    ```
-4. **Validate parse results:** Check that `parse_logs` returned non-empty records. If empty, the log format may be unrecognized — try forcing different formats (`--format kv`, `--format json`, `--format logging`, `--format tqdm`)
+4. **Validate parse results:** check `parse_logs` returned non-empty records. If empty, the format may be unrecognized — try forcing formats (`--format kv`, `--format json`, `--format logging`, `--format tqdm`)
 5. If metrics aren't parseable automatically, read the output and extract them manually
 
 ## Step 4: Profile Training
@@ -144,13 +165,12 @@ The baseline must use the same training budget as experiments to ensure fair com
 
 **For non-iterative frameworks (scikit-learn, XGBoost without GPU, LightGBM without GPU):**
 - Skip GPU memory profiling and throughput estimation below.
-- Instead, measure total `fit()` wall-clock time and record as `profiling.fit_duration_seconds` in baseline.json.
-- **Estimate experiment timeout from fit duration:** Read the model's configured iteration count (e.g., `n_estimators`, `max_iter`, `num_boost_round`) and the profiling iteration count. Compute: `estimated_timeout_seconds = fit_duration_seconds * (max_iterations_configured / profiling_iterations) * 2`. The `× 2` safety margin accounts for slower HP configs. If iteration counts cannot be determined, fall back to `fit_duration_seconds * 10`. Cap at 14400 (4 hours). Record as `profiling.estimated_timeout_seconds` in baseline.json.
+- Measure total `fit()` wall-clock time and record as `profiling.fit_duration_seconds` in baseline.json.
+- **Estimate experiment timeout from fit duration:** read the model's configured iteration count (`n_estimators`, `max_iter`, `num_boost_round`) and the profiling iteration count. Compute `estimated_timeout_seconds = fit_duration_seconds * (max_iterations_configured / profiling_iterations) * 2` (the `× 2` margin accounts for slower HP configs). If iteration counts can't be determined, fall back to `fit_duration_seconds * 10`. Cap at 14400 (4 hours). Record as `profiling.estimated_timeout_seconds` in baseline.json.
 - Set `profiling.throughput_samples_per_sec` and `profiling.estimated_max_batch_size` to `null`.
 - If the framework supports GPU (XGBoost `tree_method="gpu_hist"`, LightGBM `device="gpu"`), still run `${CLAUDE_PLUGIN_ROOT}/scripts/gpu_check.py`.
 
-**For iterative frameworks (PyTorch, TensorFlow, JAX, Lightning, HuggingFace Trainer):**
-- Proceed with the profiling steps below.
+**For iterative frameworks (PyTorch, TensorFlow, JAX, Lightning, HuggingFace Trainer):** proceed with the profiling below.
 
 Run a short training session to measure GPU resource usage:
 
@@ -161,14 +181,14 @@ Run a short training session to measure GPU resource usage:
    python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gpu_check.py
    ```
 
-2. **Estimate throughput:**
-   - Parse the training log for step timing
-   - Calculate samples/second or steps/second
+2. **Estimate throughput:** parse the training log for step timing; calculate samples/second or steps/second
 
 3. **Determine batch size limits:**
    - Current batch size and memory usage
-   - Estimate max batch size based on available GPU memory
-   - Note: this is a rough estimate; actual limits depend on model architecture
+   - Estimate max batch size from available GPU memory
+   - Note: a rough estimate; actual limits depend on model architecture
+
+4. **Record wall-clock:** record the baseline training run's wall-clock as `profiling.training_duration_seconds` in baseline.json — the source for the experiment hard timeout (`baseline_training_time * 3`).
 
 ## Step 5: Write Baseline Results
 
@@ -188,11 +208,15 @@ Write `<exp_root>/results/baseline.json`:
   },
   "code_branch": null,
   "code_proposal": null,
+  "model_category": "<from dispatch: supervised|rl|generative, or null>",
   "profiling": {
     "gpu_memory_used_mib": <value>,
     "gpu_memory_total_mib": <value>,
     "throughput_samples_per_sec": <value>,
-    "estimated_max_batch_size": <value>
+    "estimated_max_batch_size": <value>,
+    "estimated_timeout_seconds": <value or null>,
+    "training_duration_seconds": <value>,
+    "sim_env": {}
   },
   "eval_command": "<command used>",
   "train_command": "<command used>",
@@ -202,7 +226,11 @@ Write `<exp_root>/results/baseline.json`:
 
 Use the Write tool to create this file.
 
-**Nullable fields:** For non-iterative frameworks (scikit-learn, XGBoost, LightGBM), `profiling.throughput_samples_per_sec` and `profiling.estimated_max_batch_size` will be `null`. HP-tune must not use `estimated_max_batch_size` as a cap when null. Experiment must use `estimated_timeout_seconds` instead of throughput-based timeout.
+**Nullable fields:** for non-iterative frameworks (scikit-learn, XGBoost, LightGBM), `profiling.throughput_samples_per_sec` and `profiling.estimated_max_batch_size` will be `null`. HP-tune must not use `estimated_max_batch_size` as a cap when null. Experiment must use `estimated_timeout_seconds` instead of throughput-based timeout.
+
+**`profiling.sim_env`:** dict of headless-simulator env vars detected in Step 2.3 (e.g., `{"MUJOCO_GL": "egl"}`); `{}` when none apply.
+
+**New fields:** `model_category` echoes the dispatch input into baseline.json so downstream phases (the Phase 7 pre-loop reads it as a fallback when `args.model_category` is absent) can recover it without pipeline state. `profiling.training_duration_seconds` is the baseline training wall-clock — the source for the experiment hard timeout `baseline_training_time * 3`. `profiling.estimated_timeout_seconds` is the direct per-experiment timeout estimate (tabular fit-based or RL timestep-based); experiment Step 1.1 reads it first.
 
 ## Step 5.1: Validate Output
 
@@ -217,9 +245,9 @@ If validation fails, fix and re-validate before proceeding.
 
 After schema validation passes, verify the `metrics` dict contains required keys:
 
-1. **Check primary_metric:** If the orchestrator specified `primary_metric`, verify `metrics` contains a matching key (case-insensitive). If not found, search for close matches (e.g., `"val_accuracy"` for `"accuracy"`). If a close match exists, log to dev_notes which key was used. If no match: log warning to error tracker with `category: "config_error"`.
+1. **Check primary_metric:** if the orchestrator specified `primary_metric`, verify `metrics` contains a matching key (case-insensitive). If not found, search for close matches (e.g., `"val_accuracy"` for `"accuracy"`). If a close match exists, log to dev_notes which key was used. If no match: log warning to error tracker with `category: "config_error"`.
 
-2. **Check divergence metric:** If the orchestrator specified `divergence_metric` (default: `"loss"`), verify it exists in `metrics`. If not found, check aliases: `"train_loss"`, `"val_loss"`, `"total_loss"`, `"nll_loss"`. If found under an alias, log which alias to dev_notes — the orchestrator should pass this alias to the monitor skill. If not found at all: log warning — divergence monitoring may not work.
+2. **Check divergence metric:** if the orchestrator specified `divergence_metric` (default: `"loss"`), verify it exists in `metrics`. If not, check aliases: `"train_loss"`, `"val_loss"`, `"total_loss"`, `"nll_loss"`. If found under an alias, log which alias to dev_notes — the orchestrator should pass this alias to the monitor skill. If not found at all: log warning — divergence monitoring may not work.
 
 ## Step 6: Write Dev Notes
 
@@ -248,16 +276,16 @@ Return to the orchestrator:
 
 When `model_category = "rl"`:
 
-1. **Evaluation method:** Run N evaluation episodes (default: 100) with the current policy. Compute mean, std, min, max episode reward.
-2. **Profiling:** Measure steps/second and episodes/hour. Set `throughput_samples_per_sec = null`. Record `steps_per_second` and `episodes_per_hour` in profiling.
-3. **Timeout estimation:** Use `total_timesteps / steps_per_second` instead of epoch-based estimation.
-4. **Config extraction:** Capture RL-specific HPs: `gamma`, `learning_rate`, `n_steps`/`buffer_size`, `batch_size`, `entropy_coef`, `clip_range` (PPO), `tau` (SAC/TD3).
+1. **Evaluation method:** run N evaluation episodes (default: 100) with the current policy. Compute mean, std, min, max episode reward.
+2. **Profiling:** measure steps/second and episodes/hour. Set `throughput_samples_per_sec = null`. Record `steps_per_second` and `episodes_per_hour` in profiling.
+3. **Timeout estimation:** compute `estimated_timeout_seconds = (total_timesteps / steps_per_second) * 2` (the `× 2` margin mirrors the tabular estimate) and record it as `profiling.estimated_timeout_seconds` — the field experiment Step 1.1 reads first. Record the measured training wall-clock as `profiling.training_duration_seconds`.
+4. **Config extraction:** capture RL HPs: `gamma`, `learning_rate`, `n_steps`/`buffer_size`, `batch_size`, `entropy_coef`, `clip_range` (PPO), `tau` (SAC/TD3).
 
 ## Error Handling
 
-- **Eval command fails:** Report the error output, ask user for correct command
-- **No GPU available:** Run CPU-only baseline, note that throughput estimates won't be representative
-- **Metrics not parseable:** Show raw output, manually extract key numbers, note which metrics were found
+- **Eval command fails:** report the error output, ask user for the correct command
+- **No GPU available:** run CPU-only baseline, note throughput estimates won't be representative
+- **Metrics not parseable:** show raw output, manually extract key numbers, note which metrics were found
 
 ## Error Tracking
 

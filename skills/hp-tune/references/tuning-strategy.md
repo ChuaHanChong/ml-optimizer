@@ -2,17 +2,17 @@
 
 ## Tuning Order (Priority)
 
-Tune hyperparameters in this order, as earlier ones have the largest impact:
+Tune in this order — earlier ones have the largest impact:
 
 ### 1. Learning Rate (Highest Impact)
 - **Start:** Find the order of magnitude first (1e-2, 1e-3, 1e-4, 1e-5)
-- **Refine:** Once the right order is found, search within that range (e.g., 1e-4 to 5e-4)
+- **Refine:** Once the right order is found, search within it (e.g. 1e-4 to 5e-4)
 - **Common ranges by model type:**
   - Transformers: 1e-5 to 1e-3
   - CNNs: 1e-4 to 1e-2
   - Diffusion models: 1e-5 to 1e-4
   - Fine-tuning: 1e-6 to 1e-4
-- **If training diverges:** LR is probably too high
+- **If training diverges:** LR probably too high
 - **If loss plateaus early:** LR might be too low
 
 ### 2. Batch Size (Constrained by GPU Memory)
@@ -36,7 +36,7 @@ Tune hyperparameters in this order, as earlier ones have the largest impact:
 
 ### 5. Architecture-Specific Parameters
 - **Dropout:** 0.0 to 0.5 (start with 0.1)
-- **Number of layers/channels:** Usually fixed, but can tune if computational budget allows
+- **Number of layers/channels:** Usually fixed, but tunable if budget allows
 - **Attention heads:** Must divide hidden dim evenly
 
 ### 6. Data Augmentation (Lower Priority for HP Tuning)
@@ -56,22 +56,22 @@ When proposing new configs, reason about:
 3. **Interpolation:** Try values between the best and second-best
 4. **Extrapolation:** If the best was at the edge of the search space, extend it
 5. **Interaction effects:** LR and batch size interact (linear scaling rule)
-6. **Diminishing returns:** If last 3 experiments improved by <1%, consider stopping
+6. **Diminishing returns:** If the last 3 experiments improved by <1%, consider stopping
 
 ### Branch-Aware Tuning
 
-When experiments run on different code branches (from the implement skill), results must be analyzed per-branch:
+Experiments on different code branches (from the implement skill) are analyzed per-branch:
 
-- **Group by `code_branch`:** Before analyzing trends, partition results by their `code_branch` field. Experiments on `ml-opt/perceptual-loss` and experiments on baseline code are independent groups.
-- **Analyze separately:** HP sensitivities may differ between branches. `lr=0.001` might be optimal on one branch but diverge on another due to different gradient magnitudes from code changes.
-- **Don't cross-compare HPs:** A config that works well on branch A is not evidence that it will work on branch B. Only compare experiments within the same branch.
-- **Branch performance ranking:** After sufficient experiments per branch, compare the *best result from each branch* to identify which code changes are most promising. Focus future HP tuning budget on the best-performing branches.
+- **Group by `code_branch`:** Partition results by `code_branch` before analyzing trends. `ml-opt/perceptual-loss` and baseline code are independent groups.
+- **Analyze separately:** HP sensitivities may differ — `lr=0.001` might be optimal on one branch but diverge on another due to different gradient magnitudes.
+- **Don't cross-compare HPs:** A config that works on branch A is not evidence it works on branch B. Only compare within the same branch.
+- **Branch performance ranking:** After enough experiments per branch, compare the *best result from each branch* to identify which code changes are most promising. Focus future budget on the best-performing branches.
 
 ### Adaptive Budget Allocation
 
-In iteration 2+, when multiple branches survive pruning, allocate experiment slots proportionally rather than equally:
+In iteration 2+, when multiple branches survive pruning, allocate slots proportionally rather than equally:
 - **Scoring:** `score = improvement_pct * (1 - 1/sqrt(n+1))` where n = experiments on that branch
-- **Minimum:** Every branch gets at least 1 experiment slot
+- **Minimum:** Every branch gets at least 1 slot
 - **Rebalance each iteration:** Scores change as new data arrives
 
 ## Batch Sizing Strategy
@@ -79,36 +79,35 @@ In iteration 2+, when multiple branches survive pruning, allocate experiment slo
 When proposing N experiments (one per GPU):
 
 - **Exploration batch (first 1-2 batches):** Wide spread across search space
-  - e.g., LR in {1e-2, 1e-3, 1e-4, 1e-5} — cover order of magnitude
+  - e.g. LR in {1e-2, 1e-3, 1e-4, 1e-5} — cover order of magnitude
 - **Exploitation batch (later batches):** Narrow focus around best results
-  - e.g., if 1e-3 was best: try {5e-4, 8e-4, 1.2e-3, 2e-3}
-- **Hybrid batch:** Mix exploration and exploitation
-  - 2/3 configs near best result, 1/3 exploring new regions
+  - e.g. if 1e-3 was best: try {5e-4, 8e-4, 1.2e-3, 2e-3}
+- **Hybrid batch:** 2/3 configs near best result, 1/3 exploring new regions
 
 ## Multi-Objective Optimization
 
-When optimizing for multiple metrics simultaneously (e.g., accuracy AND latency):
+When optimizing multiple metrics simultaneously (e.g. accuracy AND latency):
 
-1. **Weighted scoring:** Combine metrics into a single score: `score = w1 * metric1_normalized + w2 * metric2_normalized`. Ask the user for relative weights.
-2. **Pareto frontier:** Identify experiments where no other experiment is better on ALL metrics simultaneously. Present the Pareto-optimal set to the user.
-3. **Constraint-based:** Optimize primary metric subject to secondary metric constraint (e.g., "maximize accuracy where latency < 100ms").
+1. **Weighted scoring:** Combine into a single score: `score = w1 * metric1_normalized + w2 * metric2_normalized`. Ask the user for relative weights.
+2. **Pareto frontier:** Identify experiments where no other is better on ALL metrics. Present the Pareto-optimal set to the user.
+3. **Constraint-based:** Optimize the primary metric subject to a secondary constraint (e.g. "maximize accuracy where latency < 100ms").
 4. **Sequential:** First optimize the primary metric, then fine-tune the secondary without regressing.
 
 When `secondary_metric` is provided, include both metrics in the ranking and note trade-offs.
 
 ## Multi-Loss Training
 
-When the model uses multiple loss terms (e.g., reconstruction + perceptual + adversarial):
+When the model uses multiple loss terms (e.g. reconstruction + perceptual + adversarial):
 
-1. **Identify the dominant loss:** Which loss term contributes most to the total gradient? Start by tuning its weight.
-2. **Loss weight tuning order:** Keep one loss fixed (usually the primary task loss) and tune weights of auxiliary losses.
+1. **Identify the dominant loss:** Which term contributes most to the total gradient? Tune its weight first.
+2. **Loss weight tuning order:** Keep one loss fixed (usually the primary task loss) and tune auxiliary weights.
 3. **Relative scaling:** Auxiliary loss weights should typically be 0.001x–0.1x the primary loss magnitude.
-4. **Diagnostic:** If one loss decreases while another increases, the weights are imbalanced. Monitor component losses alongside the combined total.
+4. **Diagnostic:** If one loss decreases while another increases, weights are imbalanced. Monitor component losses alongside the total.
 
 ## Effective Hyperparameters
 
 Some "code changes" are effectively HP-only changes:
-- **Mixed precision training:** `torch.cuda.amp.autocast()` — no architecture change, just a training mode flag. Doubles effective batch size with same memory.
+- **Mixed precision training:** `torch.cuda.amp.autocast()` — no architecture change, just a training mode flag. Doubles effective batch size at same memory.
 - **Gradient accumulation:** Simulates larger batch sizes without more memory. Effective_batch = batch_size × accumulation_steps.
 - **Gradient clipping:** `torch.nn.utils.clip_grad_norm_()` — prevents explosion without changing architecture.
 
@@ -167,9 +166,43 @@ Consider these alongside traditional HPs when tuning.
 - **Failure modes:** posterior collapse (KL dominates too early → use annealing), blurry reconstructions (beta too high)
 - **Interactions:** beta × latent_dim (higher dim tolerates higher beta), LR × beta (high LR + high beta → collapse)
 
+### Reinforcement Learning (PPO, SAC, TD3) — cold-start fallback — prefer research-derived priors
+
+> Cold-start fallback ONLY. Research-derived priors (`search_space` entries with citations from the research skill / agenda) and the baseline's own captured HPs (gamma, clip_range, ent_coef, n_steps) always take precedence.
+
+**PPO knobs (rough priority order):**
+1. **ent_coef** (0.0–0.05, log scale): exploration pressure — the RL analog of regularization
+2. **clip_range** (0.1–0.3): policy-update trust region
+3. **n_steps** (128–4096): rollout length per update; interacts with batch_size
+4. **gamma** (0.95–0.999): horizon — task-dependent, prefer a cited prior
+5. **gae_lambda** (0.9–0.99), **n_epochs** (3–20), **vf_coef** (0.25–1.0)
+6. **LR**: 1e-5 to 1e-3, often annealed to 0
+
+**SAC / TD3 (off-policy) knobs:**
+- **learning_rate** (1e-4 to 1e-3), **tau** (0.001–0.02): target-network smoothing
+- **train_freq** / **gradient_steps**: update-to-data ratio
+- **buffer_size** (1e5–1e6), **learning_starts**, **batch_size** (256 typical)
+- SAC: entropy auto-tuning (`ent_coef="auto"`) usually beats fixed values
+
+**What does NOT transfer from supervised tuning:**
+- **Linear LR-batch scaling does NOT apply** — RL batch/rollout sizes change the data distribution, not just gradient noise
+- **Epoch budgets do NOT apply** — RL budgets are environment timesteps (e.g. `total_timesteps`), never epochs
+- Weight decay is rarely used; regularize via ent_coef / KL penalty instead
+
+### VLA / Imitation Learning (BC, Diffusion Policy, ACT) — cold-start fallback — prefer research-derived priors
+
+> Cold-start fallback ONLY — prefer research-derived priors with citations.
+
+- **LR**: 1e-5 to 3e-4 (pretrained-backbone fine-tuning at the low end)
+- **Action chunk size / prediction horizon**: highest-impact knob for chunking policies (ACT, Diffusion Policy) — prefer a cited prior per embodiment
+- **Observation/action normalization statistics**: recompute per dataset — a mismatch silently destroys performance
+- **Batch size**: 64–256 state-based, 8–64 image-based
+- **Augmentation**: image-space only (crop/color); never augment actions
+- **What does NOT transfer:** Linear LR-batch scaling and epoch-count heuristics from vision classification — budget by gradient steps or demonstrations seen
+
 ### Tree-Based & Ensemble Models (XGBoost, LightGBM, RandomForest, GradientBoosting)
 
-These models have fundamentally different hyperparameters. Batch size, dropout, and attention heads do not apply.
+These have fundamentally different hyperparameters. Batch size, dropout, and attention heads do not apply.
 
 **Tuning order (priority):**
 1. **n_estimators / num_boost_round** (100–10000): Use early stopping. Start with 500.
@@ -200,7 +233,7 @@ These models have fundamentally different hyperparameters. Batch size, dropout, 
 ## Anti-Patterns to Avoid
 
 - Don't change all HPs at once — change 1-2 per experiment for interpretability
-- Don't ignore failed experiments — they provide valuable information about boundaries
+- Don't ignore failed experiments — they reveal boundaries
 - Don't repeat identical configs (check past results first)
 - Don't use extremely large LR just because loss is high — check if the metric is appropriate
 - Don't tune past diminishing returns — know when to stop
@@ -208,14 +241,14 @@ These models have fundamentally different hyperparameters. Batch size, dropout, 
 ## Constraint Handling
 
 ### Hard Constraints
-Parameters that cannot be violated (will cause failure):
-- **GPU memory:** Batch size × per-sample memory must fit. Proposals exceeding this should be rejected before dispatch.
-- **Training time:** If the user set a max training time per experiment, estimate duration from baseline profiling and reject configs that would exceed it.
+Cannot be violated (will cause failure):
+- **GPU memory:** Batch size × per-sample memory must fit. Reject proposals exceeding this before dispatch.
+- **Training time:** If the user set a max time per experiment, estimate duration from baseline profiling and reject configs that would exceed it.
 
 ### Soft Constraints
-Parameters the user prefers but can be relaxed if justified:
+User prefers but can be relaxed if justified:
 - **Frozen parameters:** User may say "don't change the optimizer". Respect unless analysis strongly suggests otherwise — then ask.
-- **Search space bounds:** If the best result is at the boundary of the defined search space, propose extending the range and explain why.
+- **Search space bounds:** If the best result is at the boundary, propose extending the range and explain why.
 
 ### Constraint Propagation
 When one constraint changes, propagate effects:

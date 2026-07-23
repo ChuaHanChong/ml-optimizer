@@ -48,33 +48,13 @@ Dashboard: <exp_root>/reports/dashboard.html
 
 The analysis agent reviews the entire session to identify what worked, what didn't, and how to improve.
 
-Dispatch the analysis agent in review mode (resume-or-dispatch pattern):
-
-**IF `agent_registry["analysis"]` is not null** (agent exists from batch analysis in Phase 7):
-
-```
-SendMessage(
-  to: agent_registry["analysis"],
-  message: "Ultrathink. End-of-session review. You have context from batch analyses.
-    CONTEXT FROM OTHER AGENTS:
-    - ANALYZE: final analysis across all batches
-    - RESEARCH: all proposals attempted, {N_successful}/{N_total} improved
-    - HP-TUNE: {total_iterations} iterations, best config: {best_config}
-    Parameters: project_root: {project_root}, exp_root: {exp_root}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, scope: session."
-)
-```
-
-→ If `SendMessage` fails: fall back to the `Agent()` dispatch below.
-
-**ELSE** (first dispatch — no existing agent):
+Dispatch the analysis agent in review mode (fresh dispatch — it reads the run's files: results, batch analyses, dead-ends, agenda):
 
 ```
 Agent(
   description: "Session review",
-  prompt: "Ultrathink. Run session review. Parameters: project_root: {project_root}, exp_root: {exp_root}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, scope: session.",
+  prompt: "Run session review. Read the run's files for context: results/round-N-*/exp-*.json, reports/batch-*-analysis.md, reports/dead-ends.json, reports/research-agenda.json. Parameters: project_root: {project_root}, exp_root: {exp_root}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, scope: session.",
   subagent_type: "ml-optimizer:analysis-agent"
 )
 ```
-
-→ Save returned `agentId` to `agent_registry["analysis"]`
 

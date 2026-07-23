@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Helpers for implementing research proposals: branch management, validation, and manifest writing.
+"""Helpers for implementing research proposals: branches, validation, manifest writing.
 
-Parses structured proposals out of research-findings.md, creates `ml-opt/<slug>`
-branches (or file backups for non-git projects), validates syntax/imports,
-detects file conflicts across proposals, and clones/analyzes reference repos for
-the from_reference implementation strategy. Also extracts branch diff summaries
-for the dashboard.
+Parses proposals from research-findings.md, creates `ml-opt/<slug>` branches (or
+file backups for non-git projects), validates syntax/imports, detects file
+conflicts, clones/analyzes reference repos (from_reference strategy), and extracts
+branch diff summaries for the dashboard.
 
 Usage:
     python3 implement_utils.py <findings_path> <selected_json>   # Parse proposals (selected = JSON array of 1-based indices)
@@ -13,15 +12,8 @@ Usage:
     python3 implement_utils.py analyze <repo_path>               # Analyze a cloned repo's framework/structure
     python3 implement_utils.py diff <project_root> <branch>      # Extract a branch diff summary vs the current branch
 
-selected_json selects which proposals to return by their 1-based index; pass
-"[]" or omit to return all. clone only permits https://github.com/ and
-https://gitlab.com/ URLs.
-
-Examples:
-    python3 implement_utils.py <exp_root>/reports/research-findings.md '[1,3]'
-    python3 implement_utils.py clone https://github.com/owner/repo /tmp/ref-repo
-    python3 implement_utils.py analyze /tmp/ref-repo
-    python3 implement_utils.py diff /path/to/project ml-opt/perceptual-loss
+selected_json returns proposals by 1-based index; "[]" or omit returns all.
+clone only permits https://github.com/ and https://gitlab.com/ URLs.
 """
 
 import json
@@ -35,10 +27,7 @@ from pathlib import Path
 
 
 def slugify(name: str) -> str:
-    """Convert a proposal name to a URL-safe slug.
-
-    "Perceptual Loss Function" -> "perceptual-loss-function"
-    """
+    """Convert a proposal name to a URL-safe slug ("Perceptual Loss" -> "perceptual-loss")."""
     slug = name.lower().strip()
     slug = re.sub(r"[^a-z0-9\s-]", "", slug)
     slug = re.sub(r"[\s_]+", "-", slug)
@@ -64,10 +53,7 @@ def get_current_branch(project_root: str) -> str:
 
 
 def create_proposal_branch(project_root: str, slug: str, base_branch: str, prefix: str = "ml-opt") -> str:
-    """Create a new branch for a proposal and check it out.
-
-    Returns the branch name (<prefix>/<slug>).
-    """
+    """Create and check out a proposal branch. Returns the branch name (<prefix>/<slug>)."""
     branch_name = f"{prefix}/{slug}"
     subprocess.run(
         ["git", "checkout", base_branch],
@@ -89,11 +75,9 @@ def create_proposal_branch(project_root: str, slug: str, base_branch: str, prefi
 def backup_files(files: list[str], backup_dir: str, project_root: str = "") -> dict:
     """Non-git fallback: copy original files to a backup directory.
 
-    When *project_root* is provided and a file resides inside it, the
-    relative directory structure is preserved under *backup_dir* so that
-    files with identical names in different subdirectories do not collide.
-
-    Returns a mapping of {original_path: backup_path}.
+    When *project_root* is given and a file lives inside it, its relative dir
+    structure is preserved under *backup_dir* so same-named files don't collide.
+    Returns {original_path: backup_path}.
     """
     Path(backup_dir).mkdir(parents=True, exist_ok=True)
     mapping = {}
@@ -122,13 +106,22 @@ def validate_syntax(files: list[str]) -> list[dict]:
     return results
 
 
-def validate_imports(module_path: str, project_root: str) -> dict:
-    """Attempt to import a module by running a subprocess.
+# Simulator-runtime modules that only import inside their runtime env (Isaac Sim,
+# habitat). An import failure here is NOT a code defect — skipped_env_dependent;
+# the syntax + LSP checks carry the gate for those files.
+SIM_RUNTIME_MODULES: set[str] = {"omni", "isaacgym", "isaaclab", "habitat_sim", "carb"}
 
-    Returns {passed: bool, error: str|None}.
+
+def validate_imports(module_path: str, project_root: str,
+                     python_executable: str | None = None) -> dict:
+    """Import a module in a subprocess (via *python_executable* or the current interpreter).
+
+    A ModuleNotFoundError on a SIM_RUNTIME_MODULES top-level module (covers dotted
+    imports like ``omni.isaac.core``) returns status "skipped_env_dependent", passed=True.
+    Returns {passed, status: "passed"|"failed"|"skipped_env_dependent", error}.
     """
     result = subprocess.run(
-        [sys.executable, "-c",
+        [python_executable or sys.executable, "-c",
          "import importlib.util, sys; spec = importlib.util.spec_from_file_location('mod', sys.argv[1]); mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)",
          module_path],
         cwd=project_root,
@@ -137,19 +130,25 @@ def validate_imports(module_path: str, project_root: str) -> dict:
         env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
     )
     if result.returncode == 0:
-        return {"passed": True, "error": None}
-    return {"passed": False, "error": result.stderr.strip()}
+        return {"passed": True, "status": "passed", "error": None}
+    stderr = result.stderr.strip()
+    m = re.search(r"No module named '([^'.]+)", stderr)
+    if m and m.group(1) in SIM_RUNTIME_MODULES:
+        return {
+            "passed": True,
+            "status": "skipped_env_dependent",
+            "error": stderr.splitlines()[-1] if stderr else None,
+        }
+    return {"passed": False, "status": "failed", "error": stderr}
 
 
 def parse_research_proposals(findings_path: str, selected_indices: list[int] | None = None) -> list[dict]:
-    """Parse research-findings.md and extract structured proposals.
+    """Parse research-findings.md into structured proposals from '### Proposal N: ...' blocks.
 
-    Each proposal is extracted from a '### Proposal N: ...' block.
     If selected_indices is provided, only return those proposals (1-based).
     """
     text = Path(findings_path).read_text()
 
-    # Split on proposal headers
     proposal_pattern = re.compile(
         r"^#{2,3}\s+Proposal\s+(\d+):\s*(.+?)(?:\s*\(Priority:.*?\))?\s*$",
         re.MULTILINE,
@@ -276,10 +275,7 @@ def clone_reference_repo(repo_url: str, dest_dir: str, shallow: bool = True) -> 
 
 
 def analyze_reference_structure(repo_path: str) -> dict:
-    """Analyze a cloned reference repository's structure.
-
-    Returns framework detection, file categorization, requirements, and README summary.
-    """
+    """Analyze a cloned repo: framework detection, file categorization, requirements, README summary."""
     repo = Path(repo_path)
     skip_dirs = {".git", "__pycache__", "node_modules", ".eggs", "dist", "build"}
     skip_files = {"setup.py", "setup.cfg", "conftest.py"}
@@ -315,7 +311,6 @@ def analyze_reference_structure(repo_path: str) -> dict:
                 continue
 
             rel_path = os.path.relpath(os.path.join(dirpath, fname), repo_path)
-            # Skip files in docs/ or test directories
             if rel_path.startswith("docs/") or "/tests/" in rel_path or "/test/" in rel_path:
                 continue
 
@@ -326,27 +321,22 @@ def analyze_reference_structure(repo_path: str) -> dict:
             except OSError:
                 continue
 
-            # Detect framework
             for fw, patterns in framework_patterns.items():
                 for pat in patterns:
                     if re.search(pat, content):
                         framework_hints[fw] = framework_hints.get(fw, 0) + 1
 
-            # Detect model files
             for pat in model_patterns:
                 if re.search(pat, content):
                     model_files.append(rel_path)
                     break
 
-            # Detect training files
             base = fname.lower().replace(".py", "")
             if any(tp in base for tp in training_patterns):
                 training_files.append(rel_path)
 
-    # Determine primary framework
     framework = max(framework_hints, key=framework_hints.get) if framework_hints else "unknown"
 
-    # Read requirements.txt
     requirements: list[str] = []
     req_path = repo / "requirements.txt"
     if req_path.exists():
@@ -358,7 +348,6 @@ def analyze_reference_structure(repo_path: str) -> dict:
         except OSError:
             pass
 
-    # Read README summary
     readme_summary = ""
     for readme_name in ["README.md", "README.rst", "README.txt", "README"]:
         readme_path = repo / readme_name
@@ -417,10 +406,9 @@ def write_manifest(path: str, data: dict) -> str:
 
 
 def extract_branch_diff(project_root: str, branch: str) -> dict:
-    """Extract a structured diff summary between the current branch and a proposal branch.
+    """Structured diff summary between the current branch and a proposal branch.
 
-    Returns a dict with file counts, line changes, changed functions, and a
-    truncated diff snippet suitable for dashboard display.
+    Returns file counts, line changes, changed functions, and a truncated diff snippet.
     """
     root = Path(project_root)
     if not is_git_repo(project_root):

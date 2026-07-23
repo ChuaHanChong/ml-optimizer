@@ -14,12 +14,6 @@ Usage:
     python3 prerequisites_check.py validate-data <path> <format>                           # Validate a data path matches an expected format
     python3 prerequisites_check.py gpu-install-cmd <package> [env_manager] [env_name]       # Build a GPU-aware install command
     python3 prerequisites_check.py bulk-install-cmd <project_root> <env_manager> [env_name] # Build a bulk install command from dependency files
-
-Examples:
-    python3 prerequisites_check.py scan-imports <project_root>
-    python3 prerequisites_check.py check-packages '["torch", "transformers"]'
-    python3 prerequisites_check.py detect-format-project <project_root> <project_root>/train.py
-    python3 prerequisites_check.py gpu-install-cmd torch conda myenv
 """
 
 import ast
@@ -31,10 +25,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-# ---------------------------------------------------------------------------
 # Import-name → pip-package mapping for common ML aliases
-# ---------------------------------------------------------------------------
-
 IMPORT_TO_PACKAGE: dict[str, str] = {
     "cv2": "opencv-python",
     "sklearn": "scikit-learn",
@@ -56,6 +47,27 @@ IMPORT_TO_PACKAGE: dict[str, str] = {
     "dotenv": "python-dotenv",
     "comet_ml": "comet-ml",
     "lightning": "pytorch-lightning",
+    "stable_baselines3": "stable-baselines3",
+    "sample_factory": "sample-factory",
+    "rsl_rl": "rsl-rl-lib",
+    "tensorflow_datasets": "tensorflow-datasets",
+}
+
+# Imports that must NEVER be auto-installed from PyPI: they ship with a
+# simulator/robotics runtime (Isaac Sim, ROS, habitat conda packages) or a bare
+# `pip install <name>` grabs the wrong package. Surfaced as
+# "manual_install_required" with guidance instead of installing.
+NEVER_AUTO_INSTALL: dict[str, str] = {
+    "omni": "Ships with NVIDIA Isaac Sim / Omniverse — install via the Isaac Sim installer, then run training inside that environment.",
+    "carb": "Ships with NVIDIA Isaac Sim / Omniverse — install via the Isaac Sim installer.",
+    "pxr": "USD Python bindings — ship with Isaac Sim/Omniverse (or usd-core); do not pip install blindly.",
+    "isaacsim": "Install via the NVIDIA Isaac Sim installer, not PyPI.",
+    "isaaclab": "Install via the Isaac Lab setup script (isaaclab.sh) inside an Isaac Sim environment, not PyPI.",
+    "habitat": "Install habitat-lab from source (github.com/facebookresearch/habitat-lab); the pip name collides with an unrelated package.",
+    "habitat_sim": "Install via conda: conda install habitat-sim -c conda-forge -c aihabitat; no pip wheels are published.",
+    "rclpy": "ROS 2 Python bindings — installed with a ROS 2 distribution; source your ROS setup script instead of pip.",
+    "rospy": "ROS 1 Python bindings — installed with a ROS distribution; source your ROS setup script instead of pip.",
+    "warp": "Usually NVIDIA Warp (pip install warp-lang); bare 'pip install warp' installs a different package.",
 }
 
 # Directories to skip when scanning imports
@@ -71,27 +83,15 @@ _IMAGE_EXTENSIONS: set[str] = {
 }
 
 
-# ---------------------------------------------------------------------------
-# scan_imports
-# ---------------------------------------------------------------------------
-
 def scan_imports(
     project_root: str,
     exclude_dirs: list[str] | None = None,
 ) -> dict:
     """Scan all `.py` files under *project_root* for import statements.
 
-    Uses `ast.parse` for reliable extraction.  Classifies each top-level
-    module name as *stdlib*, *local* (file exists in project), or
-    *third_party*.
-
-    Returns::
-
-        {
-            "stdlib": ["os", "sys", ...],
-            "third_party": ["torch", "numpy", ...],
-            "local": ["model", "utils", ...],
-        }
+    Uses `ast.parse` to classify each top-level module name as *stdlib*, *local*
+    (file exists in project), or *third_party*. Returns
+    {"stdlib": [...], "third_party": [...], "local": [...]}.
     """
     root = Path(project_root).resolve()
     excludes = _DEFAULT_EXCLUDE_DIRS | set(exclude_dirs or [])
@@ -156,33 +156,26 @@ def scan_imports(
     return {"stdlib": stdlib, "third_party": third_party, "local": local}
 
 
-# ---------------------------------------------------------------------------
-# check_missing_packages
-# ---------------------------------------------------------------------------
-
 def check_missing_packages(
     packages: list[str],
     python_executable: str = "python3",
 ) -> dict:
     """Check which *packages* cannot be imported by *python_executable*.
 
-    Returns::
-
-        {
-            "installed": ["torch", "numpy"],
-            "missing": ["transformers"],
-            "errors": {"somepackage": "ModuleNotFoundError: ..."},
-        }
+    Imports listed in NEVER_AUTO_INSTALL are routed to "manual_install_required"
+    (import name → guidance) instead of "missing" when absent. Returns
+    {"installed": [...], "missing": [...], "manual_install_required": {...},
+    "errors": {...}}.
     """
     installed: list[str] = []
     missing: list[str] = []
+    manual: dict[str, str] = {}
     errors: dict[str, str] = {}
 
     for pkg in packages:
-        import_name = pkg  # what we actually try to import
         try:
             result = subprocess.run(
-                [python_executable, "-c", f"import {import_name}"],
+                [python_executable, "-c", f"import {pkg}"],
                 capture_output=True,
                 text=True,
                 timeout=30,
@@ -190,7 +183,10 @@ def check_missing_packages(
             if result.returncode == 0:
                 installed.append(pkg)
             else:
-                missing.append(pkg)
+                if pkg in NEVER_AUTO_INSTALL:
+                    manual[pkg] = NEVER_AUTO_INSTALL[pkg]
+                else:
+                    missing.append(pkg)
                 stderr = result.stderr.strip()
                 if stderr:
                     errors[pkg] = stderr.splitlines()[-1]
@@ -201,7 +197,12 @@ def check_missing_packages(
             missing.append(pkg)
             errors[pkg] = "Import timed out"
 
-    return {"installed": installed, "missing": missing, "errors": errors}
+    return {
+        "installed": installed,
+        "missing": missing,
+        "manual_install_required": manual,
+        "errors": errors,
+    }
 
 
 def pip_name(import_name: str) -> str:
@@ -209,18 +210,10 @@ def pip_name(import_name: str) -> str:
     return IMPORT_TO_PACKAGE.get(import_name, import_name)
 
 
-# ---------------------------------------------------------------------------
-# detect_env_manager
-# ---------------------------------------------------------------------------
-
 def detect_env_manager(project_root: str) -> dict:
-    """Detect which environment manager the project uses.
+    """Detect the project's environment manager from config files (priority order).
 
-    Checks for common config files in priority order.
-
-    Returns::
-
-        {"manager": "conda|uv|poetry|pip|unknown", "config_file": "<path>"|null}
+    Returns {"manager": "conda|uv|poetry|pip|venv|unknown", "config_file": <path>|None}.
     """
     root = Path(project_root).resolve()
 
@@ -268,10 +261,6 @@ def detect_env_manager(project_root: str) -> dict:
     return {"manager": "unknown", "config_file": None}
 
 
-# ---------------------------------------------------------------------------
-# detect_dataset_format
-# ---------------------------------------------------------------------------
-
 # AST patterns to look for in training scripts
 _FORMAT_PATTERNS: dict[str, list[str]] = {
     "image_folder": [
@@ -306,6 +295,18 @@ _FORMAT_PATTERNS: dict[str, list[str]] = {
         "load_dataset",
         "datasets.load_dataset",
         "datasets.Dataset.from_",
+    ],
+    "lerobot": [
+        "LeRobotDataset", "lerobot",
+    ],
+    "rlds": [
+        "rlds", "builder_from_directory",
+    ],
+    "zarr": [
+        "zarr.open", "zarr",
+    ],
+    "robomimic": [
+        "robomimic", "SequenceDataset",
     ],
     "auto_download": [
         "download=True",
@@ -366,14 +367,8 @@ def _extract_data_args(tree: ast.AST) -> list[str]:
 def detect_dataset_format(training_script: str) -> dict:
     """Analyze a training script to detect expected dataset format.
 
-    Returns::
-
-        {
-            "format": "image_folder|csv|cifar|...|unknown",
-            "patterns_found": [...],
-            "data_args": ["--data_dir", ...],
-            "confidence": "high|medium|low",
-        }
+    Returns {"format": "image_folder|csv|cifar|...|unknown", "patterns_found": [...],
+    "data_args": [...], "confidence": "high|medium|low"}.
     """
     path = Path(training_script)
     if not path.is_file():
@@ -423,6 +418,7 @@ def detect_dataset_format(training_script: str) -> dict:
     # Determine primary format (specific formats first, then generic)
     priority = [
         "cifar", "mnist", "huggingface",
+        "lerobot", "rlds", "robomimic", "zarr",
         "image_folder", "csv", "hdf5", "tfrecord", "parquet",
         "sklearn", "xgboost", "lightgbm",
         "numpy", "torch_tensor",
@@ -446,7 +442,8 @@ def detect_dataset_format(training_script: str) -> dict:
     if total_matches >= 2:
         confidence = "high"
     elif primary in ("image_folder", "csv", "hdf5", "tfrecord", "parquet",
-                      "sklearn", "xgboost", "lightgbm"):
+                      "sklearn", "xgboost", "lightgbm",
+                      "lerobot", "rlds", "robomimic", "zarr"):
         confidence = "high"
     elif primary in ("cifar", "mnist"):
         confidence = "medium"
@@ -467,13 +464,9 @@ def detect_dataset_format_project(
 ) -> dict:
     """Detect dataset format by scanning the training script AND its local imports.
 
-    Parses the training script's imports, finds matching local `.py` files
-    in the project, scans those for data-loading patterns too, and returns
-    the most confident detection across all scanned files.
-
-    Returns the same schema as :func:`detect_dataset_format`, plus::
-
-        "scanned_files": ["train.py", "data.py", ...]
+    Parses the script's imports, scans matching local `.py` files for data-loading
+    patterns too, and returns the most confident detection. Same schema as
+    :func:`detect_dataset_format`, plus "scanned_files": [...].
     """
     root = Path(project_root).resolve()
     script_path = Path(training_script).resolve()
@@ -529,26 +522,12 @@ def _confidence_rank(confidence: str) -> int:
     return {"high": 3, "medium": 2, "low": 1}.get(confidence, 0)
 
 
-# ---------------------------------------------------------------------------
-# validate_data_path
-# ---------------------------------------------------------------------------
-
 def validate_data_path(path: str, expected_format: str) -> dict:
     """Validate that *path* exists and matches *expected_format*.
 
-    For large datasets only samples the first N files/entries to keep
-    validation fast.
-
-    Returns::
-
-        {
-            "exists": bool,
-            "readable": bool,
-            "non_empty": bool,
-            "format_matches": bool | None,
-            "details": {...},
-            "errors": [...],
-        }
+    Samples only the first N files/entries on large datasets. Returns
+    {"exists": bool, "readable": bool, "non_empty": bool,
+    "format_matches": bool|None, "details": {...}, "errors": [...]}.
     """
     p = Path(path)
     result: dict = {
@@ -590,7 +569,10 @@ def validate_data_path(path: str, expected_format: str) -> dict:
 
         if expected_format == "image_folder":
             result["format_matches"] = _validate_image_folder(p, result)
-        elif expected_format in ("csv", "hdf5", "parquet", "tfrecord"):
+        elif expected_format == "zarr":
+            result["format_matches"] = _validate_zarr_store(entries, result)
+        elif expected_format in ("csv", "hdf5", "parquet", "tfrecord",
+                                 "robomimic", "rlds"):
             # For these formats, we expect files, not a directory of class dirs
             # Check if sampled entries contain matching files
             ext_map = {
@@ -598,6 +580,8 @@ def validate_data_path(path: str, expected_format: str) -> dict:
                 "hdf5": {".h5", ".hdf5", ".hdf"},
                 "parquet": {".parquet"},
                 "tfrecord": {".tfrecord", ".tfrecords"},
+                "robomimic": {".h5", ".hdf5", ".hdf"},
+                "rlds": {".tfrecord", ".tfrecords"},
             }
             exts = ext_map.get(expected_format, set())
             matching = [f for f in entries if f.is_file() and f.suffix.lower() in exts]
@@ -630,8 +614,11 @@ def validate_data_path(path: str, expected_format: str) -> dict:
             ".pt": "torch_tensor", ".pth": "torch_tensor",
         }
         detected = ext_format_map.get(ext)
+        # Formats stored in a container format: accept the container's extension
+        equivalents = {"robomimic": "hdf5", "rlds": "tfrecord"}
+        expected_effective = equivalents.get(expected_format, expected_format)
         if detected and expected_format != "unknown":
-            result["format_matches"] = (detected == expected_format)
+            result["format_matches"] = (detected == expected_effective)
             if not result["format_matches"]:
                 result["errors"].append(
                     f"File extension '{ext}' suggests '{detected}', "
@@ -681,15 +668,33 @@ def _validate_image_folder(p: Path, result: dict) -> bool:
     return True
 
 
-# ---------------------------------------------------------------------------
-# Bulk install from dependency files
-# ---------------------------------------------------------------------------
+def _validate_zarr_store(entries: list[Path], result: dict) -> bool:
+    """Check zarr store structure: .zgroup/.zarray markers at top level or one level down."""
+    markers = {".zgroup", ".zarray"}
+    has_marker = any(f.name in markers for f in entries)
+    if not has_marker:
+        # Nested stores: markers may live one level down (e.g., data/.zarray)
+        for sub in [e for e in entries if e.is_dir()][:20]:
+            try:
+                if any(f.name in markers
+                       for f in itertools.islice(sub.iterdir(), 100)):
+                    has_marker = True
+                    break
+            except (PermissionError, OSError):
+                continue
+    result["details"]["zarr_markers_found"] = has_marker
+    if not has_marker:
+        result["errors"].append(
+            "No zarr markers (.zgroup/.zarray) found at top level or one level down"
+        )
+    return has_marker
+
 
 # Dependency file → (manager, install_command_template) mapping
 _DEPS_FILES: list[tuple[str, str, str]] = [
     # (filename, manager, command_template)
-    ("environment.yml", "conda", "conda env update --prune -f {deps_file}"),
-    ("environment.yaml", "conda", "conda env update --prune -f {deps_file}"),
+    ("environment.yml", "conda", "conda env update -f {deps_file}"),
+    ("environment.yaml", "conda", "conda env update -f {deps_file}"),
     ("requirements.txt", "pip", "pip install -r {deps_file}"),
     ("setup.py", "pip", "pip install -e {project_root}"),
     ("setup.cfg", "pip", "pip install -e {project_root}"),
@@ -703,21 +708,11 @@ def bulk_install_command(
 ) -> dict:
     """Generate the recommended bulk install command for a project.
 
-    Checks for common dependency files (`requirements.txt`,
-    `environment.yml`, `pyproject.toml`) and generates the appropriate
-    install command for *env_manager*.
-
-    When *env_manager* is `"conda"` and *env_name* is provided, conda
-    commands include `-n <env_name>` to target the correct environment.
-
-    Returns::
-
-        {
-            "has_deps_file": bool,
-            "deps_file": "<path>" | None,
-            "install_command": "<command>" | None,
-            "manager": "<env_manager>",
-        }
+    Checks common dependency files (`requirements.txt`, `environment.yml`,
+    `pyproject.toml`) and builds the install command for *env_manager*. When
+    *env_manager* is `"conda"` and *env_name* is given, conda commands include
+    `-n <env_name>`. Returns {"has_deps_file": bool, "deps_file": <path>|None,
+    "install_command": <command>|None, "manager": <env_manager>}.
     """
     root = Path(project_root).resolve()
     conda_n = f" -n {env_name}" if env_manager == "conda" and env_name else ""
@@ -796,10 +791,6 @@ def bulk_install_command(
     return no_deps
 
 
-# ---------------------------------------------------------------------------
-# GPU-aware package installation
-# ---------------------------------------------------------------------------
-
 # PyTorch CUDA wheel index URLs keyed by CUDA major.minor
 _TORCH_CUDA_URLS: dict[str, str] = {
     "11.8": "https://download.pytorch.org/whl/cu118",
@@ -867,24 +858,12 @@ def gpu_install_command(
 ) -> dict:
     """Return the recommended install command for *package*, GPU-aware.
 
-    For PyTorch packages (torch, torchvision, torchaudio), detects the CUDA
-    version and returns the appropriate `--index-url` command.  For
-    tensorflow, returns `tensorflow[and-cuda]` when a GPU is present.
-    For JAX packages (jax, jaxlib), returns `jax[cuda12]` or similar.
-    For other packages, returns a plain `pip install <package>`.
-
-    When *env_manager* is `"conda"` and *env_name* is provided, the
-    resulting pip command is wrapped with `conda run --no-banner -n <env_name>`
-    so that packages install into the correct conda environment.
-
-    Returns::
-
-        {
-            "package": "torch",
-            "gpu_detected": true,
-            "cuda_version": "12.1",
-            "install_command": "pip install torch --index-url https://...",
-        }
+    torch/torchvision/torchaudio → CUDA-detected `--index-url` command;
+    tensorflow → `tensorflow[and-cuda]` when a GPU is present; jax/jaxlib →
+    `jax[cuda12]` or similar; otherwise plain `pip install <package>`. When
+    *env_manager* is `"conda"` and *env_name* is given, the pip command is
+    wrapped with `conda run --no-banner -n <env_name>`. Returns {"package": ...,
+    "gpu_detected": bool, "cuda_version": ...|None, "install_command": ...}.
     """
     cuda_version = _detect_cuda_version()
     gpu_detected = cuda_version is not None
@@ -956,10 +935,6 @@ def _wrap_for_conda(
         return f"conda run --no-banner -n {env_name} {pip_cmd}"
     return pip_cmd
 
-
-# ---------------------------------------------------------------------------
-# CLI entry point
-# ---------------------------------------------------------------------------
 
 def _print_json(data: dict) -> None:
     print(json.dumps(data, indent=2))

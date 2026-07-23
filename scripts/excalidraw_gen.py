@@ -1,22 +1,15 @@
 #!/usr/bin/env python3
 """Generate Excalidraw-compatible JSON diagrams for ML optimization results.
 
-Renders optimization data as Excalidraw JSON written under
-<exp_root>/artifacts/. Supports four diagram modes: a pipeline journey
-flowchart, a two-experiment comparison, an HP-vs-metric landscape scatter,
-and a before/after architecture diagram for a proposal.
+Writes Excalidraw JSON under <exp_root>/artifacts/ in four modes: pipeline
+journey flowchart, two-experiment comparison, HP-vs-metric landscape scatter,
+and before/after architecture diagram.
 
 Usage:
     python3 excalidraw_gen.py <exp_root> pipeline <metric>             # Optimization journey flowchart
     python3 excalidraw_gen.py <exp_root> comparison <id1> <id2>        # Side-by-side comparison of two experiments
     python3 excalidraw_gen.py <exp_root> hp-landscape <hp> <metric>    # Scatter of tried HP values vs metric
     python3 excalidraw_gen.py <exp_root> architecture <proposal>       # Before/after architecture diagram for a proposal
-
-Examples:
-    python3 excalidraw_gen.py <exp_root> pipeline loss
-    python3 excalidraw_gen.py <exp_root> comparison exp-001 exp-007
-    python3 excalidraw_gen.py <exp_root> hp-landscape lr accuracy
-    python3 excalidraw_gen.py <exp_root> architecture label-smoothing
 """
 
 import json
@@ -29,11 +22,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from result_analyzer import load_results, rank_by_metric
 
-# ---------------------------------------------------------------------------
-# Excalidraw element helpers
-# ---------------------------------------------------------------------------
+# --- Excalidraw element helpers ---
 
-# Color palette
 COLORS = {
     "green": "#2f9e44",
     "red": "#e03131",
@@ -140,9 +130,7 @@ def _write_excalidraw(path: Path, elements: list) -> str:
     return str(path)
 
 
-# ---------------------------------------------------------------------------
-# Diagram: Pipeline overview
-# ---------------------------------------------------------------------------
+# --- Diagram: Pipeline overview ---
 
 def generate_pipeline_diagram(exp_root: str, metric: str) -> str:
     """Generate an optimization journey flowchart."""
@@ -154,27 +142,20 @@ def generate_pipeline_diagram(exp_root: str, metric: str) -> str:
         out = Path(exp_root) / "artifacts" / "pipeline-overview.excalidraw"
         return _write_excalidraw(out, elements)
 
-    # Get baseline
     baseline_val = None
     baseline = results.get("baseline", {})
     if baseline:
         baseline_val = baseline.get("metrics", {}).get(metric)
 
-    # Rank experiments
     ranked = rank_by_metric(results, metric, lower_is_better=True)
 
     elements = []
-    # Title
     elements.append(_text(50, 20, f"Optimization Pipeline — {metric}", font_size=24, color=COLORS["blue"]))
 
-    # Baseline box
     bl_label = f"Baseline\n{metric}={baseline_val}" if baseline_val is not None else "Baseline"
     elements.extend(_rect(50, 70, 200, 60, label=bl_label, bg=COLORS["bg_blue"], stroke=COLORS["blue"]))
-
-    # Arrow down
     elements.append(_arrow(150, 130, 150, 160, color=COLORS["gray"]))
 
-    # Experiment boxes
     y = 170
     exp_entries = [r for r in ranked if r.get("exp_id", "").startswith("exp-")]
     for i, entry in enumerate(exp_entries[:12]):  # Cap at 12 for readability
@@ -207,9 +188,7 @@ def generate_pipeline_diagram(exp_root: str, metric: str) -> str:
     return _write_excalidraw(out, elements)
 
 
-# ---------------------------------------------------------------------------
-# Diagram: Experiment comparison
-# ---------------------------------------------------------------------------
+# --- Diagram: Experiment comparison ---
 
 def generate_comparison_diagram(exp_root: str, exp_id_1: str, exp_id_2: str) -> str:
     """Generate a side-by-side comparison of two experiments."""
@@ -222,7 +201,7 @@ def generate_comparison_diagram(exp_root: str, exp_id_1: str, exp_id_2: str) -> 
     elements = []
     elements.append(_text(50, 20, f"Comparison: {exp_id_1} vs {exp_id_2}", font_size=24, color=COLORS["blue"]))
 
-    # Left box
+    # Left box (blue) vs right box (green)
     config1 = data1.get("config", {})
     metrics1 = data1.get("metrics", {})
     left_lines = [exp_id_1, f"Status: {data1.get('status', '?')}"]
@@ -235,7 +214,6 @@ def generate_comparison_diagram(exp_root: str, exp_id_1: str, exp_id_2: str) -> 
                           label="\n".join(left_lines), bg=COLORS["bg_blue"],
                           stroke=COLORS["blue"], font_size=12))
 
-    # Right box
     config2 = data2.get("config", {})
     metrics2 = data2.get("metrics", {})
     right_lines = [exp_id_2, f"Status: {data2.get('status', '?')}"]
@@ -247,17 +225,13 @@ def generate_comparison_diagram(exp_root: str, exp_id_1: str, exp_id_2: str) -> 
     elements.extend(_rect(350, 70, 250, max(200, len(right_lines) * 20 + 20),
                           label="\n".join(right_lines), bg=COLORS["bg_green"],
                           stroke=COLORS["green"], font_size=12))
-
-    # Diff arrow
     elements.append(_arrow(300, 170, 350, 170, color=COLORS["yellow"]))
 
     out = Path(exp_root) / "artifacts" / f"comparison-{exp_id_1}-vs-{exp_id_2}.excalidraw"
     return _write_excalidraw(out, elements)
 
 
-# ---------------------------------------------------------------------------
-# Diagram: HP landscape
-# ---------------------------------------------------------------------------
+# --- Diagram: HP landscape ---
 
 def generate_hp_landscape(exp_root: str, hp_name: str, metric: str) -> str:
     """Visualize HP search space as a scatter of tried configs."""
@@ -270,7 +244,6 @@ def generate_hp_landscape(exp_root: str, hp_name: str, metric: str) -> str:
     elements = []
     elements.append(_text(50, 20, f"HP Landscape: {hp_name} vs {metric}", font_size=24, color=COLORS["blue"]))
 
-    # Collect data points
     points = []
     for exp_id, data in results.items():
         if not exp_id.startswith("exp-"):
@@ -299,7 +272,6 @@ def generate_hp_landscape(exp_root: str, hp_name: str, metric: str) -> str:
     chart_x, chart_y = 80, 80
     chart_w, chart_h = 500, 300
 
-    # Axes
     elements.extend(_rect(chart_x, chart_y, chart_w, chart_h,
                           bg=COLORS["white"], stroke=COLORS["gray"]))
     elements.append(_text(chart_x + chart_w / 2 - 40, chart_y + chart_h + 10,
@@ -307,7 +279,6 @@ def generate_hp_landscape(exp_root: str, hp_name: str, metric: str) -> str:
     elements.append(_text(chart_x - 60, chart_y + chart_h / 2,
                           metric, font_size=14, color=COLORS["gray"]))
 
-    # Plot points
     hp_range = hp_max - hp_min if hp_max != hp_min else 1
     m_range = m_max - m_min if m_max != m_min else 1
 
@@ -326,7 +297,6 @@ def generate_hp_landscape(exp_root: str, hp_name: str, metric: str) -> str:
         elements.extend(dot)
         elements.append(_text(px + 10, py - 8, eid, font_size=10, color=color))
 
-    # Baseline line
     if baseline_val is not None and m_min <= baseline_val <= m_max:
         bl_y = chart_y + chart_h - 20 - (baseline_val - m_min) / m_range * (chart_h - 40)
         elements.append(_text(chart_x + chart_w + 5, bl_y - 8,
@@ -336,9 +306,7 @@ def generate_hp_landscape(exp_root: str, hp_name: str, metric: str) -> str:
     return _write_excalidraw(out, elements)
 
 
-# ---------------------------------------------------------------------------
-# Diagram: Architecture change
-# ---------------------------------------------------------------------------
+# --- Diagram: Architecture change ---
 
 def generate_architecture_diagram(exp_root: str, proposal_name: str) -> str:
     """Generate a before/after architecture diagram for a proposal."""
@@ -369,8 +337,6 @@ def generate_architecture_diagram(exp_root: str, proposal_name: str) -> str:
     elements.extend(_rect(50, 100, 250, 120,
                           label=f"Original Code\n\nFiles:\n{chr(10).join(proposal.get('files_modified', ['?'])[:5])}",
                           bg=COLORS["bg_red"], stroke=COLORS["red"], font_size=12))
-
-    # Arrow
     elements.append(_arrow(175, 220, 175, 260, color=COLORS["yellow"]))
 
     # After section
@@ -391,7 +357,6 @@ def generate_architecture_diagram(exp_root: str, proposal_name: str) -> str:
                           label="\n".join(after_lines),
                           bg=COLORS["bg_green"], stroke=COLORS["green"], font_size=12))
 
-    # Notes
     notes = proposal.get("notes", "")
     if notes:
         elements.append(_text(350, 100, f"Notes: {notes[:100]}", font_size=12, color=COLORS["gray"]))
@@ -400,9 +365,7 @@ def generate_architecture_diagram(exp_root: str, proposal_name: str) -> str:
     return _write_excalidraw(out, elements)
 
 
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
+# --- CLI ---
 
 def _cli_main() -> None:
     if len(sys.argv) < 4:

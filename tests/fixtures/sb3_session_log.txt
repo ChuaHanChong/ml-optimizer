@@ -1,0 +1,55 @@
+Using cpu device
+Wrapping the env with a `Monitor` wrapper
+Wrapping the env in a DummyVecEnv.
+---------------------------------
+| rollout/           |          |
+|    ep_len_mean     | 22.4     |
+|    ep_rew_mean     | -178     |
+| time/              |          |
+|    fps             | 2867     |
+|    iterations      | 1        |
+|    time_elapsed    | 0        |
+|    total_timesteps | 2048     |
+---------------------------------
+-----------------------------------------
+| rollout/                |             |
+|    ep_len_mean          | 27.1        |
+|    ep_rew_mean          | -142        |
+| time/                   |             |
+|    fps                  | 1780        |
+|    iterations           | 2           |
+|    time_elapsed         | 2           |
+|    total_timesteps      | 4096        |
+| train/                  |             |
+|    approx_kl            | 0.008525751 |
+|    clip_fraction        | 0.0977      |
+|    clip_range           | 0.2         |
+|    entropy_loss         | -0.686      |
+|    explained_variance   | -0.0029     |
+|    learning_rate        | 0.0003      |
+|    loss                 | 4.28        |
+|    n_updates            | 10          |
+|    policy_gradient_loss | -0.0128     |
+|    value_loss           | 49.9        |
+-----------------------------------------
+-----------------------------------------
+| rollout/                |             |
+|    ep_len_mean          | 33.9        |
+|    ep_rew_mean          | -101        |
+| time/                   |             |
+|    fps                  | 1650        |
+|    iterations           | 3           |
+|    time_elapsed         | 3           |
+|    total_timesteps      | 6144        |
+| train/                  |             |
+|    approx_kl            | 0.009874746 |
+|    clip_fraction        | 0.0663      |
+|    clip_range           | 0.2         |
+|    entropy_loss         | -0.666      |
+|    explained_variance   | 0.0906      |
+|    learning_rate        | 0.0003      |
+|    loss                 | 10.1        |
+|    n_updates            | 20          |
+|    policy_gradient_loss | -0.0159     |
+|    value_loss           | 31.2        |
+-----------------------------------------

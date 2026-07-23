@@ -778,3 +778,64 @@ class TestCLI:
         exp = str(tmp_path / "experiments")
         Path(exp).mkdir()
         assert _run_cli(exp, "init-goals", "{bad json") == 1
+
+
+# ---------------------------------------------------------------------------
+# TestRLScopeHeuristics (Batch E, Task 23)
+# ---------------------------------------------------------------------------
+
+
+def _rl_goals(scope):
+    return {
+        "objective": {"primary_metric": "episode_return", "lower_is_better": False},
+        "constraints": {"scope_level": scope},
+    }
+
+
+class TestRLScopeHeuristics:
+    """Env/reward file-pattern heuristics: env dynamics files are full-scope only."""
+
+    def _exp(self, tmp_path, scope):
+        exp = str(tmp_path / "experiments")
+        Path(exp).mkdir()
+        init_goals(exp, _rl_goals(scope))
+        return exp
+
+    def test_research_env_file_warns_at_training_scope(self, tmp_path):
+        exp = self._exp(tmp_path, "training")
+        result = validate_agent_output(exp, "research", {"proposals": [
+            {"name": "harder curriculum", "type": "code_change", "scope": "training",
+             "files_to_modify": ["envs/cartpole_env.py"]},
+        ]})
+        assert result["valid"] is True  # heuristic = warning, never violation
+        assert any("env-dynamics" in w for w in result["warnings"])
+
+    def test_research_env_file_warns_at_architecture_scope(self, tmp_path):
+        exp = self._exp(tmp_path, "architecture")
+        result = validate_agent_output(exp, "research", {"proposals": [
+            {"name": "domain randomization", "type": "code_change", "scope": "architecture",
+             "files_to_modify": ["tasks/domain_rand.py"]},
+        ]})
+        assert result["valid"] is True
+        assert any("env-dynamics" in w for w in result["warnings"])
+
+    def test_implement_policy_file_warns_at_training_scope(self, tmp_path):
+        exp = self._exp(tmp_path, "training")
+        result = validate_agent_output(exp, "implement", {
+            "files_modified": ["agents/policy_net.py"]})
+        assert result["valid"] is True
+        assert any("architecture changes" in w for w in result["warnings"])
+
+    def test_implement_env_file_warns_at_architecture_scope(self, tmp_path):
+        exp = self._exp(tmp_path, "architecture")
+        result = validate_agent_output(exp, "implement", {
+            "files_modified": ["tasks/curriculum.py"]})
+        assert result["valid"] is True
+        assert any("env-dynamics" in w for w in result["warnings"])
+
+    def test_implement_env_file_ok_at_full_scope(self, tmp_path):
+        exp = self._exp(tmp_path, "full")
+        result = validate_agent_output(exp, "implement", {
+            "files_modified": ["envs/cartpole_env.py", "tasks/curriculum.py"]})
+        assert result["valid"] is True
+        assert result["warnings"] == []

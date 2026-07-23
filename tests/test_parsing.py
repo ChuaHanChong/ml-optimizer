@@ -17,7 +17,9 @@ from detect_divergence import (
     detect_gradual_drift,
     detect_nan_inf,
     detect_plateau,
+    detect_reward_collapse,
     get_thresholds_for_category,
+    scan_records_for_nan_inf,
 )
 from parse_logs import (
     detect_format,
@@ -28,6 +30,7 @@ from parse_logs import (
     parse_kv_line,
     parse_log,
     parse_python_logging_line,
+    parse_sb3_lines,
     parse_tqdm_line,
     parse_xgboost_line,
 )
@@ -332,7 +335,8 @@ class TestDivergenceDetection:
         """Plateau detection fires on flat metrics and ignores improving/short series."""
         result = detect_plateau(values, patience=patience, lower_is_better=lower)
         if should_plateau:
-            assert result is not None and result["diverged"] is True
+            assert result is not None and result["status"] == "plateaued"
+            assert result["diverged"] is False  # plateau warns, never kills
             assert "plateau" in result["reason"].lower()
         else:
             assert result is None
@@ -357,7 +361,8 @@ class TestDivergenceDetection:
         result = detect_gradual_drift(values, window=50, min_slope_ratio=0.1,
                                       lower_is_better=lower)
         if should_drift:
-            assert result is not None and result["diverged"] is True
+            assert result is not None and result["status"] == "plateaued"
+            assert result["diverged"] is False  # drift warns, never kills
             assert "drift" in result["reason"].lower()
         else:
             assert result is None
@@ -389,20 +394,21 @@ class TestDivergenceDetection:
 
     # -- check_divergence composite --
 
-    @pytest.mark.parametrize("values,kwargs,expected_diverged,reason_contains", [
-        ([1.0 - i * 0.01 for i in range(50)], {}, False, "healthy"),
-        ([1.0, 0.9, float("nan"), 0.7], {}, True, "nan"),
-        ([], {}, False, "no data"),
+    @pytest.mark.parametrize("values,kwargs,expected_status,reason_contains", [
+        ([1.0 - i * 0.01 for i in range(50)], {}, "healthy", "healthy"),
+        ([1.0, 0.9, float("nan"), 0.7], {}, "diverged", "nan"),
+        ([], {}, "healthy", "no data"),
         ([1.0] * 15 + [100.0],
-         {"explosion_window": 10, "explosion_threshold": 5.0}, True, "explosion"),
+         {"explosion_window": 10, "explosion_threshold": 5.0}, "diverged", "explosion"),
         ([0.5 + i * 0.005 for i in range(60)],
-         {"gradual_drift_window": 50}, True, "drift"),
-        ([0.5] * 25, {"plateau_patience": 20}, True, "plateau"),
+         {"gradual_drift_window": 50}, "plateaued", "drift"),
+        ([0.5] * 25, {"plateau_patience": 20}, "plateaued", "plateau"),
     ])
-    def test_check_divergence(self, values, kwargs, expected_diverged, reason_contains):
-        """The composite check reports the expected divergence type or health."""
+    def test_check_divergence(self, values, kwargs, expected_status, reason_contains):
+        """The composite check reports the expected status; only 'diverged' kills."""
         result = check_divergence(values, **kwargs)
-        assert result["diverged"] is expected_diverged
+        assert result["status"] == expected_status
+        assert result["diverged"] is (expected_status == "diverged")
         assert reason_contains.lower() in result["reason"].lower()
 
     def test_divergence_priority_order(self):
@@ -470,9 +476,9 @@ class TestModelCategoryThresholds:
     def test_generative_longer_patience(self):
         """25 flat values: default patience triggers, generative does not."""
         values = [0.5] + [0.5] * 25
-        assert check_divergence(values, plateau_patience=20)["diverged"] is True
+        assert check_divergence(values, plateau_patience=20)["status"] == "plateaued"
         gen_kwargs = get_thresholds_for_category("generative")
-        assert check_divergence(values, **gen_kwargs)["diverged"] is False
+        assert check_divergence(values, **gen_kwargs)["status"] == "healthy"
 
 
 # ---------------------------------------------------------------------------
@@ -529,18 +535,19 @@ class TestEdgeCases:
         partial = parse_log(str(FIXTURES / "partial_log.txt"))
         assert len(partial) >= 3
 
-    @pytest.mark.parametrize("values,expected_diverged,reason_contains", [
-        ([0.5], False, "insufficient"),
-        ([1.0, 0.9, 0.8], False, "insufficient"),
-        ([0.5, 0.4, 0.3, 0.2, 0.1], False, "healthy"),  # 5 values runs checks
-        ([1.0, float("nan"), 0.8], True, "nan"),  # short with NaN
-        ([1.0, float("inf")], True, "inf"),  # short with Inf
-        ([1.0] * 30, True, "plateau"),  # constant values
+    @pytest.mark.parametrize("values,expected_status,reason_contains", [
+        ([0.5], "healthy", "insufficient"),
+        ([1.0, 0.9, 0.8], "healthy", "insufficient"),
+        ([0.5, 0.4, 0.3, 0.2, 0.1], "healthy", "healthy"),  # 5 values runs checks
+        ([1.0, float("nan"), 0.8], "diverged", "nan"),  # short with NaN
+        ([1.0, float("inf")], "diverged", "inf"),  # short with Inf
+        ([1.0] * 30, "plateaued", "plateau"),  # constant values warn, never kill
     ])
-    def test_divergence_edge_cases(self, values, expected_diverged, reason_contains):
-        """Short, NaN/Inf, and constant series produce the expected divergence verdict."""
+    def test_divergence_edge_cases(self, values, expected_status, reason_contains):
+        """Short, NaN/Inf, and constant series produce the expected status verdict."""
         result = check_divergence(values, plateau_patience=20)
-        assert result["diverged"] is expected_diverged
+        assert result["status"] == expected_status
+        assert result["diverged"] is (expected_status == "diverged")
         assert reason_contains.lower() in result["reason"].lower()
 
 
@@ -722,3 +729,197 @@ class TestOverfittingDetection:
                      "--min-gap", "0.01")
         assert r.returncode == 0
         assert json.loads(r.stdout)["overfitting"] is False
+
+
+# ---------------------------------------------------------------------------
+# TestShiftInvariantDivergence — Batch B sign-robust regression tests
+# ---------------------------------------------------------------------------
+
+
+class TestShiftInvariantDivergence:
+    """Negative-reward, negative-loss, sparse-success-rate, plateau-split cases."""
+
+    def test_negative_reward_improving_no_crash(self):
+        """Improving negative rewards (RL) must not trip the crash detector."""
+        values = [-500.0 + i * 5 for i in range(30)]  # -500 -> -355, healthy
+        result = check_divergence(values, lower_is_better=False)
+        assert result["diverged"] is False
+
+    def test_negative_reward_noisy_stable_no_crash(self):
+        """Noisy stable negative rewards never crash (ratio vs negative avg is skipped)."""
+        rng = random.Random(7)
+        values = [-100.0 + rng.gauss(0, 3) for _ in range(40)]
+        assert detect_explosion(values, window=10, threshold=5.0,
+                                lower_is_better=False) is None
+
+    def test_negative_reward_crash_detected(self):
+        """A genuine collapse in negative-reward space fires the MAD-based crash test."""
+        values = [-100.0, -101.0] * 10 + [-900.0]
+        result = detect_explosion(values, window=10, threshold=20.0,
+                                  lower_is_better=False)
+        assert result is not None and result["diverged"] is True
+        assert "crash" in result["reason"].lower()
+
+    def test_negative_loss_explosion_detected(self):
+        """A jump out of negative-loss space fires the MAD-based explosion test."""
+        values = [-5.0, -5.1] * 10 + [50.0]
+        result = detect_explosion(values, window=10, threshold=5.0,
+                                  lower_is_better=True)
+        assert result is not None and "explosion" in result["reason"].lower()
+
+    def test_negative_loss_improving_healthy(self):
+        """A loss trending more negative (improving) is healthy."""
+        values = [-1.0 - i * 0.1 for i in range(30)]
+        assert detect_explosion(values, lower_is_better=True) is None
+
+    def test_sparse_success_rate_exempt_from_crash(self):
+        """Bounded [0,1] higher-is-better metrics (success rate) never crash-kill."""
+        values = [0.0, 0.0, 0.0, 0.1, 0.0, 0.0, 0.2, 0.0,
+                  0.0, 0.0, 0.0, 0.1, 0.0, 0.0, 0.0, 0.0]
+        result = check_divergence(values, lower_is_better=False)
+        assert result["diverged"] is False
+
+    def test_plateau_returns_plateaued_not_kill(self):
+        result = check_divergence([0.5] * 30, plateau_patience=20)
+        assert result["diverged"] is False
+        assert result["status"] == "plateaued"
+
+    def test_drift_returns_plateaued_not_kill(self):
+        values = [0.5 + i * 0.005 for i in range(60)]
+        result = check_divergence(values, gradual_drift_window=50)
+        assert result["diverged"] is False and result["status"] == "plateaued"
+
+    def test_nan_still_kills(self):
+        result = check_divergence([1.0, float("nan"), 0.8])
+        assert result["diverged"] is True and result["status"] == "diverged"
+
+    def test_plateau_min_delta_scales_with_magnitude(self):
+        """At reward scale ~500, +/-5e-5 jitter is NOT improvement — plateau fires."""
+        values = [500.0 + (0.00005 if i % 2 else -0.00005) for i in range(30)]
+        result = detect_plateau(values, patience=20, min_delta=1e-6,
+                                lower_is_better=False)
+        assert result is not None and result["status"] == "plateaued"
+
+
+# ---------------------------------------------------------------------------
+# TestRewardCollapse — RL kill rule via MODEL_CATEGORY_DEFAULTS
+# ---------------------------------------------------------------------------
+
+
+class TestRewardCollapse:
+    """Sustained drop below a fraction of rolling max — the RL kill condition."""
+
+    def test_rl_category_defaults_include_collapse(self):
+        rl = get_thresholds_for_category("rl")
+        assert rl["reward_collapse_fraction"] == 0.5
+        assert rl["reward_collapse_patience"] == 10
+
+    def test_collapse_kills_with_rl_defaults(self):
+        rl = get_thresholds_for_category("rl")
+        # 45 is below 0.5*100 (collapse) but above 100/20 (no ratio crash)
+        values = [100.0] * 15 + [45.0] * 12
+        result = check_divergence(values, lower_is_better=False, **rl)
+        assert result["diverged"] is True and result["status"] == "diverged"
+        assert "collapse" in result["reason"].lower()
+
+    def test_collapse_disabled_by_default(self):
+        """Without a configured fraction the collapse rule never fires."""
+        values = [100.0] * 15 + [45.0] * 12
+        result = check_divergence(values, lower_is_better=False,
+                                  explosion_threshold=20.0)
+        assert result["diverged"] is False
+
+    def test_collapse_skipped_for_nonpositive_rolling_max(self):
+        """A fraction of a non-positive max is not a meaningful floor."""
+        assert detect_reward_collapse([-10.0] * 30, fraction=0.5, patience=5,
+                                      lower_is_better=False) is None
+
+    def test_collapse_cli_flags(self, run_main):
+        r = run_main("detect_divergence.py",
+                     json.dumps([100.0] * 15 + [45.0] * 12),
+                     "--higher-is-better", "--explosion-threshold", "20",
+                     "--reward-collapse-fraction", "0.5",
+                     "--reward-collapse-patience", "10")
+        assert r.returncode == 0
+        out = json.loads(r.stdout)
+        assert out["diverged"] is True and "collapse" in out["reason"].lower()
+
+
+# ---------------------------------------------------------------------------
+# TestMultiMetricScan — NaN/Inf across ALL parsed metrics
+# ---------------------------------------------------------------------------
+
+
+class TestMultiMetricScan:
+    """Any NaN/Inf in any parsed metric is immediate divergence."""
+
+    def test_scan_finds_nan_in_unwatched_metric(self):
+        records = [{"loss": 0.5, "aux_loss": 0.1},
+                   {"loss": 0.4, "aux_loss": float("nan")}]
+        result = scan_records_for_nan_inf(records)
+        assert result is not None and result["diverged"] is True
+        assert result["metric"] == "aux_loss" and result["step"] == 1
+
+    def test_scan_clean_records(self):
+        assert scan_records_for_nan_inf([{"loss": 0.5}, {"loss": 0.4}]) is None
+
+    def test_scan_ignores_non_numeric(self):
+        assert scan_records_for_nan_inf([{"note": "warmup", "loss": 0.5}]) is None
+
+    def test_scan_records_cli(self, run_main):
+        r = run_main("detect_divergence.py", "--scan-records",
+                     '[{"loss": 0.5}, {"loss": NaN}]')
+        assert r.returncode == 0
+        assert json.loads(r.stdout)["diverged"] is True
+
+
+# ---------------------------------------------------------------------------
+# TestSB3Parsing — Stable-Baselines3 / rsl_rl pipe-table format
+# ---------------------------------------------------------------------------
+
+
+class TestSB3Parsing:
+    """SB3 pipe tables: accumulate rows between rules, strip section prefixes."""
+
+    SAMPLE = [
+        "---------------------------------",
+        "| rollout/           |          |",
+        "|    ep_len_mean     | 22.4     |",
+        "|    ep_rew_mean     | -178     |",
+        "| time/              |          |",
+        "|    fps             | 2867     |",
+        "|    total_timesteps | 2048     |",
+        "---------------------------------",
+    ]
+
+    def test_parse_sb3_lines_single_table(self):
+        records = parse_sb3_lines(self.SAMPLE)
+        assert len(records) == 1
+        assert records[0]["ep_rew_mean"] == -178.0
+        assert records[0]["fps"] == 2867.0
+        assert "rollout/" not in records[0]  # section headers skipped
+
+    def test_detect_format_sb3(self):
+        assert detect_format(self.SAMPLE) == "sb3"
+        assert detect_format(["Using cpu device"] + self.SAMPLE) == "sb3"
+
+    def test_parse_sb3_fixture(self):
+        records = parse_log(str(FIXTURES / "sb3_session_log.txt"))
+        assert len(records) == 3
+        rewards = extract_metric_trajectory(records, "ep_rew_mean")
+        assert rewards == [-178.0, -142.0, -101.0]
+        assert records[1]["value_loss"] == 49.9
+        assert records[2]["n_updates"] == 20.0
+
+    def test_sb3_fully_qualified_keys_stripped(self):
+        lines = [
+            "------------------------",
+            "| rollout/ep_rew_mean | -55.3 |",
+            "| train/loss          | 1.2   |",
+            "------------------------",
+        ]
+        assert parse_sb3_lines(lines) == [{"ep_rew_mean": -55.3, "loss": 1.2}]
+
+    def test_sb3_forced_format(self):
+        records = parse_log(str(FIXTURES / "sb3_session_log.txt"), "sb3")
+        assert len(records) == 3

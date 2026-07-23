@@ -1,6 +1,6 @@
 # Dataset Format Reference
 
-Common dataset loading patterns by framework. Use this to understand what format the training code expects.
+Common dataset loading patterns by framework — what format the training code expects.
 
 ## PyTorch
 
@@ -24,7 +24,7 @@ data/train/
 ```python
 torchvision.datasets.CIFAR10(root="./data", download=True)
 ```
-**No preparation needed.** Data is auto-downloaded. Requires internet access on first run.
+**No preparation needed.** Auto-downloaded; requires internet on first run.
 
 ### MNIST/FashionMNIST (auto-download)
 ```python
@@ -87,9 +87,9 @@ dataset = load_dataset("csv", data_files={"train": "train.csv", "test": "test.cs
 # or from a local directory:
 dataset = load_dataset("imagefolder", data_dir="./images")
 ```
-**Expected:** Depends on the dataset type. For named datasets (e.g., "imdb"), data is auto-downloaded. For local files, the paths must exist.
-**Validation:** Check if `datasets` package is installed. For local data, validate file paths. For remote datasets, ensure internet access.
-**Note:** HuggingFace datasets are stored in Arrow format (`.arrow` files) in a cache directory. No special data preparation needed beyond ensuring the `datasets` package is installed.
+**Expected:** Depends on dataset type. Named datasets (e.g., "imdb") auto-download; local files' paths must exist.
+**Validation:** Check `datasets` package is installed. For local data, validate file paths; for remote datasets, ensure internet access.
+**Note:** HuggingFace datasets are stored in Arrow format (`.arrow` files) in a cache directory. No special prep needed beyond installing the `datasets` package.
 
 ## JAX / Flax
 
@@ -98,7 +98,7 @@ dataset = load_dataset("imagefolder", data_dir="./images")
 import tensorflow_datasets as tfds
 dataset = tfds.load('mnist', split='train', as_supervised=True)
 ```
-**No special preparation needed.** Uses TFDS which auto-downloads. Requires `tensorflow-datasets` package.
+**No special preparation needed.** TFDS auto-downloads. Requires `tensorflow-datasets` package.
 
 ### NumPy arrays (common in JAX)
 ```python
@@ -128,6 +128,46 @@ data = numpy.load("data.npy")  # or data.npz
 df = pd.read_parquet("data.parquet")
 ```
 **Expected:** `.parquet` file.
+
+## Robot Demonstration Formats
+
+### LeRobot (HuggingFace robot-learning datasets)
+```python
+from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+dataset = LeRobotDataset("lerobot/pusht")  # or a local root path
+```
+**Expected structure:**
+```
+dataset_root/
+  meta/            # info.json, stats, episode index
+  data/            # chunked parquet files with per-step observations/actions
+  videos/          # optional mp4 camera streams
+```
+**Validation:** `meta/` and `data/` exist; `data/` contains `.parquet` files. Dataset size is counted in transitions (rows), not episodes.
+
+### RLDS (Reinforcement Learning Datasets, TFDS-based)
+```python
+import tensorflow_datasets as tfds
+builder = tfds.builder_from_directory("path/to/rlds_dataset")
+```
+**Expected structure:** a TFDS directory (`dataset_info.json`, `features.json`, `*.tfrecord-*` shards). Each record is one **episode** containing a `steps` sequence (observation, action, reward, is_first/is_last).
+**Validation:** directory contains `.tfrecord*` shards. Count transitions as episodes × steps-per-episode.
+
+### robomimic (HDF5 demonstrations)
+```python
+from robomimic.utils.dataset import SequenceDataset
+dataset = SequenceDataset(hdf5_path="demo.hdf5", ...)
+```
+**Expected:** a single `.hdf5` file with `data/demo_N` groups; each demo holds `obs/*`, `actions`, `rewards`, `dones` datasets and a `num_samples` attribute.
+**Validation:** file exists and is HDF5 (`.hdf5`/`.h5`). Total transitions = sum of `num_samples` over demos (`data.attrs["total"]` when present).
+
+### Zarr replay buffers (e.g., diffusion_policy)
+```python
+import zarr
+root = zarr.open("replay_buffer.zarr", mode="r")
+```
+**Expected structure:** a `.zarr` directory containing `.zgroup`/`.zarray` marker files, typically `data/*` arrays (one row per transition) and `meta/episode_ends`.
+**Validation:** `.zgroup` or `.zarray` markers present at top level or one level down. Transitions = length of the `data` arrays; episodes = length of `meta/episode_ends`.
 
 ## Common Preparation Steps
 

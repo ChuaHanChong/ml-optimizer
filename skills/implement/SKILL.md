@@ -8,16 +8,16 @@ user-invocable: false
 
 Apply research proposals as actual code changes with git branch isolation, progressive validation, and a structured manifest for the experiment loop.
 
-Use extended thinking for all analytical reasoning in this skill. Ultrathink. Think through implementation approaches, potential side effects, validation strategies, and backwards compatibility before making code changes.
+Think through implementation approaches, side effects, validation strategies, and backwards compatibility before making code changes.
 
-> **Path convention:** All paths written as `<exp_root>/...` refer to the `exp_root` parameter from your dispatch. The plugin does not hardcode the output directory name.
+> **Path convention:** paths written as `<exp_root>/...` refer to the `exp_root` dispatch parameter. The plugin does not hardcode the output directory name.
 
 ## Reference
 
-- Implementation patterns: `${CLAUDE_SKILL_DIR}/references/implementation-patterns.md` (in this skill's directory)
-- Validation checklist: `${CLAUDE_SKILL_DIR}/references/validation-checklist.md` (in this skill's directory)
+- Implementation patterns: `${CLAUDE_SKILL_DIR}/references/implementation-patterns.md`
+- Validation checklist: `${CLAUDE_SKILL_DIR}/references/validation-checklist.md`
 - Python helpers: `${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py` (`analyze` is for framework detection only — NOT a gitnexus fallback)
-- GitNexus code-graph wrapper (REQUIRED): `${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py` (`available`/`index`/`is-indexed`). GitNexus is a HARD PREREQUISITE verified at Phase 2 — there is NO grep/`analyze` fallback for code understanding. The wrapper never raises, but this skill treats `available()==False` or an indexing failure as a HARD ERROR (halt with install/repair guidance), not a silent fallback. `index <path>` runs `gitnexus analyze <path> --index-only` — indexing is NON-INVASIVE: it does NOT inject a GitNexus section into the indexed repo's CLAUDE.md/AGENTS.md and does NOT install `.claude/` skills, and it auto-adds `.gitnexus/` to the repo's git exclude (you still must never `git add` it). Querying the resulting graph is MCP-only (`mcp__gitnexus__context`/`query`/`impact`) — there is no gitnexus-CLI query path in this plugin.
+- GitNexus code-graph wrapper (REQUIRED): `${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py` (`available`/`index`/`is-indexed`). GitNexus is a HARD PREREQUISITE verified at Phase 2 — NO grep/`analyze` fallback for code understanding. The wrapper never raises, but this skill treats `available()==False` or an indexing failure as a HARD ERROR (halt with install/repair guidance), not a silent fallback. `index <path>` runs `gitnexus analyze <path> --index-only` — NON-INVASIVE: it does NOT inject a GitNexus section into the indexed repo's CLAUDE.md/AGENTS.md, does NOT install `.claude/` skills, and auto-adds `.gitnexus/` to the repo's git exclude (still never `git add` it). Querying the graph is MCP-only (`mcp__gitnexus__context`/`query`/`impact`) — no gitnexus-CLI query path in this plugin.
 
 ## Inputs Expected
 
@@ -28,7 +28,7 @@ From the orchestrator or direct invocation:
 
 ## Step 1: Load Proposals
 
-> **Goal check:** Verify each proposal's changes are within the `scope_level` from the optimization goals. Training scope = no model architecture changes. Architecture scope = model files allowed. Full scope = all changes allowed.
+> **Goal check:** Verify each proposal's changes are within the `scope_level` from the optimization goals. Training scope = no model architecture changes. Architecture scope = model files allowed. Full scope = all changes allowed. **RL:** training scope = algorithm HPs, reward shaping, obs normalization, entropy/GAE schedules only; architecture scope also allows policy/value network changes; env dynamics, curriculum, and domain randomization are full scope ONLY.
 
 Parse the research findings file for selected proposals:
 
@@ -37,28 +37,26 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py \
   <findings_path> '<selected_indices_json>'
 ```
 
-This returns structured proposals with names, slugs, files to modify, and implementation steps.
+Returns structured proposals with names, slugs, files to modify, and implementation steps.
 
 If no findings file exists, ask the user to run the `ml-optimizer:research` skill first.
 
 ## Step 1.1: Classify Proposals by Strategy
 
-Group proposals by their `implementation_strategy` field:
+Group proposals by `implementation_strategy`:
 
-- **`from_reference` proposals:** Will require cloning a reference repo. If multiple proposals share the same `reference_repo` URL, clone it once and reuse.
-- **`from_scratch` proposals:** Will be implemented from paper descriptions and implementation steps only.
+- **`from_reference`:** requires cloning a reference repo. If multiple proposals share the same `reference_repo` URL, clone once and reuse.
+- **`from_scratch`:** implemented from paper descriptions and implementation steps only.
 
-Note: Proposals without an `implementation_strategy` field default to `from_scratch` (backward compatibility).
+Proposals without `implementation_strategy` default to `from_scratch` (backward compatibility).
 
 ## Step 2: Detect Conflicts
 
-Check for proposals that modify the same files:
+Inspect the `conflicts` array from the CLI output (proposals modifying the same files). If conflicts exist:
 
-From the CLI output, inspect the `conflicts` array. If conflicts exist:
-
-1. **Inform the user** which proposals conflict and on which files
-2. **Recommend** implementing conflicting proposals on separate branches (which is the default)
-3. **Warn** that merging conflicting branches later may require manual conflict resolution
+1. **Inform the user** which proposals conflict, on which files
+2. **Recommend** implementing conflicting proposals on separate branches (the default)
+3. **Warn** that merging conflicting branches later may need manual resolution
 
 Proceed with implementation — git branch isolation handles conflicts naturally.
 
@@ -73,7 +71,7 @@ cd <project_root> && git rev-parse --is-inside-work-tree 2>/dev/null
 **If git repo (preferred):**
 - `strategy = "git_branch"`
 - Record `original_branch` via `git -C <project_root> rev-parse --abbrev-ref HEAD`
-- Implementation runs in a dedicated **git worktree** (Step 3.1) created from `<original_branch>`'s **commit**, so the project's main working tree is never touched. **No need to stash** — uncommitted changes in the main tree stay there and cannot contaminate the proposal branches (the worktree is a clean checkout of the commit).
+- Implementation runs in a dedicated **git worktree** (Step 3.1) created from `<original_branch>`'s **commit**, so the main working tree is never touched. **No need to stash** — uncommitted changes in the main tree stay there and cannot contaminate the proposal branches (the worktree is a clean checkout of the commit).
 - Each proposal gets branch `ml-opt/<slug>`
 
 **If not a git repo (fallback):**
@@ -83,7 +81,7 @@ cd <project_root> && git rev-parse --is-inside-work-tree 2>/dev/null
 
 ## Step 3.1: Set Up the Implementation Worktree (git strategy)
 
-Do the implementation inside a git **worktree** so the project's main working tree is never disturbed. Put it **outside** `<exp_root>/` (a worktree nested under `<exp_root>/` can be wiped by a cleanup race):
+Implement inside a git **worktree** so the main working tree is never disturbed. Put it **outside** `<exp_root>/` (a worktree nested under `<exp_root>/` can be wiped by a cleanup race):
 ```bash
 PROJECT_HASH=$(echo "<project_root>" | sha1sum | cut -c1-8)
 WORKTREE_ROOT="/tmp/ml-opt-impl-worktrees-${PROJECT_HASH}"; mkdir -p "$WORKTREE_ROOT"
@@ -93,7 +91,7 @@ git -C <project_root> worktree add --detach "$WORKTREE_PATH" <original_branch>
 cd "$WORKTREE_PATH"
 ```
 
-Implement all selected proposals here **sequentially**, one `ml-opt/<slug>` branch each (Step 4 loop). After the last proposal, remove the worktree — the `ml-opt/<slug>` branches (with commits) persist in the repo for the experiment loop:
+Implement all selected proposals here **sequentially**, one `ml-opt/<slug>` branch each (Step 4 loop). After the last proposal, remove the worktree — the `ml-opt/<slug>` branches (with commits) persist for the experiment loop:
 ```bash
 cd - >/dev/null
 git -C <project_root> worktree list --porcelain | grep -q "worktree $WORKTREE_PATH$" \
@@ -104,29 +102,27 @@ git -C <project_root> worktree list --porcelain | grep -q "worktree $WORKTREE_PA
 
 ## Step 3.2: Pre-Flight File Existence Validation
 
-Before starting any implementation (parallel or sequential), validate that all target files exist:
+Before any implementation (parallel or sequential), validate that all target files exist.
 
-**File-backup strategy note:** For `strategy == "file_backup"`, pre-flight validation is critical because there is no branch isolation. If implementation fails mid-way, the working directory may be corrupted. Verify the baseline backup (`<exp_root>/backups/_baseline/`) is intact before proceeding with other proposals.
+**File-backup strategy note:** for `strategy == "file_backup"`, pre-flight is critical — there is no branch isolation, so a mid-way failure may corrupt the working directory. Verify the baseline backup (`<exp_root>/backups/_baseline/`) is intact before proceeding with other proposals.
 
 For each proposal:
 
-1. **Check every path in `files_to_modify`:**
-   - Use Glob or `test -f` to verify each file exists under `<project_root>`
+1. **Check every path in `files_to_modify`:** Glob or `test -f` to verify each exists under `<project_root>`.
 
 2. **If any file is missing:**
-   a. **Search for similar files** using Glob: `**/<filename>` and `**/<filename_stem>*<extension>`
-      - If matches found: log candidates to dev_notes
+   a. **Search for similar files** via Glob: `**/<filename>` and `**/<filename_stem>*<extension>`. If matches found, log candidates to dev_notes.
    b. **Classify viability:**
-      - If ALL `files_to_modify` are missing: mark proposal as `status: "preflight_failed"`, set `notes: "All target files missing"`. Skip this proposal entirely. Log to error tracker: `category: "implementation_error", severity: "warning", source: "implement", message: "Pre-flight failed: all files missing for proposal <name>"`
-      - If SOME missing but others exist: log warning to dev_notes. Check if proposal's implementation steps mention creating these files (expected-missing). If so, proceed. If not, log the gap but still attempt implementation.
+      - If ALL `files_to_modify` are missing: mark `status: "preflight_failed"`, `notes: "All target files missing"`, skip entirely. Log to error tracker: `category: "implementation_error", severity: "warning", source: "implement", message: "Pre-flight failed: all files missing for proposal <name>"`
+      - If SOME missing but others exist: log a warning to dev_notes. If the implementation steps mention creating these files (expected-missing), proceed; else log the gap but still attempt implementation.
 
-3. **Remove preflight-failed proposals** from the active list before implementing (Step 4). Include them in the manifest with `status: "preflight_failed"`.
+3. **Remove preflight-failed proposals** from the active list before implementing (Step 4); include them in the manifest with `status: "preflight_failed"`.
 
 ## Step 3.3: Use the GitNexus Code Graph for the Target Project (REQUIRED)
 
-The target `<project_root>` was already indexed at Phase 2 (graph at `<project_root>/.gitnexus`) — GitNexus is a HARD PREREQUISITE guaranteed by Phase 2. Before modifying any code you MUST use the gitnexus MCP tools to understand the code and scope edits precisely — confirm what depends on the code each proposal will change before touching it. There is NO grep/`analyze` substitute for this code understanding.
+The target `<project_root>` was already indexed at Phase 2 (graph at `<project_root>/.gitnexus`) — GitNexus is a HARD PREREQUISITE guaranteed by Phase 2. Before modifying any code you MUST use the gitnexus MCP tools to understand it and scope edits precisely — confirm what depends on the code each proposal changes before touching it. NO grep/`analyze` substitute.
 
-First confirm the graph is available (it should be, from Phase 2). If it is somehow missing, re-index the **main `<project_root>`** (read-only structural analysis — it does not modify source), not the throwaway worktree:
+Confirm the graph is available (it should be, from Phase 2). If somehow missing, re-index the **main `<project_root>`** (read-only structural analysis — does not modify source), not the throwaway worktree:
 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py available || { echo "HALT: gitnexus unavailable — was guaranteed by Phase 2"; exit 1; }
@@ -134,13 +130,13 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py is-indexed <project_root
   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py index <project_root>
 ```
 
-Before editing each proposal's `files_to_modify` you MUST use `mcp__gitnexus__impact` to assess the blast radius of the planned change and `mcp__gitnexus__context` (and `mcp__gitnexus__query` as needed) to understand the surrounding code, so edits stay minimal and don't break callers.
+Before editing each proposal's `files_to_modify` you MUST use `mcp__gitnexus__impact` for the blast radius and `mcp__gitnexus__context` (and `mcp__gitnexus__query` as needed) for surrounding code, so edits stay minimal and don't break callers.
 
-**HARD ERROR (not a fallback):** if `gitnexus_utils.py available` exits non-zero, or re-indexing returns `success: false`, **halt** and report it as a prerequisite/repair error — gitnexus was guaranteed installed and the target indexed at Phase 2, so its absence here is an error state, not a condition to silently route around. Surface the install/repair guidance: `npm install -g gitnexus && gitnexus setup` (`gitnexus setup` auto-registers the gitnexus MCP server for Claude Code; manual MCP-registration fallback: `claude mcp add --transport stdio --scope user gitnexus gitnexus mcp`), then re-index via `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py index <project_root>`. Do NOT fall back to `Read`/`Grep`/`Glob`/`analyze` for code understanding. (`implement_utils.py analyze` remains available only for framework detection, never as a code-graph substitute.)
+**HARD ERROR (not a fallback):** if `available` exits non-zero or re-indexing returns `success: false`, **halt** as a prerequisite/repair error — gitnexus was guaranteed at Phase 2, so absence here is an error state, not a condition to route around. Surface install/repair guidance: `npm install -g gitnexus && gitnexus setup` (`gitnexus setup` auto-registers the gitnexus MCP server; manual MCP-registration fallback: `claude mcp add --transport stdio --scope user gitnexus gitnexus mcp`), then re-index via `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py index <project_root>`. Do NOT fall back to `Read`/`Grep`/`Glob`/`analyze` for code understanding (`implement_utils.py analyze` is framework detection only, never a code-graph substitute).
 
-**MCP-query-failure recovery:** Querying the code graph is MCP-only by design. If a `mcp__gitnexus__*` tool call FAILS *after* a successful index, it is a HARD ERROR — there is NO grep fallback and NO gitnexus-CLI query fallback. Recovery: (1) ensure the gitnexus MCP server is registered — run `gitnexus setup` (or the manual `claude mcp add --transport stdio --scope user gitnexus gitnexus mcp`); (2) MCP tools load at session start, so restart the Claude Code session for a freshly-registered server to become available; (3) retry the query. If it still fails, halt and surface this to the user.
+**MCP-query-failure recovery:** querying is MCP-only by design. If a `mcp__gitnexus__*` call FAILS *after* a successful index, it is a HARD ERROR — NO grep fallback, NO gitnexus-CLI query fallback. Recovery: (1) register the gitnexus MCP server — `gitnexus setup` (or manual `claude mcp add --transport stdio --scope user gitnexus gitnexus mcp`); (2) MCP tools load at session start, so restart the Claude Code session for a freshly-registered server; (3) retry. If it still fails, halt and surface to the user.
 
-**Do not commit `.gitnexus/`:** indexing writes `<project_root>/.gitnexus/` (the wrapper auto-adds it to the repo's git exclude on success). It is a generated artifact — do not `git add` it, and ensure it is never included in any `ml-opt/<slug>` branch commit (Step 4g commits only the proposal's `<modified_files>`, so this is satisfied by committing explicit paths, not `git add .`).
+**Do not commit `.gitnexus/`:** indexing writes `<project_root>/.gitnexus/` (the wrapper auto-adds it to the repo's git exclude). A generated artifact — never `git add` it or include it in any `ml-opt/<slug>` commit (Step 4g commits only the proposal's `<modified_files>` by explicit path, not `git add .`).
 
 ## Step 4: Implement Each Proposal (Sequential)
 
@@ -170,16 +166,16 @@ Follow `${CLAUDE_SKILL_DIR}/references/implementation-patterns.md` Section 9.
 
 0. **Pre-clone exploration (alphaxiv):**
 
-   Before cloning, use alphaxiv to explore the repo remotely:
+   Before cloning, explore the repo remotely:
    ```
    mcp__alphaxiv__read_files_from_github_repository(githubUrl: "<reference_repo_url>", path: "/")
    ```
-   This returns the file tree + top-level files (README, LICENSE) in one call. Use it to:
-   - **Verify `reference_files`** from the proposal actually exist. If they don't, explore directories to find the correct paths.
+   Returns the file tree + top-level files (README, LICENSE) in one call. Use it to:
+   - **Verify `reference_files`** actually exist; if not, explore directories to find the correct paths.
    - **Check LICENSE** directly. If restrictive or missing, set `license_warning` immediately.
-   - **Assess scope**: If the relevant code is in 2-3 files with no complex internal dependencies, read them directly via alphaxiv and skip local cloning entirely.
+   - **Assess scope:** if the relevant code is in 2-3 files with no complex internal dependencies, read them directly via alphaxiv and skip local cloning entirely.
 
-   If the proposal's implementation steps are ambiguous and a source paper URL is available, clarify with:
+   If the implementation steps are ambiguous and a source paper URL is available, clarify with:
    ```
    mcp__alphaxiv__answer_pdf_queries(
      urls: ["<source_paper_url>"],
@@ -187,7 +183,7 @@ Follow `${CLAUDE_SKILL_DIR}/references/implementation-patterns.md` Section 9.
    )
    ```
 
-   **Fallback:** If alphaxiv is unavailable, proceed directly to step 1 (local cloning).
+   **Fallback:** if alphaxiv is unavailable, proceed to step 1 (local cloning).
 
 1. **Clone reference repo:**
    ```bash
@@ -201,23 +197,23 @@ Follow `${CLAUDE_SKILL_DIR}/references/implementation-patterns.md` Section 9.
    ```
    This is for framework detection only — it is NOT a substitute for the code-graph understanding below.
 
-3. **Index the reference repo with GitNexus and understand it via the code graph (REQUIRED):** EVERY reference repo MUST be indexed immediately after clone. Index it through the wrapper (it runs `gitnexus analyze <path> --index-only`, which keeps the cloned reference repo uncontaminated — it does NOT inject a GitNexus section into the repo's CLAUDE.md/AGENTS.md and does NOT install `.claude/` skills) and use the gitnexus MCP tools to locate the core implementation and its internal dependencies — you MUST understand the reference repo through the code graph before adapting any code (no `analyze`/`Read`/`Grep` substitute for this understanding):
+3. **Index the reference repo with GitNexus and understand it via the code graph (REQUIRED):** EVERY reference repo MUST be indexed immediately after clone. Index through the wrapper (runs `gitnexus analyze <path> --index-only`, keeping the cloned repo uncontaminated — does NOT inject a GitNexus section into its CLAUDE.md/AGENTS.md, does NOT install `.claude/` skills), then use the gitnexus MCP tools to locate the core implementation and its internal dependencies. You MUST understand the reference repo through the code graph before adapting any code (no `analyze`/`Read`/`Grep` substitute):
    ```bash
    python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py available || { echo "HALT: gitnexus unavailable — was guaranteed by Phase 2"; exit 1; }
    python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py is-indexed <exp_root>/reference-repos/<slug> || \
      python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py index <exp_root>/reference-repos/<slug>
    ```
-   After indexing, use `mcp__gitnexus__context`, `mcp__gitnexus__query`, and `mcp__gitnexus__impact` to understand the repo's structure and dependency edges before extracting/adapting code.
+   After indexing, use `mcp__gitnexus__context`, `mcp__gitnexus__query`, and `mcp__gitnexus__impact` to understand structure and dependency edges before extracting/adapting code.
 
-   **HARD ERROR (not a fallback):** if `available` exits non-zero or indexing returns `success: false`, **halt** with install/repair guidance: `npm install -g gitnexus && gitnexus setup` (`gitnexus setup` auto-registers the gitnexus MCP server for Claude Code; manual MCP-registration fallback: `claude mcp add --transport stdio --scope user gitnexus gitnexus mcp`), then re-index via `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py index <exp_root>/reference-repos/<slug>`. gitnexus was guaranteed by Phase 2, so its absence here is an error state — do NOT route around it with `analyze`/`Read`/`Grep` for code understanding.
+   **HARD ERROR (not a fallback):** if `available` exits non-zero or indexing returns `success: false`, **halt** with install/repair guidance: `npm install -g gitnexus && gitnexus setup` (`gitnexus setup` auto-registers the gitnexus MCP server; manual MCP-registration fallback: `claude mcp add --transport stdio --scope user gitnexus gitnexus mcp`), then re-index via `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py index <exp_root>/reference-repos/<slug>`. gitnexus was guaranteed by Phase 2, so absence here is an error state — do NOT route around it with `analyze`/`Read`/`Grep`.
 
-   **MCP-query-failure recovery:** Querying the code graph is MCP-only by design. If a `mcp__gitnexus__*` tool call FAILS *after* a successful index, it is a HARD ERROR — there is NO grep fallback and NO gitnexus-CLI query fallback. Recovery: (1) ensure the gitnexus MCP server is registered — run `gitnexus setup` (or the manual `claude mcp add --transport stdio --scope user gitnexus gitnexus mcp`); (2) MCP tools load at session start, so restart the Claude Code session for a freshly-registered server to become available; (3) retry the query. If it still fails, halt and surface this to the user.
+   **MCP-query-failure recovery:** querying is MCP-only by design. If a `mcp__gitnexus__*` call FAILS *after* a successful index, it is a HARD ERROR — NO grep fallback, NO gitnexus-CLI query fallback. Recovery: (1) register the gitnexus MCP server — `gitnexus setup` (or manual `claude mcp add --transport stdio --scope user gitnexus gitnexus mcp`); (2) MCP tools load at session start, so restart the Claude Code session for a freshly-registered server; (3) retry. If it still fails, halt and surface to the user.
 
    **Do not commit the generated `<exp_root>/reference-repos/<slug>/.gitnexus/` artifact** (the wrapper auto-adds it to the repo's git exclude, and the repo is cleaned up in step 8 anyway).
 
-4. **Read reference code:** Read the files listed in the proposal's `reference_files` (guided by the gitnexus code graph from step 3). Identify the core implementation, internal dependencies, and external packages.
+4. **Read reference code:** read the files listed in `reference_files` (guided by the step-3 code graph). Identify the core implementation, internal dependencies, and external packages.
 
-5. **Read target files:** Read every file listed in the proposal's `files_to_modify` to understand the existing code structure.
+5. **Read target files:** read every file in `files_to_modify` to understand the existing code structure.
 
 6. **Adapt and apply:**
    - Extract only the relevant functions/classes from the reference
@@ -226,7 +222,7 @@ Follow `${CLAUDE_SKILL_DIR}/references/implementation-patterns.md` Section 9.
    - Add provenance comments: `# [ml-opt] Adapted from <url>, file: <original_path>`
    - Add license comment: `# [ml-opt] License: <license_type>`
 
-7. **Check license:** Read the LICENSE file in the cloned repo. If missing or restrictive, note `license_warning` for the manifest.
+7. **Check license:** read the LICENSE file in the cloned repo. If missing or restrictive, note `license_warning` for the manifest.
 
 8. **Cleanup:** Remove the cloned repo:
    ```bash
@@ -250,21 +246,20 @@ Follow `${CLAUDE_SKILL_DIR}/references/implementation-patterns.md` Sections 1-8.
    - Paper-based implementation → Section 8
    Follow the "what to read first" and "minimal change pattern" guidance.
 
-2. **If steps are ambiguous:** If the proposal's implementation steps are vague and a paper URL is available in the Source field, use WebFetch to re-read the paper for clarification before proceeding.
+2. **If steps are ambiguous:** if the implementation steps are vague and a paper URL is in the Source field, use WebFetch to re-read the paper before proceeding.
 
-3. **Read target files:** Before modifying, **read every file** listed in the proposal's `files_to_modify`. Understand the current code structure, where changes should be inserted, and what surrounding code depends on.
+3. **Read target files:** before modifying, **read every file** in `files_to_modify`. Understand the current structure, where changes go, and what surrounding code depends on.
 
-4. **Apply changes:** Follow the proposal's implementation steps exactly:
-   - Use Edit to apply each change
-   - Keep changes minimal — only what the proposal specifies
-   - Add a comment marking the change: `# [ml-opt] <proposal_name>`
+4. **Apply changes:** follow the implementation steps exactly:
+   - Use Edit for each change; keep changes minimal — only what the proposal specifies
+   - Mark the change: `# [ml-opt] <proposal_name>`
    - If the proposal requires a new file (e.g., a new module), use Write
 
 **Important rules (both paths):**
-- Do NOT improvise changes beyond what the proposal specifies
+- Do NOT improvise beyond what the proposal specifies
 - Do NOT refactor surrounding code
 - Do NOT change configs unless the proposal explicitly requires it
-- If a step is unclear, stop and report it rather than guessing
+- If a step is unclear, stop and report rather than guessing
 
 ### 4e. Validate
 
@@ -281,23 +276,25 @@ Read `${CLAUDE_SKILL_DIR}/references/validation-checklist.md` and run checks pro
    "
    ```
 
-2. **Import check:**
+2. **Import check** (run with the PROJECT's environment python, not the plugin's):
+   Resolve `<python_executable>` from `env_manager`/`env_name` (conda: `conda run -n <env_name> which python`; venv: `<venv>/bin/python`; otherwise `python3`), then:
    ```bash
    python3 -c "
    import sys; # sys.path: add the plugin's scripts/ directory
    from implement_utils import validate_imports
-   import json; print(json.dumps(validate_imports('<module_path>', '<project_root>')))
+   import json; print(json.dumps(validate_imports('<module_path>', '<project_root>', python_executable='<python_executable>')))
    "
    ```
+   **Simulator-runtime imports:** failures caused by `omni.*`, `isaacgym`, `isaaclab`, `habitat_sim`, or `carb` return `status: "skipped_env_dependent"` (`passed: true`) — these modules only import inside the simulator runtime (Isaac Sim python, habitat conda env). Record the status in the manifest's `validation` block instead of failing the branch; the syntax check and LSP diagnostics on project code carry the gate.
 
 3. **LSP static check (Pyright):** For each modified `.py` file, use the `LSP` tool to get diagnostics. This catches undefined names, type mismatches, wrong call signatures, and unresolved imports **statically** — before any GPU time. Treat **errors** as blocking (fix and re-check); **warnings** are advisory (log to dev_notes). If the `LSP` tool is unavailable (pyright not installed), skip and note it — the syntax/import checks above still apply.
 
 **Recommended (run if project supports it):**
 
-4. Model instantiation check — attempt if the project has a model factory function (e.g., `get_model()`)
-5. Forward pass shape check — attempt if model instantiation succeeds
+4. Model instantiation check — attempt if the project has a model factory (e.g., `get_model()`)
+5. Forward pass shape check — attempt if instantiation succeeds
 
-See `${CLAUDE_SKILL_DIR}/references/validation-checklist.md` for commands. Attempt Level 3 validation when the project structure supports it (e.g., has a clear model factory or config-based instantiation).
+See `${CLAUDE_SKILL_DIR}/references/validation-checklist.md` for commands. Attempt Level 3 when the project structure supports it (clear model factory or config-based instantiation).
 
 ### 4e.5. Code Quality Gate
 
@@ -305,11 +302,11 @@ Your quality gate is the syntax/import/**LSP** checks above (step 4e) — record
 
 ### 4f. Write Unit Tests
 
-After validation passes (at least Level 1-2), write a focused unit test for the implemented proposal.
+After validation passes (at least Level 1-2), write a focused unit test for the proposal.
 
 **Test file location:** `<exp_root>/tests/test_<slug>.py`
 
-**What to test (choose based on proposal type):**
+**What to test (by proposal type):**
 
 | Proposal Type | Test Focus |
 |---------------|-----------|
@@ -319,6 +316,7 @@ After validation passes (at least Level 1-2), write a focused unit test for the 
 | Scheduler/optimizer | Instantiation, step without error, LR changes as expected |
 | Regularization | Active in train mode, inactive in eval (if applicable) |
 | Data pipeline | Output shape/dtype correct, batch iteration works |
+| Env/reward change | Reward finite over a short random-action rollout, obs/action space shapes unchanged, `reset()` runs without error |
 
 **Test template:**
 
@@ -360,16 +358,16 @@ python3 -m pytest <exp_root>/tests/test_<slug>.py -v --timeout=30 2>&1 | head -5
 ```
 
 **Record results in manifest:**
-- Add `"unit_tests"` field to the proposal's `validation` block: `"pass"`, `"fail"`, or `"skipped"`
-- Add `"test_file"` field to the proposal: path to the test file
+- Add `"unit_tests"` to the proposal's `validation` block: `"pass"`, `"fail"`, or `"skipped"`
+- Add `"test_file"`: path to the test file
 
-**If tests fail:** Log a warning but do NOT mark the proposal as `validation_failed`. Test failures are informational — they suggest the implementation may have issues but don't block experimentation.
+**If tests fail:** log a warning but do NOT mark the proposal `validation_failed`. Test failures are informational — they flag possible issues but don't block experimentation.
 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"category":"implementation_error","severity":"info","source":"implement","message":"Unit tests failed for proposal <name>: <failure_summary>","context":{"proposal_name":"<name>","test_file":"<exp_root>/tests/test_<slug>.py"}}'
 ```
 
-**If test writing is not feasible** (e.g., the proposal only modifies config files, or the changed module requires complex setup that can't be isolated): set `validation.unit_tests: "skipped"` and `test_file: null`. Log reason in the proposal's `notes` field.
+**If test writing is not feasible** (e.g., config-only change, or the module needs complex setup that can't be isolated): set `validation.unit_tests: "skipped"` and `test_file: null`. Log the reason in `notes`.
 
 ### 4g. Commit (git strategy only)
 
@@ -389,7 +387,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py diff <project_root> <br
 
 Store the result as `diff_summary` in the manifest proposal entry.
 
-Also write an `explanation` field — a 1-2 sentence plain-language description of what the code change does and why it should improve the primary metric. For example: "Replaces CrossEntropyLoss with FocalLoss to better handle class imbalance, which should improve accuracy on minority classes." This explanation is shown in the live dashboard to help users understand each method without reading code.
+Also write an `explanation` field — a 1-2 sentence plain-language description of what the change does and why it should improve the primary metric (e.g., "Replaces CrossEntropyLoss with FocalLoss to better handle class imbalance, which should improve accuracy on minority classes."). Shown in the live dashboard so users understand each method without reading code.
 
 ### 4h. Reset for the next proposal
 
@@ -511,31 +509,31 @@ New dependencies needed (install before experiments):
 
 ## Error Handling
 
-- **File not found (during implementation):** If a file listed in the proposal doesn't exist, report it and skip that file. Mark the proposal as `implementation_error`. Log to error tracker:
+- **File not found (during implementation):** if a file in the proposal doesn't exist, report and skip it. Mark the proposal `implementation_error`. Log to error tracker:
   ```bash
   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"category":"implementation_error","severity":"warning","source":"implement","message":"File not found: <file_path> for proposal <name>","context":{"proposal_name":"<name>","proposal_slug":"<slug>"}}'
   ```
-- **Syntax validation fails:** Keep the branch as-is (for debugging). Mark as `validation_failed`. The experiment skill will skip it. Log to error tracker:
+- **Syntax validation fails:** keep the branch as-is (for debugging). Mark `validation_failed`; the experiment skill skips it. Log to error tracker:
   ```bash
   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"category":"implementation_error","severity":"warning","source":"implement","message":"Syntax validation failed for proposal <name>","context":{"proposal_name":"<name>","proposal_slug":"<slug>","files_modified":["<files>"]}}'
   ```
-- **Import validation fails:** Check if a new dependency is needed. Flag it in `new_dependencies`. Mark as `validation_failed`. Log to error tracker:
+- **Import validation fails:** if a new dependency is needed, flag it in `new_dependencies`. Mark `validation_failed`. Log to error tracker:
   ```bash
   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"category":"implementation_error","severity":"warning","source":"implement","message":"Import validation failed for proposal <name>","context":{"proposal_name":"<name>","proposal_slug":"<slug>","implementation_strategy":"<strategy>"}}'
   ```
-- **Git conflicts on branch creation:** If `ml-opt/<slug>` already exists, use a while loop to find an available name: `ml-opt/<slug>-2`, `ml-opt/<slug>-3`, etc.
-- **Not a git repo and no backup possible:** Report to user, do not proceed with modifications.
+- **Git conflicts on branch creation:** if `ml-opt/<slug>` already exists, use a while loop to find an available name: `ml-opt/<slug>-2`, `ml-opt/<slug>-3`, etc.
+- **Not a git repo and no backup possible:** report to the user, do not proceed with modifications.
 
 ## Non-Git Fallback Details
 
-When using `file_backup` strategy:
-1. **Before the first proposal:** Create a baseline backup of ALL files that ANY proposal will modify → `<exp_root>/backups/_baseline/`. This is the clean reference state.
-2. **Before each proposal:** Restore ALL target files from `<exp_root>/backups/_baseline/` first (ensures a clean slate). Then apply this proposal's changes.
-3. Validate
-4. If validation fails: restore from baseline backup
-5. If validation passes: backup the modified state to `<exp_root>/backups/<slug>/`, then restore from baseline backup (return to clean state before next proposal)
-6. The manifest records backup paths instead of branch names
+`file_backup` strategy:
+1. **Before the first proposal:** back up ALL files ANY proposal will modify → `<exp_root>/backups/_baseline/` (the clean reference state).
+2. **Before each proposal:** restore ALL target files from `<exp_root>/backups/_baseline/` first (clean slate), then apply this proposal's changes.
+3. Validate.
+4. If validation fails: restore from baseline backup.
+5. If validation passes: back up the modified state to `<exp_root>/backups/<slug>/`, then restore from baseline backup (clean state before next proposal).
+6. The manifest records backup paths instead of branch names.
 
-**Critical:** The restore-before-apply pattern (step 2) prevents proposal A's changes from leaking into proposal B's code. Each proposal is validated and backed up independently against the original code.
+**Critical:** the restore-before-apply pattern (step 2) prevents proposal A's changes leaking into proposal B's code. Each proposal is validated and backed up independently against the original code.
 
-**Limitation:** With file backup, proposals cannot be tested in parallel. The experiment skill must restore each proposal's backup before running its experiments, then restore baseline before the next proposal's experiments.
+**Limitation:** with file backup, proposals cannot be tested in parallel. The experiment skill must restore each proposal's backup before its experiments, then restore baseline before the next proposal's.

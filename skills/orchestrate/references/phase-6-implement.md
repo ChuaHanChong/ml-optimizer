@@ -2,19 +2,30 @@
 
 **Phase gate:** Run `pipeline_state.py <exp_root> gate 5 6` before entering. On completion: `pipeline_state.py <exp_root> log-gate 6 completed "<summary>"`.
 
-If the user selected research proposals that require code changes (not just HP tuning):
+If the user selected research proposals that require code changes (not just HP tuning), Phase 6 runs as a **dynamic workflow**:
 
-1. **Dispatch the implement agent** — one agent for all selected proposals; it implements them sequentially, one `ml-opt/<slug>` branch each (implement skill Step 4):
+1. **Launch the implement workflow** — build the args and call it once. The workflow dispatches `ml-optimizer:implement-agent` internally (worktree-isolated, one `ml-opt/<slug>` branch per proposal, implement skill Step 4) and also runs the post-implementation reviewers internally (see step 6):
    ```
-   Agent(
-     description: "Implement research proposals",
-     prompt: "Ultrathink. Implement research proposals via the implement skill. Parameters: findings_path: <exp_root>/reports/research-findings.md, selected_indices: {selected_indices}, project_root: {project_root}.",
-     subagent_type: "ml-optimizer:implement-agent"
-   )
+   result = Workflow({
+     scriptPath: "${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/workflows/phase-6-implement.js",
+     args: {
+       exp_root,
+       project_root,
+       findings_path: "<exp_root>/reports/research-findings.md",
+       selected_indices,
+       strategy: "git_branch"   # or "file_backup" for non-git projects
+     }
+   })
    ```
-   → Save the returned agentId to `agent_registry["implement"]`; persist via `save_state(..., agent_registry=agent_registry)`.
+   The workflow writes `results/implementation-manifest.json` + the git branches and returns:
+   ```
+   {
+     manifest_path: "<exp_root>/results/implementation-manifest.json",
+     branches: [{slug, branch, status, validation, reviews}, ...]
+   }
+   ```
 
-2. **Check results** from `<exp_root>/results/implementation-manifest.json`:
+2. **Check results** from `result.branches` / `<exp_root>/results/implementation-manifest.json`:
    - **All validated** → proceed to experiment loop with branch-aware execution
    - **Some failed validation** → inform user, proceed with validated proposals only
    - **All failed** → fall back to HP-tuning only (no code changes)
@@ -39,17 +50,19 @@ If the user selected research proposals that require code changes (not just HP t
 
 5. **If conflicts detected** → Inform user which proposals touch the same files. Each is on its own branch, so experiments run independently, but merging winners later may need manual conflict resolution.
 
-6. **Post-implementation quality review:**
-   For validated proposals, dispatch two reviewers per implementation branch (in parallel) to catch problems before running experiments on broken implementations:
+6. **Post-implementation quality review (run inside the workflow):**
+   The phase-6 workflow dispatches two reviewers per validated implementation branch (in parallel, via `agentType`) to catch problems before running experiments on broken implementations — the results are folded into each branch's `reviews` field in the returned manifest:
    - `feature-dev:code-reviewer` — bugs, logic errors, and general code quality issues.
    - `pr-review-toolkit:silent-failure-hunter` — swallowed errors, inadequate error handling, and inappropriate fallbacks. Especially important for ML code: silently-caught NaN losses, failed CUDA/optimizer ops that fall through, or `except: pass` around training/eval steps will corrupt experiment results without surfacing.
 
-   Apply the findings:
+   The workflow applies the findings:
    - Only review proposals with `status: "validated"` in the manifest
-   - If either reviewer flags a critical issue (a real bug, or a silent failure that would invalidate metrics), mark the proposal as `validation_failed` and skip it
-   - If a reviewer flags minor issues (style, non-blocking), log them to dev_notes and proceed
+   - If either reviewer flags a critical issue (a real bug, or a silent failure that would invalidate metrics), the proposal is marked `validation_failed` and skipped
+   - If a reviewer flags minor issues (style, non-blocking), they are logged to dev_notes and the workflow proceeds
 
-7. **Test coverage check:**
-   The implement-agent writes a focused unit test per proposal (`<exp_root>/tests/test_<slug>.py`, implement skill step 4f). For validated proposals whose `validation.unit_tests` is `"pass"`, dispatch `pr-review-toolkit:pr-test-analyzer` on the test + the changed files to assess whether the test actually exercises the new behavior (not a token/placeholder test) and to surface missing edge cases.
+   After the workflow returns, read the per-branch `reviews` field; surface any `validation_failed` branches to the user with the reason.
+
+7. **Test coverage check (run inside the workflow):**
+   The implement-agent writes a focused unit test per proposal (`<exp_root>/tests/test_<slug>.py`, implement skill step 4f). For validated proposals whose `validation.unit_tests` is `"pass"`, the workflow dispatches `pr-review-toolkit:pr-test-analyzer` on the test + the changed files to assess whether the test actually exercises the new behavior (not a token/placeholder test) and to surface missing edge cases.
    - This is **advisory** — weak coverage does NOT block experimentation (these are ML proposals, not production code), but the findings are logged to dev_notes and inform later analysis.
    - Skip when `validation.unit_tests` is `"skipped"` (no meaningful test to analyze).

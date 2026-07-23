@@ -24,14 +24,8 @@ Usage:
     python3 error_tracker.py <exp_root> agenda list                             # List agenda ideas
     python3 error_tracker.py <exp_root> agenda add <idea_json>                  # Add a single idea to the agenda
 
-<lower_is_better> accepts true/1/yes (case-insensitive) for lower-is-better metrics.
-JSON arguments are JSON strings, not file paths — quote them.
-
-Examples:
-    python3 error_tracker.py <exp_root> log '{"category":"oom","severity":"high","source":"experiment","message":"CUDA OOM"}'
-    python3 error_tracker.py <exp_root> success accuracy false
-    python3 error_tracker.py <exp_root> dead-end check "heavy augmentation"
-    python3 error_tracker.py <exp_root> agenda update idea-3 '{"status":"dead-end"}'
+<lower_is_better> accepts true/1/yes (case-insensitive). JSON arguments are JSON
+strings, not file paths — quote them.
 """
 
 import fcntl
@@ -46,10 +40,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
-# ---------------------------------------------------------------------------
 # Schema definitions
-# ---------------------------------------------------------------------------
-
 ERROR_EVENT_REQUIRED = ["event_id", "timestamp", "category", "severity", "source", "message"]
 ERROR_EVENT_OPTIONAL = [
     "exp_id", "skill", "agent", "phase", "iteration",
@@ -82,15 +73,9 @@ VALID_SOURCES = [
 _event_counter = 0
 
 
-# ---------------------------------------------------------------------------
 # Validation
-# ---------------------------------------------------------------------------
-
 def validate_event(event: dict) -> dict:
-    """Validate an error event dict.
-
-    Returns {"valid": bool, "errors": list[str]}.
-    """
+    """Validate an error event dict. Returns {"valid": bool, "errors": list[str]}."""
     errors: list[str] = []
 
     if not isinstance(event, dict):
@@ -112,10 +97,7 @@ def validate_event(event: dict) -> dict:
     return {"valid": len(errors) == 0, "errors": errors}
 
 
-# ---------------------------------------------------------------------------
 # Event creation
-# ---------------------------------------------------------------------------
-
 def create_event(
     category: str, severity: str, source: str, message: str,
     *, exp_id=None, skill=None, agent=None, phase=None, iteration=None,
@@ -153,10 +135,7 @@ def create_event(
     return event
 
 
-# ---------------------------------------------------------------------------
 # Per-project storage
-# ---------------------------------------------------------------------------
-
 def _error_log_path(exp_root: str) -> Path:
     """Return the path to the per-project error log file."""
     return Path(exp_root) / "reports" / "error-log.json"
@@ -246,10 +225,7 @@ def get_events(
     return events
 
 
-# ---------------------------------------------------------------------------
 # Pattern detection
-# ---------------------------------------------------------------------------
-
 def _project_id(path: str) -> str:
     """Compute a short deterministic project ID from a path."""
     return hashlib.md5(path.encode()).hexdigest()[:12]
@@ -439,10 +415,7 @@ def detect_patterns(events: list[dict]) -> list[dict]:
     return patterns
 
 
-# ---------------------------------------------------------------------------
 # Suggestion ranking
-# ---------------------------------------------------------------------------
-
 # Severity weights: blocking = 3, quality-degrading = 2, informational = 1
 _PATTERN_WEIGHTS: dict[str, int] = {
     "oom_batch_size": 3,
@@ -486,10 +459,7 @@ def rank_suggestions(
     return ranked
 
 
-# ---------------------------------------------------------------------------
 # Session summary
-# ---------------------------------------------------------------------------
-
 def summarize_session(exp_root: str) -> dict:
     """Generate a session summary from the error log."""
     log_data = load_error_log(exp_root)
@@ -508,10 +478,7 @@ def summarize_session(exp_root: str) -> dict:
     return summary
 
 
-# ---------------------------------------------------------------------------
 # Success metrics and proposal outcomes
-# ---------------------------------------------------------------------------
-
 def _load_results(exp_root: str) -> tuple[dict | None, list[dict]]:
     """Load baseline and experiment results from results/ directory.
 
@@ -524,7 +491,9 @@ def _load_results(exp_root: str) -> tuple[dict | None, list[dict]]:
     baseline = None
     experiments = []
 
-    for p in results_dir.glob("*.json"):
+    # Scan flat results (baseline.json) AND round subdirs (round-N-<type>/exp-*.json),
+    # since experiments now live under round directories, not flat in results/.
+    for p in [*results_dir.glob("*.json"), *results_dir.glob("round-*/exp-*.json")]:
         if p.name in ("implementation-manifest.json",):
             continue
         try:
@@ -582,7 +551,6 @@ def compute_success_metrics(
     improvement_rate = None
     best_improvement_pct = None
     top_configs = []
-    worst_configs = []
 
     if baseline is not None:
         baseline_val = baseline.get("metrics", {}).get(primary_metric)
@@ -711,9 +679,7 @@ def compute_proposal_outcomes(
     for e in experiments:
         branch = e.get("code_branch")
         if branch and branch in proposal_branches:
-            if branch not in branch_exps:
-                branch_exps[branch] = []
-            branch_exps[branch].append(e)
+            branch_exps.setdefault(branch, []).append(e)
 
     for branch, exps in branch_exps.items():
         name = proposal_branches[branch]
@@ -732,7 +698,7 @@ def compute_proposal_outcomes(
                 if baseline_val != 0:
                     delta = baseline_val - val if lower_is_better else val - baseline_val
                     pct = round(delta / abs(baseline_val) * 100, 2)
-                    if best_imp is None or pct > (best_imp or 0):
+                    if best_imp is None or pct > best_imp:
                         best_imp = pct
 
         research_proposals.append({
@@ -770,11 +736,7 @@ def compute_proposal_outcomes(
     }
 
 
-# ---------------------------------------------------------------------------
 # Dead-end catalog
-# ---------------------------------------------------------------------------
-
-
 def _dead_ends_path(exp_root: str) -> Path:
     """Return the path to the dead-ends JSON file."""
     return Path(exp_root) / "reports" / "dead-ends.json"
@@ -876,11 +838,7 @@ def _generate_dead_ends_md(exp_root: str, dead_ends: list[dict]) -> None:
     md_path.write_text("\n".join(lines))
 
 
-# ---------------------------------------------------------------------------
 # Research agenda
-# ---------------------------------------------------------------------------
-
-
 def _agenda_path(exp_root: str) -> Path:
     """Return the path to the research agenda JSON file."""
     return Path(exp_root) / "reports" / "research-agenda.json"
@@ -889,6 +847,18 @@ def _agenda_path(exp_root: str) -> Path:
 def _agenda_md_path(exp_root: str) -> Path:
     """Return the path to the research agenda Markdown companion."""
     return Path(exp_root) / "reports" / "research-agenda.md"
+
+
+def _apply_idea_defaults(idea: dict) -> None:
+    """Fill default fields on an agenda idea in place."""
+    idea.setdefault("status", "untried")
+    idea.setdefault("priority", 5.0)
+    idea.setdefault("initial_priority", idea["priority"])
+    idea.setdefault("source", "unknown")
+    idea.setdefault("scope", "training")
+    idea.setdefault("evidence", [])
+    idea.setdefault("lessons", "")
+    idea.setdefault("related_dead_end", None)
 
 
 def init_agenda(exp_root: str, ideas: list[dict]) -> str:
@@ -902,14 +872,7 @@ def init_agenda(exp_root: str, ideas: list[dict]) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
 
     for idea in ideas:
-        idea.setdefault("status", "untried")
-        idea.setdefault("priority", 5.0)
-        idea.setdefault("initial_priority", idea["priority"])
-        idea.setdefault("source", "unknown")
-        idea.setdefault("scope", "training")
-        idea.setdefault("evidence", [])
-        idea.setdefault("lessons", "")
-        idea.setdefault("related_dead_end", None)
+        _apply_idea_defaults(idea)
 
     with open(lock_path, "w") as lock_fd:
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
@@ -951,7 +914,7 @@ def update_agenda_item(exp_root: str, idea_id: str, updates: dict) -> bool:
             found = False
             for idea in ideas:
                 if idea.get("id") == idea_id:
-                    # Append evidence rather than replace (don't mutate caller's dict)
+                    # Evidence is appended, not replaced
                     if "evidence" in updates:
                         existing = idea.get("evidence", [])
                         new_ev = updates["evidence"]
@@ -960,7 +923,6 @@ def update_agenda_item(exp_root: str, idea_id: str, updates: dict) -> bool:
                         else:
                             existing.append(new_ev)
                         idea["evidence"] = existing
-                    # Apply all other fields (skip evidence since it was handled above)
                     for k, v in updates.items():
                         if k != "evidence":
                             idea[k] = v
@@ -980,14 +942,7 @@ def add_agenda_idea(exp_root: str, idea: dict) -> str:
     lock_path = path.with_suffix(".lock")
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    idea.setdefault("status", "untried")
-    idea.setdefault("priority", 5.0)
-    idea.setdefault("initial_priority", idea["priority"])
-    idea.setdefault("source", "unknown")
-    idea.setdefault("scope", "training")
-    idea.setdefault("evidence", [])
-    idea.setdefault("lessons", "")
-    idea.setdefault("related_dead_end", None)
+    _apply_idea_defaults(idea)
 
     with open(lock_path, "w") as lock_fd:
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
@@ -1058,11 +1013,7 @@ def _generate_agenda_md(exp_root: str, ideas: list[dict]) -> None:
     md_path.write_text("\n".join(lines))
 
 
-# ---------------------------------------------------------------------------
 # Suggestion history / feedback loop
-# ---------------------------------------------------------------------------
-
-
 def _suggestion_history_path(exp_root: str) -> Path:
     """Return the path to the suggestion history file."""
     return Path(exp_root) / "reports" / "suggestion-history.json"
@@ -1100,10 +1051,7 @@ def get_suggestion_history(exp_root: str) -> list[dict]:
         return []
 
 
-# ---------------------------------------------------------------------------
 # CLI
-# ---------------------------------------------------------------------------
-
 def _cli_main() -> None:
     """CLI entry point."""
     if len(sys.argv) < 3:

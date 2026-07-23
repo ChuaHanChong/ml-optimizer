@@ -45,23 +45,12 @@ def block(reason: str) -> None:
 
 
 def _find_subdir_segment(file_path: str, subdir_name: str) -> tuple[list[str], int] | None:
-    """Locate a top-level subdirectory of `<exp_root>` in the file path.
+    """If `file_path` is at `<exp_root>/<subdir_name>/...`, return
+    `(path_parts, index_of_subdir)`, else `None`.
 
-    Walks up from `file_path` looking for a `.claude/ml-optimizer.json`
-    breadcrumb (via the shared `_find_exp_root` helper). The breadcrumb
-    is the authoritative source of truth for `exp_root`, written by the
-    orchestrator at Phase 0. Its `exp_root` field contains the absolute
-    path the user chose — the plugin does not hardcode the output
-    directory name.
-
-    Once `exp_root` is resolved, checks that `file_path` is located
-    at `<exp_root>/<subdir_name>/...` and returns `(path_parts,
-    index_of_subdir)`. Returns `None` if no breadcrumb is found or if
-    the file isn't under `<exp_root>/<subdir_name>/`.
-
-    There is no directory-name-based fallback. Tests that exercise this
-    validator MUST create a `.claude/ml-optimizer.json` breadcrumb
-    pointing at their synthetic `exp_root`.
+    exp_root comes from the `.claude/ml-optimizer.json` breadcrumb (the
+    authoritative source, written by the orchestrator at Phase 0) — there is
+    no directory-name fallback, so tests MUST create that breadcrumb.
     """
     exp_root_str = _find_exp_root(file_path)
     if exp_root_str is None:
@@ -80,18 +69,12 @@ def _find_subdir_segment(file_path: str, subdir_name: str) -> tuple[list[str], i
 
 
 def _find_results_segment(file_path: str) -> tuple[list[str], int] | None:
-    """Find the `<exp_root>/results` segment in the path.
-
-    Returns `(path_parts, index_of_results)` or `None` if not found.
-    """
+    """Find the `<exp_root>/results` segment. Returns `(parts, idx)` or None."""
     return _find_subdir_segment(file_path, "results")
 
 
 def _find_proposed_configs_segment(file_path: str) -> tuple[list[str], int] | None:
-    """Find the `<exp_root>/proposed-configs` segment in the path.
-
-    Returns `(path_parts, index_of_proposed_configs)` or `None` if not found.
-    """
+    """Find the `<exp_root>/proposed-configs` segment. Returns `(parts, idx)` or None."""
     return _find_subdir_segment(file_path, "proposed-configs")
 
 
@@ -134,6 +117,10 @@ def _validate_schema(data: dict, schema_type: str) -> dict:
             errors.append("Missing required field: exp_id")
         if "config" not in data:
             errors.append("Missing required field: config")
+        if "random_seed" in data and (
+            isinstance(data["random_seed"], bool) or not isinstance(data["random_seed"], int)
+        ):
+            errors.append("'random_seed' must be an integer")
         return {"valid": len(errors) == 0, "errors": errors, "warnings": []}
     return {"valid": True, "errors": [], "warnings": []}
 
@@ -191,12 +178,11 @@ def _check_completeness(data: dict) -> str | None:
 
 
 def _find_exp_root(file_path: str) -> str | None:
-    """Find exp_root by walking up from the file path looking for .claude/ml-optimizer.json.
+    """Find exp_root by walking up from file_path for .claude/ml-optimizer.json.
 
-    Intentionally uncached — this function runs once per hook invocation
-    (the hook is a short-lived subprocess that exits after validating one
-    Write/Edit). Do NOT add a module-level cache here; if a future refactor
-    calls this in a loop, cache at the call site with an explicit lifetime.
+    Intentionally uncached — runs once per hook invocation (short-lived
+    subprocess). Do NOT add a module-level cache; cache at the call site with an
+    explicit lifetime if a future refactor calls this in a loop.
     """
     path = Path(file_path).resolve()
     for parent in path.parents:
@@ -264,6 +250,27 @@ def _check_goal_compliance(data: dict, file_path: str) -> str | None:
     return None
 
 
+def _validate_root_file(
+    hook_input: dict, tool_name: str, parts: list[str], results_idx: int,
+    filename: str, schema_type: str | None,
+) -> None:
+    """Enforce a root-level results file: must sit directly in results/, plus an
+    optional schema check. Calls block()/approve() (which exit). schema_type=None
+    checks location only (e.g. rounds-manifest.json, written by round_manager.py)."""
+    if not _is_directly_in_results(parts, results_idx):
+        block(f"{filename} must be directly in <exp_root>/results/, not in a subdirectory")
+    if schema_type is not None:
+        content = _get_content(hook_input, tool_name)
+        if content is not None:
+            data = _parse_content(content)
+            if data is None:
+                block(f"{filename} contains invalid JSON")
+            result = _validate_schema(data, schema_type)
+            if not result["valid"]:
+                block(f"{filename} schema validation failed: {'; '.join(result['errors'])}")
+    approve()
+
+
 def validate(hook_input: dict) -> None:
     """Main validation logic."""
     tool_input = hook_input.get("tool_input", {})
@@ -318,55 +325,18 @@ def validate(hook_input: dict) -> None:
 
     # --- Determine file category and apply rules ---
 
-    # 1. Root-level result files: baseline.json, prerequisites.json,
-    #    implementation-manifest.json, rounds-manifest.json
-    if filename == "baseline.json":
-        if not _is_directly_in_results(parts, results_idx):
-            block("baseline.json must be directly in <exp_root>/results/, not in a subdirectory")
-        content = _get_content(hook_input, tool_name)
-        if content is not None:
-            data = _parse_content(content)
-            if data is None:
-                block("baseline.json contains invalid JSON")
-            result = _validate_schema(data, "baseline")
-            if not result["valid"]:
-                block(f"baseline.json schema validation failed: {'; '.join(result['errors'])}")
-        approve()
-        return
-
-    if filename == "prerequisites.json":
-        if not _is_directly_in_results(parts, results_idx):
-            block("prerequisites.json must be directly in <exp_root>/results/, not in a subdirectory")
-        content = _get_content(hook_input, tool_name)
-        if content is not None:
-            data = _parse_content(content)
-            if data is None:
-                block("prerequisites.json contains invalid JSON")
-            result = _validate_schema(data, "prerequisites")
-            if not result["valid"]:
-                block(f"prerequisites.json schema validation failed: {'; '.join(result['errors'])}")
-        approve()
-        return
-
-    if filename == "implementation-manifest.json":
-        if not _is_directly_in_results(parts, results_idx):
-            block("implementation-manifest.json must be directly in <exp_root>/results/, not in a subdirectory")
-        content = _get_content(hook_input, tool_name)
-        if content is not None:
-            data = _parse_content(content)
-            if data is None:
-                block("implementation-manifest.json contains invalid JSON")
-            result = _validate_schema(data, "manifest")
-            if not result["valid"]:
-                block(f"implementation-manifest.json schema validation failed: {'; '.join(result['errors'])}")
-        approve()
-        return
-
-    if filename == "rounds-manifest.json":
-        # Written by round_manager.py -- skip schema validation, just check location
-        if not _is_directly_in_results(parts, results_idx):
-            block("rounds-manifest.json must be directly in <exp_root>/results/, not in a subdirectory")
-        approve()
+    # 1. Root-level result files (must sit directly in results/). rounds-manifest
+    #    is location-only; it's written by round_manager.py.
+    _ROOT_SCHEMAS = {
+        "baseline.json": "baseline",
+        "prerequisites.json": "prerequisites",
+        "implementation-manifest.json": "manifest",
+        "rounds-manifest.json": None,
+    }
+    if filename in _ROOT_SCHEMAS:
+        _validate_root_file(
+            hook_input, tool_name, parts, results_idx, filename, _ROOT_SCHEMAS[filename]
+        )
         return
 
     # 2. Experiment result files (exp-*.json)

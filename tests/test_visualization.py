@@ -577,3 +577,82 @@ class TestResultsTable:
         with mock.patch.object(sys, "argv", ["d", str(exp_root), "--table"]):
             dashboard_cli()
         assert (exp_root / "results-table.md").exists()
+
+
+# ---------------------------------------------------------------------------
+# TestSecondaryMetrics (Batch E, Task 24 + Task 25 original_branch)
+# ---------------------------------------------------------------------------
+
+
+def _add_secondary_metrics(exp_root: Path, name="fps", value=30.0):
+    """Add a secondary metric to completed results + user_choices."""
+    results = exp_root / "results"
+    for f in results.glob("exp-*.json"):
+        data = json.loads(f.read_text())
+        if data.get("status") == "completed":
+            data["metrics"][name] = value
+        f.write_text(json.dumps(data))
+    state = json.loads((exp_root / "pipeline-state.json").read_text())
+    state["user_choices"]["secondary_metrics"] = [
+        {"name": name, "lower_is_better": False, "role": "guardrail"},
+    ]
+    (exp_root / "pipeline-state.json").write_text(json.dumps(state))
+
+
+class TestSecondaryMetrics:
+    """dashboard.py renders secondary metric columns in HTML + results-table.md."""
+
+    def test_load_data_reads_secondary_metrics(self, tmp_path):
+        _create_experiments(tmp_path)
+        _add_secondary_metrics(tmp_path)
+        data = _load_dashboard_data(str(tmp_path))
+        assert data["secondary_metrics"] == [
+            {"name": "fps", "lower_is_better": False, "role": "guardrail"}]
+        assert "exp-001" in data["results_raw"]
+
+    def test_html_table_has_secondary_column(self, tmp_path):
+        _create_experiments(tmp_path)
+        _add_secondary_metrics(tmp_path)
+        html = Path(generate_dashboard(str(tmp_path))).read_text()
+        assert ">fps</th>" in html
+        assert "30.0000" in html
+
+    def test_html_without_secondary_metrics_unchanged(self, tmp_path):
+        _create_experiments(tmp_path)
+        html = Path(generate_dashboard(str(tmp_path))).read_text()
+        assert ">fps</th>" not in html
+
+    def test_results_table_has_secondary_column(self, tmp_path):
+        _create_experiments(tmp_path)
+        _add_secondary_metrics(tmp_path)
+        md = Path(generate_results_table(str(tmp_path))).read_text()
+        assert " fps |" in md
+        assert " 30.0000 |" in md
+        assert " — |" in md  # failed exp has no fps value
+
+
+class TestResultsTableDiffBase:
+    """results-table.md diffs against the manifest's original_branch, not hardcoded main."""
+
+    def _add_branch_exp(self, tmp_path):
+        exp = {
+            "exp_id": "exp-010", "status": "completed",
+            "config": {"lr": 0.001}, "metrics": {"loss": 0.5},
+            "code_branch": "ml-opt/focal-loss", "iteration": 1,
+        }
+        (tmp_path / "results" / "exp-010.json").write_text(json.dumps(exp))
+
+    def test_diff_base_from_manifest(self, tmp_path):
+        _create_experiments(tmp_path)
+        self._add_branch_exp(tmp_path)
+        (tmp_path / "results" / "implementation-manifest.json").write_text(json.dumps(
+            {"original_branch": "develop", "strategy": "git_branch", "proposals": []}))
+        md = Path(generate_results_table(str(tmp_path))).read_text()
+        assert "git diff develop...ml-opt/focal-loss" in md
+        assert "git diff main..." not in md
+
+    def test_diff_base_falls_back_to_main(self, tmp_path):
+        _create_experiments(tmp_path)
+        self._add_branch_exp(tmp_path)
+        md = Path(generate_results_table(str(tmp_path))).read_text()
+        assert "git diff main...ml-opt/focal-loss" in md

@@ -6,31 +6,31 @@ user-invocable: false
 
 # Hyperparameter Tuning (LLM-Driven)
 
-Use extended thinking for all analytical reasoning in this skill. Ultrathink. Think through trade-offs, HP interaction effects, exploration vs exploitation balance, and diminishing returns before proposing configurations.
+Reason directly about past results to propose the next config batch — no grid/random/Bayesian search. Weigh trade-offs, HP interactions, exploration vs exploitation, and diminishing returns first.
 
-You are acting as an intelligent hyperparameter tuning agent. Instead of using grid search, random search, or Bayesian optimization, you reason directly about past results to propose the next batch of configurations.
-
-> **Path convention:** All paths written as `<exp_root>/...` refer to the `exp_root` parameter from your dispatch. The plugin does not hardcode the output directory name.
+> **Path convention:** Paths `<exp_root>/...` refer to the `exp_root` dispatch parameter. Output directory name is not hardcoded.
 
 ## Reference
 
-- Tuning strategy guide: `${CLAUDE_SKILL_DIR}/references/tuning-strategy.md` (in this skill's directory)
-- Read this reference FIRST before proposing any configs.
+- Tuning strategy guide: `${CLAUDE_SKILL_DIR}/references/tuning-strategy.md`. Read it FIRST, before proposing any configs.
 
 ## Inputs Expected
 
 From the orchestrator:
 - `project_root`: Project root directory
-- `num_gpus`: Number of GPUs available (determines batch size)
-- `search_space`: Defined HP ranges from the optimization plan
-- `iteration`: Which tuning iteration this is (1, 2, 3, ...)
-- `primary_metric`: The metric to optimize (e.g., "loss", "accuracy", "psnr")
-- `lower_is_better`: Whether lower metric values are better (True for loss, False for accuracy)
-- `code_branches`: List of validated code branches from the implementation manifest (e.g., `["ml-opt/perceptual-loss"]`), or `[]` for HP-only. In iteration 1, generate one config per branch (with baseline HPs) plus one for the original code, instead of spanning the search space.
+- `num_gpus`: GPUs available (determines batch size)
+- `search_space`: HP ranges from the optimization plan
+- `iteration`: Tuning iteration number (1, 2, 3, ...)
+- `primary_metric`: Metric to optimize (e.g. "loss", "accuracy", "psnr")
+- `lower_is_better`: Whether lower values are better (True for loss, False for accuracy)
+- `model_category`: `"rl"` | `"generative"` | `"supervised"` (optional). Drives the search-space prior order and the RL warm-start rules below.
+- `seeds_per_config`: Seed replicates per config (int, default 1; >1 suggested for RL). When >1, propose each config `seeds_per_config` times with distinct `random_seed` values; replicates count against the batch cap.
+- `code_branches`: Validated code branches from the implementation manifest (e.g. `["ml-opt/perceptual-loss"]`), or `[]` for HP-only. In iteration 1, generate one config per branch (baseline HPs) plus one for the original code, instead of spanning the search space.
 - `warm_start_enabled`: Whether checkpoint warm-starting is enabled (boolean, default false). When true and iteration >= 2, propose warm-starting from the best completed experiment on the same branch.
-- `available_checkpoints`: Dict mapping exp_id to checkpoint info (optional). Only provided when `warm_start_enabled` is true. Example: `{"exp-005": {"checkpoint_path": "<exp_root>/artifacts/round-2-hp/exp-005/best.pt", "code_branch": "ml-opt/method-a"}}`.
+- `available_checkpoints`: Dict mapping exp_id to checkpoint info (optional). Provided only when `warm_start_enabled` is true. Example: `{"exp-005": {"checkpoint_path": "<exp_root>/artifacts/round-2-hp/exp-005/best.pt", "code_branch": "ml-opt/method-a"}}`.
 - `branch_scores`: Per-branch allocation scores from analyze (optional). Dict mapping branch name to `{"improvement_pct": X, "sample_count": N, "score": Y}`.
-- `round_dir`: Current round directory (e.g., `"round-3-hp"`). **Required.** Passed by the orchestrator after calling `round_manager.py create-round`. Proposed config JSONs MUST be written inside `proposed-configs/<round_dir>/`. If missing from context, fetch via `round_manager.py current-round`.
+- `round_dir`: Current round directory (e.g. `"round-3-hp"`). **Required.** Passed by the orchestrator after `round_manager.py create-round`. Proposed config JSONs MUST be written inside `proposed-configs/<round_dir>/`. If missing, fetch via `round_manager.py current-round`.
+- `secondary_metrics`: Optional guardrail metrics — `[{name, lower_is_better, role}]` from Phase 0 user_choices; `role: "guardrail"` entries are metrics to avoid regressing and only inform proposal choices — `secondary_metrics` never replaces `primary_metric` as the optimization target.
 
 ## Step 1: Load Past Results
 
@@ -62,61 +62,69 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/result_analyzer.py \
   <lower_is_better>
 ```
 
-**Branch-aware analysis:** Group past results by `code_branch` field before analysis. Experiments on different code branches should be analyzed separately — HP sensitivities may differ between branches. For example, `lr=0.001` on a perceptual-loss branch may behave very differently from `lr=0.001` on baseline code.
+**Branch-aware analysis:** Group past results by `code_branch` before analysis. Experiments on different branches are analyzed separately — HP sensitivities may differ. E.g. `lr=0.001` on a perceptual-loss branch may behave very differently from `lr=0.001` on baseline code.
 
-**Check dead-end catalog:** Read techniques that were conclusively shown to be unpromising:
+**Check dead-end catalog:** Read techniques conclusively shown unpromising:
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> dead-end list
 ```
-Avoid proposing HP configs for branches/methods listed as dead ends. Focus HP exploration on branches that still show potential.
+Avoid proposing HP configs for branches/methods listed as dead ends. Focus exploration on branches that still show potential.
 
-**Check research agenda:** Read the living research agenda for context on which untried techniques are high-priority:
+**Check research agenda:** Read the living agenda for which untried techniques are high-priority:
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> agenda list
 ```
-If high-priority untried ideas exist, consider whether HP exploration should focus on branches related to those ideas (to maximize their potential) or on the current best branch.
+If high-priority untried ideas exist, consider whether HP exploration should focus on branches related to those ideas or on the current best branch.
+
+**Search-space prior order (where HP ranges come from):**
+
+1. **Research-derived priors (PRIMARY):** `search_space` entries (`{param, range, scale, source}`) on `hp_only` proposals in `<exp_root>/reports/research-findings*.md` and on research-agenda entries (`agenda list` above). They carry citations — always prefer them over built-in guidance.
+2. **Baseline-captured HPs:** ranges seeded around the HP values in `<exp_root>/results/baseline.json` `config`. For `model_category=rl`, seed around the captured gamma, clip_range, ent_coef, n_steps (and learning rate).
+3. **`tuning-strategy.md` reference sections:** cold-start fallback ONLY — use when neither research priors nor baseline HPs cover a parameter.
+
+**Research-round request:** When `model_category` is not `"supervised"` (i.e. `rl` or `generative`) AND no research-derived priors exist yet (no `search_space` entries in findings or agenda), do NOT fall back to supervised defaults. Propose only conservative baseline-anchored configs (prior order 2) for this batch, and include `"research_requested": true` plus a note naming the parameters that need cited priors — the workflow routes a research round before broad HP exploration.
 
 **Training-budget-aware proposals:**
 
-If `fixed_time_budget` is set (all experiments train for the same wall-clock duration):
-- Estimate steps fitting in budget: `estimated_steps = fixed_time_budget × baseline_throughput_steps_per_sec`
-- Propose LR schedules appropriate for that step count (e.g., 1-cycle over estimated_steps)
+If `fixed_time_budget` is set (all experiments train the same wall-clock duration):
+- Estimate steps fitting the budget: `estimated_steps = fixed_time_budget × baseline_throughput_steps_per_sec`
+- Propose LR schedules appropriate for that step count (e.g. 1-cycle over estimated_steps)
 - Avoid proposing epoch counts — the time budget controls duration
 - For short budgets (< 120s), avoid slow-convergence schedules (cosine annealing over 100+ epochs)
 
-If `fixed_epoch_budget` is set (all experiments train for the same number of epochs):
-- Do NOT vary epoch count in proposals — all experiments use the fixed epoch count
+If `fixed_epoch_budget` is set (all experiments train the same number of epochs):
+- Do NOT vary epoch count — all experiments use the fixed epoch count
 - Focus HP variation on LR, batch size, weight decay, and other non-epoch parameters
 - Propose LR schedules appropriate for the fixed epoch count
 
 From this analysis, understand:
-- **Best result so far:** Which config AND branch gave the best metric value?
-- **Worst result:** What should be avoided?
-- **Diverged experiments:** What caused them? (too high LR, too large batch, etc.)
-- **Trends:** Is there a clear direction (e.g., lower LR consistently better)? Do trends differ by branch?
-- **Untried regions:** What parts of the search space haven't been explored?
-- **Branch performance:** Which code branches are consistently better/worse?
+- **Best result so far:** Which config AND branch gave the best metric?
+- **Worst result:** What to avoid?
+- **Diverged experiments:** What caused them? (LR too high, batch too large, etc.)
+- **Trends:** Clear direction (e.g. lower LR consistently better)? Do trends differ by branch?
+- **Untried regions:** What search-space parts are unexplored?
+- **Branch performance:** Which branches are consistently better/worse?
 
 ## Step 3: Reason About Next Configs
 
-This is the core of LLM-driven HP tuning. Think through the following:
+Think through the following.
 
 ### Iteration 1 (Exploration)
-If this is the first tuning iteration (only baseline exists):
+First tuning iteration (only baseline exists):
 
-**If `code_branches` is non-empty:** Generate one config per branch using baseline HPs, plus one config for the original code (no branch). This tests each code change in isolation before HP tuning. Assign each config a `code_branch` and `code_proposal` field. Cap total configs at `len(code_branches) + 1`.
+**If `code_branches` is non-empty:** Generate one config per branch using baseline HPs, plus one for the original code (no branch). Tests each code change in isolation before HP tuning. Assign each config a `code_branch` and `code_proposal` field. Cap total configs at `len(code_branches) + 1`.
 
 **If `code_branches` is empty (HP-only):**
 
-**Tabular ML iteration 1 adjustment:** If the detected framework is scikit-learn, XGBoost, or LightGBM (tree-based models):
-- **Iteration 1 priority**: Explore `max_depth` and `n_estimators` first (these have the highest impact for tree-based models)
-- **Iteration 2+**: Then tune `learning_rate`/`eta`, `min_child_weight`, `subsample`, `colsample_bytree`
-- **Rationale**: Learning rate is less impactful for tree-based models compared to tree structure parameters
+**Tabular ML iteration 1 adjustment:** If the framework is scikit-learn, XGBoost, or LightGBM (tree-based):
+- **Iteration 1 priority:** Explore `max_depth` and `n_estimators` first (highest impact for tree-based models)
+- **Iteration 2+:** Then tune `learning_rate`/`eta`, `min_child_weight`, `subsample`, `colsample_bytree`
+- **Rationale:** Learning rate is less impactful than tree structure for tree-based models
 
 For neural network frameworks (PyTorch, TensorFlow, JAX): keep the existing strategy (learning rate first).
 
 **Default strategy (neural networks):**
-- Propose configs that span the search space
+- Propose configs spanning the search space
 - Focus on learning rate first (highest impact)
 - One config per order of magnitude of LR
 - Keep other HPs at baseline values
@@ -126,13 +134,13 @@ Based on past results:
 
 1. **Identify the best region:** Where did the best results come from?
 2. **Zoom in:** Propose configs close to the best, with small variations
-3. **Check for interactions:** If LR was tuned, now vary batch size or weight decay
-4. **Explore edges:** If best result was at the boundary, extend the search
+3. **Check interactions:** If LR was tuned, now vary batch size or weight decay
+4. **Explore edges:** If the best result was at the boundary, extend the search
 5. **Avoid repeats:** Never propose a config identical to one already tried
 
 ### Reasoning Template
 
-For each proposed config, provide this reasoning:
+For each proposed config, provide:
 
 ```
 Config <N>: {lr: X, batch_size: Y, ...}
@@ -149,56 +157,58 @@ When warm-starting is enabled and `available_checkpoints` is non-empty:
 1. For each branch being tuned, find the best checkpoint on that same branch
 2. Propose warm-started configs with lower LR (0.3-0.5x) and fewer epochs (0.3-0.5x)
 3. Mix: at most 2/3 warm-started, at least 1/3 from-scratch (maintains exploration)
-4. Only warm-start from same `code_branch` — cross-branch is unsafe
+4. Only warm-start from the same `code_branch` — cross-branch is unsafe
 5. Never warm-start from diverged/failed experiments
-6. Set `checkpoint_source` in the proposed config: `{"exp_id": "<source>", "checkpoint_path": "<path>"}`
+6. Set `checkpoint_source` in the config: `{"exp_id": "<source>", "checkpoint_path": "<path>"}`
+7. **RL warm-start requirement (`model_category=rl`):** warm-start only when the checkpoint bundles the optimizer state AND the observation/reward normalizer statistics (plus the replay buffer for off-policy algorithms like SAC/TD3). A bare policy-weights checkpoint silently resets normalization and exploration state — if the full bundle is unavailable, warm-starting is FORBIDDEN: propose from-scratch configs instead.
+8. **RL budget phrasing:** phrase warm-start budget reductions in environment timesteps (e.g. 0.3-0.5x `total_timesteps`), never epochs.
 
 ### Adaptive Branch Budget Allocation (Iteration 2+, multiple branches)
 
 When `branch_scores` is provided and `code_branches` has 2+ entries:
-1. Allocate experiment slots proportionally to branch scores: `slots = round(total * score / sum_scores)`
+1. Allocate slots proportionally to branch scores: `slots = round(total * score / sum_scores)`
 2. Every surviving branch gets minimum 1 slot
 3. High-score branches get more exploitation configs; low-score get more exploration
 4. If all branches are within 1% of each other, fall back to equal allocation
 5. Log allocation breakdown to dev_notes
 
-**Formula:** `score = max(improvement_pct × confidence, 0.0)` where `confidence = 1 - 1/√(sample_count + 1)`. Branches worse than baseline get score 0 and receive no allocation.
+**Formula:** `score = max(improvement_pct × confidence, 0.0)` where `confidence = 1 - 1/√(sample_count + 1)`. Branches worse than baseline get score 0 and no allocation.
 
 ### Interaction-Aware Proposals
 
 When the analyze output includes HP interactions:
-- If a strong interaction is detected (e.g., LR × batch_size), propose configs that explore the interacting pair TOGETHER, not independently
+- If a strong interaction is detected (e.g. LR × batch_size), propose configs exploring the interacting pair TOGETHER, not independently
 - The interaction rho sign indicates which combinations to prefer
 
 ### Categorical Hyperparameters
 
-When `search_space` includes non-numeric choices (e.g., `optimizer: ["adam", "sgd", "adamw"]`, `scheduler: ["cosine", "step"]`):
+When `search_space` includes non-numeric choices (e.g. `optimizer: ["adam", "sgd", "adamw"]`, `scheduler: ["cosine", "step"]`):
 
-- **Iteration 1:** Include each categorical option at least once across proposals (combined with reasonable numeric defaults)
-- **Iteration 2+:** Focus on the best-performing categorical values. Cross them with numeric tuning — e.g., if "adam" outperformed "sgd", try "adam" with varied learning rates
-- **Interaction effects:** Categorical choices often change the optimal numeric range (e.g., SGD needs higher LR than Adam). When switching optimizer, also broaden the LR range
+- **Iteration 1:** Include each categorical option at least once across proposals (with reasonable numeric defaults)
+- **Iteration 2+:** Focus on the best-performing categorical values. Cross with numeric tuning — e.g. if "adam" beat "sgd", try "adam" with varied learning rates
+- **Interaction effects:** Categorical choices often change the optimal numeric range (e.g. SGD needs higher LR than Adam). When switching optimizer, also broaden the LR range
 - **Grouping:** Treat categorical choices as separate "branches" in analysis — don't interpolate between them
 
 ## Step 4: Validate Proposals
 
-Before finalizing, check each proposed config:
+Before finalizing, check each config:
 
 1. **Batch size cap:** Total proposals must not exceed `max(num_gpus, 1)`.
 2. **GPU memory:** Will the batch size fit? (Check against baseline profiling)
-3. **Not a duplicate:** Has this exact config been tried before?
+3. **Not a duplicate:** Has this exact config been tried? **Seed-replicate exemption:** configs identical except for `random_seed` are intentional replicates (when `seeds_per_config` > 1), NOT duplicates — do not regenerate or drop them.
 4. **Within search space:** All values within defined ranges
-5. **Sensible combinations:** LR and batch size follow linear scaling rule
+5. **Sensible combinations:** LR and batch size follow the linear scaling rule
 
 ## Step 4.1: Log Tuning Issues
 
-### If proposals duplicate previously tried configs (caught in step 4.3):
+### If proposals duplicate previously tried configs (dup check, Step 4):
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"info","source":"hp-tune","message":"Regenerated <N> proposals due to duplication with past configs","phase":7,"iteration":<iteration>}'
 ```
 
 ## Step 5: Write Proposed Configs
 
-First, get the current round directory from the orchestrator's context (passed via SendMessage as `round_dir`). If not provided, fetch it:
+First, get the current round directory from your dispatch prompt (`round_dir`). If not provided, fetch it:
 ```bash
 round_dir=$(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/round_manager.py <exp_root> current-round | python3 -c "import json,sys; print(json.load(sys.stdin)['dir'])")
 ```
@@ -210,7 +220,7 @@ mkdir -p <exp_root>/proposed-configs/<round_dir>
 
 **IMPORTANT:** The PreToolUse hook (`validate_experiment_write.py`) blocks any `exp-*.json` write to `proposed-configs/` outside a `round-N-<type>/` subdirectory. Always write proposals to `proposed-configs/<round_dir>/<exp_id>.json`.
 
-For each proposed config, write a JSON file at `<exp_root>/proposed-configs/<round_dir>/<exp_id>.json`:
+For each config, write a JSON file at `<exp_root>/proposed-configs/<round_dir>/<exp_id>.json`:
 ```json
 {
   "exp_id": "<next_exp_id>",
@@ -227,6 +237,7 @@ For each proposed config, write a JSON file at `<exp_root>/proposed-configs/<rou
   "proposal_source": "<paper|llm_knowledge|null>",
   "method_tier": "<baseline|method_default_hp|method_tuned_hp>",
   "gpu_id": <assigned_gpu>,
+  "random_seed": <int — only on seed replicates>,
   "reasoning": "<why this config was chosen>",
   "iteration": <tuning_iteration>
 }
@@ -236,6 +247,7 @@ For each proposed config, write a JSON file at `<exp_root>/proposed-configs/<rou
 - Baseline config (no code change): `"code_branch": null, "code_proposal": null`
 - Branch config: `"code_branch": "ml-opt/<slug>"` (from manifest), `"code_proposal": "<slug>"` (matching the manifest entry's `slug` field)
 - Iteration 2+: inherit from the branch being tested, or null for baseline code
+- `random_seed`: set on seed replicates (`seeds_per_config` > 1) — each replicate shares the config but carries a distinct `random_seed`, applied via the framework's `--seed` flag. PYTHONHASHSEED is never recorded as the experiment seed.
 
 **`method_tier` rules:**
 - `"baseline"`: No code branch, running baseline HPs on original code
@@ -245,14 +257,14 @@ For each proposed config, write a JSON file at `<exp_root>/proposed-configs/<rou
 - `"stacked_tuned_hp"`: Stacked branch, after HP tuning (tuning HPs on the stacked code)
 
 **`proposal_source` rules:**
-- If config has `code_branch`: inherit `proposal_source` from the implementation manifest's matching proposal entry
+- If the config has `code_branch`: inherit `proposal_source` from the implementation manifest's matching proposal entry
 - If `code_branch` is null: set `proposal_source` to `null`
 - Iterations 2+: carry forward from the branch's original `proposal_source`
 - `"paper"`: Proposal originated from web research (Phase 5)
 - `"llm_knowledge"`: Proposal originated from LLM knowledge (Phase 7 method proposals)
 - `null`: For baseline experiments (no code change)
 
-Use `round_manager.py next-id` to generate globally unique experiment IDs (scans all round directories, not just the flat `results/`):
+Use `round_manager.py next-id` for globally unique experiment IDs (scans all round directories, not just the flat `results/`):
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/round_manager.py <exp_root> next-id
 # Returns: {"exp_id": "exp-NNN"}
@@ -275,20 +287,20 @@ Append to `<exp_root>/dev_notes.md`:
 ## Output
 
 Return to the orchestrator:
-- List of proposed configs (exp_id, config, gpu_id)
+- Proposed configs (exp_id, config, gpu_id)
 - Reasoning summary
-- Any concerns or notes (e.g., "approaching diminishing returns")
-- Recommendation: `"continue"` or `"stop"` (see "When to Recommend Stopping" below)
+- Concerns or notes (e.g. "approaching diminishing returns")
+- Recommendation: `"continue"` or `"stop"` (see below)
 
 ## When to Recommend Stopping
 
 Recommend stopping the tuning loop if:
 1. Last 3+ experiments showed <1% improvement over the best
-2. The search space has been thoroughly explored (no promising untried regions)
-3. The goal metric has been achieved
-4. All reasonable LR values have been tried and the best is clear
+2. The search space is thoroughly explored (no promising untried regions)
+3. The goal metric is achieved
+4. All reasonable LR values are tried and the best is clear
 
-**Note:** The "<1% improvement" threshold is **relative** to the baseline value (i.e., `delta / baseline * 100`). For metrics with very small absolute values (e.g., loss=0.001), even a tiny absolute change may be a large relative improvement. Always use percentage change, not absolute delta, for stopping decisions.
+**Note:** The "<1% improvement" threshold is **relative** to the baseline value (`delta / baseline * 100`). For metrics with very small absolute values (e.g. loss=0.001), a tiny absolute change may be a large relative improvement. Always use percentage change, not absolute delta.
 
 Include a `"recommendation": "continue"|"stop"` field in your output.
 
@@ -297,9 +309,9 @@ Include a `"recommendation": "continue"|"stop"` field in your output.
 When invoked during the stacking phase (identifiable by `method_tier: "stacked_default_hp"` in recent results):
 
 1. **Starting point:** Use the HP config from the best individual method in the stack (passed as `baseline_config`).
-2. **Narrow scope:** Only vary HPs that the newly added method likely interacts with. For example:
+2. **Narrow scope:** Only vary HPs the newly added method likely interacts with. E.g.:
    - New loss function → vary `learning_rate`, `weight_decay`
    - New augmentation → vary `batch_size`, `learning_rate`
    - New scheduler → vary `learning_rate`, `warmup_steps`
-3. **Budget:** Cap at 2 iterations maximum during stacking.
+3. **Budget:** Cap at 2 iterations during stacking.
 4. **Proposals:** Generate `max(num_gpus, 1)` configs, all targeting the stack branch.

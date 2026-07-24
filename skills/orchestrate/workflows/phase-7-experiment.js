@@ -12,7 +12,7 @@ export const meta = {
   ],
 };
 
-// Schemas (aligned with scripts/schema_validator.py); the runtime validates agent() returns against these.
+// Schemas (aligned with scripts/schema_validator.py); the runtime validates _dispatch() returns against these.
 
 const HP_CONFIG_SCHEMA = {
   type: "object",
@@ -173,6 +173,10 @@ const EVOLVE_RESULT_SCHEMA = {
 // Workflow runtime may deliver `args` as a JSON string — parse-if-string so
 // destructured fields + arg reads don't silently become undefined.
 const A = typeof args === 'string' ? JSON.parse(args) : (args || {})
+// opts.model override for this run only (via args.model_override); every workflow-internal
+// dispatch routes through _dispatch so a run-scoped model override applies uniformly without
+// touching each agentType call site's opts literal.
+const _dispatch = (prompt, opts) => agent(prompt, A.model_override ? { ...opts, model: A.model_override } : opts)
 const {
   exp_root,
   project_root,
@@ -250,11 +254,12 @@ const PRELOOP_SCHEMA = {
     halt: { type: ["boolean", "null"] }, // baseline checksum mismatch -> hard stop
     halt_reason: { type: ["string", "null"] },
     original_branch: { type: ["string", "null"] }, // baseline/original git branch (excluded from stacking)
+    goals_target_value: { type: ["number", "null"] }, // optimization-goals.json's objective.target_value, for fallback/cross-check
   },
   required: ["baseline_ok", "strategy", "code_branches", "search_space"],
 };
 
-const pre = await agent(
+const pre = await _dispatch(
   `Pre-loop setup for the Phase 7 experiment loop. You are a CLI runner — run the commands below and return the structured result. Do NOT start experiments.
 
 exp_root: ${exp_root}
@@ -268,8 +273,9 @@ Steps:
 4. Read the research agenda and dead-end catalog for context (no action, just confirm they exist): \`python3 ${PLUGIN}/scripts/error_tracker.py ${exp_root} agenda list\` and \`... dead-end list\`.
 5. Build the initial search_space dict for HP tuning from baseline config (${exp_root}/results/baseline.json) — sensible ranges around the baseline lr / batch_size / weight_decay etc. For tree-based frameworks (sklearn/XGBoost/LightGBM) prioritize max_depth / n_estimators. When model_category=rl, seed ranges from baseline.json's captured RL HPs — gamma, clip_range, ent_coef, n_steps — around the baseline values; do NOT apply supervised defaults.
 6. Detect num_gpus via \`python3 ${PLUGIN}/scripts/gpu_check.py\` and model_category from baseline.json if present.
+7. Read ${exp_root}/optimization-goals.json's objective.target_value (Read tool; null if the file or field is absent) and return it as goals_target_value — this workflow's target_value arg is cross-checked/fallen-back against it below.
 
-Return baseline_ok, strategy, sequential, code_branches, search_space, model_category, num_gpus, warm_start_enabled, halt, halt_reason, original_branch.`,
+Return baseline_ok, strategy, sequential, code_branches, search_space, model_category, num_gpus, warm_start_enabled, halt, halt_reason, original_branch, goals_target_value.`,
   { schema: PRELOOP_SCHEMA, agentType: "ml-optimizer:experiment-agent", phase: "Pre-loop", label: "phase7-preloop" }
 );
 
@@ -291,6 +297,14 @@ const sequential = strategy === "file_backup" || pre.sequential === true;
 // model_category: orchestrator-supplied user_choices value wins; baseline.json (pre-loop) is the fallback.
 const modelCategory = A.model_category || pre.model_category || null;
 const originalBranch = pre.original_branch || (baseline && baseline.original_branch) || null;
+// target_value: explicit arg wins; else fall back to optimization-goals.json (via pre-loop),
+// so a missed arg doesn't silently disable the target-reached exit path.
+const goalsTargetValue = typeof pre.goals_target_value === "number" ? pre.goals_target_value : null;
+const effectiveTargetValue =
+  target_value !== null && target_value !== undefined ? target_value : goalsTargetValue;
+if ((target_value === null || target_value === undefined) && goalsTargetValue !== null) {
+  log(`target_value arg was null/undefined; falling back to optimization-goals.json's target_value=${goalsTargetValue}. Pass target_value explicitly in future launches to avoid relying on this fallback.`);
+}
 const numGpus = Math.max(1, Number(pre.num_gpus) || 1);
 const warmStartEnabled = pre.warm_start_enabled === true;
 // CPU-bound parallelism: Phase-4-authorized experiments_per_gpu (default 1) multiplies the
@@ -348,9 +362,9 @@ function isImprovement(candidate, reference) {
 }
 
 function targetReached(metric) {
-  if (target_value === null || target_value === undefined) return false;
+  if (effectiveTargetValue === null || effectiveTargetValue === undefined) return false;
   if (typeof metric !== "number") return false;
-  return lowerIsBetter ? metric <= target_value : metric >= target_value;
+  return lowerIsBetter ? metric <= effectiveTargetValue : metric >= effectiveTargetValue;
 }
 
 // metric routing: divergence uses divergence_metric (lower-is-better unless divergence_lower_is_better
@@ -361,7 +375,7 @@ const divergenceClause =
     : `Divergence metric: ${divergence_metric} (lower_is_better=${divergenceLowerIsBetter}). You own in-run monitoring: poll your training log with detect_divergence.py every 5 minutes (model_category=${modelCategory} for thresholds). status="diverged" (NaN/Inf/explosion/collapse) -> kill the run and mark status="diverged". status="plateaued" (plateau/drift) -> NEVER kill; record the warning in notes for analysis.`;
 
 // Main autonomous loop — bounded by budget.remaining(). Per-iteration progress phases
-// (Round/Experiments/Analysis/Decision) are set via each agent()'s phase: opt (no top-level
+// (Round/Experiments/Analysis/Decision) are set via each _dispatch()'s phase: opt (no top-level
 // marker here — it would not map to meta.phases[]).
 
 while (budget.remaining() > 0) {
@@ -370,7 +384,7 @@ while (budget.remaining() > 0) {
 
   // -- Step 0: create round ---------------------------------------------------
   const roundType = "hp";
-  const roundRes = await agent(
+  const roundRes = await _dispatch(
     `Create a new experiment round and return its directory. Run:
 \`python3 ${PLUGIN}/scripts/round_manager.py ${exp_root} create-round ${roundType}\`
 Parse the JSON output and return round_dir = the "dir" field (e.g. "round-${iteration}-hp"). If the output has an "error", still return that dir field if present.`,
@@ -388,7 +402,7 @@ Parse the JSON output and return round_dir = the "dir" field (e.g. "round-${iter
       ? "Iteration 2: prune branches worse than baseline; focus on surviving branches + baseline."
       : "Iteration 3+: focus the best branch(es) + HP tuning. branch_scores guide slot allocation.";
 
-  const tuneRes = await agent(
+  const tuneRes = await _dispatch(
     `Propose the next batch of HP configurations for the experiment loop.
 
 Context files to read under ${exp_root}: reports/research-agenda.* (untried high-priority techniques), reports/dead-ends.* (DO NOT re-propose these), the most recent reports/batch-*-analysis.md (prior batch findings), learned-behaviors.json (OOM limits, divergence patterns).
@@ -462,7 +476,7 @@ Return {round_dir, recommendation, configs:[{exp_id, config, gpu_id, code_branch
   // never collide on files. File-backup forces sequential.
   const runOne = (cfg, idx) => async () => {
     const cfgJson = JSON.stringify(cfg.config || {});
-    return agent(
+    const r = await _dispatch(
       `Run a single training experiment, then evaluate and write the result JSON.
 
 exp_id: ${cfg.exp_id}
@@ -496,6 +510,10 @@ The result JSON must include status, config, metrics, code_branch, method_tier, 
         label: `exp-${cfg.exp_id}`,
       }
     );
+    // Ground-truth code_branch from the dispatched config, not the agent's own echo
+    // (observed dropping to null even when the on-disk JSON had it right).
+    if (r && cfg.code_branch) r.code_branch = cfg.code_branch;
+    return r;
   };
 
   let results;
@@ -526,7 +544,7 @@ The result JSON must include status, config, metrics, code_branch, method_tier, 
     completed.length > 0 &&
     completed.every((r) => r.status === "diverged" || r.diverged === true);
 
-  const analyzeRes = await agent(
+  const analyzeRes = await _dispatch(
     `Analyze batch ${batchNumber} results and decide the next action.
 
 exp_root: ${exp_root}
@@ -535,7 +553,7 @@ batch_number: ${batchNumber}
 iteration: ${iteration}
 primary_metric: ${primary_metric}
 lower_is_better: ${lowerIsBetter}
-target_value: ${target_value === null || target_value === undefined ? "null" : target_value}
+target_value: ${effectiveTargetValue === null || effectiveTargetValue === undefined ? "null" : effectiveTargetValue}
 scope_level: ${scope_level}
 model_category: ${modelCategory}
 baseline_metric (${primary_metric}): ${baselineMetricValue}
@@ -613,7 +631,7 @@ Return {decision, pivot_type, batch_number, best_exp_id, best_metric_value, impr
   await verifyBatchOutputs(roundDir, completed, batchNumber);
 
   // Close the round.
-  await agent(
+  await _dispatch(
     `Close the current experiment round with a summary. Run:
 \`python3 ${PLUGIN}/scripts/round_manager.py ${exp_root} close-round --summary "Iteration ${iteration}: best ${primary_metric}=${bestMetric}, ${completed.length}/${configs.length} completed"\`
 Also regenerate the live dashboard: \`python3 ${PLUGIN}/scripts/dashboard.py ${exp_root} --live\`.
@@ -624,7 +642,7 @@ Return nothing structured.`,
   // -- Target reached? --------------------------------------------------------
   if (targetReached(bestMetric)) {
     exitReason = "target_reached";
-    log(`Target ${primary_metric}=${target_value} reached (best=${bestMetric}). Exiting loop.`);
+    log(`Target ${primary_metric}=${effectiveTargetValue} reached (best=${bestMetric}). Exiting loop.`);
     break;
   }
 
@@ -641,7 +659,7 @@ Return nothing structured.`,
       "an untried, in-scope, non-dead-end HP direction still exists that is cheaper than this pivot (check reports/research-agenda.* and the search-space coverage in the latest reports/batch-*-analysis.md) — if so the pivot is premature",
       "the HP plateau is within noise rather than a real signal (re-examine the batch result spread / effect sizes in the latest reports/batch-*-analysis.md) — if so keep tuning before pivoting",
     ];
-    const verdicts = (await parallel(lenses.map((lens, li) => () => agent(
+    const verdicts = (await parallel(lenses.map((lens, li) => () => _dispatch(
       `You are an independent skeptic reviewing the analysis-agent's costly "${decision}" pivot (pivot_type=${(analyzeRes && analyzeRes.pivot_type) || "none"}) at iteration ${iteration}. Read ${exp_root}/reports/batch-${batchNumber}-analysis.md, the results under ${exp_root}/results/, reports/research-agenda.*, and reports/dead-ends.*. Try to REFUTE the pivot via this lens: ${lens}. Default refuted=false unless you find concrete, file-grounded evidence. Return {refuted, reason}.`,
       { agentType: "ml-optimizer:analysis-agent", phase: "Decision", label: `refute-pivot-${li + 1}-${iteration}`, schema: REFUTE_SCHEMA }))
     )).filter(Boolean);
@@ -740,7 +758,7 @@ Return nothing structured.`,
       agendaHasUntried ||
       improvedSinceLastStop;
 
-    await agent(
+    await _dispatch(
       `Log the loop-exit judgment decision. Run:
 \`python3 ${PLUGIN}/scripts/pipeline_state.py ${exp_root} log-decision '${JSON.stringify({
         phase: 7,
@@ -803,9 +821,29 @@ Return nothing structured.`,
 
 phase("Exit");
 
-const stackingCandidates = Array.from(stackingByBranch.entries())
+let stackingCandidates = Array.from(stackingByBranch.entries())
   .map(([branch, improvement_pct]) => ({ branch, improvement_pct }))
   .sort((a, b) => b.improvement_pct - a.improvement_pct);
+
+// Drop candidates whose branch is dead-ended: this harvest compares each branch's best-tuned
+// result against the flat baseline, which can look like an improvement purely from favorable
+// HP luck even when analysis's matched-HP comparison already found the branch doesn't help.
+// Stacking should never re-test a method already ruled out on better evidence.
+if (stackingCandidates.length) {
+  const DEAD_END_SCHEMA = {
+    type: "object",
+    properties: { dead_branches: { type: "array", items: { type: "string" } } },
+    required: ["dead_branches"],
+  };
+  const deadEndRes = await _dispatch(
+    `Run \`python3 ${PLUGIN}/scripts/error_tracker.py ${exp_root} dead-end list\`. Return dead_branches: the "branch" field of entries whose "technique" is actually about that branch's OWN implemented code change underperforming (e.g. technique name matches/resembles the branch slug, or names an HP of that method) — NOT entries whose "branch" is just where an unrelated HP/scheduler config happened to be tested (e.g. an invalid-scheduler code-support-gap dead-end tagged with some branch by coincidence of dispatch, not a verdict on that branch's method). Empty array if none/file missing. Do not run anything else.`,
+    { schema: DEAD_END_SCHEMA, agentType: "ml-optimizer:experiment-agent", phase: "Exit", label: "dead-end-filter" }
+  );
+  const deadBranches = new Set((deadEndRes && deadEndRes.dead_branches) || []);
+  if (deadBranches.size) {
+    stackingCandidates = stackingCandidates.filter((c) => !deadBranches.has(c.branch));
+  }
+}
 
 return {
   best_exp_id: bestExpId,
@@ -831,7 +869,7 @@ async function verifyBatchOutputs(roundDir, completedResults, batchNum) {
       missing: { type: "array", items: { type: "string" } },
     },
   };
-  const res = await agent(
+  const res = await _dispatch(
     `Completeness check for Phase 7 batch ${batchNum} (round ${roundDir}). Use Bash/Read ONLY (do NOT re-run experiments). For EACH exp_id in ${JSON.stringify(expIds)} run:
 \`python3 ${PLUGIN}/scripts/output_contract.py check ${exp_root} experiment-agent --round-dir ${roundDir} --exp-id <exp_id>\`
 (exit code 2 means missing outputs — capture the "missing" array from its JSON). Also confirm the batch analysis file exists: ${exp_root}/reports/batch-${batchNum}-analysis.md.
@@ -849,7 +887,7 @@ Return {all_present, missing}.`,
 // Research round (proposals) + implement the in-scope ones. Returns new branches.
 async function runResearchImplement(reasonLabel, idx) {
   const findingsPath = `${exp_root}/reports/research-findings-method-proposals-iter${idx}.md`;
-  const research = await agent(
+  const research = await _dispatch(
     `${reasonLabel}. Research ML optimization techniques and write in-scope proposals.
 
 Parameters:
@@ -876,7 +914,7 @@ Read ${exp_root}/reports/dead-ends.* and the research agenda first — DO NOT re
 // Stuck-protocol research (failure-context aware). Returns counts + selection.
 async function runStuckResearch(idx) {
   const findingsPath = `${exp_root}/reports/research-findings-method-proposals-iter${idx}.md`;
-  const research = await agent(
+  const research = await _dispatch(
     `STUCK PROTOCOL — the optimization is stuck; find new approaches NOT yet tried.
 
 Read first (FILES under ${exp_root}): error patterns (\`python3 ${PLUGIN}/scripts/error_tracker.py ${exp_root} patterns\`), success metrics, the dead-end catalog (\`... dead-end list\` — DO NOT re-propose any of these), and the research agenda (\`... agenda list\`).
@@ -907,7 +945,7 @@ Focus on techniques NOT in the dead-end catalog. Return {findings_path, proposal
 
 // Implement selected proposals -> new validated branches.
 async function runImplementOnly(findingsPath, selectedIndices) {
-  const impl = await agent(
+  const impl = await _dispatch(
     `Implement the selected research proposals as git branches (ml-opt/<slug>), one per proposal, sequentially inside a git worktree outside ${exp_root}.
 
 Parameters:
@@ -930,14 +968,14 @@ async function runCodeEvolution(analysis) {
     (analysis && analysis.surviving_branches && analysis.surviving_branches[0]) ||
     codeBranches[0] ||
     null;
-  const evolveHp = await agent(
+  const evolveHp = await _dispatch(
     `Propose ShinkaEvolve evolution HPs for a code_evolution step. Read learned-behaviors.json category "evolve_hp" under ${exp_root} for prior outcomes (how many generations produced the best mutation, whether more population diversity helped). Defaults: num_generations=10, population_size=2. Return {num_generations, population_size, reasoning}.`,
     { schema: EVOLVE_HP_SCHEMA, agentType: "ml-optimizer:tuning-agent", phase: "Decision", label: "evolve-hp" }
   );
   const numGen = evolveHp && evolveHp.num_generations ? evolveHp.num_generations : 10;
   const popSize = evolveHp && evolveHp.population_size ? evolveHp.population_size : 2;
 
-  const evolve = await agent(
+  const evolve = await _dispatch(
     `Run the ml-optimizer:evolve skill (ShinkaEvolve) to evolve code on the best branch.
 
 Skill("ml-optimizer:evolve") parameters:

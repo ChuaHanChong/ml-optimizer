@@ -98,6 +98,8 @@ def rank_by_metric(results: dict[str, dict], metric: str, lower_is_better: bool 
                 "value": metrics[metric],
                 "config": data.get("config", {}),
                 "status": data.get("status"),
+                # Lets consumers (dashboard, results-table) flag non-held-out-eval results.
+                "eval_protocol": data.get("eval_protocol"),
             })
     valid = [r for r in ranked if isinstance(r["value"], (int, float)) and math.isfinite(r["value"])]
     invalid = [r for r in ranked if not (isinstance(r["value"], (int, float)) and math.isfinite(r["value"]))]

@@ -98,6 +98,7 @@ Before building the training command, verify:
    Warn if less than 5 GB free.
 
 2. **Timeout enforcement:**
+   - **Never wrap with `conda run -n <env> <cmd>`** — it drops stdout on SIGTERM (0-byte log). Invoke `<conda_prefix>/bin/python3 -u` directly, with `PYTHONUNBUFFERED=1`.
    - **If `fixed_time_budget` is set** (from Phase 0 user_choices): use it directly as `timeout_seconds`. All experiments train for exactly this many seconds. When the budget expires (exit code 124 from `timeout`), this is NOT an error — set `status: "completed"`. Include `"time_budget_seconds": <value>` in the result JSON. **Checkpoint pre-flight:** verify the training script checkpoints periodically (look for `save_freq`, `checkpoint_interval`, `ModelCheckpoint`, periodic `save_checkpoint` calls) or use a framework-native time limit (Lightning `--max_time`, HF `TrainingArguments`). If NEITHER exists, the SIGTERM kill leaves no final checkpoint — warn and record `"eval_checkpoint_missing": true` in the result notes rather than scoring a stale checkpoint.
    - **If `fixed_epoch_budget` is set** (from Phase 0 user_choices): override the epoch count in the training command (e.g., `--epochs <fixed_epoch_budget>`). All experiments train for exactly this many epochs. Include `"epoch_budget": <value>` in the result JSON. Still apply the safety timeout below.
    - **If `fixed_step_budget` is set** (from Phase 0 user_choices — environment timesteps, RL): override the timestep count via the framework's flag (e.g., `--total_timesteps <fixed_step_budget>`). All experiments train for exactly this many environment steps. Include `"step_budget": <value>` in the result JSON. Still apply the safety timeout below.
@@ -416,6 +417,14 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/schema_validator.py \
 ```
 
 If validation fails, read the errors, fix the JSON file, and re-validate. Do not proceed to Step 7 until validation passes.
+
+## Step 6.2: Register the Experiment (mandatory)
+
+Immediately after the result JSON validates, register it so `rounds-manifest.json` — the pipeline's source of truth — never drifts from the result files on disk:
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/round_manager.py <exp_root> register-experiment <round_dir> <exp_id>
+```
+This is **required for every experiment** (completed, failed, or diverged), idempotent (re-registering is a no-op), and file-locked for concurrency. Skipping it leaves the manifest undercounting what actually ran. Do not proceed to Step 7 until this succeeds.
 
 ## Step 7: Report Back
 

@@ -161,6 +161,8 @@ def _check_completeness(data: dict) -> str | None:
             missing.append("method_tier")
         if "duration_seconds" not in data:
             missing.append("duration_seconds")
+        if "eval_protocol" not in data:
+            missing.append("eval_protocol (held_out_eval|train_report|rl_final_eval)")
         tier = data.get("method_tier", "")
         if isinstance(tier, str) and tier.startswith("stacked_"):
             if "code_branches" not in data:

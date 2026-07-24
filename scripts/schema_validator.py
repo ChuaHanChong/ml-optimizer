@@ -446,6 +446,8 @@ def _check_completeness(data: dict) -> list[str]:
             warnings.append("Completed experiment missing 'method_tier'")
         if "duration_seconds" not in data:
             warnings.append("Completed experiment missing 'duration_seconds'")
+        if "eval_protocol" not in data:
+            warnings.append("Completed experiment missing 'eval_protocol' (held_out_eval|train_report|rl_final_eval)")
         # Stacking completeness
         tier = data.get("method_tier", "")
         if isinstance(tier, str) and tier.startswith("stacked_"):

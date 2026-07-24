@@ -13,6 +13,10 @@ export const meta = {
 // The Workflow runtime may deliver `args` as a JSON string; parse-if-string so
 // arg reads don't silently become undefined (e.g. `undefined/reports/...` paths).
 const A = typeof args === 'string' ? JSON.parse(args) : (args || {})
+// opts.model override for this run only (via args.model_override); every workflow-internal
+// dispatch routes through _dispatch so a run-scoped model override applies uniformly without
+// touching each agentType call site's opts literal.
+const _dispatch = (prompt, opts) => agent(prompt, A.model_override ? { ...opts, model: A.model_override } : opts)
 const expRoot = A.exp_root
 const primaryMetric = A.primary_metric
 const modelCategory = A.model_category || 'supervised'
@@ -121,7 +125,7 @@ Before finishing, verify ${findingsPath} exists and is non-empty with the Read t
 // findings file exists on disk, else logs the gap and writes a minimal stub for downstream phases.
 async function verifyFindings(label) {
   const VERIFY_SCHEMA = { type: 'object', required: ['exists'], properties: { exists: { type: 'boolean' }, repaired: { type: 'boolean' } } }
-  const res = await agent(
+  const res = await _dispatch(
     `Completeness check for Phase 5 research output. Using the Read/Glob tools ONLY (do not re-run research):
 1. Check whether ${findingsPath} exists and is non-empty.
 2. If it is MISSING or empty, log the gap (\`python3 \${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py ${expRoot} log '{"category":"agent_failure","severity":"warning","source":"orchestrate","message":"research-findings.md missing after synthesis","phase":5}'\`) and write a minimal ${findingsPath} with a Problem Statement and an empty "## Proposals (Ranked by Priority)" section so downstream phases can proceed. Then set repaired=true.
@@ -158,7 +162,7 @@ const angles = [...domainAngles, 'generic cross-domain optimization techniques']
 
 // Each angle is an independent research-agent call. user_papers (if any) go to the
 // first angle so the user-paper priority bonus is applied exactly once.
-const angleThunks = angles.map((angle, i) => () => agent(
+const angleThunks = angles.map((angle, i) => () => _dispatch(
   `${baseCtx}
 
 Research ANGLE ${i + 1}/${angles.length}: "${angle}".
@@ -197,7 +201,7 @@ phase('Vet')
 const vetted = candidates.length
   ? (await pipeline(
       candidates,
-      (_prev, cand, idx) => agent(
+      (_prev, cand, idx) => _dispatch(
         `${baseCtx}
 
 ADVERSARIALLY VET this candidate proposal (#${idx + 1}) before it reaches the user:
@@ -230,7 +234,7 @@ phase('Synthesize')
 if (!ranked.length) {
   // No actionable proposals — still emit an honest findings file so downstream phases
   // can detect the empty result; the research-agent logs the research_failure event.
-  await agent(
+  await _dispatch(
     `${baseCtx}
 
 ${OUTPUT_CONTRACT}
@@ -245,7 +249,7 @@ Verify the file exists with Read before finishing.`,
 
 // One research-agent writes the canonical findings file (Step 5) and initializes the
 // agenda (Step 5.1) from the already-vetted, ranked proposals — it owns the exact format.
-const synth = await agent(
+const synth = await _dispatch(
   `${baseCtx}
 
 ${OUTPUT_CONTRACT}

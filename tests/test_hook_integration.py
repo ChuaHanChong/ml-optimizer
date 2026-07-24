@@ -172,6 +172,7 @@ class TestLayer2WriteValidation:
             "exp_id": "exp-001", "status": "completed",
             "config": {"lr": 0.01}, "metrics": {"loss": 0.4},
             "iteration": 1, "method_tier": "baseline", "duration_seconds": 120.0,
+            "eval_protocol": "held_out_eval",
         })
         _, stdout, _ = _run_hook(VALIDATE_WRITE_SCRIPT, payload)
         decision = _parse_decision(stdout)
@@ -257,6 +258,7 @@ class TestLayer2WriteValidation:
             "config": {"lr": 0.01, "model_size": "large"},
             "metrics": {"loss": 0.4},
             "iteration": 1, "method_tier": "baseline", "duration_seconds": 60,
+            "eval_protocol": "held_out_eval",
         })
         _, stdout, _ = _run_hook(VALIDATE_WRITE_SCRIPT, payload)
         decision = _parse_decision(stdout)
@@ -274,6 +276,7 @@ class TestLayer2WriteValidation:
             "exp_id": "exp-009", "status": "completed",
             "config": {"batch_size": 512}, "metrics": {"loss": 0.4},
             "iteration": 1, "method_tier": "baseline", "duration_seconds": 60,
+            "eval_protocol": "held_out_eval",
         })
         _, stdout, _ = _run_hook(VALIDATE_WRITE_SCRIPT, payload)
         decision = _parse_decision(stdout)

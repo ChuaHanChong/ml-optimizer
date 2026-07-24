@@ -861,7 +861,8 @@ class TestCompletenessWarnings:
         """A completed result with all completeness fields produces no warnings."""
         data = {"exp_id": "exp-1", "status": "completed",
                 "config": {"lr": 0.001}, "metrics": {"loss": 0.5},
-                "iteration": 1, "method_tier": "baseline", "duration_seconds": 60}
+                "iteration": 1, "method_tier": "baseline", "duration_seconds": 60,
+                "eval_protocol": "held_out_eval"}
         r = validate_result(data)
         assert r["valid"] is True
         assert r["warnings"] == []
@@ -979,7 +980,7 @@ class TestSeedReplicates:
         data = {"exp_id": "exp-001", "status": "completed",
                 "config": {"lr": 0.001}, "metrics": {"loss": 0.5},
                 "iteration": 1, "method_tier": "baseline", "duration_seconds": 10,
-                "random_seed": 42}
+                "random_seed": 42, "eval_protocol": "held_out_eval"}
         result = validate_result(data)
         assert result["valid"] is True
         assert result["warnings"] == []

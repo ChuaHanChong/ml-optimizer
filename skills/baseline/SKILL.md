@@ -117,6 +117,7 @@ The baseline must use the same training budget as experiments for fair compariso
    ```bash
    timeout --signal=SIGTERM --kill-after=60 <fixed_time_budget> <train_command>
    ```
+   **Never wrap with `conda run -n <env> <cmd>`** — it drops stdout on SIGTERM (0-byte log). Invoke `<conda_prefix>/bin/python3 -u` directly, with `PYTHONUNBUFFERED=1`.
 2. Set epochs high enough that timeout is the binding constraint (e.g., `--epochs 200`)
 3. Exit code 124 (timeout reached) is treated as **success** — training completed its time budget normally
 4. **Checkpoint pre-flight:** verify the training script saves checkpoints periodically (look for `save_freq`, `checkpoint_interval`, `ModelCheckpoint`, periodic `save_checkpoint` calls) or supports a framework-native time limit (Lightning `--max_time`, HF `TrainingArguments`). If NEITHER exists, the SIGTERM kill leaves no final checkpoint — warn in dev_notes and record `"eval_checkpoint_missing": true` in the baseline notes instead of scoring a stale/initial checkpoint.

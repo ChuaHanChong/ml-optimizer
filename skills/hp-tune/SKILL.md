@@ -87,10 +87,9 @@ If high-priority untried ideas exist, consider whether HP exploration should foc
 **Training-budget-aware proposals:**
 
 If `fixed_time_budget` is set (all experiments train the same wall-clock duration):
-- Estimate steps fitting the budget: `estimated_steps = fixed_time_budget × baseline_throughput_steps_per_sec`
-- Propose LR schedules appropriate for that step count (e.g. 1-cycle over estimated_steps)
-- Avoid proposing epoch counts — the time budget controls duration
-- For short budgets (< 120s), avoid slow-convergence schedules (cosine annealing over 100+ epochs)
+- **Overshoot the epoch count deliberately — don't calibrate precisely to the budget.** No reliable epochs/sec estimate exists (`baseline.json`'s `profiling.throughput_samples_per_sec` is samples/sec, not epochs/sec — converting needs dataset size, which varies by config). Overshooting is harmless with periodic checkpointing (timeout just cuts training off wherever it reaches); undershooting wastes budget. When a scheduler needs an epoch count (e.g. cosine annealing's `T_max`), propose one noticeably higher than any plausible fit — same pattern the baseline skill uses (`--epochs 200` when only ~90 fit).
+- Propose LR schedules for the time budget, not a specific epoch target — a schedule keyed to the overshot ceiling still works since it just gets truncated.
+- For short budgets (< 120s), avoid slow-convergence schedules as the primary lever — an oversized epoch flag itself is fine.
 
 If `fixed_epoch_budget` is set (all experiments train the same number of epochs):
 - Do NOT vary epoch count — all experiments use the fixed epoch count

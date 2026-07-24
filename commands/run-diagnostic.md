@@ -743,6 +743,17 @@ cd /tmp/ml-opt-diagnostic
 echo "experiments/" > .gitignore
 git init && git add . && git commit -m "initial"
 mkdir -p /tmp/ml-opt-diagnostic/experiments/{results,reports,logs,scripts,artifacts}
+
+# Breadcrumb (normally written at Phase 0 — phase-0-discovery.md Step 3.1). Required so
+# the L2 PreToolUse hook can resolve exp_root and actually enforce during Step 6, not
+# just Step 3.2's synthetic tests.
+mkdir -p /tmp/ml-opt-diagnostic/.claude
+python3 -c "
+import json
+from pathlib import Path
+bc = Path('/tmp/ml-opt-diagnostic/.claude/ml-optimizer.json')
+json.dump({'active': '/tmp/ml-opt-diagnostic/experiments', 'runs': ['/tmp/ml-opt-diagnostic/experiments']}, bc.open('w'), indent=2)
+"
 ```
 
 Use these paths throughout the diagnostic:

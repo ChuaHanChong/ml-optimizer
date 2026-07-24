@@ -113,6 +113,13 @@ def create_round(exp_root: str, round_type: str, branch: str | None = None) -> d
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
         try:
             manifest = _load_manifest(exp_root)
+            # Self-heal: an open prior round was abandoned mid-flight — close it.
+            if manifest["rounds"] and manifest["rounds"][-1].get("closed_at") is None:
+                manifest["rounds"][-1]["closed_at"] = datetime.now(timezone.utc).isoformat()
+                manifest["rounds"][-1]["summary"] = (
+                    manifest["rounds"][-1].get("summary")
+                    or "auto-closed: abandoned (a new round was created without this one being explicitly closed, likely an interruption)"
+                )
             round_id = manifest["current_round"] + 1
             dir_name = f"round-{round_id}-{round_type}"
 

@@ -580,6 +580,7 @@ class TestWriteHookCompleteness:
             "iteration": 1,
             "method_tier": "baseline",
             "duration_seconds": 120.0,
+            "eval_protocol": "held_out_eval",
         }
         reason = _check_completeness(data)
         assert reason is None
@@ -670,6 +671,7 @@ class TestWriteHookCompleteness:
             "duration_seconds": 300.0,
             "code_branches": ["ml-opt/branch-a", "ml-opt/branch-b"],
             "stacking_order": 2,
+            "eval_protocol": "held_out_eval",
         }
         reason = _check_completeness(data)
         assert reason is None

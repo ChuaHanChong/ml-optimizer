@@ -193,6 +193,7 @@ svg{max-width:100%}
     <div class="metric-label">${metric_name} (${direction})</div>
     <div style="margin-top:8px;font-size:0.85rem;color:#495057">${best_exp_id}</div>
     <div style="font-size:0.85rem;color:#2f9e44">${improvement}</div>
+    ${data_quality_banner}
   </div>
   <div class="card">
     <h2>Pipeline State</h2>
@@ -353,6 +354,19 @@ def generate_dashboard(exp_root: str, *, live: bool = False) -> str:
     best = completed[0] if completed else None
     best_value = _format_value(best.get("value") if best else None)
     best_id = best.get("exp_id", "—") if best else "—"
+
+    # Data-quality banner: flag when the ranking includes non-held-out-eval results.
+    unverified_count = sum(1 for e in completed if e.get("eval_protocol") != "held_out_eval")
+    if unverified_count:
+        best_unverified = best is not None and best.get("eval_protocol") != "held_out_eval"
+        data_quality_banner = (
+            f'<div style="margin-top:8px;font-size:0.8rem;color:#c0392b;font-weight:600">'
+            f'⚠ {unverified_count}/{len(completed)} completed results are not held-out evaluations'
+            f'{" — including the result shown above" if best_unverified else ""}.'
+            f' Sort by eval_protocol=held_out_eval before trusting rankings.</div>'
+        )
+    else:
+        data_quality_banner = ""
     improvement = ""
     if best and baseline_val is not None:
         bv = best.get("value")
@@ -388,9 +402,12 @@ def generate_dashboard(exp_root: str, *, live: bool = False) -> str:
             sval = raw_results.get(eid, {}).get("metrics", {}).get(m["name"])
             num = sval if isinstance(sval, (int, float)) and not isinstance(sval, bool) else ""
             sec_cells += f'<td data-val="{num}">{_format_value(sval)}</td>'
+        # Flag non-held-out-eval values — a train-set proxy otherwise looks like a real result.
+        proto = exp.get("eval_protocol")
+        proto_badge = "" if proto == "held_out_eval" else ' <span class="badge" style="background:#c0392b" title="not a held-out evaluation">⚠ unverified</span>'
         rows.append(
             f'<tr><td>{eid}</td><td>{_status_badge(status)}</td>'
-            f'<td data-val="{val if val is not None else ""}">{_format_value(val)}</td>'
+            f'<td data-val="{val if val is not None else ""}">{_format_value(val)}{proto_badge}</td>'
             f'<td>{delta}</td><td>{branch}</td><td>{iteration}</td>{sec_cells}</tr>'
         )
 
@@ -527,6 +544,7 @@ def generate_dashboard(exp_root: str, *, live: bool = False) -> str:
         direction="lower is better" if lower else "higher is better",
         best_exp_id=best_id,
         improvement=improvement,
+        data_quality_banner=data_quality_banner,
         phase=str(ps.get("phase", "—")),
         iteration=str(ps.get("iteration", "—")),
         running_section=running_section,
@@ -623,8 +641,15 @@ def generate_results_table(exp_root: str, metric: str = "loss", lower_is_better:
         f"- Completed: {statuses['completed']} | Failed: {statuses['failed']} | "
         f"Diverged: {statuses['diverged']} | Running: {statuses['running']}",
         f"- Best result: {best_line}",
-        "",
     ]
+    unverified_count = sum(1 for r in ranked if r.get("eval_protocol") != "held_out_eval")
+    if unverified_count:
+        lines.append(
+            f"- ⚠ **{unverified_count}/{len(ranked)} ranked results are not held-out evaluations** "
+            f"(missing/non-`held_out_eval` `eval_protocol`) — marked with ⚠ below. "
+            f"Do not trust these values against results that are genuinely held-out."
+        )
+    lines.append("")
 
     # Results table
     if ranked:
@@ -644,6 +669,8 @@ def generate_results_table(exp_root: str, metric: str = "loss", lower_is_better:
             status = results.get(eid, {}).get("status", "?")
             val = r.get("value")
             val_str = f"{val:.4f}" if isinstance(val, (int, float)) else "—"
+            if r.get("eval_protocol") != "held_out_eval":
+                val_str += " ⚠"
             delta_str = "—"
             if val is not None and baseline_val is not None and abs(baseline_val) > 1e-12:
                 if lower_is_better:

@@ -157,7 +157,7 @@ async function verifyStackStep(expRoot, plugin, keptExpId, stepOrder) {
       missing: { type: "array", items: { type: "string" } }
     }
   };
-  const res = await agent(
+  const res = await _dispatch(
     [
       `Completeness check for kept stacking step ${stepOrder}. Use Bash/Read ONLY (do NOT re-run anything).`,
       `Find the round directory holding result exp_id "${keptExpId}" under ${expRoot}/results/ (a round-*-stacked dir), then verify the experiment-agent outputs:`,
@@ -185,6 +185,10 @@ phase("Pre-check");
 // Workflow runtime may deliver `args` as a JSON string — parse-if-string so
 // destructured fields + arg reads don't silently become undefined.
 const A = typeof args === 'string' ? JSON.parse(args) : (args || {})
+// opts.model override for this run only (via args.model_override); every workflow-internal
+// dispatch routes through _dispatch so a run-scoped model override applies uniformly without
+// touching each agentType call site's opts literal.
+const _dispatch = (prompt, opts) => agent(prompt, A.model_override ? { ...opts, model: A.model_override } : opts)
 const {
   exp_root,
   project_root,
@@ -297,7 +301,7 @@ for (let i = 1; i < ranked.length; i++) {
   log(`Stack step ${stackOrder}: merge ${method.branch} into ${stackBaseBranch} -> ${stackBranch}`);
 
   // ---- Step a/b/c/d: implement-agent merges next method into a new stack branch ----
-  const merge = await agent(
+  const merge = await _dispatch(
     [
       `Method-stacking merge — stack step ${stackOrder}.`,
       `Project root: ${project_root}. exp_root: ${exp_root}.`,
@@ -336,10 +340,10 @@ for (let i = 1; i < ranked.length; i++) {
   // corrupted-metrics experiment never runs; a critical finding skips this stack step.
   const stackReviewCtx = `Review the merged stacking branch ${stackBranch} in project_root ${project_root}. Diff it against the prior stack base ${stackBaseBranch} AND the newly merged method ${method.branch} to focus on the MERGE BOUNDARY (combining: ${stackedMethods.concat([method.branch]).join(", ")}). This is an ML research stack, not production code.`;
   const stackReviews = (await parallel([
-    () => agent(
+    () => _dispatch(
       `${stackReviewCtx} Focus: bugs, logic errors, incorrect tensor/shape handling, and whether the merge preserved BOTH methods' functionality. Set critical=true for a real bug that would corrupt training/eval. Return the schema.`,
       { agentType: "pr-review-toolkit:code-reviewer", label: `stack-review-code-${stackOrder}`, phase: "Accumulate", schema: STACK_REVIEW_SCHEMA }),
-    () => agent(
+    () => _dispatch(
       `${stackReviewCtx} Focus: silent failures introduced by the merge/conflict resolution — swallowed NaN/Inf losses, failed CUDA/optimizer ops that fall through, bare except/except:pass around training or eval, or a resolution that dropped one method's error handling. Any of these silently invalidates the stacked metric, so set critical=true. Return the schema.`,
       { agentType: "pr-review-toolkit:silent-failure-hunter", label: `stack-review-silent-${stackOrder}`, phase: "Accumulate", schema: STACK_REVIEW_SCHEMA }),
   ])).filter(Boolean);
@@ -356,7 +360,7 @@ for (let i = 1; i < ranked.length; i++) {
   // ---- Step f: experiment-agent runs the stacked branch ----
   const codeBranches = stackedMethods.concat([method.branch]);
 
-  const exp = await agent(
+  const exp = await _dispatch(
     [
       `Run stacking experiment for ${stackBranch} (stack step ${stackOrder}).`,
       `Project root: ${project_root}. exp_root: ${exp_root}.`,
@@ -391,7 +395,7 @@ for (let i = 1; i < ranked.length; i++) {
   const stackedMetric = primaryMetricOf(exp, primary_metric);
 
   // ---- Step g: analysis-agent assesses the stacked result ----
-  const analysis = await agent(
+  const analysis = await _dispatch(
     [
       `Assess a stacked experiment result.`,
       `exp_root: ${exp_root}. project_root: ${project_root}.`,
@@ -445,7 +449,7 @@ for (let i = 1; i < ranked.length; i++) {
     log(`Stack step ${stackOrder}: interference detected; attempting code_evolution on ${stackBranch}.`);
 
     // (1) tuning-agent proposes evolve HPs
-    const evolveHp = await agent(
+    const evolveHp = await _dispatch(
       [
         `Propose ShinkaEvolve evolution HPs for a stacking code_evolution step.`,
         `exp_root: ${exp_root}. project_root: ${project_root}.`,
@@ -467,7 +471,7 @@ for (let i = 1; i < ranked.length; i++) {
       : { num_generations: 5, population_size: 2, reasoning: "default stacking evolve HPs" };
 
     // (2) implement-agent runs the evolve skill on the stacked branch
-    const evolved = await agent(
+    const evolved = await _dispatch(
       [
         `Run ShinkaEvolve code evolution on a stacked branch via Skill("ml-optimizer:evolve").`,
         `project_root: ${project_root}. exp_root: ${exp_root}.`,
@@ -490,7 +494,7 @@ for (let i = 1; i < ranked.length; i++) {
 
     if (evolved && evolved.status === "validated" && evolved.branch) {
       // Re-run the evolved branch and keep it only if it beats the pre-evolution stack.
-      const evolvedExp = await agent(
+      const evolvedExp = await _dispatch(
         [
           `Run experiment on an evolved stacked branch.`,
           `Project root: ${project_root}. exp_root: ${exp_root}.`,
@@ -541,7 +545,7 @@ for (let i = 1; i < ranked.length; i++) {
   if (combinedGainPct > 1 && budget.remaining() > 0) {
     log(`Stack step ${stackOrder}: combo gain ${combinedGainPct.toFixed(2)}% > 1%; running narrowed HP-tune on ${keptBranch}.`);
 
-    const hp = await agent(
+    const hp = await _dispatch(
       [
         `Propose a narrowed HP-tune batch for a stacked branch (1 small round).`,
         `exp_root: ${exp_root}. project_root: ${project_root}.`,
@@ -562,7 +566,7 @@ for (let i = 1; i < ranked.length; i++) {
     if (cfgs.length > 0) {
       const hpRuns = await parallel(
         cfgs.map((cfg) => () =>
-          agent(
+          _dispatch(
             [
               `Run a narrowed stacked HP-tune experiment.`,
               `Project root: ${project_root}. exp_root: ${exp_root}.`,

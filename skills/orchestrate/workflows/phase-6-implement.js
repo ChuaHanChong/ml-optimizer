@@ -12,6 +12,10 @@ export const meta = {
 // { exp_root, project_root, findings_path, selected_indices:[int], strategy }
 // Workflow runtime may deliver `args` as a JSON string — parse-if-string.
 const A = typeof args === 'string' ? JSON.parse(args) : (args || {})
+// opts.model override for this run only (via args.model_override); every workflow-internal
+// dispatch routes through _dispatch so a run-scoped model override applies uniformly without
+// touching each agentType call site's opts literal.
+const _dispatch = (prompt, opts) => agent(prompt, A.model_override ? { ...opts, model: A.model_override } : opts)
 const expRoot = A.exp_root
 const projectRoot = A.project_root
 const findingsPath = A.findings_path || `${expRoot}/reports/research-findings.md`
@@ -124,7 +128,7 @@ phase('Implement')
 
 // stage 1 implements one proposal (worktree-isolated for git so parallel implements don't collide);
 // stage 2 reviews that proposal's branch. git = concurrent pipeline; file_backup = sequential (below).
-const stageImplement = (_prev, idx, i) => agent(
+const stageImplement = (_prev, idx, i) => _dispatch(
   `${baseCtx}
 
 Implement EXACTLY ONE proposal: index ${idx} from ${findingsPath} (use the implement skill).
@@ -155,17 +159,17 @@ const stageReview = (entry, idx) => {
   // coverage) and runs only when the implement-agent wrote a test_file — it never blocks.
   const hasTest = !!entry.test_file
   const thunks = [
-    () => agent(
+    () => _dispatch(
       `${reviewCtx}
 Focus: bugs, logic errors, incorrect tensor/shape handling, and general correctness. Report whether any finding is CRITICAL (a real bug that would corrupt training/eval results). Return the schema.`,
       { agentType: CODE_REVIEWER, label: `review:code:${entry.slug}`, phase: 'Review', schema: REVIEW_SCHEMA }),
-    () => agent(
+    () => _dispatch(
       `${reviewCtx}
 Focus: silent failures — swallowed NaN/Inf losses, failed CUDA/optimizer ops that fall through, bare except/except:pass around training or eval, inappropriate fallbacks that hide errors. Any of these invalidates experiment metrics silently, so flag them CRITICAL. Return the schema.`,
       { agentType: SILENT_HUNTER, label: `review:silent:${entry.slug}`, phase: 'Review', schema: REVIEW_SCHEMA }),
   ]
   if (hasTest) {
-    thunks.push(() => agent(
+    thunks.push(() => _dispatch(
       `${reviewCtx}
 ADVISORY test-coverage review of the unit test ${entry.test_file}. Assess whether it actually exercises the new behavior from this proposal (not a placeholder/token test) and covers the key edge cases. This is advisory only — set critical=false regardless. Return the schema.`,
       { agentType: TEST_ANALYZER, label: `review:test:${entry.slug}`, phase: 'Review', schema: REVIEW_SCHEMA }))
@@ -211,7 +215,7 @@ phase('Assemble')
 
 // A final implement-agent merges all per-proposal entries into the canonical manifest and
 // validates the schema — it owns the exact implementation-manifest.json format.
-const assemble = await agent(
+const assemble = await _dispatch(
   `${baseCtx}
 
 ${OUTPUT_CONTRACT}
@@ -243,7 +247,7 @@ const VERIFY_SCHEMA = {
   },
 }
 
-const verify = await agent(
+const verify = await _dispatch(
   `${baseCtx}
 
 Completeness check for Phase 6 implementation output. Use Read/Bash ONLY (do NOT re-implement proposals):

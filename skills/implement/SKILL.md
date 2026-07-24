@@ -306,6 +306,8 @@ After validation passes (at least Level 1-2), write a focused unit test for the 
 
 **Test file location:** `<exp_root>/tests/test_<slug>.py`
 
+**Import path: use `<project_root>`, never `$WORKTREE_PATH`** — the worktree is removed after this step, so a test importing from it breaks on re-run.
+
 **What to test (by proposal type):**
 
 | Proposal Type | Test Focus |

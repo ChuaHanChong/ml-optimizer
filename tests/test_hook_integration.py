@@ -199,7 +199,6 @@ class TestLayer2WriteValidation:
         _, stdout, _ = _run_hook(VALIDATE_WRITE_SCRIPT, payload)
         decision = _parse_decision(stdout)
         assert decision["decision"] == "block"
-        assert "mandatory fields" in decision["reason"]
         for field in ("iteration", "method_tier", "duration_seconds"):
             assert field in decision["reason"]
 

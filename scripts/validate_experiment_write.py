@@ -16,9 +16,17 @@ import re
 import sys
 from pathlib import Path
 
-# Import schema validators from the same directory
+# schema_validator owns schema + completeness rules, goal_memory frozen-param/OOM.
+# This hook is a second enforcement point for them, never a second implementation.
 sys.path.insert(0, str(Path(__file__).parent))
+from goal_memory import (
+    check_goal_compliance,
+    load_behaviors,
+    load_goals,
+    max_batch_size,
+)
 from schema_validator import (
+    check_completeness,
     validate_baseline,
     validate_manifest,
     validate_prerequisites,
@@ -144,39 +152,14 @@ def _is_in_round_dir(parts: list[str], results_idx: int) -> tuple[bool, str | No
 
 
 def _check_completeness(data: dict) -> str | None:
-    """Check mandatory completeness fields based on status.
+    """Block reason if `data` is incomplete for its status, else None.
 
-    Returns a block reason string if incomplete, None if OK.
-    Placeholder writes (status: running/pending) are always allowed.
+    Thin adapter over schema_validator.check_completeness (the single owner of
+    these rules) — turns its warning list into one block reason. Placeholder
+    writes (status running/pending) yield no warnings, so they stay allowed.
     """
-    status = data.get("status", "")
-    if status in ("running", "pending"):
-        return None
-
-    if status == "completed":
-        missing = []
-        if "iteration" not in data:
-            missing.append("iteration")
-        if "method_tier" not in data:
-            missing.append("method_tier")
-        if "duration_seconds" not in data:
-            missing.append("duration_seconds")
-        if "eval_protocol" not in data:
-            missing.append("eval_protocol (held_out_eval|train_report|rl_final_eval)")
-        tier = data.get("method_tier", "")
-        if isinstance(tier, str) and tier.startswith("stacked_"):
-            if "code_branches" not in data:
-                missing.append("code_branches")
-            if "stacking_order" not in data:
-                missing.append("stacking_order")
-        if missing:
-            return f"Completed experiment missing mandatory fields: {', '.join(missing)}"
-
-    if status in ("failed", "diverged"):
-        if "notes" not in data:
-            return f"{status.capitalize()} experiment must include 'notes' explaining what went wrong"
-
-    return None
+    missing = check_completeness(data)
+    return "; ".join(missing) if missing else None
 
 
 def _find_exp_root(file_path: str) -> str | None:
@@ -203,53 +186,26 @@ def _find_exp_root(file_path: str) -> str | None:
 
 
 def _check_goal_compliance(data: dict, file_path: str) -> str | None:
-    """Check config against frozen parameters and OOM limits.
+    """Block reason if the config breaches frozen params or the OOM limit, else None.
 
-    Returns block reason or None. Gracefully degrades if goals/behaviors
-    files don't exist.
+    Thin adapter over goal_memory.check_goal_compliance (the single owner of these
+    rules). Degrades to None when the config is absent, the write is a
+    running/pending placeholder, or no breadcrumb locates the exp_root.
     """
     config = data.get("config")
     if not isinstance(config, dict) or not config:
         return None
 
-    status = data.get("status", "")
-    if status in ("running", "pending"):
+    if data.get("status", "") in ("running", "pending"):
         return None
 
     exp_root = _find_exp_root(file_path)
     if not exp_root:
         return None
 
-    # Check frozen parameters
-    goals_path = Path(exp_root) / "optimization-goals.json"
-    if goals_path.is_file():
-        try:
-            goals = json.loads(goals_path.read_text())
-            frozen = goals.get("constraints", {}).get("frozen_parameters", [])
-            for fp in frozen:
-                if fp in config:
-                    return f"Config modifies frozen parameter '{fp}' — this parameter cannot be changed"
-        except (json.JSONDecodeError, OSError):
-            pass
-
-    # Check OOM batch size
-    behaviors_path = Path(exp_root) / "learned-behaviors.json"
-    if behaviors_path.is_file():
-        try:
-            behaviors = json.loads(behaviors_path.read_text())
-            for entry in behaviors.get("resource_constraints", []):
-                max_bs = entry.get("max_batch_size")
-                if max_bs is not None and "batch_size" in config:
-                    try:
-                        bs = int(config["batch_size"])
-                        if bs > int(max_bs):
-                            return f"Config batch_size={bs} exceeds OOM limit {max_bs}"
-                    except (ValueError, TypeError):
-                        pass
-        except (json.JSONDecodeError, OSError):
-            pass
-
-    return None
+    frozen = (load_goals(exp_root) or {}).get("constraints", {}).get("frozen_parameters", [])
+    violations = check_goal_compliance(config, frozen, max_batch_size(load_behaviors(exp_root)))
+    return f"Config {violations[0]}" if violations else None
 
 
 def _validate_root_file(

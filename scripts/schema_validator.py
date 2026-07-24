@@ -170,7 +170,7 @@ def validate_result(data: dict) -> dict:
 
     _check_random_seed(data, errors)
 
-    warnings = _check_completeness(data) if not errors else []
+    warnings = check_completeness(data) if not errors else []
     return {"valid": len(errors) == 0, "errors": errors, "warnings": warnings}
 
 
@@ -424,11 +424,12 @@ def validate_file(filepath: str, schema_type: str) -> dict:
 # Completeness checks (status-aware)
 # ---------------------------------------------------------------------------
 
-def _check_completeness(data: dict) -> list[str]:
+def check_completeness(data: dict) -> list[str]:
     """Return warnings for missing fields that should be present given the status.
 
     These are not structural errors — the result is valid but incomplete.
-    In `--strict` mode, these become blocking errors.
+    In `--strict` mode, these become blocking errors. Also the single owner of
+    this rule set for validate_experiment_write.py's PreToolUse hook.
     """
     warnings: list[str] = []
     status = data.get("status")
@@ -466,7 +467,7 @@ def _check_completeness(data: dict) -> list[str]:
 def validate_result_strict(data: dict) -> dict:
     """Validate structure AND completeness. Warnings become errors."""
     result = validate_result(data)
-    completeness = _check_completeness(data)
+    completeness = check_completeness(data)
     if completeness:
         result["errors"].extend(completeness)
         result["valid"] = False

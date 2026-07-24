@@ -176,8 +176,12 @@ def load_goals(exp_root: str) -> dict | None:
 
 # --- Behaviors: log / query ---
 
-def _load_behaviors(exp_root: str) -> dict:
-    """Load learned-behaviors.json, returning empty structure if absent."""
+def load_behaviors(exp_root: str) -> dict:
+    """Load learned-behaviors.json, returning empty structure if absent.
+
+    Public alongside load_goals — validate_experiment_write.py's PreToolUse hook
+    reads both to run check_goal_compliance at write time.
+    """
     path = _behaviors_path(exp_root)
     if not path.is_file():
         return _empty_behaviors()
@@ -234,7 +238,7 @@ def log_behavior(exp_root: str, category: str, entry: dict) -> str:
     with open(lock_path, "w") as lock_fd:
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
         try:
-            data = _load_behaviors(exp_root)
+            data = load_behaviors(exp_root)
             key = _category_key(category)
             if key not in data:
                 data[key] = []
@@ -252,7 +256,7 @@ def get_behaviors(
     recent: int | None = None,
 ) -> list[dict]:
     """Query learned behaviors, optionally filtered by category."""
-    data = _load_behaviors(exp_root)
+    data = load_behaviors(exp_root)
     if category is not None:
         key = _category_key(category)
         items = data.get(key, [])
@@ -274,6 +278,40 @@ def get_behaviors(
 
 # --- Validation ---
 
+def max_batch_size(behaviors: dict) -> int | None:
+    """Tightest OOM batch-size ceiling across resource_constraints, or None."""
+    best = None
+    for rc in behaviors.get("resource_constraints", []):
+        mbs = rc.get("max_batch_size")
+        if mbs is not None:
+            best = mbs if best is None else min(best, mbs)
+    return best
+
+
+def check_goal_compliance(
+    config: dict, frozen: list, max_bs: int | None
+) -> list[str]:
+    """Return violations for one config: frozen-parameter edits and OOM breaches.
+
+    Single owner of this rule set — used by the hp-tune/experiment validators
+    below and by validate_experiment_write.py's PreToolUse hook.
+    """
+    violations: list[str] = []
+    for fp in frozen:
+        if fp in config:
+            violations.append(
+                f"modifies frozen parameter '{fp}' — this parameter cannot be changed"
+            )
+    if max_bs is not None and "batch_size" in config:
+        try:
+            bs = int(config["batch_size"])
+            if bs > int(max_bs):
+                violations.append(f"batch_size={bs} exceeds OOM limit {max_bs}")
+        except (ValueError, TypeError):
+            pass
+    return violations
+
+
 def validate_agent_output(exp_root: str, agent: str, output: dict) -> dict:
     """Validate agent output against goals. Returns {valid, violations, warnings}."""
     violations: list[str] = []
@@ -283,7 +321,7 @@ def validate_agent_output(exp_root: str, agent: str, output: dict) -> dict:
     if goals is None:
         return {"valid": True, "violations": [], "warnings": ["No optimization-goals.json found"]}
 
-    behaviors = _load_behaviors(exp_root)
+    behaviors = load_behaviors(exp_root)
     constraints = goals.get("constraints", {})
     objective = goals.get("objective", {})
     frozen = constraints.get("frozen_parameters", [])
@@ -313,12 +351,7 @@ def _validate_hp_tune(output, frozen, behaviors, exp_root, violations, warnings)
     if not isinstance(configs, list):
         configs = [output] if isinstance(output, dict) and "lr" in output else []
 
-    # OOM limit from resource constraints
-    max_bs = None
-    for rc in behaviors.get("resource_constraints", []):
-        mbs = rc.get("max_batch_size")
-        if mbs is not None:
-            max_bs = mbs if max_bs is None else min(max_bs, mbs)
+    max_bs = max_batch_size(behaviors)
 
     # HP upper bounds from hp_constraints
     hp_bounds: dict[str, float] = {}
@@ -333,22 +366,9 @@ def _validate_hp_tune(output, frozen, behaviors, exp_root, violations, warnings)
     for i, cfg in enumerate(configs):
         if not isinstance(cfg, dict):
             continue
-        # Frozen parameter check
-        for fp in frozen:
-            if fp in cfg:
-                violations.append(
-                    f"Config {i}: modifies frozen parameter '{fp}'"
-                )
-        # OOM limit
-        if max_bs is not None and "batch_size" in cfg:
-            try:
-                bs = int(cfg["batch_size"])
-                if bs > max_bs:
-                    violations.append(
-                        f"Config {i}: batch_size={bs} exceeds OOM limit {max_bs}"
-                    )
-            except (ValueError, TypeError):
-                pass
+        violations.extend(
+            f"Config {i}: {v}" for v in check_goal_compliance(cfg, frozen, max_bs)
+        )
         # HP bounds (warnings, not violations — agents may intentionally explore)
         for param, bound in hp_bounds.items():
             if param in cfg:
@@ -496,25 +516,10 @@ def _validate_experiment(output, frozen, behaviors, violations, warnings):
     if not isinstance(cfg, dict):
         return
 
-    for fp in frozen:
-        if fp in cfg:
-            violations.append(f"Experiment modifies frozen parameter '{fp}'")
-
-    max_bs = None
-    for rc in behaviors.get("resource_constraints", []):
-        mbs = rc.get("max_batch_size")
-        if mbs is not None:
-            max_bs = mbs if max_bs is None else min(max_bs, mbs)
-
-    if max_bs is not None and "batch_size" in cfg:
-        try:
-            bs = int(cfg["batch_size"])
-            if bs > max_bs:
-                violations.append(
-                    f"Experiment batch_size={bs} exceeds OOM limit {max_bs}"
-                )
-        except (ValueError, TypeError):
-            pass
+    violations.extend(
+        f"Experiment {v}"
+        for v in check_goal_compliance(cfg, frozen, max_batch_size(behaviors))
+    )
 
 
 # --- Summary generation ---
@@ -524,7 +529,7 @@ def generate_summary(exp_root: str) -> str:
     lines: list[str] = []
 
     goals = load_goals(exp_root)
-    behaviors = _load_behaviors(exp_root)
+    behaviors = load_behaviors(exp_root)
 
     # --- Goals section ---
     if goals:
@@ -681,7 +686,7 @@ def sync_from_errors(exp_root: str) -> dict:
     except ImportError:
         return {"synced": 0, "skipped": 0, "error": "error_tracker not found"}
 
-    behaviors = _load_behaviors(exp_root)
+    behaviors = load_behaviors(exp_root)
 
     # --- OOM events → resource_constraints ---
     oom_events = [

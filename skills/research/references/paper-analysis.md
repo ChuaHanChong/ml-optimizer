@@ -2,58 +2,58 @@
 
 ## How to Extract Implementable Insights from ML Papers
 
-When analyzing a paper, focus on what can be **directly implemented**, not just the theoretical contribution.
+When analyzing a paper, focus on what can be **directly implemented**, not the theoretical contribution.
 
 ## Extraction Framework
 
 For each paper, extract:
 
 ### 1. Core Technique
-- **What is it?** One-sentence description
+- **What is it?** one-sentence description
 - **What problem does it solve?** (e.g., training instability, slow convergence, poor generalization)
 - **Category:** Architecture / Loss function / Training strategy / Data augmentation / Regularization / Other
 
 ### 2. Implementation Details
-- **Code changes required:** Which files/functions need modification?
-- **Dependencies:** Any new libraries needed?
+- **Code changes required:** which files/functions need modification?
+- **Dependencies:** any new libraries?
 - **Complexity estimate:**
-  - **Low:** Change a few lines (e.g., swap loss function, add a layer)
-  - **Medium:** Modify a module (e.g., new attention mechanism, custom scheduler)
-  - **High:** Significant refactoring (e.g., new training paradigm, different architecture)
+  - **Low:** a few lines (e.g., swap loss function, add a layer)
+  - **Medium:** modify a module (e.g., new attention mechanism, custom scheduler)
+  - **High:** significant refactoring (e.g., new training paradigm, different architecture)
 - **Reference implementation:**
   - URL (GitHub/GitLab link from paper or search)
   - Quality indicators (stars, recency, official vs community)
-  - Relevant files (which files contain the core implementation)
+  - Relevant files (which contain the core implementation)
   - Framework (PyTorch, TensorFlow, JAX, etc.)
-  - **Repo exploration:** Use `mcp__alphaxiv__read_files_from_github_repository(githubUrl, path="/")` for structured repo exploration — returns file tree + top-level files in one call. Drill into implementation directories with `path: "src/"` or `path: "models/"`. Falls back to WebFetch on the README URL if alphaxiv is unavailable.
+  - **Repo exploration:** `mcp__alphaxiv__read_files_from_github_repository(githubUrl, path="/")` for structured exploration — returns file tree + top-level files in one call. Drill into implementation dirs with `path: "src/"` or `path: "models/"`. Falls back to WebFetch on the README URL if alphaxiv is unavailable.
 - **Implementation strategy recommendation:**
-  - `from_reference`: Quality repo exists, code is extractable, compatible framework or translatable
-  - `from_scratch`: No repo, incompatible framework requiring full rewrite, or repo too entangled to extract
+  - `from_reference`: quality repo exists, code extractable, compatible or translatable framework
+  - `from_scratch`: no repo, incompatible framework needing full rewrite, or repo too entangled to extract
 
 ### 3. Expected Impact
 - **What improvement does the paper report?** (quantitative if available)
-- **On what benchmark/dataset?** (how comparable is it to our task?)
+- **On what benchmark/dataset?** (how comparable to our task?)
 - **Conditions for improvement:** (e.g., "works best with large batch sizes", "requires pre-training")
-- **Realistic expectation:** Papers report best-case; expect 30-70% of reported gains
+- **Realistic expectation:** papers report best-case; expect 30-70% of reported gains
 
 ### 4. Risks and Requirements
-- **Could it make things worse?** (e.g., adds training instability, increases memory usage)
-- **Computational cost:** More/less expensive than current approach?
-- **Compatibility:** Does it work with our model architecture and framework?
+- **Could it make things worse?** (e.g., training instability, more memory)
+- **Computational cost:** more/less expensive than the current approach?
+- **Compatibility:** does it work with our model architecture and framework?
 
 ## Red Flags in Papers
 
 Be skeptical when:
-- Results only shown on toy datasets
+- Results only on toy datasets
 - No ablation study
-- Improvement is within standard deviation
-- Method requires extensive HP tuning to work
-- No code available and method description is ambiguous
-- Reference repo uses incompatible framework with deep infrastructure entanglement
+- Improvement within standard deviation
+- Method needs extensive HP tuning to work
+- No code AND ambiguous method description
+- Reference repo uses an incompatible framework with deep infrastructure entanglement
 - Reference repo has no license (legal risk for adaptation)
 - Reference repo is >3 years old with deprecated dependencies
-- Paper only available as a preprint with no peer review AND no reference implementation
-- alphaxiv structured summary shows conflicting claims between abstract and results sections
+- Preprint with no peer review AND no reference implementation
+- alphaxiv summary shows conflicting claims between abstract and results
 
 ## Search Strategy
 
@@ -87,13 +87,13 @@ Be skeptical when:
 
 ## Paper Content Extraction with alphaxiv
 
-When analyzing papers found via any source, use alphaxiv's content tools for efficient extraction:
+For papers found via any source, use alphaxiv's content tools for efficient extraction:
 
 ### For individual paper analysis:
-Use `mcp__alphaxiv__get_paper_content(url)` to get a structured summary (~2000 tokens). This is faster and more LLM-friendly than raw WebFetch. Use `fullText: true` only when the summary lacks implementation details.
+`mcp__alphaxiv__get_paper_content(url)` gives a structured summary (~2000 tokens) — faster and more LLM-friendly than raw WebFetch. Use `fullText: true` only when the summary lacks implementation details.
 
 ### For targeted extraction across multiple papers:
-Use `mcp__alphaxiv__answer_pdf_queries` to ask specific questions about multiple papers simultaneously:
+`mcp__alphaxiv__answer_pdf_queries` asks specific questions about multiple papers at once:
 ```
 mcp__alphaxiv__answer_pdf_queries(
   urls: ["<paper_1_url>", "<paper_2_url>", "<paper_3_url>"],
@@ -106,15 +106,15 @@ mcp__alphaxiv__answer_pdf_queries(
   ]
 )
 ```
-This is especially useful when comparing multiple candidate techniques — a single call extracts the same information from all papers.
+Especially useful when comparing candidate techniques — one call extracts the same info from all papers.
 
 ### For reference repo exploration:
-Use `mcp__alphaxiv__read_files_from_github_repository` to explore paper codebases:
-1. Start with `path: "/"` to get the repo structure and top-level files (README, LICENSE, setup.py)
+`mcp__alphaxiv__read_files_from_github_repository` explores paper codebases:
+1. Start with `path: "/"` for the repo structure and top-level files (README, LICENSE, setup.py)
 2. Drill into the implementation directory (e.g., `path: "models/"` or `path: "src/"`)
 3. Read specific implementation files for core technique code
 
-This replaces the need to clone repos locally for initial assessment. Reserve cloning (via `${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py clone`) for the implement phase when actual code adaptation happens.
+This replaces cloning repos locally for initial assessment. Reserve cloning (via `${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py clone`) for the implement phase when actual code adaptation happens.
 
 ### Fallback:
 If alphaxiv tools are unavailable, use `WebFetch(url)` for paper content and `WebFetch` on GitHub README URLs for repo assessment.
@@ -123,16 +123,16 @@ If alphaxiv tools are unavailable, use `WebFetch(url)` for paper content and `We
 
 Before proposing, check if `<exp_root>/reports/research-findings.md` already exists. If so:
 1. Read all previously proposed technique names
-2. Do NOT re-propose techniques that were already tried
+2. Do NOT re-propose already-tried techniques
 3. Note in the output: "Excluded N previously-proposed techniques"
 
-This prevents wasting effort on re-implementing techniques from prior optimization runs.
+This prevents re-implementing techniques from prior optimization runs.
 
 ## Output Format
 
 Rank proposals by priority score: `(impact * confidence) / (11 - min(feasibility, 10))`
 
-Note: Clamp feasibility to [1, 10] range to prevent division by zero. Higher feasibility = easier to implement = higher priority.
+Note: clamp feasibility to [1, 10] to prevent division by zero. Higher feasibility = easier to implement = higher priority.
 
 ```markdown
 ### Proposal: [Name]
@@ -154,5 +154,5 @@ Note: Clamp feasibility to [1, 10] range to prevent division by zero. Higher fea
 
 ### Proposal Type Classification
 
-- **`code_change`**: Requires modifying model architecture, loss functions, data pipeline, or training loop code. These go through the implement skill for branch creation.
-- **`hp_only`**: Can be achieved purely through hyperparameter or config changes. Examples: "use cosine annealing" (scheduler config), "increase weight decay" (optimizer param), "add warmup" (scheduler config). These bypass implement and go directly to hp-tune.
+- **`code_change`**: modifies model architecture, loss functions, data pipeline, or training loop code. Goes through the implement skill for branch creation.
+- **`hp_only`**: achievable purely through hyperparameter or config changes. Examples: "use cosine annealing" (scheduler config), "increase weight decay" (optimizer param), "add warmup" (scheduler config). Bypasses implement, goes directly to hp-tune.

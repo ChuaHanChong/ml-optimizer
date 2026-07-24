@@ -16,9 +16,17 @@ import re
 import sys
 from pathlib import Path
 
-# Import schema validators from the same directory
+# schema_validator owns schema + completeness rules, goal_memory frozen-param/OOM.
+# This hook is a second enforcement point for them, never a second implementation.
 sys.path.insert(0, str(Path(__file__).parent))
+from goal_memory import (
+    check_goal_compliance,
+    load_behaviors,
+    load_goals,
+    max_batch_size,
+)
 from schema_validator import (
+    check_completeness,
     validate_baseline,
     validate_manifest,
     validate_prerequisites,
@@ -45,23 +53,12 @@ def block(reason: str) -> None:
 
 
 def _find_subdir_segment(file_path: str, subdir_name: str) -> tuple[list[str], int] | None:
-    """Locate a top-level subdirectory of `<exp_root>` in the file path.
+    """If `file_path` is at `<exp_root>/<subdir_name>/...`, return
+    `(path_parts, index_of_subdir)`, else `None`.
 
-    Walks up from `file_path` looking for a `.claude/ml-optimizer.json`
-    breadcrumb (via the shared `_find_exp_root` helper). The breadcrumb
-    is the authoritative source of truth for `exp_root`, written by the
-    orchestrator at Phase 0. Its `exp_root` field contains the absolute
-    path the user chose — the plugin does not hardcode the output
-    directory name.
-
-    Once `exp_root` is resolved, checks that `file_path` is located
-    at `<exp_root>/<subdir_name>/...` and returns `(path_parts,
-    index_of_subdir)`. Returns `None` if no breadcrumb is found or if
-    the file isn't under `<exp_root>/<subdir_name>/`.
-
-    There is no directory-name-based fallback. Tests that exercise this
-    validator MUST create a `.claude/ml-optimizer.json` breadcrumb
-    pointing at their synthetic `exp_root`.
+    exp_root comes from the `.claude/ml-optimizer.json` breadcrumb (the
+    authoritative source, written by the orchestrator at Phase 0) — there is
+    no directory-name fallback, so tests MUST create that breadcrumb.
     """
     exp_root_str = _find_exp_root(file_path)
     if exp_root_str is None:
@@ -80,18 +77,12 @@ def _find_subdir_segment(file_path: str, subdir_name: str) -> tuple[list[str], i
 
 
 def _find_results_segment(file_path: str) -> tuple[list[str], int] | None:
-    """Find the `<exp_root>/results` segment in the path.
-
-    Returns `(path_parts, index_of_results)` or `None` if not found.
-    """
+    """Find the `<exp_root>/results` segment. Returns `(parts, idx)` or None."""
     return _find_subdir_segment(file_path, "results")
 
 
 def _find_proposed_configs_segment(file_path: str) -> tuple[list[str], int] | None:
-    """Find the `<exp_root>/proposed-configs` segment in the path.
-
-    Returns `(path_parts, index_of_proposed_configs)` or `None` if not found.
-    """
+    """Find the `<exp_root>/proposed-configs` segment. Returns `(parts, idx)` or None."""
     return _find_subdir_segment(file_path, "proposed-configs")
 
 
@@ -134,6 +125,10 @@ def _validate_schema(data: dict, schema_type: str) -> dict:
             errors.append("Missing required field: exp_id")
         if "config" not in data:
             errors.append("Missing required field: config")
+        if "random_seed" in data and (
+            isinstance(data["random_seed"], bool) or not isinstance(data["random_seed"], int)
+        ):
+            errors.append("'random_seed' must be an integer")
         return {"valid": len(errors) == 0, "errors": errors, "warnings": []}
     return {"valid": True, "errors": [], "warnings": []}
 
@@ -157,46 +152,22 @@ def _is_in_round_dir(parts: list[str], results_idx: int) -> tuple[bool, str | No
 
 
 def _check_completeness(data: dict) -> str | None:
-    """Check mandatory completeness fields based on status.
+    """Block reason if `data` is incomplete for its status, else None.
 
-    Returns a block reason string if incomplete, None if OK.
-    Placeholder writes (status: running/pending) are always allowed.
+    Thin adapter over schema_validator.check_completeness (the single owner of
+    these rules) — turns its warning list into one block reason. Placeholder
+    writes (status running/pending) yield no warnings, so they stay allowed.
     """
-    status = data.get("status", "")
-    if status in ("running", "pending"):
-        return None
-
-    if status == "completed":
-        missing = []
-        if "iteration" not in data:
-            missing.append("iteration")
-        if "method_tier" not in data:
-            missing.append("method_tier")
-        if "duration_seconds" not in data:
-            missing.append("duration_seconds")
-        tier = data.get("method_tier", "")
-        if isinstance(tier, str) and tier.startswith("stacked_"):
-            if "code_branches" not in data:
-                missing.append("code_branches")
-            if "stacking_order" not in data:
-                missing.append("stacking_order")
-        if missing:
-            return f"Completed experiment missing mandatory fields: {', '.join(missing)}"
-
-    if status in ("failed", "diverged"):
-        if "notes" not in data:
-            return f"{status.capitalize()} experiment must include 'notes' explaining what went wrong"
-
-    return None
+    missing = check_completeness(data)
+    return "; ".join(missing) if missing else None
 
 
 def _find_exp_root(file_path: str) -> str | None:
-    """Find exp_root by walking up from the file path looking for .claude/ml-optimizer.json.
+    """Find exp_root by walking up from file_path for .claude/ml-optimizer.json.
 
-    Intentionally uncached — this function runs once per hook invocation
-    (the hook is a short-lived subprocess that exits after validating one
-    Write/Edit). Do NOT add a module-level cache here; if a future refactor
-    calls this in a loop, cache at the call site with an explicit lifetime.
+    Intentionally uncached — runs once per hook invocation (short-lived
+    subprocess). Do NOT add a module-level cache; cache at the call site with an
+    explicit lifetime if a future refactor calls this in a loop.
     """
     path = Path(file_path).resolve()
     for parent in path.parents:
@@ -215,53 +186,47 @@ def _find_exp_root(file_path: str) -> str | None:
 
 
 def _check_goal_compliance(data: dict, file_path: str) -> str | None:
-    """Check config against frozen parameters and OOM limits.
+    """Block reason if the config breaches frozen params or the OOM limit, else None.
 
-    Returns block reason or None. Gracefully degrades if goals/behaviors
-    files don't exist.
+    Thin adapter over goal_memory.check_goal_compliance (the single owner of these
+    rules). Degrades to None when the config is absent, the write is a
+    running/pending placeholder, or no breadcrumb locates the exp_root.
     """
     config = data.get("config")
     if not isinstance(config, dict) or not config:
         return None
 
-    status = data.get("status", "")
-    if status in ("running", "pending"):
+    if data.get("status", "") in ("running", "pending"):
         return None
 
     exp_root = _find_exp_root(file_path)
     if not exp_root:
         return None
 
-    # Check frozen parameters
-    goals_path = Path(exp_root) / "optimization-goals.json"
-    if goals_path.is_file():
-        try:
-            goals = json.loads(goals_path.read_text())
-            frozen = goals.get("constraints", {}).get("frozen_parameters", [])
-            for fp in frozen:
-                if fp in config:
-                    return f"Config modifies frozen parameter '{fp}' — this parameter cannot be changed"
-        except (json.JSONDecodeError, OSError):
-            pass
+    frozen = (load_goals(exp_root) or {}).get("constraints", {}).get("frozen_parameters", [])
+    violations = check_goal_compliance(config, frozen, max_batch_size(load_behaviors(exp_root)))
+    return f"Config {violations[0]}" if violations else None
 
-    # Check OOM batch size
-    behaviors_path = Path(exp_root) / "learned-behaviors.json"
-    if behaviors_path.is_file():
-        try:
-            behaviors = json.loads(behaviors_path.read_text())
-            for entry in behaviors.get("resource_constraints", []):
-                max_bs = entry.get("max_batch_size")
-                if max_bs is not None and "batch_size" in config:
-                    try:
-                        bs = int(config["batch_size"])
-                        if bs > int(max_bs):
-                            return f"Config batch_size={bs} exceeds OOM limit {max_bs}"
-                    except (ValueError, TypeError):
-                        pass
-        except (json.JSONDecodeError, OSError):
-            pass
 
-    return None
+def _validate_root_file(
+    hook_input: dict, tool_name: str, parts: list[str], results_idx: int,
+    filename: str, schema_type: str | None,
+) -> None:
+    """Enforce a root-level results file: must sit directly in results/, plus an
+    optional schema check. Calls block()/approve() (which exit). schema_type=None
+    checks location only (e.g. rounds-manifest.json, written by round_manager.py)."""
+    if not _is_directly_in_results(parts, results_idx):
+        block(f"{filename} must be directly in <exp_root>/results/, not in a subdirectory")
+    if schema_type is not None:
+        content = _get_content(hook_input, tool_name)
+        if content is not None:
+            data = _parse_content(content)
+            if data is None:
+                block(f"{filename} contains invalid JSON")
+            result = _validate_schema(data, schema_type)
+            if not result["valid"]:
+                block(f"{filename} schema validation failed: {'; '.join(result['errors'])}")
+    approve()
 
 
 def validate(hook_input: dict) -> None:
@@ -318,55 +283,18 @@ def validate(hook_input: dict) -> None:
 
     # --- Determine file category and apply rules ---
 
-    # 1. Root-level result files: baseline.json, prerequisites.json,
-    #    implementation-manifest.json, rounds-manifest.json
-    if filename == "baseline.json":
-        if not _is_directly_in_results(parts, results_idx):
-            block("baseline.json must be directly in <exp_root>/results/, not in a subdirectory")
-        content = _get_content(hook_input, tool_name)
-        if content is not None:
-            data = _parse_content(content)
-            if data is None:
-                block("baseline.json contains invalid JSON")
-            result = _validate_schema(data, "baseline")
-            if not result["valid"]:
-                block(f"baseline.json schema validation failed: {'; '.join(result['errors'])}")
-        approve()
-        return
-
-    if filename == "prerequisites.json":
-        if not _is_directly_in_results(parts, results_idx):
-            block("prerequisites.json must be directly in <exp_root>/results/, not in a subdirectory")
-        content = _get_content(hook_input, tool_name)
-        if content is not None:
-            data = _parse_content(content)
-            if data is None:
-                block("prerequisites.json contains invalid JSON")
-            result = _validate_schema(data, "prerequisites")
-            if not result["valid"]:
-                block(f"prerequisites.json schema validation failed: {'; '.join(result['errors'])}")
-        approve()
-        return
-
-    if filename == "implementation-manifest.json":
-        if not _is_directly_in_results(parts, results_idx):
-            block("implementation-manifest.json must be directly in <exp_root>/results/, not in a subdirectory")
-        content = _get_content(hook_input, tool_name)
-        if content is not None:
-            data = _parse_content(content)
-            if data is None:
-                block("implementation-manifest.json contains invalid JSON")
-            result = _validate_schema(data, "manifest")
-            if not result["valid"]:
-                block(f"implementation-manifest.json schema validation failed: {'; '.join(result['errors'])}")
-        approve()
-        return
-
-    if filename == "rounds-manifest.json":
-        # Written by round_manager.py -- skip schema validation, just check location
-        if not _is_directly_in_results(parts, results_idx):
-            block("rounds-manifest.json must be directly in <exp_root>/results/, not in a subdirectory")
-        approve()
+    # 1. Root-level result files (must sit directly in results/). rounds-manifest
+    #    is location-only; it's written by round_manager.py.
+    _ROOT_SCHEMAS = {
+        "baseline.json": "baseline",
+        "prerequisites.json": "prerequisites",
+        "implementation-manifest.json": "manifest",
+        "rounds-manifest.json": None,
+    }
+    if filename in _ROOT_SCHEMAS:
+        _validate_root_file(
+            hook_input, tool_name, parts, results_idx, filename, _ROOT_SCHEMAS[filename]
+        )
         return
 
     # 2. Experiment result files (exp-*.json)

@@ -128,3 +128,41 @@ class TestRelayCliIntegration:
             capture_output=True, text=True
         )
         assert result.returncode == 1
+
+
+class TestSearchSpacePriors:
+    """Research-derived HP priors: validate_search_space + research_to_tuning route."""
+
+    def test_valid_search_space_entries(self):
+        from schema_validator import validate_search_space
+        errors = validate_search_space([
+            {"param": "ent_coef", "range": [0.001, 0.05], "scale": "log",
+             "source": "arXiv:1707.06347"},
+        ])
+        assert errors == []
+
+    def test_missing_fields_reported_per_entry(self):
+        from schema_validator import validate_search_space
+        errors = validate_search_space([{"param": "lr"}])
+        assert any("range" in e for e in errors)
+        assert any("scale" in e for e in errors)
+        assert any("source" in e for e in errors)
+
+    def test_non_list_input(self):
+        from schema_validator import validate_search_space
+        errors = validate_search_space({"param": "lr"})
+        assert errors and "must be a list" in errors[0]
+
+    def test_research_to_tuning_route(self):
+        result = validate_relay("research_to_tuning", {
+            "search_space": [{"param": "gamma", "range": [0.95, 0.999],
+                              "scale": "linear", "source": "arXiv:1707.06347"}],
+        })
+        assert result["valid"] is True
+
+    def test_research_to_tuning_bad_entry_blocks(self):
+        result = validate_relay("research_to_tuning", {
+            "search_space": [{"param": "gamma"}],
+        })
+        assert result["valid"] is False
+        assert any("search_space[0]" in e for e in result["errors"])

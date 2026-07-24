@@ -1,22 +1,27 @@
 ================================================================================
-              ML-OPTIMIZER HYPERAGENT — WORKFLOW DIAGRAM
+                    ML-OPTIMIZER — WORKFLOW DIAGRAM
 ================================================================================
 
-  THE PLUGIN IS THE HYPERAGENT — self-referential, self-improving.
+  Autonomous ML optimization pipeline. 10 phases (0-9), orchestrator-driven.
 
   1. Optimizes the ML model (the task)
-     → Evolutionary archive, lineage, 3 mutation operators, staged eval
+     → Research → implement → experiment loop → method stacking, evidence-based.
 
-  2. Optimizes its own optimization strategy (the meta-task)
-     → Hyperagent modifies skill instructions. No hardcoded thresholds.
+  2. Two dispatch modes:
+     → Phases 0/1, 2, 3, 4, 9  = orchestrator Agent() (interactive / trivial)
+     → Phases 5, 6, 7, 8        = dynamic Workflow({scriptPath, args}) — one
+                                  workflow per phase; the script owns the
+                                  fan-out / loop and dispatches agents via
+                                  agentType. No SendMessage, no agent registry.
 
   3. Gets better with each session
-     → Promoted meta-patches persist, claude-mem recalls insights.
+     → memory: local per agent, claude-mem recalls prior sessions.
 
   Core principle: Standing on the shoulders of giants.
   Research-implement is first-class. User papers get highest priority.
+  The analysis agent is the decision-maker (Phase 7/8) — no hardcoded thresholds.
 
-  Always on. Autonomous. Runs until goal reached or user stops.
+  Always on. Autonomous. Runs until goal reached, user stops, or fixpoint.
 
 ================================================================================
 
@@ -33,12 +38,12 @@ ENTRY POINT
                     |
                     v
     +-------------------------------+
-    |   ml-optimizer:orchestrate    |  <-- skill invocation
-    |   (skills/orchestrate/)       |
-    +-------------------------------+
+    |   ml-optimizer:orchestrate    |  <-- skill, loaded by orchestrator-agent
+    |   (skills/orchestrate/)       |      (main thread, activated by settings.json,
+    +-------------------------------+       auto-starts Phase 0 via initialPrompt)
                     |
-         Dispatches agents via
-         Agent tool (named subagent types)
+        Phases 0/1,2,3,4,9 -> Agent(subagent_type="ml-optimizer:<name>-agent")
+        Phases 5,6,7,8     -> Workflow({scriptPath: ".../phase-N-*.js", args})
                     |
                     v
 
@@ -46,101 +51,174 @@ ENTRY POINT
                           AGENT ROSTER (10 types)
 ================================================================================
 
-  All agents have memory: local (persistent at .claude/agent-memory-local/)
-  All agents read goal_memory.py summary before acting (Phase 7+)
+  All agents have memory: local (persistent at .claude/agent-memory-local/<name>/)
+  All agents read goal_memory.py summary before acting (goals + dead-ends).
 
-  6 PERSISTENT agents: resumed via SendMessage (accumulated context)
-  4 EPHEMERAL agents:  fresh Agent() spawn each time
+  ALL 9 worker agents are FRESH SPAWNS — there is NO persistent-agent /
+  SendMessage / agent_registry resumption. Directly via Agent() for phases
+  2/3/9; via the workflow runtime's agent({agentType}) for phases 5-8.
+  The 10th (orchestrator-agent) is the main-thread agent, not a subagent.
 
-  DISPATCH PROTOCOL:
-    First dispatch:      Agent(subagent_type=...) → save agentId to agent_registry
-    Subsequent dispatch: SendMessage(to: agentId) with CONTEXT FROM OTHER AGENTS
-    Fallback:            If SendMessage fails → fresh Agent() → update registry
+  CROSS-AGENT CONTEXT = args + FILES (no message bus):
+    (a) the workflow's args
+    (b) files agents write under <exp_root>/ (results, manifests, agenda,
+        batch-N-analysis.md)
+    (c) each agent's structured schema: return, relayed by the script
 
-  INTER-AGENT COMMUNICATION (orchestrator relay):
-    analyze → tuning:      correlations, branch scores, recommendation
-    analyze → research:    pivot reason, dead-end catalog
-    analyze → hyperagent:  recommendation, pivot type, improvement %
-    monitor → tuning:      OOM batch sizes, divergence patterns
-    research → implement:  proposals with findings path
-    experiments → analyze: batch completion counts, best metrics
-    hyperagent → tuning:   action, evolve HPs, target branch
+    5 handoff routes (validated: schema_validator.py relay <route> <json>):
+      analyze  -> tuning:      batch-N-analysis.md (correlations, branch scores)
+      analyze  -> research:    pivot reason + dead-ends.json + research-agenda.json
+      monitor  -> tuning:      OOM sizes / divergence -> learned-behaviors.json
+      research -> implement:   research-findings*.md + selected_indices (args)
+      experiments -> analyze:  results/round-N-*/exp-*.json (batch results)
 
-    Relay validation: schema_validator.py relay <route> <json> before each SendMessage
-    Relay acknowledgment: persistent agents emit RELAY_ACK: <route> in response
-
-  PROCEDURAL AGENTS (model: sonnet — lower cost/latency, no ultrathink)
-  ---------------------------------------------------------------------
+  PROCEDURAL AGENTS (model: sonnet[1m], effort: medium — lower cost/latency)
+  --------------------------------------------------------------------------
 
   +-------------------+  Tools: Bash, Read, Write, Glob, Grep, Skill,
   | prerequisites-    |  WebSearch, WebFetch
-  | agent (EPHEMERAL) |  Skill: ml-optimizer:prerequisites
-  +-------------------+
+  | agent             |  Skill: ml-optimizer:prerequisites
+  +-------------------+  Dispatched: Phase 2 via Agent()
 
   +-------------------+  Tools: Bash, Read, Write, Glob, Grep, Skill,
   | baseline-agent    |  WebSearch, WebFetch
-  | (EPHEMERAL)       |  Skill: ml-optimizer:baseline
-  +-------------------+
+  |                   |  Skill: ml-optimizer:baseline
+  +-------------------+  Dispatched: Phase 3 via Agent()
 
   +-------------------+  Tools: Bash, Read, Write, Glob, Grep, Skill,
   | experiment-agent  |  WebSearch, WebFetch
-  | (EPHEMERAL)       |  Skill: ml-optimizer:experiment
-  +-------------------+
+  |                   |  Skill: ml-optimizer:experiment
+  +-------------------+  Dispatched: Phase 7/8 via agentType (parallel, worktree).
+                         Runs detect_divergence.py on its own log (divergence
+                         folded in — standalone monitor is opt-in).
 
   +-------------------+  Tools: Bash, Read, Write, Glob, Grep, Skill,
   | monitor-agent     |  WebSearch, WebFetch
-  | (PERSISTENT)      |  Skill: ml-optimizer:monitor
-  +-------------------+
+  |                   |  Skill: ml-optimizer:monitor
+  +-------------------+  Dispatched: optional (per batch). Not the default —
+                         divergence is folded into the experiment agent.
 
-  ANALYTICAL AGENTS (model: opus, ultrathink prompting)
-  --------------------------------------------------------------
+  ANALYTICAL AGENTS (model: opus[1m], effort: xhigh)
+  ---------------------------------------------------
 
-  +-------------------+  Tools: Read, Write, Edit, Bash, Glob, Grep,
-  | hyperagent        |  Skill, WebSearch, WebFetch
-  | (PERSISTENT)      |  Skills: ml-optimizer:hyperagent-generate,
-  +-------------------+    ml-optimizer:hyperagent-select, hyperagent-eval,
-                         hyperagent-archive, hyperagent-init, hyperagent-setup,
-                         ml-optimizer:evolve, shinka-*, claude-mem:mem-search,
-                         systematic-debugging, feature-dev:code-explorer
-                         Enables self-improvement. Helps Phase 7 (experiments)
-                         and Phase 8 (stacking) in a loop.
-                         Analysis advises, hyperagent decides.
+  +-------------------+  Tools: WebSearch, WebFetch, Read, Write, Bash, Glob,
+  | research-agent    |  Grep, Skill + alphaxiv MCP (6) + gitnexus MCP (3)
+  |                   |  Skills: ml-optimizer:research, claude-mem:mem-search,
+  +-------------------+    superpowers:verification-before-completion
+                         External: context7, claude-mem, alphaxiv, gitnexus.
+                         Dispatched: Phase 5 workflow + Phase 7 mid-loop research.
+                         Must query gitnexus before recommending from_reference.
 
-  +-------------------+  Tools: WebSearch, WebFetch, Read, Write, Bash,
-  | research-agent    |  Glob, Grep, Skill + alphaxiv MCP (6 tools)
-  | (PERSISTENT)      |  Skill: ml-optimizer:research
-  +-------------------+  External: context7, claude-mem:mem-search,
-                         alphaxiv (search, content, repo)
-
-  +-------------------+  Tools: Bash, Read, Write, Edit, Glob, Grep,
-  | implement-agent   |  Skill, WebSearch, WebFetch + alphaxiv MCP (2 tools)
-  | (PERSISTENT)      |  Skills: ml-optimizer:implement, ml-optimizer:evolve,
-  +-------------------+    ml-optimizer:shinka-setup, ml-optimizer:shinka-convert,
-                           ml-optimizer:shinka-run, ml-optimizer:shinka-inspect,
-                           superpowers:systematic-debugging,
-                           feature-dev:code-explorer, feature-dev:code-reviewer
-                         External: context7, alphaxiv (repo reader, PDF Q&A)
+  +-------------------+  Tools: Bash, Read, Write, Edit, LSP, Glob, Grep, Skill,
+  | implement-agent   |  WebSearch, WebFetch + alphaxiv MCP (2) + gitnexus MCP (3)
+  |                   |  Skills: ml-optimizer:implement, evolve, shinka-*,
+  +-------------------+    systematic-debugging, verification, karpathy-guidelines
+                         External: context7, alphaxiv, gitnexus.
+                         Dispatched: Phase 6 workflow (one git worktree per
+                         branch, fanned out in parallel) + Phase 7/8. Must query
+                         gitnexus (context/query/impact) before editing. LSP
+                         (pyright) self-check before any GPU time.
 
   +-------------------+  Tools: Read, Write, Bash, Glob, Grep, Skill,
   | tuning-agent      |  WebSearch, WebFetch
-  | (PERSISTENT)      |  Skill: ml-optimizer:hp-tune
-  +-------------------+
+  |                   |  Skills: ml-optimizer:hp-tune, claude-mem:mem-search,
+  +-------------------+    superpowers:verification-before-completion
+                         Dispatched: Phase 7/8 (propose HP configs, evolve HPs).
 
   +-------------------+  Tools: Bash, Read, Write, Glob, Grep, Skill,
   | analysis-agent    |  WebSearch, WebFetch
-  | (PERSISTENT)      |  Skill: ml-optimizer:analyze
-  +-------------------+
+  |                   |  Skills: ml-optimizer:analyze, claude-mem:mem-search,
+  +-------------------+    superpowers:verification-before-completion
+                         Dispatched: Phase 7/8 (batch decision — THE decision
+                         maker) + Phase 9 (session review mode).
 
   +-------------------+  Tools: Bash, Read, Write, Glob, Grep, Skill,
   | report-agent      |  WebSearch, WebFetch
-  | (EPHEMERAL)       |  Skill: ml-optimizer:report
-  +-------------------+
+  |                   |  Skills: ml-optimizer:report, verification
+  +-------------------+  Dispatched: Phase 9 via Agent().
+
+  MAIN-THREAD AGENT (activated by settings.json)
+  -----------------------------------------------
+
+  +-------------------+  Tools: Agent, Read, Write, Edit, Bash, Glob, Grep,
+  | orchestrator-     |  Skill, WebSearch, WebFetch, Workflow
+  | agent             |  Skills: ml-optimizer:orchestrate, verification
+  +-------------------+  The main thread. Runs interactive phases directly and
+                         launches phase-5..8 workflows. Not a dispatchable
+                         subagent (SubagentStop never fires for it).
+
+  Reviewers reused via agentType inside phase-6 / phase-8 workflows:
+    feature-dev:code-reviewer, pr-review-toolkit:silent-failure-hunter,
+    pr-review-toolkit:pr-test-analyzer (advisory).
+
+================================================================================
+                  DYNAMIC WORKFLOWS (PHASES 5-8)  [REQUIRED]
+================================================================================
+
+  Phases 5-8 run as dynamic workflows (the Workflow tool) — there is NO
+  Agent/SendMessage fallback path. The workflow runtime's agent({agentType})
+  call is the dispatch mechanism. If dynamic workflows are not enabled on the
+  plan, phases 5-8 cannot run.
+
+  Scripts are bundled INSIDE the orchestrate skill (NOT under .claude/workflows/,
+  which would expose them as user /slash-commands). Launched by scriptPath:
+
+    skills/orchestrate/workflows/phase-5-research.js    (name: phase-5-research)
+    skills/orchestrate/workflows/phase-6-implement.js   (name: phase-6-implement)
+    skills/orchestrate/workflows/phase-7-experiment.js  (name: phase-7-experiment)
+    skills/orchestrate/workflows/phase-8-stacking.js    (name: phase-8-stacking)
+
+  Each is plain JS (no TS, no build step), begins with `export const meta`, and
+  uses runtime primitives: args, agent(prompt,{agentType,schema,isolation}),
+  parallel(), pipeline(), phase(), log(), budget.remaining(), schema: returns.
+
+  RULES:
+    - No Date.now() / Math.random() (workflows are replay/resume-safe).
+    - No mid-run user input. Phase 7 autonomy (method_proposal_scope,
+      method_proposal_iterations, training budget) is PRE-AUTHORIZED at Phase 4
+      and read from args. A genuine user-decision point returns to the
+      orchestrator as a workflow boundary (relaunch via resumeFromRunId).
+    - Fan-out caps: 16 concurrent, 1000 total per run; parallel()/pipeline()
+      auto-queue beyond 16 (excess runs as slots free).
+    - Within-session resume via resumeFromRunId + file-persisted state.
+
+  The orchestrator reads each workflow's structured return and runs the user
+  checkpoint BETWEEN phases (the "run each stage as its own workflow" pattern).
+
+================================================================================
+                     GITNEXUS CODE-GRAPH  [HARD PREREQUISITE]
+================================================================================
+
+  GitNexus (MCP + CLI) indexes a repo into a queryable code knowledge graph.
+  It is REQUIRED — on par with git. There is NO grep/analyze fallback for code
+  understanding.
+
+    Phase 2 verifies: gitnexus_utils.py available  (CLI absent -> BLOCK pipeline)
+                      gitnexus_utils.py mcp-registered (not registered -> WARN)
+    Index every repo: gitnexus_utils.py index <path>  (runs
+                      `gitnexus analyze <path> --index-only` — non-invasive:
+                      never rewrites the repo's CLAUDE.md, never installs skills;
+                      writes <path>/.gitnexus, auto-excludes it from git)
+      - TARGET project: indexed once at Phase 2
+      - EVERY reference repo: indexed immediately after clone
+    Query MCP-ONLY:   mcp__gitnexus__context / query / impact  (no CLI query
+                      fallback). implement-agent must query before editing;
+                      research-agent must query before recommending from_reference.
+
+  Install: npm install -g gitnexus && gitnexus setup
+    (gitnexus setup auto-registers the MCP server AND installs its own global
+    skills + hooks into ~/.claude/ — affects all projects.)
+  Recovery if MCP unregistered: gitnexus setup, then RESTART the session
+    (MCP tools load at session start).
+
+  Optional MCP (graceful fallback): alphaxiv (papers -> WebSearch/WebFetch),
+    context7 (framework docs -> WebSearch), claude-mem (cross-session memory).
 
 ================================================================================
                   OUTPUT-STRUCTURE ENFORCEMENT (3-CHECKPOINT)
 ================================================================================
 
-  Every agent dispatch passes through three hook checkpoints that together
+  Every SUBAGENT dispatch passes through three hook checkpoints that together
   guarantee the agent produces every documented output with valid schema,
   correct path, and all mandatory fields. All three layers read the same
   per-agent contract from scripts/output_contract.py (single source of truth).
@@ -148,7 +226,7 @@ ENTRY POINT
     +--------------------------------------------------------------------+
     |  LAYER 1 — SubagentStart (BEFORE work)                             |
     |  Hook: hooks/subagent-start-inject-goals.sh                        |
-    |    → python3 scripts/output_contract.py inject <exp_root> <agent>  |
+    |    -> python3 scripts/output_contract.py inject <exp_root> <agent> |
     |  Action: Injects the agent's output contract into its prompt —     |
     |  exact paths, schema, dev_notes logging command. The agent         |
     |  cannot claim it didn't know what to produce.                      |
@@ -174,11 +252,10 @@ ENTRY POINT
     +--------------------------------------------------------------------+
     |  LAYER 3 — SubagentStop (AFTER work)                               |
     |  Hook: scripts/validate_agent_output.py                            |
-    |    → imports output_contract.check_outputs(<agent>, <exp_root>)    |
-    |  Blocks if any required file/dir is missing.                       |
-    |  Also: reads last entry in dev_notes.md and verifies its embedded  |
-    |  <!-- agent_id: X --> matches the current invocation's agent_id    |
-    |  (stateless multi-day session log correlation).                    |
+    |    -> imports output_contract.check_outputs(<agent>, <exp_root>)   |
+    |  Blocks if any required file/dir is missing. (dev_notes.md is a    |
+    |  human-readable running log; no agent_id correlation — that was     |
+    |  legacy to the removed persistent-agent/registry model.)           |
     +--------------------------------------------------------------------+
 
   Contract machinery (scripts/output_contract.py):
@@ -204,9 +281,13 @@ ENTRY POINT
                   (e.g. prerequisites-agent's prepared-data/ is only required
                   when dataset.prepared == true in prerequisites.json)
 
+  Workflow verifiers: because a workflow-dispatched agent may skip the
+  SubagentStop hook, each workflow ALSO runs an in-script completeness verifier
+  (SubagentStop 'verify' role) after its stages — confirming required outputs on
+  disk via output_contract.py and logging a loud (non-fatal) gap on miss.
+
   Subagents NOT in CONTRACTS are auto-approved at SubagentStop:
-    monitor-agent     — relay only, no file output
-    hyperagent-agent  — manages its own archive lifecycle (hyperagent/)
+    monitor-agent — relay only, no file output
 
   Note: orchestrator-agent is the main-thread agent (activated by settings.json),
   not a subagent. SubagentStop doesn't fire for it at all — it's out of scope,
@@ -217,476 +298,314 @@ ENTRY POINT
 ================================================================================
 
 
-  PHASE 0+1: DISCOVERY & PLANNING (multi-round)
+  PHASE 0+1: DISCOVERY & PLANNING (multi-round)          [Agent: orchestrator]
   ================================================
   Mode: Plan Mode throughout (read-only until user approves)
-  Agent: orchestrator (no subagent dispatch)
 
     +--------------------------------------------------------------+
     |  STEP A — DISCOVERY (ask questions)                          |
-    |                                                              |
-    |  User answers 12 questions:                                  |
-    |    Q1:  Optimization target metric                           |
-    |    Q2:  Current performance (if known)                       |
-    |    Q3:  Target performance                                   |
-    |    Q4:  Constraints (time, GPU memory, frozen params)        |
-    |    Q5:  Prior attempts                                       |
-    |    Q6:  Scope (HP-only / HP+research / full autonomous)      |
-    |    Q7:  Divergence metric (default: loss)                    |
-    |    Q7a: Divergence polarity (auto-inferred)                  |
-    |    Q8:  Optimization type (training vs inference)            |
-    |    Q9:  Training budget (time / epochs / default)            |
-    |    Q10: Anything else?                                       |
-    |    Q11: Dataset location                                     |
-    |    Q12: Environment manager                                  |
-    |                                                              |
-    |  RL polarity validation:                                     |
-    |    If metric contains "reward"/"return"/"score"              |
-    |    AND lower_is_better = True → WARN and confirm             |
+    |  Metric, current/target performance, constraints, prior      |
+    |  attempts, scope (training/architecture/full), divergence    |
+    |  metric (+ auto-inferred polarity), train vs inference,      |
+    |  training budget (time/epochs/default), dataset location,    |
+    |  environment manager.                                        |
+    |  RL polarity validation: "reward"/"return"/"score" AND       |
+    |  lower_is_better -> WARN and confirm.                        |
     +--------------------------------------------------------------+
                     |
                     v
     +--------------------------------------------------------------+
     |  STEP B — BRAINSTORM + WRITE GOALS                           |
-    |                                                              |
-    |  1. Skill("superpowers:brainstorming")                       |
-    |     - Explore bottlenecks, trade-offs, risk appetite         |
-    |     - Surface domain-specific techniques                     |
-    |  2. Write optimization-goals.json (goal anchor)              |
-    |  3. Save pipeline-state.json (user_choices)                  |
-    |  4. Present summary to user → invite refinement              |
-    |                                                              |
-    |  If user wants changes:                                      |
-    |    → update goals → re-brainstorm if needed → re-present     |  <--+
-    |    → repeat until user is satisfied                          |     |
+    |  superpowers:brainstorming -> optimization-goals.json ->     |  <--+
+    |  save pipeline-state.json (user_choices) -> present ->       |     |
+    |  refine until satisfied.                                     |     |
     +--------------------------------------------------------------+     |
                     |                                                    |
                     v                                                    |
     +--------------------------------------------------------------+     |
-    |  STEP C — ANALYZE CODEBASE (still in plan mode)              |     |
-    |                                                              |     |
-    |  - Read model files, config files                            |     |
-    |  - python3 gpu_check.py  -->  GPU count, VRAM                |     |
-    |  - Detect framework (PyTorch/TF/JAX/sklearn/XGBoost)         |     |
-    |  - Determine model_category if not set                       |     |
-    |  - claude-mem:mem-search (recall past projects)              |     |
-    |  - Create optimization plan from plan-template.md            |     |
-    |  - Estimate cost/time budget                                 |     |
+    |  STEP C — ANALYZE CODEBASE (still plan mode)                 |     |
+    |  Read model/config; gpu_check.py; detect framework;         |     |
+    |  model_category; claude-mem:mem-search; build plan; cost.   |     |
     +--------------------------------------------------------------+     |
                     |                                                    |
                     v                                                    |
     +--------------------------------------------------------------+     |
     |  STEP D — PRESENT FULL PLAN (user can loop)                  |     |
-    |                                                              |     |
-    |  Present plan with options:                                  |     |
-    |    1. Proceed        → ExitPlanMode → Phase 2                |     |
-    |    2. Adjust         → back to Step B  --------------------------->+
-    |    3. Re-brainstorm  → back to Step B  --------------------------->+
-    |    4. Ask questions  → answer → re-present Step D            |
-    |                                                              |
-    |  The user can loop as many times as they want.               |
-    |  Only option 1 exits plan mode.                              |
+    |    1. Proceed -> ExitPlanMode -> Phase 2                     |     |
+    |    2/3. Adjust / Re-brainstorm -> back to Step B  -------------->+
+    |    4. Ask questions -> re-present                            |
     +--------------------------------------------------------------+
 
-  Writes: optimization-goals.json, pipeline-state.json,
-          user-choices-backup.json, dev_notes.md
+  Detects a prior completed run (phase==9) -> prompt: new <exp_root> or continue.
+  Writes: optimization-goals.json, pipeline-state.json, user-choices-backup.json,
+          dev_notes.md, .claude/ml-optimizer.json (breadcrumb: active + runs[])
 
                     |
-      (user chose "Proceed" → ExitPlanMode)
+      (user chose "Proceed" -> ExitPlanMode)
                     v
 
   RELIABILITY LAYER (applies to all phases)
   ==========================================
   Phase gates:    pipeline_state.py gate <from> <to> before each transition
                   pipeline_state.py log-gate <phase> completed after each phase
-  Relay contracts: schema_validator.py relay <route> <json> before SendMessage
-                   Persistent agents emit RELAY_ACK: <route> to confirm receipt
-  Decision log:   pipeline_state.py log-decision <json> at every pivot/stop/operator choice
+  Handoff:        schema_validator.py relay <route> <json> (5 routes) validates
+                  the file/args payloads workflows hand between stages
+  Decision log:   pipeline_state.py log-decision <json> at every pivot/stop
                   SHA-256 input hashing for replay-based divergence detection
-  Meta-patch gate: pipeline_state.py meta-patch validate|log|promote
-                   Max 3/session, forbidden skills enforced
+  Baseline:       baseline_checksum (SHA-256) verified before each batch + resume
 
-  PHASE 2: PREREQUISITES
+  PHASE 2: PREREQUISITES                                 [Agent: prerequisites]
   =======================
-  Agent: prerequisites-agent --> ml-optimizer:prerequisites skill
   Phase gate: pipeline_state.py gate 1 2
 
     +--------------------------------------------------------------+
-    |  Step 1: Detect environment (conda/venv/system)              |
-    |  Step 2: Scan imports, check missing packages                |
-    |  Step 3: Detect dataset format (CSV/ImageFolder/HuggingFace) |
-    |  Step 4: Validate dataset paths and structure                |
-    |  Step 5: Install missing dependencies                        |
-    |  Step 6: Prepare data if needed (preprocessing)              |
-    |  Step 6.1: Dry-run validation (NEW)                          |
-    |    timeout 120 <train_command_with_minimal_steps>            |
-    |  Step 7: Write prerequisites.json report                     |
+    |  Detect env (conda/venv/system); scan imports; detect+       |
+    |  validate dataset format; install deps; prepare data;        |
+    |  dry-run (timeout 120 <train_cmd minimal>); write report.    |
+    |  VERIFY GITNEXUS: gitnexus_utils.py available (BLOCK if CLI   |
+    |  absent) + mcp-registered (WARN if not); index target repo.  |
     +--------------------------------------------------------------+
 
   Reads: user_choices (train_command, data paths, env_manager)
-  Writes: <exp_root>/results/prerequisites.json
-          <exp_root>/prepared-data/ (if preprocessing needed)
+  Writes: results/prerequisites.json, prepared-data/ (if needed),
+          <project_root>/.gitnexus/ (index; git-excluded, never committed)
 
                     |
                     v
 
-  PHASE 3: BASELINE
+  PHASE 3: BASELINE                                      [Agent: baseline]
   ==================
-  Agent: baseline-agent --> ml-optimizer:baseline skill
   Phase gate: pipeline_state.py gate 2 3
 
     +--------------------------------------------------------------+
-    |  1. Run training with default HPs                            |
-    |  2. Parse logs: python3 parse_logs.py <logfile>              |
-    |  3. Check divergence: python3 detect_divergence.py           |
-    |  4. Profile GPU memory usage (skip for tabular ML)           |
-    |  5. Estimate throughput (steps/sec, time/epoch)              |
-    |  6. Write baseline.json                                      |
+    |  Run training w/ default HPs (wrap `timeout` if              |
+    |  fixed_time_budget set); parse_logs.py; detect_divergence.py;|
+    |  profile GPU (skip tabular); throughput; write baseline.json.|
     +--------------------------------------------------------------+
 
   Reads: prerequisites.json, user_choices
-  Writes: <exp_root>/results/baseline.json
-          <exp_root>/logs/baseline/train.log
+  Writes: results/baseline.json, logs/baseline/train.log,
           pipeline-state.json (baseline_checksum — immutable baseline)
 
                     |
                     v
 
-  PHASE 4: USER CHECKPOINT
+  PHASE 4: USER CHECKPOINT                               [Agent: orchestrator]
   =========================
-  Agent: orchestrator (user interaction)
+  Present baseline; user chooses direction (HP / research / user papers /
+  skip to experiments / method proposals). Autonomous mode auto-selects.
 
-  Presents options to user:
-    +--------------------------------------------------------------+
-    | 1. Continue to research (web search for techniques)          |
-    | 2. Skip research, go directly to HP tuning                   |
-    | 3. Adjust baseline config and re-run                         |
-    | 4. Stop here                                                 |
-    | 5. Generate method proposals (research with source: "both")  |
-    +--------------------------------------------------------------+
-
-  Option 5 triggers:
-    - Ask user for method_proposal_scope (training/architecture/full)
-    - research-agent --> ml-optimizer:research (source: "both")
-    - User confirms proposals
-    - implement-agent --> ml-optimizer:implement
-    - Creates branches/backups for each proposal
+  *** PRE-AUTHORIZE PHASE 7 AUTONOMY (MANDATORY) ***
+    Workflows take no mid-run input, so lock into user_choices now:
+      method_proposal_scope        (null | training | architecture | full)
+      method_proposal_iterations   (0 disables; else budget of mid-loop rounds)
+      hp_batches_per_round         (cadence, default 3)
+      fixed_time_budget / fixed_epoch_budget  (passed as two typed fields)
+    These become Phase 7 args so the experiment workflow runs with no prompts.
 
                     |
-     (option 1 or 5 chosen)
+      (proceed to research or experiments)
                     v
 
-  PHASE 5: RESEARCH
+  PHASE 5: RESEARCH        Workflow(phase-5-research.js)  [reuses research-agent]
   ==================
-  Agent: research-agent --> ml-optimizer:research skill
   Phase gate: pipeline_state.py gate 4 5
+  args:   { exp_root, primary_metric, model_category, scope_level, source,
+            user_papers }
+  return: { findings_path, proposals[], agenda_initialized }
 
     +----------------------------------------------------------------+
-    |  Source modes:                                                 |
-    |    "web"       — WebSearch + alphaxiv MCP (parallel)           |
-    |    "knowledge" — Structured ideation (6 lenses: Problem-First, |
-    |                  Analogical, What Changed, Constraint,         |
-    |                  Inversion, Composition). Diverge→converge→    |
-    |                  refine. Confidence cap 7/10.                  |
-    |    "both"      — LLM proposals + web/alphaxiv validation       |
-    |                                                                |
-    |  Scope levels:                                                 |
-    |    "training"      — HPs, schedulers, augmentation (safest)    |
-    |    "architecture"  — model changes, loss functions             |
-    |    "full"          — any change including data pipeline        |
-    |                                                                |
-    |  Fuzzy deduplication (NEW):                                    |
-    |    - Normalize: lowercase, strip suffixes                      |
-    |    - Substring containment check                               |
-    |    - Common abbreviation matching (lr↔learning rate, etc.)     |
-    |    - >70% word overlap → treat as duplicate                    |
-    |                                                                |
-    |  Priority scoring:                                             |
-    |    score = (impact × confidence) / (11 - feasibility)          |
+    |  Stage Fan-out:  one research-agent per domain angle (parallel)|
+    |                  -> candidates; dedup by normalized title.     |
+    |  Stage Vet:      one research-agent per candidate (adversarial |
+    |                  deep-read / feasibility / novelty / dead-end);|
+    |                  rank by (impact*confidence)/(11-feasibility). |
+    |  Stage Synthesize: write research-findings.md + init agenda.   |
+    |                  Zero survivors -> honest-empty findings +     |
+    |                  research_failure log -> orchestrator HP-only. |
+    |  Source: "web" | "knowledge" (6 ideation lenses, conf cap 7)  |
+    |          | "both". Small dataset (<5K) -> low-data techniques. |
+    |  Web/alphaxiv degradation absorbed WITHIN one dispatch.        |
     +----------------------------------------------------------------+
 
-  Reads: baseline.json, user_choices, existing findings files, dead-ends.json
-  Writes: <exp_root>/reports/research-findings.md
-          <exp_root>/reports/research-findings-method-proposals.md (if "both")
-          <exp_root>/reports/research-agenda.json (living document)
-          <exp_root>/reports/research-agenda.md (companion)
+  Writes: reports/research-findings.md, research-findings-method-proposals.md
+          (if source both), research-agenda.json/.md (living document)
 
                     |
+      (post-research user checkpoint: pick proposals)
                     v
 
-  PHASE 6: IMPLEMENT
+  PHASE 6: IMPLEMENT       Workflow(phase-6-implement.js) [reuses implement-agent]
   ===================
-  Agent: implement-agent --> ml-optimizer:implement skill
   Phase gate: pipeline_state.py gate 5 6
-  Code analysis: feature-dev:code-explorer (dependency tracing)
-  Quality gate: feature-dev:code-reviewer (Step 4e.5, advisory)
+  args:   { exp_root, project_root, findings_path, selected_indices[], strategy }
+  return: { manifest_path, branches:[{slug,branch,status,validation,reviews}] }
 
     +--------------------------------------------------------------+
-    |  Strategy A — Git Branch (default):                          |
-    |    Parallel via git worktrees (one Agent per proposal):      |
-    |      1. git checkout -b ml-opt/<slug> from base branch       |
-    |      2. Apply code changes                                   |
-    |      3. Validate syntax (py_compile)                         |
-    |      4. Run dry-run test                                     |
-    |      5. Record in implementation-manifest.json               |
+    |  Strategy A — Git Branch (default): pipeline() fans out one   |
+    |    worktree-isolated implement-agent per proposal IN PARALLEL:|
+    |      git checkout -b ml-opt/<slug> from base -> query         |
+    |      gitnexus (context/query/impact) -> edit -> validate      |
+    |      (syntax/import/LSP pyright) -> unit test -> commit ->    |
+    |      remove worktree (branch persists) -> manifest entry.     |
     |                                                              |
-    |  Strategy B — File Backup (non-git fallback):                |
-    |    Restore-before-apply pattern (no cross-contamination)     |
-    |      1. Create baseline backup (_baseline/)                  |
-    |      2. For EACH proposal:                                   |
-    |         a. Restore ALL files from _baseline/ (clean slate)   |
-    |         b. Apply this proposal's changes                     |
-    |         c. Validate syntax                                   |
-    |         d. If pass: backup to backups/<slug>/                |
-    |         e. Restore from _baseline/ (clean for next)          |
-    |      3. Experiments run SEQUENTIALLY (not parallel)          |
+    |  Strategy B — File Backup (non-git): implement + review run   |
+    |    STRICTLY SEQUENTIALLY (shared working tree, restore-       |
+    |    before-apply). Concurrency here would clobber changes.    |
+    |                                                              |
+    |  Review stage (per validated branch, in parallel):           |
+    |    feature-dev:code-reviewer + pr-review-toolkit:silent-      |
+    |    failure-hunter. A CRITICAL finding downgrades the branch   |
+    |    validated -> validation_failed (folded into notes).       |
+    |                                                              |
+    |  Assemble: merge entries -> implementation-manifest.json,     |
+    |    schema_validator.py manifest, verify branches resolve.    |
     +--------------------------------------------------------------+
 
-  Reads: research-findings.md, user-confirmed proposal indices
-  Writes: <exp_root>/results/implementation-manifest.json
-          Git branches: ml-opt/<slug> (one per proposal)
+  Reads: research-findings.md, selected proposal indices
+  Writes: results/implementation-manifest.json, Git branches ml-opt/<slug>
 
                     |
                     v
 
-  PHASE 7: EXPERIMENT LOOP (Hyperagent-driven)
-  ==============================================
-  Phase 7 ↔ Phase 8 in a loop. The hyperagent helps Phase 7 by deciding
-  what action to take. Analysis advises, hyperagent decides.
+  PHASE 7: EXPERIMENT LOOP   Workflow(phase-7-experiment.js)   [autonomous]
+  ==========================
+  Phase gate: pipeline_state.py gate 6 7
+  args:   { exp_root, project_root, baseline, primary_metric, divergence_metric,
+            divergence_lower_is_better, lower_is_better, target_value, scope_level,
+            fixed_time_budget, fixed_epoch_budget, hp_batches_per_round,
+            method_proposal_scope, method_proposal_iterations }
+  return: { best_exp_id, best_metric, rounds_completed, exit_reason,
+            stacking_candidates:[{branch, improvement_pct}] }
 
-  Loop exit conditions:
-    1. Target metric achieved
-    2. User manually stops
-  Autonomous — never auto-stops on plateaus. Hyperagent tries different
-  operators. Analysis advises, hyperagent decides.
+  The while-loop lives INSIDE the script (bounded by budget.remaining()). Each
+  agent is a fresh agentType dispatch reading files under <exp_root>/.
 
   +========================================================================+
+  |  PRE-LOOP (experiment-agent as CLI runner)                             |
+  |    verify-baseline (checksum mismatch -> halt); load manifest          |
+  |    (validated branches only, git rev-parse each); seed code_branches + |
+  |    search_space; detect num_gpus / model_category; capture             |
+  |    original_branch (excluded from stacking candidates).                |
   |                                                                        |
-  |  PRE-LOOP SETUP                                                        |
-  |    - Validate pipeline state, verify baseline integrity                |
-  |    - Initialize code archive: hyperagent-init (gen-000 from baseline)  |
-  |    - Load meta-patches (if meta-improvement has run previously)        |
-  |    - Load implementation manifest, sync behavioral memory              |
-  |                                                                        |
-  |  ITERATION START                                                       |
+  |  ITERATION (per round)                                                 |
   |  +------------------------------------------------------------------+  |
-  |  |  7.1  HYPERAGENT DECIDES ACTION                                  |  |
-  |  |  Agent: hyperagent (PERSISTENT, resumed via SendMessage)         |  |
-  |  |                                                                  |  |
-  |  |  Reads: archive stats, analysis insights, operator stats,        |  |
-  |  |         dead-end catalog, behavioral memory                      |  |
-  |  |                                                                  |  |
-  |  |  Chooses ONE action:                                             |  |
-  |  |    a. HP tuning      → delegates to tuning-agent                 |  |
-  |  |    b. LLM code patch → modifies code directly                    |  |
-  |  |    c. ShinkaEvolve   → dispatches evolve skill                   |  |
-  |  |    d. Research       → dispatches research + implement agents    |  |
-  |  |    e. Meta-improve   → modifies skill instructions (max 3/ses)   |  |
+  |  | 0. round_manager.py create-round hp -> round_dir                 |  |
+  |  | 1. tuning-agent  -> proposed-configs/round-N-hp/exp-*.json       |  |
+  |  |      iter1: one exp/branch @ baseline HPs; iter2: prune losers;  |  |
+  |  |      iter3+: focus best branch + HP tuning (branch_scores).      |  |
+  |  | 2. experiment-agents (PARALLEL, worktree --detach; sequential    |  |
+  |  |      for file_backup). Each runs detect_divergence.py; honors    |  |
+  |  |      the SAME training budget as baseline (budgetClause).        |  |
+  |  |      -> results/round-N-hp/exp-*.json + logs + scripts + artifacts|  |
+  |  | 3. per-batch completeness verifier (output_contract.py; loud).   |  |
+  |  | 4. analysis-agent -> reports/batch-N-analysis.md + returns a     |  |
+  |  |      decision. THE analysis agent is the decision-maker.         |  |
+  |  |      (updates research-agenda.json, dead-ends.json)              |  |
   |  +------------------------------------------------------------------+  |
   |                    |                                                   |
-  |       +------------+----------+-----------+-----------+                |
-  |       |            |          |           |           |                |
-  |    hp_tune    llm_patch  shinka_evolve research  meta_improve          |
-  |       |            |          |           |           |                |
-  |       v            v          v           v           v                |
-  |  +------------------------------------------------------------------+  |
-  |  |  7.2  EXECUTE ACTION                                             |  |
-  |  |                                                                  |  |
-  |  |  hp_tune:                                                        |  |
-  |  |    tuning-agent proposes configs → experiment-agents parallel    |  |
-  |  |    monitor-agent watches for divergence (concurrent)             |  |
-  |  |                                                                  |  |
-  |  |  llm_patch / shinka_evolve / research_implement:                 |  |
-  |  |    1. hyperagent-select → pick parent from archive               |  |
-  |  |       (6 strategies: best, score_child_prop, ucb, ...)           |  |
-  |  |       UCB1: value/visits + C×sqrt(ln(N)/visits)                  |  |
-  |  |       MCTS backprop: ancestors get visit_count++, value_sum+=    |  |
-  |  |    2. hyperagent-generate → create code variant                  |  |
-  |  |       (ShinkaEvolve: evolve skill does convert→run→inspect)      |  |
-  |  |       File handoff: SHINKA_PROVIDER=claude_code,                 |  |
-  |  |         SHINKA_HANDOFF_TIMEOUT=600 (10 min per mutation)         |  |
-  |  |         Agent writes .inprogress → deadline resets               |  |
-  |  |         shinka_run writes .heartbeat every 5s for liveness       |  |
-  |  |    3. hyperagent-eval → staged eval (10% budget, adaptive        |  |
-  |  |       threshold). If FAIL → archive as filtered, skip full.      |  |
-  |  |    4. If PASS → HP-tune (1-2 iters) + full experiment            |  |
-  |  |                                                                  |  |
-  |  |  meta_improve:                                                   |  |
-  |  |    hyperagent-generate (meta_improvement_mode: true)             |  |
-  |  |    → reads skill files + archive + operator stats                |  |
-  |  |    → writes patched skills to <exp_root>/meta-patches/          |  |
-  |  |    → writes meta-changelog.json (skill, change, reason, impact)  |  |
-  |  |    → IMMEDIATELY loads patches into subsequent dispatches        |  |
-  |  |    → tuning/analysis/research use improved instructions          |  |
-  |  +------------------------------------------------------------------+  |
+  |  4.7 PIVOT GATE (before a COSTLY pivot: code_evolution /              |
+  |      method_proposal / qualitative_change): 2 independent analysis    |
+  |      skeptics try to REFUTE (cheaper in-scope HP exists; plateau      |
+  |      within noise). Any refutation -> downgrade to "continue".        |
+  |      ("stop" is NOT gated here — guarded by stuck protocol below.)    |
   |                    |                                                   |
-  |                    v                                                   |
-  |  +------------------------------------------------------------------+  |
-  |  |  7.3  ARCHIVE RESULTS                                            |  |
-  |  |  hyperagent-archive → update code-archive.jsonl                  |  |
-  |  |    - Track genid, parent, lineage, fitness, mutation operator    |  |
-  |  |    - Backpropagate UCB score (normalized) through lineage        |  |
-  |  |    - Log to behavioral memory + research agenda                  |  |
-  |  |    - Update operator_stats in hyperagent_state                   |  |
-  |  +------------------------------------------------------------------+  |
+  |  5. DECISION TREE (scope-gated):                                      |
+  |     continue                 -> keep tuning                           |
+  |     branch_test              -> add untested_branches                 |
+  |     hp_expand/narrow/regular -> swap search_space                     |
+  |     method_proposal          -> research + implement  (scope != train,|
+  |                                 method_proposal budget left) else     |
+  |                                 hp_expand                             |
+  |     code_evolution           -> tuning(evolve HPs) + implement(evolve |
+  |                                 skill, ShinkaEvolve) (scope==full,    |
+  |                                 budget left) else hp_expand           |
+  |     stop                     -> STUCK PROTOCOL:                       |
+  |                                 research (failure-aware) + implement;  |
+  |                                 continue if new in-scope proposals OR |
+  |                                 agenda untried OR metric improved;    |
+  |                                 else FIXPOINT -> exit to Phase 9.     |
+  |     (unknown -> hp_expand.  malformed analysis -> continue.)          |
   |                    |                                                   |
-  |                    v                                                   |
-  |  +------------------------------------------------------------------+  |
-  |  |  7.4  ANALYZE                                                    |  |
-  |  |  Agent: analysis-agent --> ml-optimizer:analyze skill            |  |
-  |  |                                                                  |  |
-  |  |  Decision tree:                                                  |  |
-  |  |    "continue"        → resume hyperagent for next iteration      |  |
-  |  |    "code_evolution"  → resume hyperagent (code mutation next)    |  |
-  |  |    "hp_expand" etc   → resume hyperagent (HP tuning next)        |  |
-  |  |    "stop"            → hyperagent tries other operators first    |  |
-  |  |    "method_stacking" → Phase 8 (merge methods, resolve conflict) |  |
-  |  |  If meta_improvement_recommended: true                           |  |
-  |  |    → hyperagent may choose meta_improve next iteration           |  |
-  |  |                                                                  |  |
-  |  |  Analysis ADVISES direction, hyperagent DECIDES specific action. |  |
-  |  +------------------------------------------------------------------+  |
-  |       |                                                                |
-  |       +-- Loop back to 7.1 HYPERAGENT DECIDES                          |
-  |                                                                        |
-  |  +------------------------------------------------------------------+  |
-  |  |  7.5  METHOD STACKING (when analysis recommends)                 |  |
-  |  |  Triggered by: pivot_type: "method_stacking"                     |  |
-  |  |  (multiple improved methods from different papers/code changes)  |  |
-  |  |  Requires: git branch strategy                                   |  |
-  |  |                                                                  |  |
-  |  |  The hyperagent merges best methods sequentially:                |  |
-  |  +------------------------------------------------------------------+  |
+  |  6. CADENCE research (every hp_batches_per_round, budget left).       |
+  |                                                                       |
+  |  method_proposal_iterations = shared budget for method_proposal +     |
+  |  code_evolution + cadence research. Exhausted -> those fall back to   |
+  |  hp_expand. (Stuck protocol is the exit path, not budget-capped.)     |
   +=============================== END LOOP ================================+
 
-                    |
-      (target achieved or user manually stops)
-                    v
-
-  PHASE 8: METHOD STACKING (Hyperagent Driven, in loop with Phase 7)
-  ====================================================================
-  MANDATORY: Phase 8 is driven by the hyperagent, same as Phase 7.
-  Resume via SendMessage(to: agent_registry["hyperagent"]).
-  Do NOT implement stacking logic directly in the orchestrator.
-
-  Phase 7 ↔ Phase 8 loop. Analysis advises stacking, hyperagent decides.
-  No fixed method count. After stacking → back to Phase 7 on stacked code.
-  Agent: hyperagent drives stacking decisions
-  Requires: git branch strategy (skipped for file_backup projects)
-
-    +--------------------------------------------------------------+
-    |  1. Rank methods by improvement (descending) using           |
-    |     rank_methods_for_stacking() from result_analyzer.py      |
-    |                                                              |
-    |  2. Initialize: best method branch -> ml-opt/stack-1         |
-    |                                                              |
-    |  3. For each remaining method (in rank order):               |
-    |     a. Create ml-opt/stack-<N> from <stack_base_branch>      |
-    |        (may be an evolved branch from prior step)            |
-    |     b. Merge next method; conflicts -> implement-agent       |
-    |     c. Run experiment                                        |
-    |     d. Dispatch analysis agent on stacked result:            |
-    |        - Compare stacked gain vs best individual             |
-    |        - If interference detected:                           |
-    |          1. tuning-agent → evolve HPs                        |
-    |          2. implement-agent → evolve (ShinkaEvolve)          |
-    |          3. tuning-agent → training HPs for evolved          |
-    |          4. experiment-agent → run on evolved code           |
-    |          5. re-analyze → loop until improved or stop         |
-    |        - Else: proceed to HP-tune                            |
-    |     e. HP-tune on (potentially evolved) code                 |
-    |     f. If degraded: skip, re-branch from last success        |
-    |                                                              |
-    |  4. Save stacking state (+ evolved_methods) to               |
-    |     pipeline-state.json (resumable)                          |
-    +--------------------------------------------------------------+
-
-  Reads: results/round-*/exp-*.json, implementation-manifest.json, baseline.json
-  Writes: results/round-N-stacked/exp-*.json (stacked_default_hp / stacked_tuned_hp)
-          Git branches: ml-opt/stack-<N>
+  exit_reason: target_reached | fixpoint | budget_exhausted | baseline_integrity_halt
+  stacking_candidates: branches beating baseline (deduped, best improvement kept)
 
                     |
-      (stacking complete → return to Phase 7 on stacked code)
-      (target achieved or user stops → Phase 9)
+      (return non-empty stacking_candidates -> Phase 8)
                     v
 
-  Phase 7 ↔ Phase 8 loop:
-    Analysis advises "method_stacking" → Phase 8
-    After stacking → back to Phase 7 on stacked code
-    Meta-improvement inside Phase 7 (one of 5 actions)
-    Loop until goal or user stops
+  PHASE 8: METHOD STACKING   Workflow(phase-8-stacking.js)
+  ==========================
+  Requires git branch strategy (skipped for file_backup projects).
+  args:   { exp_root, project_root, primary_metric, lower_is_better,
+            stacking_candidates }
+  return: { best_stack_branch, best_stack_metric, steps[{method,branch,kept}] }
 
-  PHASE 9: REPORT, REVIEW & PROMOTION
-  =====================================
+  Sequential accumulation loop INSIDE the script:
+    +--------------------------------------------------------------+
+    |  Rank candidates by improvement (desc). Seed: strongest       |
+    |  method's own branch = logical stack-1 (no branch cut).       |
+    |                                                              |
+    |  For each remaining method (rank order):                     |
+    |    a. implement-agent merges it into ml-opt/stack-<N> in a    |
+    |       worktree (resolve conflicts, preserve BOTH methods).   |
+    |       Skip on conflict_unresolved / validation_failed.      |
+    |    b. REVIEW GATE (mirror Phase 6): code-reviewer +          |
+    |       silent-failure-hunter on the merge boundary. A         |
+    |       CRITICAL finding SKIPS this method (a merge-introduced |
+    |       silent failure would corrupt the stacked metric).     |
+    |    c. experiment-agent runs the stacked branch.             |
+    |    d. analysis-agent assesses (interference vs best          |
+    |       individual gain). Skip on "stop" or numeric           |
+    |       regression vs current stack base.                     |
+    |    e. [interference] code_evolution repair: tuning(evolve    |
+    |       HPs) + implement(evolve, 5 gen / pop 2). Promote the   |
+    |       evolved branch only if it beats pre-evolution stack.   |
+    |    f. [combo gain > 1%] narrowed HP-tune on the kept branch. |
+    |    Kept method -> new stack base.                           |
+    +--------------------------------------------------------------+
 
-  Step 1: REPORT
+  Reads: stacking_candidates, results/round-*/exp-*.json, manifest, baseline.json
+  Writes: results/round-N-stacked/exp-*.json (stacked_default_hp/stacked_tuned_hp)
+          Git branches ml-opt/stack-<N>, ml-opt/evolved-stack-<N> (if evolved)
+
+                    |
+      (orchestrator may relaunch Phase 7 on the stacked code)
+      (target achieved / fixpoint / user stops -> Phase 9)
+                    v
+
+  PHASE 9: REPORT & REVIEW
+  =========================
+  Phase gate: gate 7 9 (if Phase 8 skipped) or gate 8 9.
+
+  Step 1: REPORT                                         [Agent: report]
   ---------------
-  Agent: report-agent --> ml-optimizer:report skill
-
     +--------------------------------------------------------------+
-    |  Compile final optimization report:                          |
-    |    - Best experiment config and metrics                      |
-    |    - Ranking of all experiments                              |
-    |    - HP sensitivity analysis (Spearman correlations)         |
-    |    - ASCII charts (comparison, timeline, sensitivity)        |
-    |    - Matplotlib progress chart                               |
-    |    - Excalidraw diagrams (pipeline, architecture)            |
-    |    - HTML dashboard (dashboard.py --live)                    |
-    |    - Markdown results table (dashboard.py --table)           |
-    |    - Error pattern summary                                   |
-    |    - Research agenda summary                                 |
-    |    - Dead-end catalog summary                                |
-    |    - Proposal outcome tracking                               |
-    |    - Threats to Validity section (conditional caveats)       |
-    |    - Citation verification (Step 5.3: cross-ref claims vs    |
-    |      experiment data, check source URL accessibility)        |
-    |                                                              |
-    |  Three-tier comparison (when method_tier present):           |
-    |    Tier 1: baseline                                          |
-    |    Tier 2: method_default_hp (isolated method effect)        |
-    |    Tier 3: method_tuned_hp (combined HP + method effect)     |
-    |                                                              |
-    |  Stacking comparison (when stacking results present):        |
-    |    stacked_default_hp (combined methods, individual HPs)     |
-    |    stacked_tuned_hp (combined methods, tuned HPs)            |
+    |  Compile final report: best config/metrics, ranking, HP      |
+    |  sensitivity (Spearman), ASCII + matplotlib charts,          |
+    |  excalidraw diagrams, HTML dashboard (--live), results-table |
+    |  (--table), error/agenda/dead-end summaries, proposal        |
+    |  outcomes, Threats to Validity, citation verification.       |
+    |  Three-tier table (method_tier present):                     |
+    |    baseline / method_default_hp / method_tuned_hp            |
+    |  Stacking table: stacked_default_hp / stacked_tuned_hp       |
     +--------------------------------------------------------------+
 
-  Reads: All <exp_root>/results/*.json, error-log.json,
-         research-agenda.json, dead-ends.json
-  Writes: <exp_root>/reports/final-report.md
-          <exp_root>/reports/dashboard.html
-          <exp_root>/results-table.md
-          <exp_root>/reports/progress_chart.png
-          <exp_root>/artifacts/pipeline-overview.excalidraw
-          <exp_root>/artifacts/architecture-*.excalidraw
-
-                    |
-                    v
-
-  Step 2: SESSION REVIEW
+  Step 2: SESSION REVIEW              [Agent: analysis, review mode]
   -----------------------
-  Agent: analysis-agent --> ml-optimizer:analyze skill (review mode)
+    What worked / what didn't / anti-patterns / how to improve next session.
+    Writes: reports/session-review.md
 
-    - What worked, what didn't, how to improve
-    - Anti-patterns observed
-    - Actionable suggestions for next session
-
-  Writes: <exp_root>/reports/session-review.md
-
-                    |
-                    v
-
-  Step 3: META-PATCH PROMOTION (if meta-improvements were made)
-  ==============================================================
-  Agent: analysis-agent (meta_patches scope) + orchestrator
-
-    1. analysis-agent evaluates each meta-patch:
-       - Did experiments after the patch show improvement?
-       - Is the modification generalizable?
-    2. Present to user: "Promote N strategy improvements to plugin?"
-    3. If approved → commit patched skills to plugin's current branch
-       (immediately available next session, no merge needed)
-    4. Log to behavioral memory + claude-mem for cross-session recall
+  Reads: all results/*.json, error-log.json, research-agenda.json, dead-ends.json
+  Writes: reports/final-report.md, dashboard.html, results-table.md,
+          progress_chart.png, artifacts/*.excalidraw
 
 
 ================================================================================
@@ -695,98 +614,86 @@ ENTRY POINT
 
   Phase  | Reads                          | Writes
   -------|--------------------------------|-----------------------------
-  0+1    | (user input), model files,     | pipeline-state.json (user_choices + agent_registry
-         | config, gpu_check.py           |   + hyperagent_state)
-         |                                | user-choices-backup.json
-         |                                | optimization-goals.json
-         |                                | dev_notes.md
+  0+1    | (user input), model files,     | pipeline-state.json (user_choices)
+         | config, gpu_check.py           | user-choices-backup.json
+         |                                | optimization-goals.json, dev_notes.md
+         |                                | .claude/ml-optimizer.json (breadcrumb)
   2      | user_choices                   | results/prerequisites.json
-         |                                | prepared-data/
+         |                                | prepared-data/, <root>/.gitnexus/
   3      | prerequisites.json             | results/baseline.json
          |                                | logs/baseline/train.log
          |                                | pipeline-state.json (baseline_checksum)
-  4      | baseline.json                  | (user decision)
-  5      | baseline.json, user_choices,   | reports/research-findings.md
+  4      | baseline.json                  | user_choices (Phase 7 pre-authorization)
+  5(WF)  | baseline.json, user_choices,   | reports/research-findings.md
          | dead-ends.json                 | reports/research-agenda.json
-  6      | research-findings.md           | results/implementation-manifest.json
-         |                                | Git branches: ml-opt/<slug>
-  7.1    | code-archive.jsonl,            | (hyperagent decision)
-         | results/round-*/exp-*.json,    |
-         | operator_stats, dead-ends.json |
-  7.2    | proposed-configs/round-N-hp/   | results/round-N-hp/exp-NNN.json (+ reproducibility)
-         | branch from archive            | code-archive.jsonl (updated)
-         |                                | logs/round-N-hp/<exp-id>/train.log
-         |                                | logs/round-N-hp/<exp-id>/pip_freeze.txt
-         |                                | scripts/round-N-hp/<exp-id>/train.sh
-         |                                | artifacts/round-N-hp/<exp-id>/
-  7.3    | logs/round-N-hp/<exp-id>/train.log | (status: healthy/diverged/unmonitored)
-  7.3    | results from 7.2               | code-archive.jsonl (add entry)
-         |                                | learned-behaviors.json (operator outcome)
-  7.4    | results/, code-archive.jsonl,  | reports/batch-N-analysis.md
-         | optimization-goals.json        | reports/research-agenda.json (updated)
-         |                                | reports/dead-ends.json (if pruned)
-         |                                | reports/dashboard.html (--live)
-         |                                | results-table.md (--table)
-  7.5    | error patterns, dead-ends,     | (research dispatch or exit)
-         | agenda, success metrics        |
-  8      | results/round-*/exp-*.json,    | results/round-N-stacked/exp-*.json (stacking)
-         | implementation-manifest.json   | Git branches: ml-opt/stack-<N>
-         |                                | Git branches: ml-opt/evolved-stack-<N> (if evolved)
-         |                                | artifacts/shinka-task/ (evolve conversion)
-         |                                | artifacts/shinka-results/ (evolve output)
-  9      | results/, error-log.json,      | reports/final-report.md
-         | research-agenda.json,          | reports/dashboard.html
-         |                                | results-table.md
-         | dead-ends.json,                | reports/progress_chart.png
-         | optimization-goals.json,       |
-         | learned-behaviors.json         |
-         |                                | artifacts/pipeline-overview.excalidraw
-         |                                | artifacts/architecture-*.excalidraw
+  6(WF)  | research-findings.md,          | results/implementation-manifest.json
+         | selected_indices               | Git branches: ml-opt/<slug>
+  7(WF)  | manifest, research-agenda,     | proposed-configs/round-N-hp/exp-*.json
+         | dead-ends, batch-*-analysis,   | results/round-N-hp/exp-*.json (+repro)
+         | learned-behaviors, results/    | logs/scripts/artifacts/round-N-hp/...
+         |                                | reports/batch-N-analysis.md
+         |                                | research-agenda.json, dead-ends.json
+         |                                | dashboard.html (--live), results-table.md
+  8(WF)  | stacking_candidates,           | results/round-N-stacked/exp-*.json
+         | results/round-*, manifest,     | Git branches: ml-opt/stack-<N>
+         | baseline.json                  | Git branches: ml-opt/evolved-stack-<N>
+  9      | results/, error-log.json,      | reports/final-report.md, dashboard.html
+         | research-agenda.json,          | results-table.md, progress_chart.png
+         | dead-ends.json, goals,         | reports/session-review.md
+         | learned-behaviors.json         | artifacts/*.excalidraw
+
+  Cross-cutting (scripts / multiple agents):
+    round_manager.py   -> results/rounds-manifest.json (round lifecycle)
+    error_tracker.py   -> reports/error-log.json, dead-ends.*, research-agenda.*
+    pipeline_state.py  -> pipeline-state.json (phase, user_choices, stacking state,
+                          consecutive_stop_count, stuck_protocol_triggered,
+                          baseline_checksum)
+    goal_memory.py     -> optimization-goals.json, learned-behaviors.json
 
 
 ================================================================================
                               LEGEND
 ================================================================================
 
-  First dispatch:    orchestrator --Agent(subagent_type="ml-optimizer:<name>-agent")--> agent
-                     → save agentId to agent_registry["<name>"]
-  Resume dispatch:   orchestrator --SendMessage(to: agentId, CONTEXT FROM OTHER AGENTS)--> agent
-                     → if fails: fall back to fresh Agent(), update registry
-  Agent preloads:    agent --skills: [ml-optimizer:<skill>]--> skill instructions
-  User interaction:  [User]  <--->  [Orchestrator]
-  Conditional:       (condition) ---> branch
-  External skill:    context7, claude-mem, feature-dev, superpowers, alphaxiv
-  MCP servers:       alphaxiv (paper search/analysis), claude-mem (cross-session memory)
-  Data flow:         Reads: <file>  |  Writes: <file>
+  Agent dispatch (2/3/9): orchestrator --Agent(subagent_type="ml-optimizer:
+                          <name>-agent")--> fresh agent
+  Workflow dispatch (5-8): orchestrator --Workflow({scriptPath, args})-->
+                          runtime --agent({agentType})--> fresh agent
+  NO SendMessage, NO agent_registry, NO persistent-agent resumption.
+  Cross-agent context:    args + files under <exp_root>/ + structured returns
+  Agent preloads:         agent --skills: [ml-optimizer:<skill>]--> instructions
+  User interaction:       [User]  <--->  [Orchestrator]  (between phases only)
+  Conditional:            (condition) ---> branch
+  External skill/MCP:     context7, claude-mem, feature-dev, superpowers,
+                          alphaxiv (opt), gitnexus (REQUIRED)
 
-  Persistent agents: hyperagent, research, implement, tuning, analysis, monitor
-                     Resumed via SendMessage — accumulate context across pipeline
-                     Hyperagent is the PRIMARY loop driver (decides strategy)
-  Ephemeral agents:  prerequisites, baseline, experiment, report
-                     Fresh spawn each time — single-use or parallel tasks
-  Analytical agents (ultrathink): Extended reasoning, model: opus
-  Procedural agents (sonnet): Direct execution, lower cost/latency
-  Agent memory: All agents have memory: local → .claude/agent-memory-local/<name>/
-  Agent registry: pipeline-state.json → agent_registry (session-scoped, cleared on new session)
-  Hyperagent state: pipeline-state.json → hyperagent_state (enabled, archive_generation,
-                    strategy_history, meta_improvement_count, operator_stats)
-  Code archive: hyperagent/archive.jsonl (JSONL — genid, parent, lineage, fitness, mutation_type)
-  UCB1 tree search: 6 parent selection strategies (best, score_child_prop, ucb, ...)
-                    UCB1 backprop: visit_count (all ancestors), eval_count (node only), value_sum
-                    Scores min-max normalized to [0,1] with metric direction inversion
-  Meta-patches: <exp_root>/meta-patches/ (session-scoped skill modifications)
-  Meta-patch gate: pipeline_state.py meta-patch validate|log|promote (max 3/session)
-  Phase gates: pipeline_state.py gate <from> <to> (validates transition legality + completion)
-  Decision log: <exp_root>/decision-log.json (append-only, SHA-256 input hashing)
-  Relay schemas: schema_validator.py relay <route> <json> (7 routes, typed fields)
-  Output contracts: output_contract.py (single source for 8 agents — see 3-checkpoint
-                    enforcement section). Layer 1 SubagentStart injects, Layer 2
-                    PreToolUse validates writes, Layer 3 SubagentStop verifies outputs.
-                    Supports glob/dir/any_of/required_if for conditional enforcement.
-  ShinkaEvolve handoff: SHINKA_HANDOFF_TIMEOUT=600 (configurable), .inprogress marker
-                         extends deadline, .heartbeat every 5s for liveness, sleep(1) poll
+  Agent classes:
+    Procedural (sonnet[1m], effort medium): prerequisites, baseline, experiment,
+                          monitor — direct execution, lower cost/latency
+    Analytical (opus[1m], effort xhigh): research, tuning, implement, analysis,
+                          report — extended reasoning
+    Main-thread: orchestrator-agent (settings.json; loads orchestrate; launches
+                          workflows; not a dispatchable subagent)
+  Agent memory: All agents have memory: local -> .claude/agent-memory-local/<name>/
+  Workflow resume: resumeFromRunId (within-session) + file-persisted state
+  Phase gates: pipeline_state.py gate <from> <to> (transition legality + completion)
+  Decision log: pipeline_state.py log-decision <json> (SHA-256 input hashing)
+  Handoff schemas: schema_validator.py relay <route> <json> (5 routes)
+  Output contracts: output_contract.py (single source for 8 subagents — see
+                    3-checkpoint enforcement). L1 SubagentStart injects, L2
+                    PreToolUse validates writes, L3 SubagentStop verifies; plus
+                    in-workflow verifiers for workflow-dispatched agents.
+                    Supports glob/dir/any_of/required_if.
+  GitNexus (REQUIRED): index every repo (--index-only, non-invasive); query via
+                    MCP only (context/query/impact); Phase 2 blocks if CLI absent.
+  Proposal priority: (impact * confidence) / (11 - clamp(feasibility, 1, 10))
+  ShinkaEvolve handoff: SHINKA_PROVIDER=claude_code, SHINKA_HANDOFF_TIMEOUT=600
+                    (configurable); .inprogress marker extends deadline;
+                    .heartbeat every 5s for liveness. Use the local submodule
+                    (PyPI lacks file_handoff_provider).
   Goal anchor: optimization-goals.json (Phase 0, read by all agents)
   Behavioral memory: learned-behaviors.json (accumulated, project-scoped)
+  Multi-run: one <exp_root> = one run; new direction -> new <exp_root> at Phase 0.
 
   Three-tier + stacking fields in exp-*.json:
     "method_tier":     "baseline" | "method_default_hp" | "method_tuned_hp"

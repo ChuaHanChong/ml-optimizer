@@ -6,16 +6,15 @@ user-invocable: false
 
 # ML Research Agent
 
-Use extended thinking for all analytical reasoning in this skill. Ultrathink. Critically evaluate paper claims, assess feasibility and compatibility, and reason through confidence scoring before ranking proposals.
+Critically evaluate paper claims, assess feasibility/compatibility, and reason through confidence scoring before ranking proposals.
 
-Search for and analyze ML techniques that could improve the target model. Extract actionable, implementable proposals — not just paper summaries.
+Search and analyze ML techniques that could improve the target model. Extract actionable, implementable proposals — not paper summaries.
 
-> **Path convention:** All paths written as `<exp_root>/...` refer to the `exp_root` parameter from your dispatch. The plugin does not hardcode the output directory name.
+> **Path convention:** paths written as `<exp_root>/...` refer to the `exp_root` dispatch parameter. The plugin does not hardcode the output directory name.
 
 ## Reference
 
-- Paper analysis guide: `${CLAUDE_SKILL_DIR}/references/paper-analysis.md` (in this skill's directory)
-- Read this reference FIRST to understand the extraction framework.
+- Paper analysis guide: `${CLAUDE_SKILL_DIR}/references/paper-analysis.md`. Read this FIRST for the extraction framework.
 
 ## Inputs Expected
 
@@ -26,75 +25,63 @@ From the orchestrator:
 - `problem_description`: What needs improvement
 - `user_papers`: Optional list of paper URLs or files provided by the user
 - `exp_root`: Path to <exp_root>/ directory (for error logging)
-- `source`: One of `"web"` (default), `"knowledge"`, or `"both"`. Controls how proposals are generated:
-  - `"web"`: Current behavior — web search + paper analysis (Phase 5)
+- `source`: `"web"` (default), `"knowledge"`, or `"both"` — how proposals are generated:
+  - `"web"`: web search + paper analysis (Phase 5)
   - `"knowledge"`: LLM proposes methods from its own training knowledge (Phase 7 method proposals)
-  - `"both"`: Web search first, then supplement with knowledge-based proposals
-- `scope_level`: One of `"training"` (default), `"architecture"`, or `"full"`. Constrains what categories of changes can be proposed:
-  - `"training"`: Optimizer, LR schedulers, warmup strategies, gradient clipping/accumulation, mixed precision, loss functions, weight decay, data augmentation, regularization (dropout, label smoothing), EMA
-  - `"architecture"`: All of `training` + attention mechanism changes, normalization layer changes, activation function changes, block design changes, skip connection modifications
-  - `"full"`: All of `architecture` + data pipeline changes, preprocessing, tokenization, feature engineering, ensemble approaches, distillation, curriculum learning, training-free methods (pruning, quantization, sparsification), test-time adaptation (TTA, test-time augmentation), inference-time search (MCTS, beam search)
-- `output_path`: Where to write findings (default: `<exp_root>/reports/research-findings.md`). When called from Phase 7, use `<exp_root>/reports/research-findings-method-proposals.md`
+  - `"both"`: web search first, then supplement with knowledge-based proposals
+- `scope_level`: `"training"` (default), `"architecture"`, or `"full"` — constrains what categories of changes can be proposed:
+  - `"training"`: Optimizer, LR schedulers, warmup strategies, gradient clipping/accumulation, mixed precision, loss functions, weight decay, data augmentation, regularization (dropout, label smoothing), EMA. **RL:** algorithm HPs, reward shaping, observation normalization, entropy/GAE schedules
+  - `"architecture"`: All of `training` + attention mechanism changes, normalization layer changes, activation function changes, block design changes, skip connection modifications. **RL:** policy/value network changes
+  - `"full"`: All of `architecture` + data pipeline changes, preprocessing, tokenization, feature engineering, ensemble approaches, distillation, curriculum learning, training-free methods (pruning, quantization, sparsification), test-time adaptation (TTA, test-time augmentation), inference-time search (MCTS, beam search). **RL:** env dynamics, curriculum, domain randomization
+- `output_path`: where to write findings (default: `<exp_root>/reports/research-findings.md`). From Phase 7, use `<exp_root>/reports/research-findings-method-proposals.md`
 
 ## Step 1: Analyze User-Provided Papers (if any)
 
-> **Goal check:** Respect scope_level constraints and dead-end techniques from the optimization goals. Do NOT propose architecture changes when scope is "training" or re-propose dead-end techniques.
+> **Goal check:** respect scope_level constraints and dead-end techniques from the optimization goals. Do NOT propose architecture changes when scope is "training", or re-propose dead-end techniques.
 
 If the user provided papers or URLs:
 
-1. For each URL, retrieve the content using the most appropriate tool:
-   - **arXiv/alphaXiv URLs** (contains `arxiv.org` or `alphaxiv.org`): Use `mcp__alphaxiv__get_paper_content` for a structured summary:
-     ```
-     mcp__alphaxiv__get_paper_content(url: "<paper_url>")
-     ```
-     If the summary lacks implementation details, follow up with `fullText: true` or use `mcp__alphaxiv__answer_pdf_queries` with targeted questions.
-   - **Other URLs** (blog posts, conference pages, non-arXiv PDFs): Use WebFetch:
-     ```
-     WebFetch(url: "<paper_url>")
-     ```
-   - **If alphaxiv tool fails on an arXiv URL:** Fall back to `WebFetch(url: "<paper_url>")`.
+1. For each URL, retrieve content with the most appropriate tool:
+   - **arXiv/alphaXiv URLs** (contain `arxiv.org` or `alphaxiv.org`): `mcp__alphaxiv__get_paper_content(url: "<paper_url>")` for a structured summary. If it lacks implementation details, follow up with `fullText: true` or `mcp__alphaxiv__answer_pdf_queries` with targeted questions.
+   - **Other URLs** (blog posts, conference pages, non-arXiv PDFs): `WebFetch(url: "<paper_url>")`.
+   - **If alphaxiv fails on an arXiv URL:** fall back to `WebFetch(url: "<paper_url>")`.
 
-2. For local files, use Read to read them
+2. For local files, use Read.
 
-3. Apply the paper analysis framework from `${CLAUDE_SKILL_DIR}/references/paper-analysis.md`:
-   - Extract core technique
-   - Determine implementation details
-   - Assess expected impact
-   - Identify risks
+3. Apply the paper analysis framework from `${CLAUDE_SKILL_DIR}/references/paper-analysis.md`: extract core technique, determine implementation details, assess expected impact, identify risks.
 
 ## Step 1.1: Check for Existing Research and Dead Ends (Deduplication)
 
-Before searching, check for existing findings and dead ends:
+Before searching, check existing findings and dead ends:
 
 1. Check ALL existing findings files in `<exp_root>/reports/`:
    - `research-findings.md` (Phase 5 web-based proposals)
    - `research-findings-method-proposals.md` (Phase 7 pre-loop method proposals)
    - `research-findings-method-proposals-iter*.md` (Phase 7 mid-loop iterations)
    - `research-findings-method-proposals-both.md` (combined web + knowledge)
-   - The current `output_path` itself (if it already exists from a previous run)
-2. Check dead-end catalog — techniques conclusively shown to be unpromising:
+   - the current `output_path` itself (if it exists from a previous run)
+2. Check the dead-end catalog (techniques conclusively unpromising):
    ```bash
    python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> dead-end list
    ```
-4. If any exist, read them and extract all previously proposed technique names AND dead-end technique names
-5. When generating new proposals, exclude techniques that were already proposed OR are in the dead-end catalog
-6. This prevents re-proposing the same techniques and avoids wasting budget on proven dead ends
+3. If any exist, extract all previously proposed technique names AND dead-end names.
+4. When generating new proposals, exclude techniques already proposed OR in the dead-end catalog. This avoids re-proposing the same techniques and wasting budget on proven dead ends.
 
-**Fuzzy matching rules:** When comparing a new technique name against previously proposed names:
-- Normalize both names: lowercase, strip trailing "loss", "function", "scheduler", "strategy", "method", "technique"
-- Check substring containment: if either normalized name contains the other, treat as duplicate (e.g., "perceptual loss" matches "vgg perceptual loss")
-- Check common abbreviations: "lr" ↔ "learning rate", "bn" ↔ "batch normalization", "wd" ↔ "weight decay"
+**Fuzzy matching rules** when comparing a new technique name against previous names:
+- Normalize both: lowercase, strip trailing "loss", "function", "scheduler", "strategy", "method", "technique"
+- Substring containment: if either normalized name contains the other, treat as duplicate (e.g., "perceptual loss" matches "vgg perceptual loss")
+- Common abbreviations: "lr" ↔ "learning rate", "bn" ↔ "batch normalization", "wd" ↔ "weight decay"
 - If in doubt (>70% word overlap), treat as duplicate and skip
 
 ## Step 2: Web Search for Techniques
 
-Construct targeted searches based on the model type and task:
+Construct targeted searches for the model type and task.
 
 ### Search queries to run in parallel (adapt to the specific model/task):
 
-**Run ALL applicable searches in parallel** by issuing multiple WebSearch tool calls in a single message. Do not wait for one search to complete before starting the next — they are independent queries.
+**Run ALL applicable searches in parallel** — issue multiple WebSearch calls in a single message; they are independent queries.
 
-**Date handling:** Always use the current year dynamically. Never hardcode year strings. Use `<current_year-1> <current_year>` in search queries (e.g., if the current year is 2026, search for "2025 2026").
+**Date handling:** use the current year dynamically, never hardcode year strings. Use `<current_year-1> <current_year>` in queries (e.g., current year 2026 → search "2025 2026").
 
 1. **Architecture improvements:**
    ```
@@ -121,11 +108,11 @@ Construct targeted searches based on the model type and task:
    WebSearch(query: "arxiv <task> <model_type> <current_year-1> <current_year> improvement")
    ```
 
-Issue all applicable searches simultaneously in a single message. After all parallel searches return, process results from each. For each promising result, use WebFetch to get more details — WebFetch calls for different URLs can also be issued in parallel.
+Issue all applicable searches simultaneously in one message. After they return, process each result; for promising ones use WebFetch for details — WebFetch calls for different URLs also parallelize.
 
 ### alphaxiv academic paper searches (run IN PARALLEL with WebSearch queries above)
 
-**Additionally, issue the following 3 alphaxiv searches in the SAME parallel batch as the WebSearch calls above.** These provide academic paper coverage complementary to WebSearch's blog/tutorial/GitHub coverage.
+**Issue these 3 alphaxiv searches in the SAME parallel batch as the WebSearch calls above.** They add academic-paper coverage complementary to WebSearch's blog/tutorial/GitHub coverage.
 
 **a. Semantic search** (2-3 sentence descriptive query):
 ```
@@ -153,33 +140,31 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"categor
 
 Apply the appropriate workflow based on the research context:
 
-**1. Comprehensive Paper Search (default):** The parallel search pattern above. Each tool covers different blind spots — embedding search for conceptual/semantic matches, full-text search for exact keyword hits, agentic retrieval for autonomous cross-angle exploration. This is the default for all `source: "web"` or `"both"` invocations.
+**1. Comprehensive Paper Search (default):** the parallel search pattern above. Each tool covers different blind spots — embedding search for conceptual/semantic matches, full-text search for exact keyword hits, agentic retrieval for autonomous cross-angle exploration. Default for all `source: "web"` or `"both"` invocations.
 
 **2. Deep Research** — when initial results are thin (fewer than 3 actionable papers):
-- After the initial parallel search, re-run `mcp__alphaxiv__embedding_similarity_search` and `mcp__alphaxiv__full_text_papers_search` with **different query angles** (broader terms, related techniques, adjacent domains, different terminology)
-- Use `mcp__alphaxiv__get_paper_content` to deep-read the most promising papers found
-- Use `mcp__alphaxiv__read_files_from_github_repository` to verify implementations exist and are viable
-- This ensures holistic coverage even for niche or emerging topics
+- Re-run `mcp__alphaxiv__embedding_similarity_search` and `mcp__alphaxiv__full_text_papers_search` with **different query angles** (broader terms, related techniques, adjacent domains, different terminology)
+- `mcp__alphaxiv__get_paper_content` to deep-read the most promising papers
+- `mcp__alphaxiv__read_files_from_github_repository` to verify implementations exist and are viable
 
-**3. Literature Review** — when the task needs broad coverage across multiple related techniques:
+**3. Literature Review** — when the task needs broad coverage across many related techniques:
 - Run the initial parallel search
-- Re-run `embedding_similarity_search` and `full_text_papers_search` with varied/refined queries to fill gaps (e.g., search for each technique category separately)
-- Use `mcp__alphaxiv__answer_pdf_queries` to batch-extract key information from all found papers in a single call (more efficient than reading each paper separately)
-- Synthesize findings across papers to identify common patterns, contradictions, and consensus
+- Re-run `embedding_similarity_search` and `full_text_papers_search` with varied/refined queries to fill gaps (e.g., each technique category separately)
+- `mcp__alphaxiv__answer_pdf_queries` to batch-extract key info from all found papers in one call (more efficient than reading each separately)
+- Synthesize across papers for common patterns, contradictions, and consensus
 
 **4. Code Analysis** — when evaluating `from_reference` proposals (see also Step 3 sub-step 4):
-- Locate the paper via search tools
-- Extract the GitHub URL from search results or paper content
-- Use `mcp__alphaxiv__read_files_from_github_repository(githubUrl, path: "/")` to explore repo structure (lightweight first pass to locate the implementation)
-- **Code-graph feasibility check (GitNexus — REQUIRED for any `from_reference` proposal):** GitNexus is a HARD PREREQUISITE verified at Phase 2 — every candidate GitHub repo that informs a `from_reference` proposal MUST be cloned, indexed, and understood through the code graph before you set `implementation_strategy`. Use the graph to judge whether the technique's implementation is isolated (favoring `from_reference`) or entangled across the codebase (favoring `from_scratch`). There is NO grep/alphaxiv-only substitute for this assessment. Index through the wrapper (it runs `gitnexus analyze <repo_path> --index-only`, which keeps the cloned reference repo uncontaminated — it does NOT inject a GitNexus section into the repo's CLAUDE.md/AGENTS.md and does NOT install `.claude/` skills), guarded by an `is-indexed` check for consistency with the implement skill (the wrapper also skips internally — belt-and-suspenders):
+- Locate the paper via search tools; extract the GitHub URL from results or paper content
+- `mcp__alphaxiv__read_files_from_github_repository(githubUrl, path: "/")` to explore repo structure (lightweight first pass to locate the implementation)
+- **Code-graph feasibility check (GitNexus — REQUIRED for any `from_reference` proposal):** GitNexus is a HARD PREREQUISITE verified at Phase 2 — every candidate GitHub repo informing a `from_reference` proposal MUST be cloned, indexed, and understood through the code graph before you set `implementation_strategy`. Use the graph to judge whether the technique's implementation is isolated (favor `from_reference`) or entangled across the codebase (favor `from_scratch`). There is NO grep/alphaxiv-only substitute. Index through the wrapper — it runs `gitnexus analyze <repo_path> --index-only`, which keeps the cloned repo uncontaminated (does NOT inject a GitNexus section into its CLAUDE.md/AGENTS.md, does NOT install `.claude/` skills) — guarded by an `is-indexed` check (the wrapper also skips internally):
   ```bash
   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py available || { echo "HALT: gitnexus unavailable — was guaranteed by Phase 2"; exit 1; }
   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py is-indexed <repo_path> || \
     python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py index <repo_path>
   ```
-  After indexing, query the graph with `mcp__gitnexus__context`/`mcp__gitnexus__query`/`mcp__gitnexus__impact` to assess feasibility and set `implementation_strategy`. **HARD ERROR (not a fallback):** if `available` exits non-zero or indexing returns `success: false`, **halt** with install/repair guidance: `npm install -g gitnexus && gitnexus setup` (`gitnexus setup` auto-registers the gitnexus MCP server for Claude Code; manual MCP-registration fallback: `claude mcp add --transport stdio --scope user gitnexus gitnexus mcp`). gitnexus was guaranteed by Phase 2, so its absence here is an error state — do NOT route around it with alphaxiv-only exploration for the feasibility decision. Do not commit any generated `.gitnexus/` artifact (the wrapper auto-adds it to the repo's git exclude).
+  After indexing, query with `mcp__gitnexus__context`/`mcp__gitnexus__query`/`mcp__gitnexus__impact` to assess feasibility and set `implementation_strategy`. **HARD ERROR (not a fallback):** if `available` exits non-zero or indexing returns `success: false`, **halt** with install/repair guidance: `npm install -g gitnexus && gitnexus setup` (`gitnexus setup` auto-registers the gitnexus MCP server for Claude Code; manual MCP-registration fallback: `claude mcp add --transport stdio --scope user gitnexus gitnexus mcp`). gitnexus was guaranteed by Phase 2, so absence here is an error state — do NOT route around it with alphaxiv-only exploration. Do not commit any generated `.gitnexus/` artifact (the wrapper auto-adds it to the repo's git exclude).
 
-  **MCP-query-failure recovery:** Querying the code graph is MCP-only by design. If a `mcp__gitnexus__*` tool call FAILS *after* a successful index, it is a HARD ERROR — there is NO grep fallback and NO gitnexus-CLI query fallback. Recovery: (1) ensure the gitnexus MCP server is registered — run `gitnexus setup` (or the manual `claude mcp add --transport stdio --scope user gitnexus gitnexus mcp`); (2) MCP tools load at session start, so restart the Claude Code session for a freshly-registered server to become available; (3) retry the query. If it still fails, halt and surface this to the user.
+  **MCP-query-failure recovery:** querying the code graph is MCP-only by design. If a `mcp__gitnexus__*` call FAILS *after* a successful index, it is a HARD ERROR — NO grep fallback, NO gitnexus-CLI query fallback. Recovery: (1) register the gitnexus MCP server — `gitnexus setup` (or manual `claude mcp add --transport stdio --scope user gitnexus gitnexus mcp`); (2) MCP tools load at session start, so restart the Claude Code session for a freshly-registered server; (3) retry the query. If it still fails, halt and surface to the user.
 
 ### Tabular ML search queries (for scikit-learn, XGBoost, LightGBM)
 
@@ -236,7 +221,7 @@ When the task is object detection, segmentation, super-resolution, or pose estim
 
 ### Reinforcement Learning search queries
 
-When the model category is RL (gym, gymnasium, stable-baselines3, etc.):
+When the model category is RL (gym, gymnasium, stable-baselines3, rsl_rl, IsaacLab, skrl, brax, etc.):
 
 15. **Policy optimization:**
     ```
@@ -246,34 +231,55 @@ When the model category is RL (gym, gymnasium, stable-baselines3, etc.):
     ```
     WebSearch(query: "<task> exploration strategy reward shaping <model_type>")
     ```
+17. **Sim-to-real & curriculum:**
+    ```
+    WebSearch(query: "<task> domain randomization sim-to-real curriculum learning <model_type>")
+    ```
+18. **Algorithm-specific tricks:**
+    ```
+    WebSearch(query: "<model_type> PPO SAC implementation tricks training stability <current_year-1> <current_year>")
+    ```
 
 ### Time Series search queries
 
 When the task involves forecasting, anomaly detection on temporal data, or sequence prediction:
 
-17. **Temporal methods:**
+19. **Temporal methods:**
     ```
     WebSearch(query: "<task> temporal encoding patching strategy time series <current_year-1> <current_year>")
     ```
-18. **Forecasting architectures:**
+20. **Forecasting architectures:**
     ```
     WebSearch(query: "<task> forecasting model improvement <model_type> state-of-the-art")
+    ```
+
+### VLA / Imitation Learning search queries
+
+When the model is a vision-language-action policy or trained from demonstrations (behavior cloning, LeRobot, robomimic, diffusion policy, ACT):
+
+21. **Policy architectures & action chunking:**
+    ```
+    WebSearch(query: "<task> action chunking diffusion policy imitation learning <current_year-1> <current_year>")
+    ```
+22. **Demonstration data strategies:**
+    ```
+    WebSearch(query: "<task> demonstration augmentation co-training data mixing behavior cloning")
     ```
 
 Issue only the domain-specific queries relevant to the detected model type/task, in parallel with the general DL or tabular queries.
 
 ## Step 2 Alternative: Knowledge-Based Proposals (when `source` is `"knowledge"`)
 
-When `source` is `"knowledge"`, **skip Steps 1, 2, and 3 entirely** — do NOT use WebSearch or WebFetch. Instead, propose methods directly from the LLM's own training knowledge.
+When `source` is `"knowledge"`, **skip Steps 1, 2, and 3 entirely** — do NOT use WebSearch or WebFetch. Propose methods directly from the LLM's own training knowledge.
 
 ### Process:
 
-1. **Analyze the model context:** Consider the model type, task, framework, current metrics, and problem description.
+1. **Analyze the model context:** model type, task, framework, current metrics, problem description.
 
 2. **Generate proposals using structured ideation** (diverge → converge → refine):
 
    **Phase A — Diverge (generate 10-15 candidate ideas):**
-   Apply 3 complementary lenses (choose the most relevant from this list):
+   Apply 3 complementary lenses (most relevant from this list):
 
    | Lens | Question |
    |------|----------|
@@ -288,9 +294,9 @@ When `source` is `"knowledge"`, **skip Steps 1, 2, and 3 entirely** — do NOT u
 
    | Scope Level | Allowed Categories |
    |---|---|
-   | `training` | Optimizer changes (Adam → AdamW, LAMB, etc.), LR schedulers (cosine, one-cycle, warm restarts), warmup strategies, gradient clipping, gradient accumulation, mixed precision, loss function changes, weight decay tuning, data augmentation, regularization (dropout, label smoothing, stochastic depth), EMA |
-   | `architecture` | All of `training` + attention variants (multi-head, efficient attention), normalization changes (BatchNorm → LayerNorm/GroupNorm/RMSNorm), activation functions (ReLU → SiLU/GELU/Swish), block design changes, skip/residual connection modifications, channel/dimension scaling |
-   | `full` | All of `architecture` + data pipeline changes, preprocessing, tokenization changes, feature engineering, ensemble approaches, distillation, curriculum learning, different training paradigms |
+   | `training` | Optimizer changes (Adam → AdamW, LAMB, etc.), LR schedulers (cosine, one-cycle, warm restarts), warmup strategies, gradient clipping, gradient accumulation, mixed precision, loss function changes, weight decay tuning, data augmentation, regularization (dropout, label smoothing, stochastic depth), EMA. **RL:** algorithm HPs, reward shaping, observation normalization, entropy/GAE schedules |
+   | `architecture` | All of `training` + attention variants (multi-head, efficient attention), normalization changes (BatchNorm → LayerNorm/GroupNorm/RMSNorm), activation functions (ReLU → SiLU/GELU/Swish), block design changes, skip/residual connection modifications, channel/dimension scaling. **RL:** policy/value network changes |
+   | `full` | All of `architecture` + data pipeline changes, preprocessing, tokenization changes, feature engineering, ensemble approaches, distillation, curriculum learning, different training paradigms. **RL:** env dynamics, curriculum, domain randomization |
 
    **Phase B — Converge (filter to 3-7 proposals):**
    - Eliminate ideas outside `scope_level` constraints
@@ -304,11 +310,11 @@ When `source` is `"knowledge"`, **skip Steps 1, 2, and 3 entirely** — do NOT u
    - Cap confidence at 7/10 (knowledge-mode ceiling)
 
 3. **Apply quality standards:**
-   - Each proposal must have concrete implementation steps (not vague suggestions)
-   - Each proposal must specify files to modify and what to change
-   - Cap confidence scores at 7/10 maximum (unless the technique is extremely well-established, e.g., label smoothing for classification)
+   - Concrete implementation steps (not vague suggestions)
+   - Specify files to modify and what to change
+   - Cap confidence at 7/10 (unless extremely well-established, e.g., label smoothing for classification)
    - All proposals are `implementation_strategy: "from_scratch"` (no reference repo)
-   - All proposals must include `**Proposal source:** llm_knowledge`
+   - All proposals include `**Proposal source:** llm_knowledge`
 
 4. **Apply the same ranking formula:** `(impact × confidence) / (11 - min(feasibility, 10))`
 
@@ -316,7 +322,7 @@ When `source` is `"knowledge"`, **skip Steps 1, 2, and 3 entirely** — do NOT u
 
 ### When `source` is `"both"`:
 
-Run Steps 1-3 (web search) first, then supplement with knowledge-based proposals that don't overlap with what was found. Apply deduplication between web-found and knowledge-generated proposals. Mark web-found proposals with `**Proposal source:** paper` and knowledge proposals with `**Proposal source:** llm_knowledge`.
+Run Steps 1-3 (web search) first, then add knowledge-based proposals that don't overlap what was found. Deduplicate between web-found and knowledge-generated proposals. Mark web-found `**Proposal source:** paper`, knowledge `**Proposal source:** llm_knowledge`.
 
 ## Step 3: Analyze Found Papers
 
@@ -352,25 +358,21 @@ For each relevant paper or technique found:
    - Can it be implemented without major refactoring?
 
 4. Search for reference implementations:
-   - Check if the paper links to a code repository
-   - Search: `WebSearch(query: "<paper_title> github implementation")`
+   - Check whether the paper links a code repository; search `WebSearch(query: "<paper_title> github implementation")`
    - If a GitHub repo is found:
      a. **Explore with alphaxiv first** (structured, efficient):
         ```
         mcp__alphaxiv__read_files_from_github_repository(githubUrl: "https://github.com/org/repo", path: "/")
         ```
-        This returns the full file tree AND top-level file contents (README, LICENSE, setup.py) in one call. Use it to:
-        - Read the README for relevance and quality indicators
-        - Check the LICENSE file directly (prefer permissive: MIT, Apache, BSD)
-        - Identify which source directories contain the core implementation
+        Returns the full file tree AND top-level file contents (README, LICENSE, setup.py) in one call. Use it to read the README for relevance/quality, check the LICENSE (prefer permissive: MIT, Apache, BSD), and identify which source dirs contain the core implementation.
      b. **Drill into relevant directories:**
         ```
         mcp__alphaxiv__read_files_from_github_repository(githubUrl: "https://github.com/org/repo", path: "src/models/")
         ```
-        Read the directory containing the core implementation — fetches all files in the directory in parallel.
-     c. **Fallback:** If `read_files_from_github_repository` fails, fall back to `WebFetch` on the repo's README URL.
-   - Apply the repo quality gate: >10 stars or official, updated within 2 years, permissive license
-   - Decide strategy: `from_reference` if quality gate passes, otherwise `from_scratch`
+        Fetches all files in the directory in parallel.
+     c. **Fallback:** if `read_files_from_github_repository` fails, fall back to `WebFetch` on the repo's README URL.
+   - Repo quality gate: >10 stars or official, updated within 2 years, permissive license
+   - Decide strategy: `from_reference` if the gate passes, else `from_scratch`
 
 ## Step 4: Rank Proposals
 
@@ -387,13 +389,18 @@ Sort proposals by priority score, highest first.
 
 ### Small Dataset Awareness
 
-Check the dataset size from `prerequisites.json` or the training script. If the dataset has fewer than 5,000 training samples, adapt your search strategy: heavy augmentation and regularization often underperform on small data. Instead, search for techniques designed for low-data regimes — transfer learning, pre-trained model fine-tuning, few-shot learning, adapters (LoRA, prefix tuning), prompt tuning, synthetic data generation, semi-supervised methods, self-training, and meta-learning approaches.
+Check the dataset size from `prerequisites.json` or the training script.
+
+- **Skip this check for online RL** (`model_category = "rl"` with `dataset.format_detected = "rl_environment"`): there is no fixed dataset — data is generated by environment interaction, so "dataset size" is not meaningful.
+- **Demonstration datasets** (lerobot, rlds, robomimic, zarr formats): count **transitions** (steps), not episodes — 50 episodes of 400 steps is 20,000 samples, not 50.
+- **If the dataset has fewer than 5,000 training samples** (transitions for demonstration data), adapt your search strategy: heavy augmentation and regularization often underperform on small data.
+  - **Supervised models:** search for low-data techniques — transfer learning, pre-trained model fine-tuning, few-shot learning, adapters (LoRA, prefix tuning), prompt tuning, synthetic data generation, semi-supervised methods, self-training, and meta-learning approaches.
+  - **Imitation learning / behavior cloning:** the supervised low-data list does not transfer — search instead for BC-appropriate low-data techniques: action chunking, observation augmentation, pretrained visual encoders, and co-training / data mixing with related demonstration datasets.
 
 ### User Paper Priority Bonus
 
 If a proposal originated from a user-provided paper (`user_papers` input):
-- Add +2 to `confidence` score (capped at 10) before computing priority
-- Rationale: user identified the paper as relevant — strong signal
+- Add +2 to `confidence` (capped at 10) before computing priority — the user flagged it relevant, a strong signal
 - Still apply feasibility and impact scoring objectively
 
 ## Step 5: Write Research Findings
@@ -422,6 +429,7 @@ Note: Mark each source with its discovery channel — `(alphaxiv)` for papers fo
 ### Proposal 1: [Name] (Priority: X/10)
 - **Proposal source:** paper | llm_knowledge
 - **Type:** code_change | hp_only
+- **Search space** *(hp_only proposals — REQUIRED)*: `[{"param": "<hp name>", "range": [<low>, <high>], "scale": "log|linear|categorical", "source": "<paper/URL the range came from>"}]` — structured `{param, range, scale, source}` priors that hp-tune seeds directly; every entry must cite its source
 - **Source:** [Paper title and URL, or "LLM knowledge" for knowledge-mode]
 - **Technique:** [Category] - [Description]
 - **What to change:**
@@ -450,9 +458,11 @@ Note: Mark each source with its discovery channel — `(alphaxiv)` for papers fo
 - [Technique X]: [Why it's not suitable for this project]
 ```
 
+**HP priors on `hp_only` proposals:** Every `hp_only` proposal MUST carry the **Search space** field — a JSON array of `{param, range, scale, source}` entries with citations. These are the PRIMARY search-space priors for the hp-tune skill (hp_only proposals skip the implement skill and route directly to hp-tune). Validate the array shape with `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/schema_validator.py relay research_to_tuning '{"search_space": [...]}'`.
+
 ## Step 5.1: Initialize Research Agenda
 
-After writing the research findings, initialize the research agenda from the proposals. This creates a living document that the analyze skill updates after each batch.
+After writing findings, initialize the research agenda from the proposals — a living document the analyze skill updates after each batch.
 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> agenda init '<ideas_json>'
@@ -461,50 +471,47 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> agenda init '<
 Where `<ideas_json>` is a JSON array of ideas derived from the proposals:
 ```json
 [
-  {"id": "proposal-1-slug", "name": "<Proposal 1 name>", "priority": <priority_score>, "source": "<paper|llm_knowledge>", "scope": "<training|architecture|full>"},
+  {"id": "proposal-1-slug", "name": "<Proposal 1 name>", "priority": <priority_score>, "source": "<paper|llm_knowledge>", "scope": "<training|architecture|full>", "search_space": [{"param": "<hp>", "range": [<low>, <high>], "scale": "<log|linear|categorical>", "source": "<citation>"}]},
   {"id": "proposal-2-slug", "name": "<Proposal 2 name>", "priority": <priority_score>, "source": "<paper|llm_knowledge>", "scope": "<scope_level>"}
 ]
 ```
 
-Use the proposal's priority score (from ranking) as the initial priority. The `id` should be a URL-safe slug of the proposal name (lowercase, hyphens, no spaces).
+Use the proposal's priority score as the initial priority. `id` is a URL-safe slug of the proposal name (lowercase, hyphens, no spaces).
 
-If a research agenda already exists (e.g., mid-loop research), use `agenda add` instead to append new ideas without overwriting the existing ones.
+For `hp_only` proposals, copy the proposal's **Search space** array into the agenda entry's `search_space` key (same `{param, range, scale, source}` shape) — hp-tune reads the agenda to seed research-derived priors.
 
-**CRITICAL — Output verification:** After writing, verify the file exists at `output_path` using the Read tool. If the file is missing or empty, re-write it. The orchestrator depends on this file existing at the exact `output_path` specified in the dispatch parameters.
+If a research agenda already exists (e.g., mid-loop research), use `agenda add` to append without overwriting existing ideas.
+
+**CRITICAL — Output verification:** after writing, verify the file exists at `output_path` (Read tool). If missing or empty, re-write it — the orchestrator depends on this file existing at the exact `output_path`.
 
 ## Step 6: Summary for Orchestrator
 
-Return:
-- Number of proposals found
-- Top 3 proposals with brief summaries
-- Recommended order of implementation
-- Any dependencies between proposals
-- Estimated total implementation effort
+Return: number of proposals found; top 3 with brief summaries; recommended implementation order; dependencies between proposals; estimated total implementation effort.
 
 ## Tips for Effective Research
 
-1. **Be specific in searches:** "diffusion model image restoration perceptual loss" is better than "ML improvement"
-2. **Check recency:** Prefer papers from the last 2-3 years over older ones
-3. **Look for code:** Papers with code repos are much more implementable
-4. **Check benchmarks:** Make sure reported improvements are on comparable tasks/datasets
-5. **Combine techniques:** Some improvements stack (e.g., better loss + better scheduler)
-6. **Be honest about confidence:** If a technique seems promising but risky, say so
+1. **Be specific in searches:** "diffusion model image restoration perceptual loss" beats "ML improvement"
+2. **Check recency:** prefer papers from the last 2-3 years
+3. **Look for code:** papers with code repos are far more implementable
+4. **Check benchmarks:** ensure reported improvements are on comparable tasks/datasets
+5. **Combine techniques:** some improvements stack (e.g., better loss + better scheduler)
+6. **Be honest about confidence:** if a technique is promising but risky, say so
 
 ## Error Handling
 
-- **WebSearch fails:** Try alternative search terms, or ask user for specific papers
-- **Paper behind paywall:** Note the limitation, extract what's available from abstract
-- **No relevant results:** Broaden search terms, try related tasks/model types
-- **Contradictory findings:** Note both perspectives, let the user decide
-- **alphaxiv MCP unavailable:** Proceed with WebSearch/WebFetch only. Log to error tracker with severity "warning". This is expected when the alphaxiv MCP server is not installed or not running.
-- **alphaxiv search returns no results:** Rely on WebSearch results for that query. Do NOT retry the same query with alphaxiv — move on.
-- **`get_paper_content` fails on a valid arXiv URL:** Fall back to `WebFetch(url: "<arxiv_url>")`.
-- **`read_files_from_github_repository` fails:** Fall back to `WebFetch` on the repo's README URL.
-- **`answer_pdf_queries` times out:** Fall back to `get_paper_content(fullText: true)` and extract answers manually from the full text.
+- **WebSearch fails:** try alternative search terms, or ask the user for specific papers
+- **Paper behind paywall:** note the limitation, extract what's available from the abstract
+- **No relevant results:** broaden search terms, try related tasks/model types
+- **Contradictory findings:** note both perspectives, let the user decide
+- **alphaxiv MCP unavailable:** proceed with WebSearch/WebFetch only; log to error tracker, severity "warning". Expected when the alphaxiv MCP server is not installed/running.
+- **alphaxiv search returns no results:** rely on WebSearch for that query. Do NOT retry the same query with alphaxiv — move on.
+- **`get_paper_content` fails on a valid arXiv URL:** fall back to `WebFetch(url: "<arxiv_url>")`.
+- **`read_files_from_github_repository` fails:** fall back to `WebFetch` on the repo's README URL.
+- **`answer_pdf_queries` times out:** fall back to `get_paper_content(fullText: true)` and extract answers manually.
 
 ## Error Tracking
 
-At the following points, log an error event using the error tracker:
+Log an error event via the error tracker at these points:
 
 ### When WebSearch returns no useful results for a query:
 ```bash

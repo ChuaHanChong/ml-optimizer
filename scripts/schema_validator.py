@@ -16,12 +16,8 @@ Usage:
 
 --strict (result only) promotes completeness warnings to blocking errors. Relay
 routes: analyze_to_tuning, analyze_to_research, monitor_to_tuning,
-research_to_implement, experiments_to_analyze. Exit code 0 = valid, 1 = invalid.
-
-Examples:
-    python3 schema_validator.py <exp_root>/results/round-1-hp/exp-001.json result
-    python3 schema_validator.py <exp_root>/results/baseline.json baseline
-    python3 schema_validator.py relay analyze_to_tuning '{"recommendation": "continue", "batch_number": 2}'
+research_to_implement, research_to_tuning, experiments_to_analyze.
+Exit code 0 = valid, 1 = invalid.
 """
 
 import json
@@ -42,13 +38,14 @@ EXPERIMENT_RESULT_OPTIONAL = [
     "code_branches", "stacking_order", "stack_base_exp",
     "artifacts_dir", "time_budget_seconds",
     "checkpoint_source", "warm_started",
-    "reproducibility",
+    "reproducibility", "random_seed",
 ]
 VALID_METHOD_TIERS = ["baseline", "method_default_hp", "method_tuned_hp", "stacked_default_hp", "stacked_tuned_hp"]
 VALID_STATUSES = ["completed", "failed", "diverged", "running", "pending", "timeout"]
 
 BASELINE_REQUIRED = ["exp_id", "status", "config", "metrics"]
-BASELINE_OPTIONAL = ["profiling", "eval_command", "train_command", "notes"]
+BASELINE_OPTIONAL = ["profiling", "eval_command", "train_command", "notes", "model_category"]
+VALID_MODEL_CATEGORIES = ["supervised", "rl", "generative"]
 
 MANIFEST_REQUIRED = ["original_branch", "strategy", "proposals"]
 MANIFEST_OPTIONAL = ["conflicts", "new_dependencies"]
@@ -62,7 +59,7 @@ PROPOSAL_OPTIONAL = [
     "adaptation_notes", "files_created", "license_warning", "new_dependencies",
     "proposal_source", "test_file", "explanation", "diff_summary",
 ]
-VALID_PROPOSAL_STATUSES = ["validated", "validation_failed", "implementation_error"]
+VALID_PROPOSAL_STATUSES = ["validated", "validation_failed", "implementation_error", "preflight_failed"]
 VALID_IMPLEMENTATION_STRATEGIES = ["from_scratch", "from_reference"]
 
 PREREQUISITES_REQUIRED = ["status", "dataset", "environment", "ready_for_baseline"]
@@ -72,11 +69,13 @@ HP_PROPOSAL_REQUIRED = ["exp_id", "config"]
 HP_PROPOSAL_OPTIONAL = [
     "code_branch", "code_proposal", "proposal_source",
     "method_tier", "gpu_id", "reasoning", "iteration",
-    "checkpoint_source", "warm_started",
+    "checkpoint_source", "warm_started", "random_seed",
 ]
 
 ROUNDS_MANIFEST_REQUIRED = ["rounds", "current_round", "total_experiments"]
 VALID_ROUND_TYPES = ["hp", "evolved", "research", "stacked"]
+
+SEARCH_SPACE_ENTRY_REQUIRED = ["param", "range", "scale", "source"]
 
 
 # ---------------------------------------------------------------------------
@@ -102,21 +101,20 @@ def _check_numeric_metrics(data: dict, errors: list[str]) -> None:
                 errors.append(f"Metric '{mk}' must be finite, got {mv}")
 
 
+def _check_random_seed(data: dict, errors: list[str]) -> None:
+    """Append an error when `random_seed` is present but not an integer."""
+    if "random_seed" in data:
+        rs = data["random_seed"]
+        if isinstance(rs, bool) or not isinstance(rs, int):
+            errors.append("'random_seed' must be an integer")
+
+
 # ---------------------------------------------------------------------------
 # Public validation functions
 # ---------------------------------------------------------------------------
 
 def validate_result(data: dict) -> dict:
-    """Validate an experiment result dict.
-
-    Checks:
-    - All required fields are present.
-    - `status` is one of the valid status values.
-    - `metrics` is a dict.
-    - `config` is a dict.
-
-    Returns `{"valid": True/False, "errors": [...]}`.
-    """
+    """Validate an experiment result dict -> {"valid": bool, "errors": [...], "warnings": [...]}."""
     errors: list[str] = []
 
     if not isinstance(data, dict):
@@ -170,17 +168,14 @@ def validate_result(data: dict) -> dict:
         elif data["warm_started"] and not isinstance(data.get("checkpoint_source"), dict):
             errors.append("'warm_started' is true but 'checkpoint_source' is missing or null")
 
-    warnings = _check_completeness(data) if not errors else []
+    _check_random_seed(data, errors)
+
+    warnings = check_completeness(data) if not errors else []
     return {"valid": len(errors) == 0, "errors": errors, "warnings": warnings}
 
 
 def validate_baseline(data: dict) -> dict:
-    """Validate a baseline result dict.
-
-    Checks that all required baseline fields are present.
-
-    Returns `{"valid": True/False, "errors": [...]}`.
-    """
+    """Validate a baseline result dict -> {"valid": bool, "errors": [...]}."""
     errors: list[str] = []
 
     if not isinstance(data, dict):
@@ -201,20 +196,29 @@ def validate_baseline(data: dict) -> dict:
     if "config" in data and not isinstance(data["config"], dict):
         errors.append("'config' must be a dict")
 
+    if "model_category" in data and data["model_category"] is not None:
+        if data["model_category"] not in VALID_MODEL_CATEGORIES:
+            errors.append(
+                f"Invalid model_category '{data['model_category']}': "
+                f"must be one of {VALID_MODEL_CATEGORIES} or null"
+            )
+
+    if "profiling" in data:
+        prof = data["profiling"]
+        if not isinstance(prof, dict):
+            errors.append("'profiling' must be a dict")
+        else:
+            for key in ("estimated_timeout_seconds", "training_duration_seconds"):
+                if key in prof and prof[key] is not None:
+                    v = prof[key]
+                    if isinstance(v, bool) or not isinstance(v, (int, float)):
+                        errors.append(f"'profiling.{key}' must be numeric or null")
+
     return {"valid": len(errors) == 0, "errors": errors, "warnings": []}
 
 
 def validate_manifest(data: dict) -> dict:
-    """Validate a manifest dict, including each proposal in the proposals list.
-
-    Checks:
-    - All required manifest fields are present.
-    - `strategy` is one of the valid strategies.
-    - `proposals` is a list and each proposal has the required fields.
-    - Each proposal `status` is valid.
-
-    Returns `{"valid": True/False, "errors": [...]}`.
-    """
+    """Validate a manifest dict, including each proposal in the proposals list."""
     errors: list[str] = []
 
     if not isinstance(data, dict):
@@ -258,16 +262,8 @@ def validate_manifest(data: dict) -> dict:
 def validate_prerequisites(data: dict) -> dict:
     """Validate a prerequisites report dict.
 
-    Checks:
-    - All required fields are present.
-    - `status` is one of the valid prerequisite statuses.
-    - `dataset` and `environment` are dicts.
-    - `ready_for_baseline` is a boolean.
-    - Inner field warnings for missing `dataset.train_path`,
-      `dataset.prepared_train_path` (when `prepared` is True),
-      and `environment.manager`.
-
-    Returns `{"valid": True/False, "errors": [...], "warnings": [...]}`.
+    Inner-field checks (missing dataset.train_path, prepared_train_path when
+    prepared is True, environment.manager) are soft warnings, not errors.
     """
     errors: list[str] = []
     warnings: list[str] = []
@@ -320,12 +316,7 @@ def validate_prerequisites(data: dict) -> dict:
 
 
 def validate_hp_proposal(data: dict) -> dict:
-    """Validate an HP tuning proposal dict.
-
-    Checks that `exp_id` and `config` are present and correctly typed.
-
-    Returns `{"valid": True/False, "errors": [...]}`.
-    """
+    """Validate an HP tuning proposal dict (exp_id + config required)."""
     errors: list[str] = []
 
     if not isinstance(data, dict):
@@ -344,17 +335,13 @@ def validate_hp_proposal(data: dict) -> dict:
     if "exp_id" in data and not isinstance(data["exp_id"], str):
         errors.append("'exp_id' must be a string")
 
+    _check_random_seed(data, errors)
+
     return {"valid": len(errors) == 0, "errors": errors, "warnings": []}
 
 
 def validate_rounds_manifest(data: dict) -> dict:
-    """Validate a rounds-manifest.json dict.
-
-    Checks that `rounds` is a list of valid round entries, `current_round`
-    is an integer, and `total_experiments` is a non-negative integer.
-
-    Returns `{"valid": True/False, "errors": [...]}`.
-    """
+    """Validate a rounds-manifest.json dict (rounds list, current_round int, total_experiments >= 0)."""
     errors: list[str] = []
 
     if not isinstance(data, dict):
@@ -393,14 +380,7 @@ def validate_rounds_manifest(data: dict) -> dict:
 
 
 def validate_file(filepath: str, schema_type: str) -> dict:
-    """Read a JSON file and validate it against the specified schema.
-
-    Args:
-        filepath: Path to the JSON file.
-        schema_type: One of `"result"`, `"baseline"`, or `"manifest"`.
-
-    Returns `{"valid": True/False, "errors": [...], "filepath": ...}`.
-    """
+    """Read a JSON file and validate it against the named schema; adds 'filepath' to the result."""
     result: dict = {"filepath": filepath}
     path = Path(filepath)
 
@@ -444,11 +424,12 @@ def validate_file(filepath: str, schema_type: str) -> dict:
 # Completeness checks (status-aware)
 # ---------------------------------------------------------------------------
 
-def _check_completeness(data: dict) -> list[str]:
+def check_completeness(data: dict) -> list[str]:
     """Return warnings for missing fields that should be present given the status.
 
     These are not structural errors — the result is valid but incomplete.
-    In `--strict` mode, these become blocking errors.
+    In `--strict` mode, these become blocking errors. Also the single owner of
+    this rule set for validate_experiment_write.py's PreToolUse hook.
     """
     warnings: list[str] = []
     status = data.get("status")
@@ -466,6 +447,8 @@ def _check_completeness(data: dict) -> list[str]:
             warnings.append("Completed experiment missing 'method_tier'")
         if "duration_seconds" not in data:
             warnings.append("Completed experiment missing 'duration_seconds'")
+        if "eval_protocol" not in data:
+            warnings.append("Completed experiment missing 'eval_protocol' (held_out_eval|train_report|rl_final_eval)")
         # Stacking completeness
         tier = data.get("method_tier", "")
         if isinstance(tier, str) and tier.startswith("stacked_"):
@@ -484,12 +467,38 @@ def _check_completeness(data: dict) -> list[str]:
 def validate_result_strict(data: dict) -> dict:
     """Validate structure AND completeness. Warnings become errors."""
     result = validate_result(data)
-    completeness = _check_completeness(data)
+    completeness = check_completeness(data)
     if completeness:
         result["errors"].extend(completeness)
         result["valid"] = False
     return result
 
+
+def validate_search_space(entries) -> list[str]:
+    """Validate a research-derived HP prior list [{param, range, scale, source}] -> list of error strings.
+
+    Used for hp_only search_space payloads, research-agenda entries, and the
+    research_to_tuning relay route; `source` cites the paper/URL the range came from.
+    """
+    errors: list[str] = []
+    if not isinstance(entries, list):
+        return ["'search_space' must be a list of {param, range, scale, source} entries"]
+    for i, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            errors.append(f"search_space[{i}] must be a dict")
+            continue
+        for field in SEARCH_SPACE_ENTRY_REQUIRED:
+            if field not in entry:
+                errors.append(f"search_space[{i}]: missing required field: {field}")
+        if "param" in entry and not isinstance(entry["param"], str):
+            errors.append(f"search_space[{i}]: 'param' must be a string")
+        if "range" in entry and not isinstance(entry["range"], list):
+            errors.append(f"search_space[{i}]: 'range' must be a list")
+        if "scale" in entry and not isinstance(entry["scale"], str):
+            errors.append(f"search_space[{i}]: 'scale' must be a string")
+        if "source" in entry and not isinstance(entry["source"], str):
+            errors.append(f"search_space[{i}]: 'source' must be a string")
+    return errors
 
 
 # ---------------------------------------------------------------------------
@@ -517,6 +526,11 @@ RELAY_SCHEMAS = {
         "optional": ["scope_level", "selected_indices", "implementation_strategies"],
         "types": {"findings_path": str, "selected_indices": list},
     },
+    "research_to_tuning": {
+        "required": ["search_space"],
+        "optional": ["findings_path", "model_category"],
+        "types": {"search_space": list, "findings_path": str, "model_category": str},
+    },
     "experiments_to_analyze": {
         "required": ["completed_ids"],
         "optional": ["best_metric_value", "diverged_count", "timeout_count", "batch_number"],
@@ -526,14 +540,7 @@ RELAY_SCHEMAS = {
 
 
 def validate_relay(route: str, data: dict) -> dict:
-    """Validate a relay message against its schema.
-
-    Args:
-        route: The relay route name (e.g. `"analyze_to_tuning"`).
-        data: The message payload dict.
-
-    Returns `{"valid": bool, "errors": [...], "warnings": [...]}`.
-    """
+    """Validate a relay message against its route schema -> {"valid": bool, "errors": [...], "warnings": [...]}."""
     errors: list[str] = []
     warnings: list[str] = []
 
@@ -558,6 +565,11 @@ def validate_relay(route: str, data: dict) -> dict:
                     f"Type mismatch for '{field}': expected {expected_type}, "
                     f"got {type(data[field]).__name__}"
                 )
+
+    # Element-level validation for research-derived HP priors (list form only —
+    # analyze→tuning's dict-form search_space is a plain range dict, not priors).
+    if isinstance(data.get("search_space"), list):
+        errors.extend(validate_search_space(data["search_space"]))
 
     # Check for unexpected fields
     all_known = set(schema["required"]) | set(schema["optional"])

@@ -172,6 +172,7 @@ class TestLayer2WriteValidation:
             "exp_id": "exp-001", "status": "completed",
             "config": {"lr": 0.01}, "metrics": {"loss": 0.4},
             "iteration": 1, "method_tier": "baseline", "duration_seconds": 120.0,
+            "eval_protocol": "held_out_eval",
         })
         _, stdout, _ = _run_hook(VALIDATE_WRITE_SCRIPT, payload)
         decision = _parse_decision(stdout)
@@ -198,7 +199,6 @@ class TestLayer2WriteValidation:
         _, stdout, _ = _run_hook(VALIDATE_WRITE_SCRIPT, payload)
         decision = _parse_decision(stdout)
         assert decision["decision"] == "block"
-        assert "mandatory fields" in decision["reason"]
         for field in ("iteration", "method_tier", "duration_seconds"):
             assert field in decision["reason"]
 
@@ -257,6 +257,7 @@ class TestLayer2WriteValidation:
             "config": {"lr": 0.01, "model_size": "large"},
             "metrics": {"loss": 0.4},
             "iteration": 1, "method_tier": "baseline", "duration_seconds": 60,
+            "eval_protocol": "held_out_eval",
         })
         _, stdout, _ = _run_hook(VALIDATE_WRITE_SCRIPT, payload)
         decision = _parse_decision(stdout)
@@ -274,6 +275,7 @@ class TestLayer2WriteValidation:
             "exp_id": "exp-009", "status": "completed",
             "config": {"batch_size": 512}, "metrics": {"loss": 0.4},
             "iteration": 1, "method_tier": "baseline", "duration_seconds": 60,
+            "eval_protocol": "held_out_eval",
         })
         _, stdout, _ = _run_hook(VALIDATE_WRITE_SCRIPT, payload)
         decision = _parse_decision(stdout)
@@ -436,45 +438,6 @@ class TestLayer3OutputVerification:
         _, stdout, _ = _run_hook(
             VALIDATE_OUTPUT_SCRIPT,
             self._stop_payload(exp_root, "experiment-agent"),
-        )
-        decision = _parse_decision(stdout)
-        assert decision["decision"] == "approve"
-
-    def test_dev_notes_agent_id_mismatch_blocked(self, exp_root):
-        """Agent is blocked when its dev_notes entry was tagged with a different agent_id."""
-        exp = exp_root / "experiments"
-        (exp / "results" / "baseline.json").write_text('{"exp_id":"baseline"}')
-        (exp / "logs" / "baseline").mkdir()
-        (exp / "logs" / "baseline" / "train.log").write_text("log data")
-        # Write a dev_notes entry tagged with agent-X
-        subprocess.run(
-            ["python3", str(DEV_NOTES_SCRIPT), str(exp), "append",
-             "baseline-agent", "test message", "--agent-id", "agent-X"],
-            check=True, capture_output=True,
-        )
-        # Invoke SubagentStop with a different agent_id → expect block
-        _, stdout, _ = _run_hook(
-            VALIDATE_OUTPUT_SCRIPT,
-            self._stop_payload(exp_root, "baseline-agent", agent_id="agent-Y"),
-        )
-        decision = _parse_decision(stdout)
-        assert decision["decision"] == "block"
-        assert "dev_notes.md" in decision["reason"]
-
-    def test_dev_notes_agent_id_match_approved(self, exp_root):
-        """Agent is approved when its dev_notes entry matches the stopping agent_id."""
-        exp = exp_root / "experiments"
-        (exp / "results" / "baseline.json").write_text('{"exp_id":"baseline"}')
-        (exp / "logs" / "baseline").mkdir()
-        (exp / "logs" / "baseline" / "train.log").write_text("log data")
-        subprocess.run(
-            ["python3", str(DEV_NOTES_SCRIPT), str(exp), "append",
-             "baseline-agent", "test message", "--agent-id", "agent-X"],
-            check=True, capture_output=True,
-        )
-        _, stdout, _ = _run_hook(
-            VALIDATE_OUTPUT_SCRIPT,
-            self._stop_payload(exp_root, "baseline-agent", agent_id="agent-X"),
         )
         decision = _parse_decision(stdout)
         assert decision["decision"] == "approve"

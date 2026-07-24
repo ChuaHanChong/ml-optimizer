@@ -8,12 +8,11 @@ user-invocable: false
 
 Generate a comprehensive report summarizing the entire optimization effort.
 
-> **Path convention:** All paths written as `<exp_root>/...` refer to the `exp_root` parameter from your dispatch. The plugin does not hardcode the output directory name.
+> **Path convention:** Paths `<exp_root>/...` refer to the `exp_root` dispatch parameter. Output directory name is not hardcoded.
 
 ## Reference
 
-- Report template: `${CLAUDE_SKILL_DIR}/references/report-template.md` (in this skill's directory)
-- Use this template as the structure for the final report.
+- Report template: `${CLAUDE_SKILL_DIR}/references/report-template.md` — the structure for the final report.
 
 ## Inputs Expected
 
@@ -26,13 +25,13 @@ From the orchestrator:
 
 ## State Preservation (CRITICAL)
 
-**DO NOT** run any git commands that modify the working tree (`git checkout`, `git reset`, `git clean`, `git stash`). The project may have untracked experiment data in `<exp_root>/` that would be lost. Only use **read-only** git commands (`git log`, `git branch --list`, `git show`).
+**DO NOT** run any git command that modifies the working tree (`git checkout`, `git reset`, `git clean`, `git stash`). The project may have untracked experiment data in `<exp_root>/` that would be lost. Use **read-only** git commands only (`git log`, `git branch --list`, `git show`).
 
-**DO NOT** recreate, delete, or overwrite files outside of `<exp_root>/reports/` and `<exp_root>/artifacts/`. The `<exp_root>/results/`, `<exp_root>/pipeline-state.json`, and `<exp_root>/reports/error-log.json` are read-only inputs — never modify them.
+**DO NOT** recreate, delete, or overwrite files outside `<exp_root>/reports/` and `<exp_root>/artifacts/`. `<exp_root>/results/`, `<exp_root>/pipeline-state.json`, and `<exp_root>/reports/error-log.json` are read-only inputs — never modify them.
 
 ## Step 1: Gather All Data
 
-> **Goal check:** Read optimization goals to compare best result against target_value and include a Goal Achievement section.
+> **Goal check:** Read optimization goals to compare the best result against target_value and include a Goal Achievement section.
 
 ### Load experiment results
 ```bash
@@ -44,43 +43,37 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/result_analyzer.py \
 ```
 
 ### Read all batch analyses
-Use Glob to find: `<exp_root>/reports/batch-*-analysis.md`
-Read each one for key findings.
+Glob `<exp_root>/reports/batch-*-analysis.md`; read each for key findings.
 
 ### Read dev notes
 Read `<exp_root>/dev_notes.md` for decisions, reasoning, and observations.
 
 ### Read research findings (if applicable)
-Check if `<exp_root>/reports/research-findings.md` exists.
-If so, read for proposals that were tried.
-Also check for method proposal findings: `<exp_root>/reports/research-findings-method-proposals*.md`.
-If any exist, read them for method proposals that were tried.
+If `<exp_root>/reports/research-findings.md` exists, read for proposals that were tried. Also check `<exp_root>/reports/research-findings-method-proposals*.md` and read them for method proposals that were tried.
 
 ### Read research agenda (if applicable)
-Check if `<exp_root>/reports/research-agenda.json` exists:
+If `<exp_root>/reports/research-agenda.json` exists:
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> agenda list
 ```
-If ideas exist, include a "Research Agenda Summary" section in the report showing: successful techniques, tried-but-neutral, dead ends, and remaining untried ideas.
+If ideas exist, include a "Research Agenda Summary" section: successful techniques, tried-but-neutral, dead ends, and remaining untried ideas.
 
 ### Read dead-end catalog (if applicable)
-Check if `<exp_root>/reports/dead-ends.json` exists:
+If `<exp_root>/reports/dead-ends.json` exists:
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> dead-end list
 ```
 If entries exist, include a "Dead Ends" section listing techniques that were tried and conclusively failed.
 
 ### Read implementation manifest (if applicable)
-Check if `<exp_root>/results/implementation-manifest.json` exists.
-If so, read for: validated proposals, branches, files modified, conflicts.
+If `<exp_root>/results/implementation-manifest.json` exists, read for validated proposals, branches, files modified, conflicts.
 
 ### Extract profiling data
-Read `<exp_root>/results/baseline.json` and extract the `profiling` block
-for GPU memory, throughput, and max batch size.
+Read `<exp_root>/results/baseline.json` and extract the `profiling` block for GPU memory, throughput, and max batch size.
 
 ## Step 2: Compile Results Table
 
-Create a comprehensive comparison table with ALL experiments:
+Build a comprehensive comparison table with ALL experiments:
 
 1. Load all result JSONs from `<exp_root>/results/`
 2. Sort by primary metric (best first)
@@ -88,11 +81,10 @@ Create a comprehensive comparison table with ALL experiments:
 
 ## Step 2.1: Compile HP Sensitivity Analysis
 
-The `${CLAUDE_PLUGIN_ROOT}/scripts/result_analyzer.py` `identify_correlations()` output includes per-HP
-correlation data. Format this into the "Hyperparameter Sensitivity" table:
-- Only include if ≥4 experiments completed (otherwise note "insufficient data")
+`${CLAUDE_PLUGIN_ROOT}/scripts/result_analyzer.py` `identify_correlations()` output includes per-HP correlation data. Format it into the "Hyperparameter Sensitivity" table:
+- Include only if ≥4 experiments completed (otherwise note "insufficient data")
 - Show direction (lower/higher correlates with better metric)
-- For categorical params, show most common value in top vs bottom performers
+- For categorical params, show the most common value in top vs bottom performers
 
 ## Step 2.2: Three-Tier Results (if method proposals were used)
 
@@ -120,7 +112,7 @@ Table of experiments with `method_tier: "method_default_hp"`:
 |--------|----------|--------|----------|-------------|
 | ml-opt/... | ... | paper / llm_knowledge | ... | +X% / -X% |
 
-This shows the **isolated effect of each method** before HP tuning.
+Shows the **isolated effect of each method** before HP tuning.
 
 ### Tier 3: Method + Tuned HPs
 Table of best experiments per branch with `method_tier: "method_tuned_hp"`:
@@ -129,14 +121,14 @@ Table of best experiments per branch with `method_tier: "method_tuned_hp"`:
 |--------|----------|--------|-------------|----------|-------------|---------------|
 | ml-opt/... | ... | paper / llm_knowledge | lr=..., bs=... | ... | +X% | +Y% |
 
-This shows the **combined effect of method + HP tuning**.
+Shows the **combined effect of method + HP tuning**.
 
 ### Method Effectiveness Summary
 For each method proposal, summarize:
 - **Method gain** (Tier 2 vs Tier 1): How much did the method itself contribute?
 - **Tuning gain** (Tier 3 vs Tier 2): How much did HP tuning add on top?
 - **Total gain** (Tier 3 vs Tier 1): Combined improvement
-- **Source**: `paper` or `llm_knowledge` — enables comparison of paper-based vs LLM-knowledge-based proposals
+- **Source**: `paper` or `llm_knowledge` — enables comparing paper-based vs LLM-knowledge-based proposals
 
 If no experiments have `method_tier` fields, skip this section entirely.
 
@@ -170,7 +162,7 @@ Sort by `stacking_order`. Show both cumulative gain (vs baseline) and incrementa
 
 ## Step 4: Summarize the Journey
 
-Read through dev notes chronologically and batch analyses to reconstruct:
+Read dev notes chronologically and batch analyses to reconstruct:
 1. What was the starting point?
 2. What approach was taken first? (research vs. direct HP tuning)
 3. What key decisions were made and why?
@@ -188,12 +180,18 @@ From the analysis reports and results, identify:
 
 ## Step 5.1: Generate Visualizations
 
-Use the ${CLAUDE_PLUGIN_ROOT}/scripts/plot_results.py script to generate ASCII charts:
+Use `${CLAUDE_PLUGIN_ROOT}/scripts/plot_results.py` to generate ASCII charts:
 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plot_results.py \
-  <exp_root>/results <primary_metric> comparison
+  <exp_root>/results <primary_metric> comparison [--higher-is-better]
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plot_results.py \
+  <exp_root>/results <primary_metric> timeline [--higher-is-better]
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plot_results.py \
+  <exp_root>/results <primary_metric> sensitivity <highest_impact_hp> [--higher-is-better]
 ```
+
+**Polarity:** append `--higher-is-better` to EVERY plot_results.py invocation when `lower_is_better` is false (accuracy, PSNR, reward, ...) — without it the charts mark the wrong experiments as best.
 
 Generate:
 1. Metric comparison bar chart (all experiments)
@@ -204,11 +202,11 @@ Include the ASCII chart output in the report (in code blocks).
 
 ### Matplotlib Progress Chart
 
-After the ASCII charts, attempt to generate a matplotlib progress chart:
+After the ASCII charts, attempt a matplotlib progress chart:
 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plot_results.py \
-  <exp_root>/results <primary_metric> progress
+  <exp_root>/results <primary_metric> progress [--higher-is-better]
 ```
 
 If successful, this saves a PNG to `<exp_root>/reports/progress_chart.png` showing:
@@ -217,12 +215,12 @@ If successful, this saves a PNG to `<exp_root>/reports/progress_chart.png` showi
 - Blue step line tracking the running best frontier
 - Annotated experiment IDs on kept experiments
 
-Include a reference to this image in the report:
+Reference the image in the report:
 ```markdown
 ![Optimization Progress](reports/progress_chart.png)
 ```
 
-If matplotlib is not available, skip this step (the ASCII charts provide the same information).
+If matplotlib is unavailable, skip this step (the ASCII charts carry the same information).
 
 ### Excalidraw diagrams
 
@@ -231,13 +229,13 @@ Generate Excalidraw diagrams for interactive exploration:
 ```bash
 # Pipeline overview
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/excalidraw_gen.py \
-  <project_root>/experiments pipeline <primary_metric>
+  <exp_root> pipeline <primary_metric>
 ```
 
 If the best result used a code branch (method proposal), also generate an architecture diagram:
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/excalidraw_gen.py \
-  <project_root>/experiments architecture <best_proposal_name>
+  <exp_root> architecture <best_proposal_name>
 ```
 
 Reference the generated `.excalidraw` files in the report: users can open them at excalidraw.com for interactive exploration.
@@ -246,27 +244,25 @@ Reference the generated `.excalidraw` files in the report: users can open them a
 
 Include in the final report:
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py <project_root>/experiments summary
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py <exp_root> summary
 ```
 
 Use this summary to add:
-1. **Goal vs Achievement:** Compare the best result against the `target_value` from optimization-goals.json
-2. **Learned Behaviors:** Summarize key HP constraints, method outcomes, and divergence patterns discovered during optimization
-3. **Scope Compliance:** Note any scope violations that were caught and corrected during the session
+1. **Goal vs Achievement:** Compare the best result against `target_value` from optimization-goals.json
+2. **Learned Behaviors:** Summarize key HP constraints, method outcomes, and divergence patterns discovered
+3. **Scope Compliance:** Note any scope violations caught and corrected during the session
 
 ## Step 5.3: Verify Claims Against Evidence
 
 Before writing the final report:
 
-1. **Cross-reference technique claims with experiment data:** For each "technique X improved Y by Z%" claim, verify the improvement percentage matches actual experiment results.
-
-2. **Check source URL accessibility** (if research findings were used): Use WebFetch on 2-3 key source URLs to verify they're still accessible. Mark broken links as "[link unavailable]".
-
-3. Add a brief note in the Appendix: "N/M source URLs verified accessible as of report date."
+1. **Cross-reference technique claims with experiment data:** For each "technique X improved Y by Z%" claim, verify the percentage matches actual results.
+2. **Check source URL accessibility** (if research findings were used): WebFetch 2-3 key source URLs to verify they're still accessible. Mark broken links "[link unavailable]".
+3. Add a brief Appendix note: "N/M source URLs verified accessible as of report date."
 
 ## Step 6: Write the Report
 
-Write to `<exp_root>/reports/final-report.md` using the template from `${CLAUDE_SKILL_DIR}/references/report-template.md`.
+Write to `<exp_root>/reports/final-report.md` using the template `${CLAUDE_SKILL_DIR}/references/report-template.md`.
 
 Fill in all sections:
 - Executive summary (2-3 sentences)
@@ -346,19 +342,19 @@ Before writing the report, verify:
 ## Edge Cases
 
 ### Missing Baseline
-If `baseline.json` does not exist or has no metrics, the report should:
+If `baseline.json` does not exist or has no metrics:
 - State that no baseline was established
 - Report absolute metric values only (no deltas or improvement percentages)
 - Recommend re-running with a proper baseline for meaningful comparison
 
 ### Single Experiment
-If only one experiment was run (plus baseline), the report should:
+If only one experiment was run (plus baseline):
 - Skip HP sensitivity analysis (insufficient data)
 - Note that results are preliminary and more experiments are recommended
 - Still generate the full report structure with available data
 
 ### All Experiments Diverged
-If every experiment (excluding baseline) has `status: "diverged"`, the report should:
+If every experiment (excluding baseline) has `status: "diverged"`:
 - Highlight this prominently in the executive summary
 - Analyze common factors across diverged experiments (LR too high? batch size?)
 - Recommend a more conservative search space

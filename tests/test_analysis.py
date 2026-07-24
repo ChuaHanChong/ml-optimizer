@@ -861,7 +861,8 @@ class TestCompletenessWarnings:
         """A completed result with all completeness fields produces no warnings."""
         data = {"exp_id": "exp-1", "status": "completed",
                 "config": {"lr": 0.001}, "metrics": {"loss": 0.5},
-                "iteration": 1, "method_tier": "baseline", "duration_seconds": 60}
+                "iteration": 1, "method_tier": "baseline", "duration_seconds": 60,
+                "eval_protocol": "held_out_eval"}
         r = validate_result(data)
         assert r["valid"] is True
         assert r["warnings"] == []
@@ -923,3 +924,201 @@ class TestCompletenessWarnings:
         r = validate_result(data)
         assert r["valid"] is True
         assert r["warnings"] == []
+
+
+# ---------------------------------------------------------------------------
+# TestBaselineBatchBFields — model_category + profiling timeout/duration
+# ---------------------------------------------------------------------------
+
+
+class TestBaselineBatchBFields:
+    """baseline.json Batch B fields validate correctly."""
+
+    def _base(self, **extra):
+        data = {"exp_id": "baseline", "status": "completed",
+                "config": {"lr": 0.001}, "metrics": {"loss": 0.5}}
+        data.update(extra)
+        return data
+
+    def test_accepts_new_fields(self):
+        data = self._base(
+            model_category="rl",
+            profiling={"estimated_timeout_seconds": 1200,
+                       "training_duration_seconds": 400.5,
+                       "steps_per_second": 800.0},
+        )
+        assert validate_baseline(data)["valid"] is True
+
+    def test_null_model_category_ok(self):
+        assert validate_baseline(self._base(model_category=None))["valid"] is True
+
+    def test_rejects_bad_model_category(self):
+        result = validate_baseline(self._base(model_category="robotics"))
+        assert result["valid"] is False
+        assert any("model_category" in e for e in result["errors"])
+
+    def test_rejects_non_numeric_profiling_timeout(self):
+        result = validate_baseline(
+            self._base(profiling={"estimated_timeout_seconds": "soon"}))
+        assert result["valid"] is False
+        assert any("estimated_timeout_seconds" in e for e in result["errors"])
+
+    def test_rejects_non_dict_profiling(self):
+        result = validate_baseline(self._base(profiling="fast"))
+        assert result["valid"] is False
+
+
+# ======================================================================
+# TestSeedReplicates (Batch C, Task 15)
+# ======================================================================
+
+
+class TestSeedReplicates:
+    """random_seed schema field + replicate aggregation in result_analyzer."""
+
+    def test_validate_result_accepts_integer_random_seed(self):
+        data = {"exp_id": "exp-001", "status": "completed",
+                "config": {"lr": 0.001}, "metrics": {"loss": 0.5},
+                "iteration": 1, "method_tier": "baseline", "duration_seconds": 10,
+                "random_seed": 42, "eval_protocol": "held_out_eval"}
+        result = validate_result(data)
+        assert result["valid"] is True
+        assert result["warnings"] == []
+
+    def test_validate_result_rejects_non_integer_random_seed(self):
+        data = {"exp_id": "exp-001", "status": "completed",
+                "config": {}, "metrics": {"loss": 0.5}, "random_seed": "42"}
+        result = validate_result(data)
+        assert result["valid"] is False
+        assert any("random_seed" in e for e in result["errors"])
+
+    def test_validate_hp_proposal_rejects_bool_random_seed(self):
+        from schema_validator import validate_hp_proposal
+        result = validate_hp_proposal({"exp_id": "exp-001", "config": {}, "random_seed": True})
+        assert result["valid"] is False
+        assert any("random_seed" in e for e in result["errors"])
+
+    def test_aggregate_replicates_pools_seed_replicates(self, tmp_path):
+        from result_analyzer import aggregate_replicates
+        for i, (seed, loss) in enumerate([(1, 0.8), (2, 0.6), (3, 0.7)]):
+            _write_result(tmp_path, f"exp-{i+1}", "completed",
+                          {"lr": 0.001}, {"loss": loss},
+                          code_branch="ml-opt/a", random_seed=seed)
+        groups = aggregate_replicates(load_results(str(tmp_path)), "loss")
+        assert len(groups) == 1
+        g = groups[0]
+        assert g["n"] == 3
+        assert abs(g["mean"] - 0.7) < 1e-9
+        assert g["std"] is not None and g["std"] > 0
+        assert g["best_exp_id"] == "exp-2"
+
+    def test_aggregate_replicates_never_pools_without_seed(self, tmp_path):
+        from result_analyzer import aggregate_replicates
+        _write_result(tmp_path, "exp-1", "completed", {"lr": 0.001}, {"loss": 0.8})
+        _write_result(tmp_path, "exp-2", "completed", {"lr": 0.001}, {"loss": 0.6})
+        groups = aggregate_replicates(load_results(str(tmp_path)), "loss")
+        assert len(groups) == 2
+
+    def test_rank_methods_uses_replicate_mean(self, tmp_path):
+        _write_results(tmp_path, {
+            "baseline": {"metrics": {"loss": 1.0}, "config": {"lr": 0.01}},
+            # branch a: lucky seed 0.5 but replicate mean 0.75
+            "exp-001": {"metrics": {"loss": 0.5}, "config": {"lr": 0.001},
+                        "random_seed": 1, "code_branch": "ml-opt/a",
+                        "code_proposal": "a", "method_tier": "method_tuned_hp",
+                        "status": "completed"},
+            "exp-002": {"metrics": {"loss": 1.0}, "config": {"lr": 0.001},
+                        "random_seed": 2, "code_branch": "ml-opt/a",
+                        "code_proposal": "a", "method_tier": "method_tuned_hp",
+                        "status": "completed"},
+            # branch b: consistent 0.7
+            "exp-003": {"metrics": {"loss": 0.7}, "config": {"lr": 0.001},
+                        "random_seed": 1, "code_branch": "ml-opt/b",
+                        "code_proposal": "b", "method_tier": "method_tuned_hp",
+                        "status": "completed"},
+            "exp-004": {"metrics": {"loss": 0.7}, "config": {"lr": 0.001},
+                        "random_seed": 2, "code_branch": "ml-opt/b",
+                        "code_proposal": "b", "method_tier": "method_tuned_hp",
+                        "status": "completed"},
+        })
+        ranked = rank_methods_for_stacking(load_results(str(tmp_path)), "loss", lower_is_better=True)
+        # b (mean 0.7) ranks above a (mean 0.75) despite a's lucky 0.5 seed
+        assert ranked[0]["code_proposal"] == "b"
+        assert ranked[0]["replicates"]["n"] == 2
+        assert ranked[1]["replicates"]["std"] is not None
+
+    def test_branch_scores_expose_replicates(self, tmp_path):
+        results_dir = tmp_path / "results"
+        results_dir.mkdir()
+        _write_result(results_dir, "baseline", "completed", {"lr": 0.01}, {"loss": 1.0})
+        _write_result(results_dir, "exp-1", "completed", {"lr": 0.001}, {"loss": 0.7},
+                      code_branch="ml-opt/a", random_seed=1)
+        _write_result(results_dir, "exp-2", "completed", {"lr": 0.001}, {"loss": 0.9},
+                      code_branch="ml-opt/a", random_seed=2)
+        scores = compute_branch_scores(load_results(str(results_dir)), "loss")
+        entry = scores["ml-opt/a"]
+        assert entry["sample_count"] == 2
+        assert entry["replicates"]["n"] == 2
+        assert abs(entry["best_metric"] - 0.8) < 1e-9  # replicate mean, not lucky 0.7
+
+
+# ======================================================================
+# TestLowNStats (Batch C, Task 16)
+# ======================================================================
+
+
+class TestLowNStats:
+    """n/low_n on correlations, small-n significance gating, zero-centered deltas."""
+
+    def test_correlations_carry_n_and_low_n(self):
+        results = {
+            f"exp-{i}": {"status": "completed", "config": {"lr": 0.001 * (i + 1)},
+                         "metrics": {"loss": 0.5 + i * 0.1}}
+            for i in range(4)
+        }
+        out = identify_correlations(results, "loss")
+        entry = next(c for c in out["correlations"] if c["param"] == "lr")
+        assert entry["n"] == 4
+        assert entry["low_n"] is True
+
+    def test_interaction_not_significant_at_n5(self, tmp_path):
+        results_dir = tmp_path / "results"
+        results_dir.mkdir()
+        _write_result(results_dir, "baseline", "completed", {"lr": 0.01}, {"loss": 1.0})
+        # XOR-like lr x batch_size pattern: interaction rho = 0.975, but the
+        # exact critical value at n=5 is 1.0 -> annotated not significant.
+        configs = [
+            (0.01, 16, 0.2), (0.01, 64, 1.0), (0.001, 16, 1.0),
+            (0.001, 64, 0.25), (0.005, 32, 0.6),
+        ]
+        for i, (lr, bs, loss) in enumerate(configs):
+            _write_result(results_dir, f"exp-{i+1}", "completed",
+                          {"lr": lr, "batch_size": bs}, {"loss": loss})
+        out = detect_hp_interactions(load_results(str(results_dir)), "loss")
+        assert len(out["interactions"]) == 1
+        entry = out["interactions"][0]
+        assert entry["n_experiments"] == 5
+        assert entry["significant"] is False
+        assert "not significant at this n" in entry["note"]
+
+    def test_compute_deltas_zero_centered_fallback(self):
+        results = {
+            "baseline": {"metrics": {"score": 0.01}, "config": {}},
+            "exp-1": {"metrics": {"score": 1.0}, "config": {"lr": 0.1}},
+            "exp-2": {"metrics": {"score": -1.0}, "config": {"lr": 0.01}},
+        }
+        deltas = compute_deltas(results, "baseline", "score")
+        assert all(d["batch_std"] is not None for d in deltas)
+        assert all(d["delta_pct"] is None for d in deltas)
+        assert all("delta_vs_spread" in d for d in deltas)
+
+    def test_compute_deltas_normal_baseline_keeps_pct(self):
+        results = {
+            "baseline": {"metrics": {"loss": 1.0}, "config": {}},
+            "exp-1": {"metrics": {"loss": 0.9}, "config": {"lr": 0.1}},
+            "exp-2": {"metrics": {"loss": 0.8}, "config": {"lr": 0.01}},
+        }
+        deltas = compute_deltas(results, "baseline", "loss")
+        assert all(d["delta_pct"] is not None for d in deltas)
+        assert all(d["batch_std"] is not None for d in deltas)
+        assert not any("delta_vs_spread" in d for d in deltas)

@@ -22,17 +22,43 @@ Examples:
 
 import json
 import math
+import statistics
 import sys
 from pathlib import Path
 
 
-def load_results(results_dir: str) -> dict[str, dict]:
-    """Load all experiment results from a directory.
+# Statistical constants (spec-fixed, NOT tunable heuristics; per-model-category
+# thresholds live in detect_divergence's MODEL_CATEGORY_DEFAULTS, not here).
 
-    Scans both flat files (`baseline.json`) and hierarchical round
-    directories (`round-*/exp-*.json`).  Exp-ids are globally unique
-    so there is no collision between rounds.
-    """
+# Two-sided critical |Spearman rho| at alpha=0.05 for small n (n<5 never significant).
+SPEARMAN_CRITICAL_05 = {5: 1.0, 6: 0.886, 7: 0.786, 8: 0.738, 9: 0.700, 10: 0.648}
+
+# Correlations from fewer than this many points are flagged low_n.
+LOW_N = 10
+
+# When |baseline| < this factor x batch std, report deltas vs spread (percent-of-baseline unstable).
+ZERO_CENTERED_BASELINE_FACTOR = 2.0
+
+
+def _avg_rank(values: list) -> list[float]:
+    """Assign ranks with average-rank tie-breaking (1-based)."""
+    n = len(values)
+    indexed = sorted(range(n), key=lambda i: values[i])
+    ranks = [0.0] * n
+    i = 0
+    while i < n:
+        j = i
+        while j < n - 1 and values[indexed[j]] == values[indexed[j + 1]]:
+            j += 1
+        avg_rank = (i + j) / 2.0 + 1
+        for k in range(i, j + 1):
+            ranks[indexed[k]] = avg_rank
+        i = j + 1
+    return ranks
+
+
+def load_results(results_dir: str) -> dict[str, dict]:
+    """Load all results: flat `baseline.json`/`exp-*.json` + round `round-*/exp-*.json` (exp-ids globally unique)."""
     path = Path(results_dir)
     results = {}
     if not path.exists():
@@ -72,6 +98,8 @@ def rank_by_metric(results: dict[str, dict], metric: str, lower_is_better: bool 
                 "value": metrics[metric],
                 "config": data.get("config", {}),
                 "status": data.get("status"),
+                # Lets consumers (dashboard, results-table) flag non-held-out-eval results.
+                "eval_protocol": data.get("eval_protocol"),
             })
     valid = [r for r in ranked if isinstance(r["value"], (int, float)) and math.isfinite(r["value"])]
     invalid = [r for r in ranked if not (isinstance(r["value"], (int, float)) and math.isfinite(r["value"]))]
@@ -82,40 +110,17 @@ def rank_by_metric(results: dict[str, dict], metric: str, lower_is_better: bool 
 
 
 def spearman_correlation(x: list, y: list) -> float:
-    """Compute Spearman rank correlation coefficient between two lists.
-
-    Uses the formula: rho = 1 - 6 * sum(d^2) / (n * (n^2 - 1))
-    where d is the difference between ranks of corresponding values.
-    Handles ties by assigning average ranks.
-    """
+    """Spearman rank correlation: rho = 1 - 6*sum(d^2)/(n*(n^2-1)), average-rank ties."""
     if len(x) != len(y) or len(x) < 2:
         return 0.0
-
-    def _rank(values):
-        """Assign ranks with average-rank tie-breaking."""
-        n = len(values)
-        indexed = sorted(range(n), key=lambda i: values[i])
-        ranks = [0.0] * n
-        i = 0
-        while i < n:
-            j = i
-            while j < n - 1 and values[indexed[j]] == values[indexed[j + 1]]:
-                j += 1
-            avg_rank = (i + j) / 2.0 + 1  # 1-based
-            for k in range(i, j + 1):
-                ranks[indexed[k]] = avg_rank
-            i = j + 1
-        return ranks
-
     n = len(x)
-    rx = _rank(x)
-    ry = _rank(y)
+    rx = _avg_rank(x)
+    ry = _avg_rank(y)
     # Constant ranks have no variance — correlation is undefined; return 0.0
     if len(set(rx)) == 1 or len(set(ry)) == 1:
         return 0.0
     d_sq_sum = sum((rx[i] - ry[i]) ** 2 for i in range(n))
-    rho = 1 - 6 * d_sq_sum / (n * (n ** 2 - 1))
-    return rho
+    return 1 - 6 * d_sq_sum / (n * (n ** 2 - 1))
 
 
 def compute_deltas(results: dict[str, dict], baseline_id: str, metric: str) -> list[dict]:
@@ -147,6 +152,19 @@ def compute_deltas(results: dict[str, dict], baseline_id: str, metric: str) -> l
                 "delta_pct": delta_pct,
                 "config": data.get("config", {}),
             })
+    # Batch spread — enables the zero-centered fallback (deltas vs spread when |baseline| is small).
+    values = [d["value"] for d in deltas
+              if isinstance(d["value"], (int, float)) and math.isfinite(d["value"])]
+    batch_std = round(statistics.stdev(values), 6) if len(values) >= 2 else None
+    zero_centered = (
+        batch_std is not None and batch_std > 0
+        and abs(baseline_val) < ZERO_CENTERED_BASELINE_FACTOR * batch_std
+    )
+    for d in deltas:
+        d["batch_std"] = batch_std
+        if zero_centered:
+            d["delta_pct"] = None
+            d["delta_vs_spread"] = round(d["delta"] / batch_std, 4)
     return deltas
 
 
@@ -211,9 +229,12 @@ def identify_correlations(results: dict[str, dict], metric: str, lower_is_better
             top_avg = sum(float(v) for v in numeric_top) / len(numeric_top) if numeric_top else None
             bottom_avg = sum(float(v) for v in numeric_bottom) / len(numeric_bottom) if numeric_bottom else None
             rho = spearman_correlation(hp_values, metric_values)
+            n_pairs = len(numeric_pairs)
             corr_entry = {
                 "param": key,
                 "spearman_rho": round(rho, 4),
+                "n": n_pairs,
+                "low_n": n_pairs < LOW_N,
             }
             if top_avg is not None:
                 corr_entry["top_avg"] = top_avg
@@ -226,10 +247,13 @@ def identify_correlations(results: dict[str, dict], metric: str, lower_is_better
             correlations.append(corr_entry)
         else:
             # Categorical — report most common values
+            n_cat = len(top_vals) + len(bottom_vals)
             correlations.append({
                 "param": key,
                 "top_common": max(set(top_vals), key=top_vals.count) if top_vals else None,
                 "bottom_common": max(set(bottom_vals), key=bottom_vals.count) if bottom_vals else None,
+                "n": n_cat,
+                "low_n": n_cat < LOW_N,
             })
 
     return {"correlations": correlations}
@@ -241,14 +265,7 @@ def build_experiment_description(
     baseline_config: dict | None = None,
     max_len: int = 45,
 ) -> str:
-    """Build a short human-readable description for a progress chart annotation.
-
-    Combines the method name (from `code_proposal`) with the most
-    distinctive HP change vs *baseline_config*.  Falls back to exp_id
-    when no richer information is available.
-
-    Returns a string of at most *max_len* characters.
-    """
+    """Short chart-annotation description: method name (`code_proposal`) + top HP diff vs baseline_config, <= max_len chars, falling back to exp_id."""
     parts: list[str] = []
 
     # Stacked methods (multiple branches combined)
@@ -288,19 +305,70 @@ def build_experiment_description(
     return desc
 
 
+def aggregate_replicates(results: dict[str, dict], metric: str, lower_is_better: bool = True) -> list[dict]:
+    """Group completed experiments into seed-replicate groups.
+
+    A replicate group = same `code_branch` + identical config except `random_seed`
+    (top-level field, falling back to config key). Experiments WITHOUT a random_seed
+    are never pooled — each stays a singleton. Returns group dicts: {code_branch,
+    code_proposal, method_tier, config (seed-stripped), exp_ids, values, n, mean,
+    std (sample std, None when n==1), best_exp_id}.
+    """
+    groups: dict[tuple, dict] = {}
+    for exp_id, data in results.items():
+        if exp_id == "baseline":
+            continue
+        status = data.get("status")
+        if status is not None and status != "completed":
+            continue
+        metrics = data.get("metrics", data)
+        if not isinstance(metrics, dict) or metric not in metrics:
+            continue
+        val = metrics[metric]
+        if isinstance(val, bool) or not isinstance(val, (int, float)) or not math.isfinite(val):
+            continue
+        cfg = data.get("config", {})
+        cfg = cfg if isinstance(cfg, dict) else {}
+        seed = data.get("random_seed", cfg.get("random_seed"))
+        stripped = {k: v for k, v in cfg.items() if k != "random_seed"}
+        if seed is not None:
+            key = (data.get("code_branch"), json.dumps(stripped, sort_keys=True, default=str))
+        else:
+            key = (data.get("code_branch"), f"__solo__{exp_id}")
+        g = groups.setdefault(key, {
+            "code_branch": data.get("code_branch"),
+            "code_proposal": data.get("code_proposal"),
+            "method_tier": data.get("method_tier"),
+            "config": stripped,
+            "exp_ids": [],
+            "values": [],
+        })
+        g["exp_ids"].append(exp_id)
+        g["values"].append(float(val))
+
+    out = []
+    for g in groups.values():
+        n = len(g["values"])
+        best = min(g["values"]) if lower_is_better else max(g["values"])
+        g["n"] = n
+        g["mean"] = sum(g["values"]) / n
+        g["std"] = round(statistics.stdev(g["values"]), 6) if n >= 2 else None
+        g["best_exp_id"] = g["exp_ids"][g["values"].index(best)]
+        out.append(g)
+    return out
+
+
 def rank_methods_for_stacking(
     results: dict[str, dict],
     metric: str,
     lower_is_better: bool = True,
 ) -> list[dict]:
-    """Rank methods by improvement over baseline for stacking.
+    """Rank methods by improvement over baseline for stacking (most improved first).
 
-    For each code_branch, finds the best experiment result. Excludes methods
-    that didn't improve over baseline. Returns a list sorted by improvement
-    magnitude (most improved first).
-
-    Each entry contains: code_branch, code_proposal, best_metric,
-    best_config, best_exp_id, improvement_pct.
+    Seed replicates are aggregated first — each branch ranked by its best
+    replicate-group MEAN, never the luckiest single seed. Excludes non-improving
+    methods. Each entry: code_branch, code_proposal, best_metric (group mean),
+    best_config, best_exp_id, replicates {n, mean, std}, improvement_pct.
     """
     baseline = results.get("baseline", {})
     baseline_metrics = baseline.get("metrics", baseline)
@@ -308,39 +376,28 @@ def rank_methods_for_stacking(
         return []
     baseline_val = baseline_metrics[metric]
 
-    # Group by code_branch, find best per branch
+    # Best replicate group per branch (group value = mean across seeds)
     branch_best: dict[str, dict] = {}
-    for exp_id, data in results.items():
-        if exp_id == "baseline":
-            continue
-        branch = data.get("code_branch")
+    for grp in aggregate_replicates(results, metric, lower_is_better):
+        branch = grp["code_branch"]
         if not branch:
             continue
-        status = data.get("status")
-        if status is not None and status != "completed":
-            continue
-        exp_metrics = data.get("metrics", data)
-        if metric not in exp_metrics:
-            continue
-        val = exp_metrics[metric]
-        if not isinstance(val, (int, float)) or not math.isfinite(val):
-            continue
-
+        val = grp["mean"]
+        entry = {
+            "code_branch": branch,
+            "code_proposal": grp["code_proposal"] or branch.removeprefix("ml-opt/"),
+            "best_metric": val,
+            "best_config": grp["config"],
+            "best_exp_id": grp["best_exp_id"],
+            "replicates": {"n": grp["n"], "mean": grp["mean"], "std": grp["std"]},
+        }
         if branch not in branch_best:
-            branch_best[branch] = {
-                "code_branch": branch,
-                "code_proposal": data.get("code_proposal", branch.removeprefix("ml-opt/")),
-                "best_metric": val,
-                "best_config": data.get("config", {}),
-                "best_exp_id": exp_id,
-            }
+            branch_best[branch] = entry
         else:
             current = branch_best[branch]["best_metric"]
             better = val < current if lower_is_better else val > current
             if better:
-                branch_best[branch]["best_metric"] = val
-                branch_best[branch]["best_config"] = data.get("config", {})
-                branch_best[branch]["best_exp_id"] = exp_id
+                branch_best[branch] = entry
 
     # Filter to methods that improved over baseline and compute improvement
     improved = []
@@ -442,21 +499,6 @@ def detect_hp_interactions(
     if len(numeric_keys) < 2:
         return {"interactions": [], "note": "Need at least 2 varying numeric HPs for interaction detection"}
 
-    def _rank(values):
-        n = len(values)
-        indexed = sorted(range(n), key=lambda i: values[i])
-        ranks = [0.0] * n
-        i = 0
-        while i < n:
-            j = i
-            while j < n - 1 and values[indexed[j]] == values[indexed[j + 1]]:
-                j += 1
-            avg_rank = (i + j) / 2.0 + 1
-            for k in range(i, j + 1):
-                ranks[indexed[k]] = avg_rank
-            i = j + 1
-        return ranks
-
     interactions = []
     for a_idx in range(len(numeric_keys)):
         for b_idx in range(a_idx + 1, len(numeric_keys)):
@@ -485,8 +527,8 @@ def detect_hp_interactions(
             rho_b = spearman_correlation(vals_b, vals_metric)
 
             # Centered ranks
-            ranks_a = _rank(vals_a)
-            ranks_b = _rank(vals_b)
+            ranks_a = _avg_rank(vals_a)
+            ranks_b = _avg_rank(vals_b)
             mean_a = sum(ranks_a) / len(ranks_a)
             mean_b = sum(ranks_b) / len(ranks_b)
             centered_a = [r - mean_a for r in ranks_a]
@@ -510,15 +552,28 @@ def detect_hp_interactions(
                 else:
                     desc = f"Combined high {key_a} + high {key_b} correlates with better (higher) {metric}"
 
-                interactions.append({
+                # Small-n significance gate: exact critical value where the
+                # lookup table covers n; larger n falls through to the
+                # min_interaction_rho strength gate above.
+                n_pair = len(subset)
+                crit = SPEARMAN_CRITICAL_05.get(n_pair)
+                significant = crit is None or abs(rho_interaction) >= crit
+
+                interaction_entry = {
                     "param_a": key_a,
                     "param_b": key_b,
                     "interaction_rho": round(rho_interaction, 4),
                     "individual_rho_a": round(rho_a, 4),
                     "individual_rho_b": round(rho_b, 4),
                     "description": desc,
-                    "n_experiments": len(subset),
-                })
+                    "n_experiments": n_pair,
+                    "significant": significant,
+                }
+                if not significant:
+                    interaction_entry["note"] = (
+                        f"not significant at this n (n={n_pair}, |rho| < {crit})"
+                    )
+                interactions.append(interaction_entry)
 
     interactions.sort(key=lambda x: abs(x["interaction_rho"]), reverse=True)
     return {"interactions": interactions, "note": None}
@@ -529,11 +584,7 @@ def compute_branch_scores(
     metric: str,
     lower_is_better: bool = True,
 ) -> dict[str, dict]:
-    """Compute per-branch allocation scores for adaptive budget allocation.
-
-    For each code_branch (null branch keyed as `__baseline__`), computes
-    improvement_pct over baseline, sample_count, and a composite score.
-    """
+    """Per-branch allocation scores (null branch keyed `__baseline__`): improvement_pct over baseline (best replicate-group mean), sample_count, replicates {n, mean, std}, composite score."""
     # Find baseline metric value
     baseline = results.get("baseline", {})
     baseline_metrics = baseline.get("metrics", {})
@@ -545,34 +596,25 @@ def compute_branch_scores(
     except (ValueError, TypeError):
         return {}
 
-    # Group completed experiments by code_branch
-    groups: dict[str, list[dict]] = {}
-    for eid, data in results.items():
-        if eid == "baseline":
+    # Group replicate-aggregated results by code_branch (stacked tiers
+    # excluded). A branch's best is the best replicate-group MEAN; the group
+    # std is that branch's measured noise floor.
+    branch_groups: dict[str, list[dict]] = {}
+    for grp in aggregate_replicates(results, metric, lower_is_better):
+        tier = grp.get("method_tier") or ""
+        if isinstance(tier, str) and tier.startswith("stacked_"):
             continue
-        if data.get("status") != "completed":
-            continue
-        if data.get("method_tier", "").startswith("stacked_"):
-            continue
-        m = data.get("metrics", {})
-        val = m.get(metric)
-        if val is None:
-            continue
-        try:
-            val = float(val)
-        except (ValueError, TypeError):
-            continue
-        branch = data.get("code_branch") or "__baseline__"
-        groups.setdefault(branch, []).append({"exp_id": eid, "metric_val": val})
+        branch = grp["code_branch"] or "__baseline__"
+        branch_groups.setdefault(branch, []).append(grp)
 
     scores = {}
-    for branch, exps in groups.items():
+    for branch, grps in branch_groups.items():
         if lower_is_better:
-            best = min(exps, key=lambda e: e["metric_val"])
+            best = min(grps, key=lambda g: g["mean"])
         else:
-            best = max(exps, key=lambda e: e["metric_val"])
+            best = max(grps, key=lambda g: g["mean"])
 
-        best_val = best["metric_val"]
+        best_val = best["mean"]
         if abs(baseline_val) > 1e-12:
             if lower_is_better:
                 improvement_pct = (baseline_val - best_val) / abs(baseline_val) * 100
@@ -581,15 +623,16 @@ def compute_branch_scores(
         else:
             improvement_pct = 0.0
 
-        sample_count = len(exps)
+        sample_count = sum(g["n"] for g in grps)
         confidence = 1 - 1 / math.sqrt(sample_count + 1)
         score = max(improvement_pct * confidence, 0.0)
 
         scores[branch] = {
             "best_metric": best_val,
-            "best_exp_id": best["exp_id"],
+            "best_exp_id": best["best_exp_id"],
             "improvement_pct": round(improvement_pct, 2),
             "sample_count": sample_count,
+            "replicates": {"n": best["n"], "mean": best["mean"], "std": best["std"]},
             "score": round(score, 2),
         }
 

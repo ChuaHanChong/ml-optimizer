@@ -1,21 +1,13 @@
 #!/usr/bin/env python3
-"""Managed dev_notes.md writer — enforces consistent format.
+"""Managed dev_notes.md writer — dated, agent-attributed session log entries.
 
-Appends dated, agent-attributed entries to <exp_root>/dev_notes.md with
-file locking for concurrent-safe writes. Used by many agents to maintain a
-running session log.
-
-Usage:
-    python3 dev_notes.py <exp_root> init                                          # Create dev_notes.md with header
-    python3 dev_notes.py <exp_root> append <agent_name> '<message>' [--agent-id <id>]  # Append a dated, attributed entry
-    python3 dev_notes.py <exp_root> last-agent                                     # Report the last entry's agent/agent_id/timestamp
-
+Appends to <exp_root>/dev_notes.md with file locking for concurrent-safe writes.
 The --agent-id is embedded as an HTML comment so SubagentStop can verify the
 specific agent invocation (not just the agent type) wrote the entry.
 
-Examples:
+Usage:
     python3 dev_notes.py <exp_root> init
-    python3 dev_notes.py <exp_root> append baseline-agent 'Established baseline loss=0.42' --agent-id abc123
+    python3 dev_notes.py <exp_root> append <agent_name> '<message>' [--agent-id <id>]
     python3 dev_notes.py <exp_root> last-agent
 """
 
@@ -55,34 +47,25 @@ def init(exp_root: str) -> str:
 def append(exp_root: str, agent_name: str, message: str, agent_id: str = "") -> dict:
     """Append a dated entry to dev_notes.md.
 
-    Format:
-        <!-- agent_id: <id> -->
-        ## YYYY-MM-DD HH:MM — <description> (<agent_name>)
-        <message lines>
-
-    The `agent_id` is embedded as an HTML comment so SubagentStop can verify
-    THIS specific agent invocation (not just the agent type) wrote the entry.
-
-    Returns {"appended": True, "path": str, "timestamp": str}.
+    Format: optional `<!-- agent_id: <id> -->` comment, then
+    `## <timestamp> — <first-line description> (<agent_name>)`, then message body.
+    Returns {"appended": True, "path": str, "timestamp": str, ...}.
     """
     path = _dev_notes_path(exp_root)
     if not path.exists():
         init(exp_root)
 
-    now = datetime.now(timezone.utc)
-    timestamp = now.strftime("%Y-%m-%d %H:%M UTC")
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
-    # Extract a brief description from the first line of message
+    # Brief description from first line of message (truncated to 80 chars)
     first_line = message.strip().split("\n")[0]
     if len(first_line) > 80:
         first_line = first_line[:77] + "..."
 
-    # Format the entry
     lines = ["\n"]
     if agent_id:
         lines.append(f"<!-- agent_id: {agent_id} -->\n")
     lines.append(f"## {timestamp} — {first_line} ({agent_name})\n")
-    # Add message body
     for line in message.strip().split("\n"):
         lines.append(f"- {line}\n")
     lines.append("\n")
@@ -111,8 +94,7 @@ def last_agent(exp_root: str) -> dict:
 
     content = path.read_text()
     import re
-    # Find last entry with optional agent_id comment before the ## heading
-    # Pattern matches: optional "<!-- agent_id: ID -->\n" then "## ts — desc (name)"
+    # Optional "<!-- agent_id: ID -->\n" then "## ts — desc (name)"
     entry_pattern = re.compile(
         r"(?:<!-- agent_id: ([^ ]+) -->\n)?^## (.+?) — .+ \(([^)]+)\)$",
         re.MULTILINE,
@@ -129,10 +111,7 @@ def last_agent(exp_root: str) -> dict:
     }
 
 
-# ---------------------------------------------------------------------------
 # CLI
-# ---------------------------------------------------------------------------
-
 if __name__ == "__main__":
     if len(sys.argv) < 3:
         print("Usage: dev_notes.py <exp_root> append|last-agent|init [args...]")

@@ -197,6 +197,13 @@ def train(args):
         print(f"epoch={epoch} step={global_step} loss={epoch_loss:.4f} lr={current_lr:.6f} accuracy={epoch_acc:.1f}")
         sys.stdout.flush()
 
+        # Periodic checkpoint: survives a mid-loop SIGTERM so eval.py has something real to score.
+        torch.save({
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "epoch": epoch,
+        }, output_dir / "model.pth")
+
     # Final evaluation on test set
     test_loss, test_acc = evaluate(model, test_loader, criterion, device)
     print(f"final loss={test_loss:.4f} accuracy={test_acc:.1f}")

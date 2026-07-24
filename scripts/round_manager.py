@@ -18,11 +18,6 @@ Usage:
 
 Valid round types: hp, evolved, research, stacked. Exit codes: 0 = success,
 1 = error, 2 = check failure (check-* command found incomplete output).
-
-Examples:
-    python3 round_manager.py <exp_root> create-round hp
-    python3 round_manager.py <exp_root> register-experiment round-1-hp exp-001
-    python3 round_manager.py <exp_root> check-round round-1-hp
 """
 
 import fcntl
@@ -47,9 +42,7 @@ from schema_validator import (
 VALID_ROUND_TYPES = ["hp", "evolved", "research", "stacked"]
 
 
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
+# --- Internal helpers ---
 
 def _atomic_write_json(path: Path, data) -> None:
     """Write JSON atomically via temp file + rename."""
@@ -86,38 +79,28 @@ def _scan_exp_ids(results_dir: Path) -> list[int]:
     """Scan for all exp-NNN IDs across flat and round directories."""
     exp_pattern = re.compile(r"^exp-(\d+)\.json$")
     nums: list[int] = []
-
-    # Flat results
-    if results_dir.is_dir():
-        for f in results_dir.iterdir():
-            if f.is_file():
-                m = exp_pattern.match(f.name)
-                if m:
-                    nums.append(int(m.group(1)))
-
-    # Round directories
-    if results_dir.is_dir():
-        for rdir in results_dir.iterdir():
-            if rdir.is_dir() and rdir.name.startswith("round-"):
-                for f in rdir.iterdir():
-                    if f.is_file():
-                        m = exp_pattern.match(f.name)
-                        if m:
-                            nums.append(int(m.group(1)))
-
+    if not results_dir.is_dir():
+        return nums
+    for f in results_dir.iterdir():
+        if f.is_file():
+            m = exp_pattern.match(f.name)
+            if m:
+                nums.append(int(m.group(1)))
+        elif f.is_dir() and f.name.startswith("round-"):
+            for sub in f.iterdir():
+                if sub.is_file():
+                    m = exp_pattern.match(sub.name)
+                    if m:
+                        nums.append(int(m.group(1)))
     return nums
 
 
-# ---------------------------------------------------------------------------
-# Round lifecycle
-# ---------------------------------------------------------------------------
+# --- Round lifecycle ---
 
 def create_round(exp_root: str, round_type: str, branch: str | None = None) -> dict:
-    """Create a new round directory and update manifest.
+    """Create a round directory and update rounds-manifest.json atomically (file-locked).
 
-    Creates <exp_root>/results/round-N-<type>/ and the matching
-    proposed-configs/round-N-<type>/ directory.  Updates
-    rounds-manifest.json atomically with file locking.
+    Creates <exp_root>/results/round-N-<type>/ and its proposed-configs/ sibling.
     """
     if round_type not in VALID_ROUND_TYPES:
         return {"error": f"Invalid round type '{round_type}': must be one of {VALID_ROUND_TYPES}"}
@@ -130,6 +113,13 @@ def create_round(exp_root: str, round_type: str, branch: str | None = None) -> d
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
         try:
             manifest = _load_manifest(exp_root)
+            # Self-heal: an open prior round was abandoned mid-flight — close it.
+            if manifest["rounds"] and manifest["rounds"][-1].get("closed_at") is None:
+                manifest["rounds"][-1]["closed_at"] = datetime.now(timezone.utc).isoformat()
+                manifest["rounds"][-1]["summary"] = (
+                    manifest["rounds"][-1].get("summary")
+                    or "auto-closed: abandoned (a new round was created without this one being explicitly closed, likely an interruption)"
+                )
             round_id = manifest["current_round"] + 1
             dir_name = f"round-{round_id}-{round_type}"
 
@@ -168,10 +158,7 @@ def create_round(exp_root: str, round_type: str, branch: str | None = None) -> d
 
 
 def current_round(exp_root: str) -> dict | None:
-    """Get the current (latest) round info from manifest.
-
-    Returns None if no rounds exist.
-    """
+    """Get the current (latest) round info from manifest, or None if no rounds exist."""
     manifest = _load_manifest(exp_root)
     if not manifest["rounds"]:
         return None
@@ -179,10 +166,7 @@ def current_round(exp_root: str) -> dict | None:
 
 
 def register_experiment(exp_root: str, round_dir: str, exp_id: str) -> dict:
-    """Register an experiment ID in the specified round.
-
-    Updates the round's experiments list in the manifest.
-    """
+    """Register an experiment ID in the specified round's experiments list."""
     path = _manifest_path(exp_root)
     lock_path = path.with_suffix(".lock")
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -246,9 +230,7 @@ def next_experiment_id(exp_root: str) -> str:
     return f"exp-{max(nums) + 1:03d}"
 
 
-# ---------------------------------------------------------------------------
-# Completeness checks
-# ---------------------------------------------------------------------------
+# --- Completeness checks ---
 
 def _check_file(exp_root: str, filename: str, validator) -> dict:
     """Check a file exists and passes schema validation."""
@@ -284,8 +266,8 @@ def check_manifest(exp_root: str) -> dict:
 def check_round(exp_root: str, round_dir: str) -> dict:
     """Check completeness of a round directory.
 
-    For each exp-*.json in the round directory, validates the result
-    schema, checks for terminal status, and verifies the log file exists.
+    For each exp-*.json: validates the result schema, checks terminal status,
+    and verifies the log file exists.
     """
     root = Path(exp_root)
     rpath = root / "results" / round_dir
@@ -330,7 +312,6 @@ def check_round(exp_root: str, round_dir: str) -> dict:
         else:
             non_terminal.append(exp_id)
 
-        # Check log file exists (round-based path)
         log_path = root / "logs" / round_dir / exp_id / "train.log"
         if not log_path.is_file():
             missing_logs.append(exp_id)
@@ -350,8 +331,7 @@ def check_round(exp_root: str, round_dir: str) -> dict:
 def check_proposals(exp_root: str, round_dir: str) -> dict:
     """Check proposed configs in proposed-configs/<round_dir>/.
 
-    For each exp-*.json, checks that exp_id and config fields exist
-    and that exp_id matches the filename.
+    For each exp-*.json: validates the schema and that exp_id matches the filename.
     """
     root = Path(exp_root)
     ppath = root / "proposed-configs" / round_dir
@@ -381,7 +361,6 @@ def check_proposals(exp_root: str, round_dir: str) -> dict:
         result = validate_hp_proposal(data)
         errors = list(result["errors"])
 
-        # Check exp_id matches filename
         actual_id = data.get("exp_id", "")
         if actual_id != expected_id:
             errors.append(
@@ -402,9 +381,7 @@ def check_proposals(exp_root: str, round_dir: str) -> dict:
     }
 
 
-# ---------------------------------------------------------------------------
-# CLI entry point
-# ---------------------------------------------------------------------------
+# --- CLI entry point ---
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:

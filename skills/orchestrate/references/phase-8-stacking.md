@@ -1,23 +1,32 @@
-# Phase 8: Method Stacking (Within the Autonomous Loop)
+# Phase 8: Method Stacking (Workflow)
 
 **Phase gate:** Run `pipeline_state.py <exp_root> gate 7 8` before entering. On completion: `pipeline_state.py <exp_root> log-gate 8 completed "<summary>"`.
 
-Method stacking combines different implementations (from papers, LLM patches, or ShinkaEvolve) into one model. It's triggered by the analysis agent during Phase 7 when it judges that multiple improved methods could yield compound gains — not by a fixed method count.
+Phase 8 runs as a **dynamic workflow** (`Workflow({scriptPath: "${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/workflows/phase-8-stacking.js", args})`). The orchestrator launches it when the phase-7 workflow returns non-empty `stacking_candidates`. The stacking loop lives inside the workflow script: it holds the "current best stack" in a script variable and dispatches existing agents internally via `agentType` (`agent(prompt, {agentType: "ml-optimizer:<name>-agent"})`).
 
-**Pre-check:** If `strategy: "file_backup"` (non-git project), skip stacking. Log to dev_notes.
+> "Dispatch the X agent" = an `agent({agentType: "ml-optimizer:X-agent"})` call inside the workflow script, NOT an orchestrator `Agent()`/`SendMessage` call. No message bus, no `SendMessage`, no agent registry — cross-agent context flows via `args` + the files agents write under `<exp_root>/`.
 
-**Trigger:** The analysis agent advises `pivot_type: "method_stacking"` when multiple methods from different papers or significant code changes have improved independently. The orchestrator ranks methods by improvement magnitude and drives the stacking loop.
+## Workflow Args & Return
 
-After stacking completes, return to Phase 7 to continue optimizing on the stacked code.
-- **Autonomous mode:** Auto-proceed. Log to dev_notes: "Auto-entering stacking phase with {N} improved methods."
+**Args (in):** `{ exp_root, project_root, primary_metric, lower_is_better, baseline_metric, scope_level, divergence_metric, divergence_lower_is_better, model_category, fixed_time_budget, fixed_epoch_budget, fixed_step_budget, stacking_candidates }`
+where `stacking_candidates: [{branch, improvement_pct}, ...]` comes from the phase-7 return. `baseline_metric` (the baseline's primary-metric value) lets the workflow derive the seed method's absolute metric so the first accumulation is compared, not force-kept. `scope_level` gates the code_evolution/ShinkaEvolve repair (only runs at `"full"`, mirroring Phase 7). `fixed_time_budget`/`fixed_epoch_budget` cap each stacked run the same way the baseline was, so metrics stay comparable. `divergence_metric`/`divergence_lower_is_better`/`model_category` build the same divergenceClause Phase 7 uses, appended to every stacked experiment prompt — stacked runs get identical divergence handling to Phase 7 runs.
 
-## Orchestrator-Driven Stacking
+**Return (out):** `{ best_stack_branch, best_stack_metric, steps: [{method, branch, kept}, ...] }`
 
-The orchestrator ranks methods by improvement magnitude (descending — largest improvement first) and drives the stacking loop directly. No archive lineage data needed — methods are stacked in order of effectiveness.
+Method stacking combines different implementations (papers, LLM patches, or ShinkaEvolve) into one model. It's triggered by the analysis agent during Phase 7 (`pivot_type: "method_stacking"`) when it judges multiple improved methods could yield compound gains — not by a fixed method count. The phase-7 workflow surfaces those methods as `stacking_candidates`.
+
+**Pre-check:** If `strategy: "file_backup"` (non-git project), the workflow skips stacking and returns immediately. Log to dev_notes.
+
+After stacking completes, the orchestrator may relaunch the phase-7 workflow to continue optimizing on the stacked code.
+- **Autonomous mode:** The workflow auto-proceeds. Log to dev_notes: "Auto-entering stacking phase with {N} improved methods."
+
+## Workflow-Driven Stacking
+
+The workflow ranks methods by improvement magnitude (descending — largest first) and drives the stacking loop. No archive lineage data needed — methods are stacked in order of effectiveness.
 
 ## Stacking Loop
 
-1. **Rank methods by improvement magnitude** (descending) — the method with the largest improvement over baseline gets stacked first.
+1. **Rank methods by improvement magnitude** (descending) — the largest improvement over baseline gets stacked first.
 
 2. **Initialize stack:** The best method's branch becomes `ml-opt/stack-1`. No experiment needed — its existing best result serves as the stack baseline.
 
@@ -37,28 +46,10 @@ The orchestrator ranks methods by improvement magnitude (descending — largest 
 
    c. **If clean merge** → proceed to validation.
 
-   d. **If merge conflicts** → dispatch implement-agent (resume-or-dispatch pattern):
-
-      **IF `agent_registry["implement"]` is not null** (agent exists from a previous phase):
+   d. **If merge conflicts** → dispatch the implement agent via `agent({agentType: "ml-optimizer:implement-agent"})` with prompt:
       ```
-      SendMessage(
-        to: agent_registry["implement"],
-        message: "Resolve merge conflicts for stack step {order}.
-          CONTEXT FROM OTHER AGENTS:
-          - EXPERIMENTS: methods ranked by improvement: {ranking}
-          - ANALYZE: recommended stacking order: {order}
-          Merge {method_B} into {current_stack_branch}. Preserve both methods.
-          Conflicting files: {conflicting_files}. Both methods must be preserved: [method-A description] and [method-B description]."
-      )
+      "Resolve merge conflicts for stack step {order}. Merge {method_B} into {current_stack_branch}. Both methods must be preserved: [method-A description] and [method-B description]. The goal is to combine their functionality. Conflicting files: {conflicting_files} (from `git diff --name-only --diff-filter=U`). CONTEXT: methods ranked by improvement: {ranking}; recommended stacking order: {order}."
       ```
-      → If `SendMessage` fails (agent no longer reachable): fall back to the `Agent()` dispatch below, update `agent_registry["implement"]` with the new agentId.
-
-      **ELSE** (first dispatch — no existing agent):
-      - **Prompt:** "Resolve merge conflicts in the following files. Both methods must be preserved: [method-A description] and [method-B description]. The goal is to combine their functionality."
-      - **Files:** List of conflicting files from `git diff --name-only --diff-filter=U`
-      → Save returned `agentId` to `agent_registry["implement"]`
-      → Persist registry: `save_state(..., agent_registry=agent_registry)`
-
       - If implement-agent succeeds → `git add .` and `git commit -m "Resolve merge conflicts for stack-<order>"`
       - If implement-agent fails → skip this method:
         - `git merge --abort`
@@ -75,63 +66,28 @@ The orchestrator ranks methods by improvement magnitude (descending — largest 
       ```
       Without this, the PreToolUse hook blocks the experiment's result write.
 
-   f. **Run experiment** by dispatching the experiment agent:
+   f. **Run experiment** via `agent({agentType: "ml-optimizer:experiment-agent"})` with prompt:
       ```
-      Agent(
-        description: "Run stacking experiment stack-{order}",
-        prompt: "Run stacking experiment. Parameters: exp_id: {exp_id}. Config: {config_json}. GPU: {gpu_id}. Project root: {project_root}. Train command: {train_command}. Eval command: {eval_command or null}. Code branch: ml-opt/stack-{order}. Method tier: stacked_default_hp. Stacking order: {order}. Stack base exp: {stack_base_exp}. Code branches: {code_branches_json}. round_dir: {round_dir}.",
-        subagent_type: "ml-optimizer:experiment-agent"
-      )
+      "Run stacking experiment. Parameters: exp_id: {exp_id}. Config: {config_json}. GPU: {gpu_id}. Project root: {project_root}. Train command: {train_command}. Eval command: {eval_command or null}. Code branch: ml-opt/stack-{order}. Method tier: stacked_default_hp. Stacking order: {order}. Stack base exp: {stack_base_exp}. Code branches: {code_branches_json}. round_dir: {round_dir}."
       ```
 
    g. **Evaluate result:**
-      - Compare to previous stack step's metric value.
+      - Compare to the previous stack step's metric value.
       - **If improved:** Keep this stack step.
         - Update `stack_base_branch = ml-opt/stack-<order>`
 
-        - **Analyze stacked result:** Dispatch the analysis agent to assess whether the stacked code needs evolution or HP-tuning (resume-or-dispatch pattern, same as Phase 7):
-
-          **IF `agent_registry["analysis"]` is not null:**
+        - **Analyze stacked result:** Dispatch the analysis agent via `agent({agentType: "ml-optimizer:analysis-agent"})` to assess whether the stacked code needs evolution or HP-tuning, with prompt:
           ```
-          SendMessage(
-            to: agent_registry["analysis"],
-            message: "Analyze stacked experiment result.
-              CONTEXT FROM OTHER AGENTS:
-              - EXPERIMENTS: stacked experiment on ml-opt/stack-{order}: {stacked_metrics}
-              - STACKING: methods combined: {stacked_methods}, stacking order: {order}
-              - BEST INDIVIDUAL: best single method gain: {best_individual_gain}%
-              Parameters: project_root: {project_root}, batch_number: stack-{order},
-              primary_metric: {primary_metric}, lower_is_better: {lower_is_better},
-              exp_root: {exp_root}.
-              Compare the stacked gain to the best individual method gain. If the stack underperforms
-              the best individual (methods interfering), recommend code_evolution. Otherwise recommend continue."
-          )
+          "Analyze stacked experiment result. Parameters: project_root: {project_root}, batch_number: stack-{order}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, exp_root: {exp_root}. CONTEXT: stacked experiment on ml-opt/stack-{order}: {stacked_metrics}; methods combined: {stacked_methods}, stacking order: {order}; best single method gain: {best_individual_gain}%. Compare the stacked gain to the best individual method gain. If the stack underperforms the best individual (methods interfering), recommend code_evolution. Otherwise recommend continue."
           ```
-          → If `SendMessage` fails: fall back to `Agent()` dispatch below, update `agent_registry["analysis"]`.
-
-          **ELSE:**
-          ```
-          Agent(
-            description: "Analyze stacked result stack-{order}",
-            prompt: <same as above>,
-            subagent_type: "ml-optimizer:analysis-agent"
-          )
-          ```
-          → Save returned `agentId` to `agent_registry["analysis"]`
-          → Persist registry: `save_state(..., agent_registry=agent_registry)`
+          The stacked metrics and best-individual gain are read from `results/round-N-stacked/exp-*.json` and the round results.
 
         - **If analysis recommends `pivot_type: "code_evolution"`:**
 
-          **Step 1: Tune evolve HPs.** Dispatch tuning agent (resume-or-dispatch):
-          ```
-          SendMessage(to: agent_registry["tuning"]) OR Agent(subagent_type="ml-optimizer:tuning-agent")
-          ```
-          Prompt: "Propose ShinkaEvolve evolution HPs for stacking code_evolution. Stacked methods: {stacked_methods}. Read `learned-behaviors.json` category `evolve_hp` for prior outcomes. Return `evolve_recommendation: {num_generations, population_size, reasoning}`."
+          **Step 1: Tune evolve HPs.** Dispatch the tuning agent via `agent({agentType: "ml-optimizer:tuning-agent"})` with prompt:
+          "Propose ShinkaEvolve evolution HPs for stacking code_evolution. Stacked methods: {stacked_methods}. Read `learned-behaviors.json` category `evolve_hp` for prior outcomes. Return `evolve_recommendation: {num_generations, population_size, reasoning}`."
 
-          **Step 2: Execute evolve.** Dispatch implement-agent with evolve skill (resume-or-dispatch):
-          ```
-          SendMessage(to: agent_registry["implement"]) OR Agent(subagent_type="ml-optimizer:implement-agent")
-          ```
+          **Step 2: Execute evolve.** Dispatch the implement agent via `agent({agentType: "ml-optimizer:implement-agent"})` with the evolve skill.
           Prompt: `Skill("ml-optimizer:evolve")` with parameters:
             - `project_root`, `parent_branch: ml-opt/stack-{order}`, `parent_metrics: {stacked metrics}`
             - `primary_metric`, `lower_is_better`, `scope_level`, `exp_root`
@@ -141,21 +97,17 @@ The orchestrator ranks methods by improvement magnitude (descending — largest 
           **Handle evolve result:**
           - If `status == "validated"`:
             - Run experiment on the evolved branch (`ml-opt/evolved-*`)
-            - If evolved result is better than pre-evolution stack → update `stack_base_branch` to evolved branch, add `"stack-<order>"` to `evolved_methods` in stacking state
+            - If evolved result beats the pre-evolution stack → update `stack_base_branch` to the evolved branch, add `"stack-<order>"` to `evolved_methods` in stacking state
             - If evolved result is worse → discard evolved branch, keep pre-evolution `ml-opt/stack-<order>` as stack base
           - If `status == "shinkaevolve_unavailable"` or `"validation_failed"`:
             - Log to error tracker, continue without evolution (proceed to HP-tune)
 
-        - **HP-tune on (potentially evolved) stack branch:** Dispatch the tuning agent to propose training HPs, then run experiment (resume-or-dispatch pattern):
-
-          ```
-          SendMessage(to: agent_registry["tuning"]) OR Agent(subagent_type="ml-optimizer:tuning-agent")
-          ```
+        - **HP-tune on the (potentially evolved) stack branch:** Dispatch the tuning agent via `agent({agentType: "ml-optimizer:tuning-agent"})` to propose training HPs, then run experiment.
           Prompt: "Propose HP configs for stacked method. Parameters: project_root: {project_root}, num_gpus: {num_gpus}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, code_branches: [{stack_base_branch}], iteration: 1, search_space: {narrowed_search_space}."
 
-          Run experiments with proposed configs. If HP-tune improves, record as `method_tier: "stacked_tuned_hp"`.
+          Run experiments with proposed configs (via `agent({agentType: "ml-optimizer:experiment-agent"})`). If HP-tune improves, record as `method_tier: "stacked_tuned_hp"`.
 
-        - **Re-analyze:** After evolve + HP-tune, dispatch the analysis agent again on the updated result:
+        - **Re-analyze:** After evolve + HP-tune, dispatch the analysis agent again on the updated result (`agent({agentType: "ml-optimizer:analysis-agent"})`):
           - If analysis recommends `code_evolution` again → loop back to the tuning + evolve step above (with new HPs from tuning agent)
           - If analysis recommends `continue` → improvement achieved, proceed to next stack step
           - If analysis recommends `stop` → skip this method, the combination can't be fixed
@@ -163,7 +115,7 @@ The orchestrator ranks methods by improvement magnitude (descending — largest 
       - **If analysis recommends `stop`:** Skip this method.
         - Delete `ml-opt/stack-<order>` branch
         - Log: "Method <slug> skipped in stacking (analysis determined combination unproductive)"
-        - Continue to next method (next stack branch re-branches from last successful stack)
+        - Continue to next method (next stack branch re-branches from the last successful stack)
 
    h. **Close the stacking round:** After all experiments and any evolve/hp-tune sub-rounds for this stack step complete:
       ```bash
@@ -188,16 +140,16 @@ The orchestrator ranks methods by improvement magnitude (descending — largest 
    }
    ```
 
-5. **Final result:** The last successful `ml-opt/stack-<N>` branch is the compound best.
+5. **Final result:** The last successful `ml-opt/stack-<N>` branch is the compound best. The workflow returns `{ best_stack_branch: "ml-opt/stack-<N>", best_stack_metric, steps: [{method, branch, kept}, ...] }` to the orchestrator.
    Log to dev_notes: "Stacking complete. Final stack: [methods]. Compound gain: X% over baseline. Branch: ml-opt/stack-<N>"
 
 ## Stacking Phase Resumption
 
-On pipeline restart, if `pipeline-state.json` contains a `stacking` key in `user_choices`:
+Within a session, the phase-8 workflow is resumable via `resumeFromRunId`. Across sessions / on pipeline restart, if `pipeline-state.json` contains a `stacking` key in `user_choices`, the orchestrator relaunches the phase-8 workflow, which reads the file-persisted stacking state and continues:
 1. Read stacking state
 2. **Validate before resuming:**
    a. `current_stack_order < len(ranked_methods)` — if not, stacking is already complete; skip to Phase 9
    b. Verify `ml-opt/stack-<current_stack_order>` branch exists (`git branch --list`). If missing, log error to error tracker and skip to Phase 9 with partial results.
    c. Verify `stack_base_exp` result file is readable. If missing, fall back to the last known good stack result from `stacked_methods`.
 3. Resume from `current_stack_order + 1`
-4. Continue with remaining methods in `ranked_methods` that aren't in `stacked_methods` or `skipped_methods`
+4. Continue with remaining methods in `ranked_methods` not in `stacked_methods` or `skipped_methods`

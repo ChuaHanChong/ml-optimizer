@@ -1,18 +1,26 @@
 ---
 name: run-diagnostic
-description: "Run end-to-end diagnostics — validates plugin structure, dispatches all 9 agents, tests evolutionary workflow (ShinkaEvolve), and runs a full optimization pipeline on the test fixture via live Agent() dispatch."
+description: "Run end-to-end diagnostics — validates plugin structure, dispatches all 9 worker agents (10 agent definitions incl. the main-thread orchestrator), tests evolutionary workflow (ShinkaEvolve), and runs a full optimization pipeline on the test fixture."
 allowed-tools: "Bash, Read, Write, Edit, Glob, Grep, Agent, Skill, WebSearch, WebFetch"
 ---
 
 # ML Optimizer End-to-End Diagnostic
 
-You are running a comprehensive diagnostic of the ml-optimizer plugin. This validates plugin structure via pytest, exercises all script CLIs, tests hook security boundaries, validates the resumable subagent infrastructure (agent registry, SendMessage patterns, context relay), confirms all 9 agents dispatch correctly, tests the ShinkaEvolve evolutionary workflow, and runs the full Phase 2→9 pipeline via live Agent() dispatch — the only way to test the multi-agent orchestration end-to-end.
+Comprehensive diagnostic of the ml-optimizer plugin: validates plugin structure via pytest, exercises all script CLIs, tests hook security boundaries, validates workflow infrastructure (`skills/orchestrate/workflows/phase-{5,6,7,8}-*.js`), confirms all 9 worker agents dispatch (10 agent definitions total, incl. the main-thread orchestrator, which is not a dispatchable subagent), tests the ShinkaEvolve workflow, and runs the full Phase 2→9 pipeline. Phases 0/1, 2, 3, 4, 9 dispatch via `Agent()`; phases 5–8 run as dynamic workflows (`Workflow({scriptPath, args})`) dispatching via `agentType`.
 
 ## Step 1: Run full test suite (pytest)
 
-**First:** Detect this plugin's root directory — the directory containing `scripts/`, `tests/`, `hooks/`, and `agents/`. Save it as `PLUGIN_ROOT` for all subsequent steps.
+**First:** Detect this plugin's root — the directory containing `scripts/`, `tests/`, `hooks/`, `agents/`. Save as `PLUGIN_ROOT` for all subsequent steps.
+
+Checks (each prints ✓/✗; all run regardless of individual failures):
 
 ```bash
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}"
+export PLUGIN_ROOT
+SCRIPTS=$PLUGIN_ROOT/scripts
+HOOKS=$PLUGIN_ROOT/hooks
+FIX=$PLUGIN_ROOT/tests/fixtures
+
 cd $PLUGIN_ROOT
 
 # Collection guard: verify pytest discovers at least 1100 tests before running.
@@ -29,13 +37,18 @@ fi
 python3 -m pytest tests/ -v --tb=short 2>&1 | tail -60
 ```
 
-This runs all 17 test files (~1192 tests total; ~1149 when `test_evolve.py` is excluded because ShinkaEvolve pulls extra deps). Report failures. GPU-related test failures on non-GPU machines are acceptable. If `scripts/plot_results.py` fails due to missing matplotlib, note it but continue. If `test_evolve.py` can't be collected due to missing ShinkaEvolve dependencies, run with `--ignore=tests/test_evolve.py` and the collection guard will tolerate the lower count.
+Runs all 22 test files (~1332 tests, including `test_evolve.py`). Report failures. GPU-related failures on non-GPU machines are acceptable. If `scripts/plot_results.py` fails on missing matplotlib, note and continue. `test_evolve.py` (43 tests) is REQUIRED — its imports are stdlib-only, so it needs only the ShinkaEvolve submodule initialized (not extra deps). If those tests fail to collect, ShinkaEvolve is not set up: run `bash scripts/setup_evolve.sh` to fix it (SSH→HTTPS submodule fallback + verification). Do NOT skip them with `--ignore`.
 
 ## Step 2: Script CLI smoke tests
 
-Run each Python script's CLI interface with minimal inputs. This tests argument parsing and basic execution paths — no training needed.
+Run each Python script's CLI with minimal inputs — tests argument parsing and basic execution paths, no training needed.
+
+Checks (each prints ✓/✗; all run regardless of individual failures):
 
 ```bash
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}"
+export PLUGIN_ROOT
+
 SCRIPTS=$PLUGIN_ROOT/scripts
 FIX=$PLUGIN_ROOT/tests/fixtures
 mkdir -p /tmp/ml-opt-cli-test/{results,reports,logs}
@@ -166,7 +179,7 @@ python3 $SCRIPTS/output_contract.py inject $OC_EXP baseline-agent | grep -q "REQ
   && python3 $SCRIPTS/output_contract.py check $OC_EXP report-agent > /dev/null 2>&1; [ $? -eq 2 ] \
   && echo "✓ output_contract (inject × 3 + check × 2)" || echo "✗ output_contract FAILED"
 
-# 20. dev_notes.py (init + append + last-agent subcommands — dev_notes.md writer + agent_id correlation)
+# 20. dev_notes.py (init + append + last-agent subcommands — dev_notes.md running-log writer; --agent-id tags the entry)
 DN_EXP=/tmp/ml-opt-cli-test/dev-notes
 mkdir -p $DN_EXP
 python3 $SCRIPTS/dev_notes.py $DN_EXP init > /dev/null \
@@ -198,20 +211,28 @@ Report pass/fail count.
 
 ## Step 3: Hook tests
 
-Test every hook wired in `hooks.json` plus the 3-checkpoint enforcement machinery. Split into two sub-steps:
+Test every hook in `hooks.json` plus the 3-checkpoint enforcement machinery. Two sub-steps:
 
 - **Step 3.1** — functional tests for the 9 lifecycle hooks (security, compaction, status, state-change detection).
-- **Step 3.2** — 3-checkpoint enforcement tests for the 3 output-structure hooks (SubagentStart inject, PreToolUse Write/Edit validate, SubagentStop check) with synthetic stdin covering all validator features (`any_of`, `required_if`, stacked tier, frozen params, OOM cap, dev_notes agent_id correlation).
+- **Step 3.2** — 3-checkpoint enforcement tests for the 3 output-structure hooks (SubagentStart inject, PreToolUse Write/Edit validate, SubagentStop check) with synthetic stdin covering all validator features (`any_of`, `required_if`, stacked tier, frozen params, OOM cap).
 
-Together these cover all 11 hooks wired in `hooks.json`.
+Together these cover all 11 hooks in `hooks.json`.
 
 ### Step 3.1: Hook functional tests
 
-Test every hook wired in `hooks.json` with synthetic JSON stdin inputs. Covers 8 lifecycle hooks (bash-safety, file-guardrail, detect-critical-errors, pre-compact, post-compact-context, stop-check, file-changed-pipeline-state, cwd-changed-detect-experiments). The 3 output-structure enforcement hooks (subagent-start-inject-goals, validate_experiment_write, validate_agent_output) are tested separately in **Step 3.2**.
+Test every hook in `hooks.json` with synthetic JSON stdin. Covers 8 lifecycle hooks (bash-safety, file-guardrail, detect-critical-errors, pre-compact, post-compact-context, stop-check, file-changed-pipeline-state, cwd-changed-detect-experiments). The 3 output-structure enforcement hooks (subagent-start-inject-goals, validate_experiment_write, validate_agent_output) are tested separately in **Step 3.2**.
 
-**Prerequisite:** Check if `jq` is installed (`which jq`). If not, skip hook tests and note in report.
+**Prerequisite:** Check `jq` is installed (`which jq`). If not, skip hook tests and note in report.
+
+Checks (each prints ✓/✗; all run regardless of individual failures):
 
 ```bash
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}"
+export PLUGIN_ROOT
+SCRIPTS=$PLUGIN_ROOT/scripts
+HOOKS=$PLUGIN_ROOT/hooks
+FIX=$PLUGIN_ROOT/tests/fixtures
+
 HOOKS=$PLUGIN_ROOT/hooks
 
 echo "=== Hook Functional Tests ==="
@@ -349,11 +370,17 @@ Report pass/fail count.
 
 ### Step 3.2: 3-checkpoint output structure enforcement
 
-Test the 3 hooks that enforce documented output structure for every agent dispatch. Uses a synthetic experiment directory under `/tmp`. All 3 layers of the enforcement model (SubagentStart inject, PreToolUse Write/Edit validate, SubagentStop check) are exercised with mock stdin — no live agent dispatch required.
+Test the 3 hooks enforcing documented output structure for every agent dispatch, using a synthetic experiment directory under `/tmp`. All 3 enforcement layers (SubagentStart inject, PreToolUse Write/Edit validate, SubagentStop check) are exercised with mock stdin — no live agent dispatch required.
 
-**Prerequisite:** `jq` must be installed (already checked in Step 3.1). Set `$SCRIPTS` and `$HOOKS` to the plugin directories.
+**Prerequisite:** `jq` installed (checked in Step 3.1). Set `$SCRIPTS` and `$HOOKS` to the plugin directories.
+
+Checks (each prints ✓/✗; all run regardless of individual failures):
 
 ```bash
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}"
+export PLUGIN_ROOT
+# NOTE: no `set -e` — the checks use && / || and must all run.
+
 SCRIPTS=$PLUGIN_ROOT/scripts
 HOOKS=$PLUGIN_ROOT/hooks
 ENFORCE_EXP=/tmp/ml-opt-enforce-test
@@ -570,192 +597,104 @@ echo "$DECISION" | grep -q '"decision": *"approve"' \
   && echo "✓ L3 approves prerequisites-agent when prepared=true AND dir exists" \
   || echo "✗ L3 FAILED required_if true+dir"
 
-# dev_notes.md agent_id correlation: mismatch → block
-# Reset baseline outputs (they may have been cleared by earlier L3 tests)
-mkdir -p $ENFORCE_EXP/experiments/logs/baseline
-echo '{"exp_id":"baseline"}' > $ENFORCE_EXP/experiments/results/baseline.json
-echo "log data" > $ENFORCE_EXP/experiments/logs/baseline/train.log
-# Write an entry tagged with agent-X
-python3 $SCRIPTS/dev_notes.py $ENFORCE_EXP/experiments append baseline-agent 'test entry' --agent-id agent-X >/dev/null 2>&1
-DECISION=$(echo '{"cwd":"'$ENFORCE_EXP'","subagent_type":"ml-optimizer:baseline-agent","agent_id":"agent-Y"}' \
-  | python3 $SCRIPTS/validate_agent_output.py 2>/dev/null)
-echo "$DECISION" | grep -q '"decision": *"block"' \
-  && echo "$DECISION" | grep -q "dev_notes.md" \
-  && echo "✓ L3 blocks agent when dev_notes.md agent_id does not match" \
-  || echo "✗ L3 FAILED dev_notes agent_id mismatch"
-
-# dev_notes.md agent_id match → approve
-DECISION=$(echo '{"cwd":"'$ENFORCE_EXP'","subagent_type":"ml-optimizer:baseline-agent","agent_id":"agent-X"}' \
-  | python3 $SCRIPTS/validate_agent_output.py 2>/dev/null)
-echo "$DECISION" | grep -q '"decision": *"approve"' \
-  && echo "✓ L3 approves agent when dev_notes.md agent_id matches" \
-  || echo "✗ L3 FAILED dev_notes agent_id match"
 
 # Cleanup
 rm -rf $ENFORCE_EXP
 ```
 
-Report pass/fail count. Expected: 24 ✓ lines (3 for L1, 11 for L2, 10 for L3).
+Report pass/fail count. Expected: 22 ✓ lines (3 for L1, 11 for L2, 8 for L3).
 
-## Step 4: Resumable subagent infrastructure validation
+## Step 4: Workflow infrastructure validation
 
-Validate that the resumable subagent patterns are correctly implemented across the plugin. This is structural validation — no live agent dispatch needed.
+Validate that the dynamic workflows backing phases 5–8 are present and well-formed, and that the phase docs dispatch through them. Structural validation — no live agent dispatch needed.
 
-### 4.1: Agent registry in pipeline_state.py
+### 4.1: Workflow files exist and are valid
+
+Checks (each prints ✓/✗; all run regardless of individual failures):
 
 ```bash
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}"
+export PLUGIN_ROOT
+SCRIPTS="$PLUGIN_ROOT/scripts"
+HOOKS="$PLUGIN_ROOT/hooks"
+FIX="$PLUGIN_ROOT/tests/fixtures"
+
+# ── 4.1: Workflow files exist and are valid ──
 cd $PLUGIN_ROOT
-# Verify agent_registry is a parameter of save_state()
+WORKFLOWS="$PLUGIN_ROOT/skills/orchestrate/workflows"
+
+# Detect node once — node --check is skipped if absent
+HAVE_NODE=0; which node > /dev/null 2>&1 && HAVE_NODE=1
+
+for f in phase-5-research.js phase-6-implement.js phase-7-experiment.js phase-8-stacking.js; do
+  path="$WORKFLOWS/$f"
+  if [ ! -f "$path" ]; then
+    echo "FAIL: $f missing"
+    continue
+  fi
+  # Must begin with 'export const meta'
+  if head -1 "$path" | grep -q "export const meta"; then
+    META_OK="meta✓"
+  else
+    META_OK="meta✗"
+  fi
+  # node --check (skip if node absent)
+  if [ "$HAVE_NODE" -eq 1 ]; then
+    if node --check "$path" 2>/dev/null; then
+      CHECK_OK="node-check✓"
+    else
+      CHECK_OK="node-check✗"
+    fi
+  else
+    CHECK_OK="node-check(skipped — node absent)"
+  fi
+  echo "PASS: $f present — $META_OK $CHECK_OK"
+done
+
+# ── 4.2: Phase docs dispatch via Workflow( ──
+REFS="$PLUGIN_ROOT/skills/orchestrate/references"
+for doc in phase-5-research phase-6-implement phase-7-experiment-loop phase-8-stacking; do
+  path="$REFS/$doc.md"
+  if [ -f "$path" ] && grep -q "Workflow(" "$path"; then
+    echo "PASS: $doc.md dispatches via Workflow("
+  else
+    echo "FAIL: $doc.md does NOT dispatch via Workflow("
+  fi
+done
+
+# ── 4.3: pipeline_state save/load roundtrips user_choices (no agent_registry) ──
 python3 -c "
+import sys, tempfile
+sys.path.insert(0, '$PLUGIN_ROOT/scripts')
 from pipeline_state import save_state, load_state
-import tempfile, os
 with tempfile.TemporaryDirectory() as d:
-    # Test save/load roundtrip
-    reg = {'research': 'agent-test-1', 'tuning': 'agent-test-2'}
-    save_state(7, 1, [], d, agent_registry=reg)
+    # Test user_choices save/load roundtrip
+    choices = {'primary_metric': 'loss', 'lower_is_better': True}
+    save_state(7, 1, [], d, user_choices=choices)
     state = load_state(d)
-    assert state['agent_registry'] == reg, 'Registry roundtrip failed'
+    assert state['user_choices'] == choices, 'user_choices roundtrip failed'
     # Test preserve-on-None
     save_state(7, 2, [], d)
-    assert load_state(d)['agent_registry'] == reg, 'Registry not preserved'
-    # Test clearing
-    save_state(7, 3, [], d, agent_registry={})
-    assert load_state(d)['agent_registry'] == {}, 'Registry not cleared'
-    # Test coexistence with user_choices
-    save_state(7, 4, [], d, agent_registry={'research': 'x'}, user_choices={'metric': 'loss'})
-    s = load_state(d)
-    assert s['agent_registry'] == {'research': 'x'} and s['user_choices']['metric'] == 'loss'
-print('agent_registry: all 4 checks passed')
+    assert load_state(d)['user_choices'] == choices, 'user_choices not preserved'
+    # No agent_registry should be persisted
+    assert 'agent_registry' not in load_state(d), 'agent_registry should be removed'
+print('pipeline_state: user_choices roundtrip OK, no agent_registry')
 "
-```
-
-### 4.2: Persistent vs ephemeral agent classification
-
-```bash
-# Verify persistent agents have "Resumable Agent" section
-for agent in research implement tuning analysis monitor; do
-  if grep -q "Resumable Agent" "$PLUGIN_ROOT/agents/${agent}-agent.md"; then
-    echo "PASS: ${agent}-agent has Resumable Agent section"
-  else
-    echo "FAIL: ${agent}-agent MISSING Resumable Agent section"
-  fi
-done
-
-# Verify ephemeral agents do NOT have "Resumable Agent" section
-for agent in prerequisites baseline experiment report; do
-  if grep -q "Resumable Agent" "$PLUGIN_ROOT/agents/${agent}-agent.md"; then
-    echo "FAIL: ${agent}-agent should NOT have Resumable Agent section"
-  else
-    echo "PASS: ${agent}-agent correctly has no Resumable Agent section"
-  fi
-done
-```
-
-### 4.3: Orchestrate skill agent registry documentation
-
-```bash
-ORCH="$PLUGIN_ROOT/skills/orchestrate/SKILL.md"
-checks=0; passed=0
-for pattern in "agent_registry" "Dispatch Protocol" "SendMessage" "Context Relay" "Persistent" "Ephemeral" "pipeline-state.json"; do
-  checks=$((checks + 1))
-  if grep -qi "$pattern" "$ORCH"; then
-    passed=$((passed + 1))
-  else
-    echo "FAIL: Orchestrate SKILL.md missing '$pattern'"
-  fi
-done
-echo "Orchestrate agent registry docs: $passed/$checks checks passed"
-```
-
-### 4.4: Resume patterns in phase reference files
-
-```bash
-REFS="$PLUGIN_ROOT/skills/orchestrate/references"
-echo "=== Phase 5: agent_registry save ==="
-grep -c "agent_registry" "$REFS/phase-5-research.md" | xargs -I{} echo "  agent_registry mentions: {}"
-
-echo "=== Phase 6: agent_registry save ==="
-grep -c "agent_registry" "$REFS/phase-6-implement.md" | xargs -I{} echo "  agent_registry mentions: {}"
-
-echo "=== Phase 7: SendMessage resume patterns ==="
-sm_count=$(grep -c "SendMessage(" "$REFS/phase-7-experiment-loop.md")
-echo "  SendMessage calls: $sm_count (expected >=11)"
-ctx_count=$(grep -c "CONTEXT FROM OTHER AGENTS" "$REFS/phase-7-experiment-loop.md")
-echo "  Context relay sections: $ctx_count (expected >=5)"
-fb_count=$(grep -ci "fall back" "$REFS/phase-7-experiment-loop.md")
-echo "  Fallback instructions: $fb_count (expected >=5)"
-
-# Verify all 5 persistent agents have registry entries in phase-7
-for agent in research implement tuning analysis monitor; do
-  if grep -q "agent_registry\[\"$agent\"\]" "$REFS/phase-7-experiment-loop.md"; then
-    echo "  PASS: $agent has agent_registry entry"
-  else
-    echo "  FAIL: $agent MISSING agent_registry entry"
-  fi
-done
-
-echo "=== Phase 8: resume patterns ==="
-for agent in implement tuning; do
-  if grep -q "agent_registry\[\"$agent\"\]" "$REFS/phase-8-stacking.md"; then
-    echo "  PASS: $agent has resume pattern"
-  else
-    echo "  FAIL: $agent MISSING resume pattern"
-  fi
-done
-
-echo "=== Phase 9: resume patterns ==="
-if grep -q 'agent_registry\["analysis"\]' "$REFS/phase-9-report.md"; then
-  echo "  PASS: analysis has resume pattern"
-else
-  echo "  FAIL: analysis MISSING resume pattern"
-fi
-
-# Verify ephemeral agents NOT in registry
-for agent in experiment report; do
-  if grep -q "agent_registry\[\"$agent\"\]" "$REFS/phase-7-experiment-loop.md"; then
-    echo "  FAIL: ephemeral $agent should NOT be in agent_registry"
-  else
-    echo "  PASS: ephemeral $agent correctly absent from agent_registry"
-  fi
-done
-```
-
-### 4.5: CLAUDE.md documentation
-
-```bash
-CLAUDE_MD="$PLUGIN_ROOT/.claude/CLAUDE.md"
-checks=0; passed=0
-for pattern in "Resumable subagents" "persistent" "ephemeral" "agent_registry" "Inter-agent communication" "CONTEXT FROM OTHER AGENTS" "session-scoped"; do
-  checks=$((checks + 1))
-  if grep -qi "$pattern" "$CLAUDE_MD"; then
-    passed=$((passed + 1))
-  else
-    echo "FAIL: CLAUDE.md missing '$pattern'"
-  fi
-done
-echo "CLAUDE.md resumable docs: $passed/$checks checks passed"
 ```
 
 Report results in a summary table:
 ```
-Resumable Subagent Infrastructure:
-  agent_registry pipeline_state:  [✓/✗] — save/load/preserve/clear
-  Persistent agent sections:      [✓/✗] — 5/5 have Resumable Agent
-  Ephemeral agent sections:       [✓/✗] — 4/4 correctly absent
-  Orchestrate registry docs:      [✓/✗] — N/7 patterns found
-  Phase 5/6 ID saves:             [✓/✗]
-  Phase 7 SendMessage calls:      N (expected >=11)
-  Phase 7 context relay:          N (expected >=5)
-  Phase 7 fallback instructions:  N (expected >=5)
-  Phase 8/9 resume patterns:      [✓/✗]
-  CLAUDE.md documentation:        [✓/✗] — N/7 patterns found
+Workflow Infrastructure:
+  Workflow files present:          [✓/✗] — phase-{5,6,7,8}-*.js exist
+  export const meta header:        [✓/✗] — 4/4 begin with 'export const meta'
+  node --check passes:             [✓/✗/skipped] — 4/4 parse (skipped if node absent)
+  Phase docs use Workflow():       [✓/✗] — 4/4 phase-5/6/7/8 docs dispatch via Workflow()
+  pipeline_state user_choices:     [✓/✗] — save/load/preserve, no agent_registry
 ```
 
 ## Step 5: Agent dispatch smoke tests
 
 Dispatch each of the 9 agents with a minimal smoke-test prompt. Run them in 2 batches for speed.
-
-**For persistent agents (research, implement, tuning, analysis, monitor):** Also verify the agent confirms it understands resumption — it should mention "Resumable Agent" or "SendMessage" or "accumulated knowledge" when asked about its capabilities.
 
 **Batch 1 — Procedural agents (model: sonnet[1m]):**
 
@@ -786,19 +725,35 @@ For each agent, verify:
 
 Report results in a table.
 
-## Step 6: Full pipeline via live Agent() dispatch
+## Step 6: Full pipeline (Agent dispatch + dynamic workflows)
 
-This is the core diagnostic — you act as the orchestrator, dispatching agents directly with pre-defined parameters. This tests the full optimization flow including all autoresearch-inspired features and goal memory.
+Core diagnostic — the runner drives the full optimization flow end to end, exactly as the orchestrator does. Phases 0/1, 2, 3, 4, 9 dispatch via `Agent()` (interactive/trivial, correctly direct-dispatch per the architecture); phases 5, 6, 7, 8 launch the bundled dynamic workflows via `Workflow({scriptPath: "${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/workflows/phase-N-<name>.js", args})` — the workflow script owns that phase's fan-out/loop and dispatches its agents internally via `agentType`. The runner reads each workflow's structured return plus the files it wrote under `<exp_root>/`, and runs the user checkpoint between phases. This exercises the ACTUAL workflow scripts (Step 4 only node-checks them). Tests the full optimization flow including all autoresearch-inspired features and goal memory.
 
-**Error handling:** After each phase, verify the expected outputs exist. If a phase fails, log it as FAILED, skip to Step 5.8 (feature checklist) with partial results, and include the failure in the final report.
+**Error handling:** After each phase, verify expected outputs exist. If a phase fails, log it FAILED, skip to Step 6.8 (feature checklist) with partial results, and include the failure in the final report.
 
 ### 6.1: Set up test project
 
 ```bash
 rm -rf /tmp/ml-opt-diagnostic
 cp -r $FIX/tiny_resnet_cifar10/ /tmp/ml-opt-diagnostic/
-cd /tmp/ml-opt-diagnostic && git init && git add . && git commit -m "initial"
+cd /tmp/ml-opt-diagnostic
+# gitignore experiments/ BEFORE the first commit — Step 6.6c creates method branches
+# with `git add -A`, which would otherwise sweep the untracked run artifacts into a
+# branch and let a later `git checkout` wipe them from the working tree.
+echo "experiments/" > .gitignore
+git init && git add . && git commit -m "initial"
 mkdir -p /tmp/ml-opt-diagnostic/experiments/{results,reports,logs,scripts,artifacts}
+
+# Breadcrumb (normally written at Phase 0 — phase-0-discovery.md Step 3.1). Required so
+# the L2 PreToolUse hook can resolve exp_root and actually enforce during Step 6, not
+# just Step 3.2's synthetic tests.
+mkdir -p /tmp/ml-opt-diagnostic/.claude
+python3 -c "
+import json
+from pathlib import Path
+bc = Path('/tmp/ml-opt-diagnostic/.claude/ml-optimizer.json')
+json.dump({'active': '/tmp/ml-opt-diagnostic/experiments', 'runs': ['/tmp/ml-opt-diagnostic/experiments']}, bc.open('w'), indent=2)
+"
 ```
 
 Use these paths throughout the diagnostic:
@@ -871,7 +826,7 @@ sys.path.insert(0, '$SCRIPTS')
 from pipeline_state import save_state, _compute_baseline_checksum
 baseline = json.loads(open('/tmp/ml-opt-diagnostic/experiments/results/baseline.json').read())
 checksum = _compute_baseline_checksum(baseline['metrics'])
-save_state(3, 0, [], '/tmp/ml-opt-diagnostic/experiments', baseline_checksum=checksum, agent_registry={}, user_choices={
+save_state(3, 0, [], '/tmp/ml-opt-diagnostic/experiments', baseline_checksum=checksum, user_choices={
   'primary_metric': 'loss', 'lower_is_better': True, 'fixed_time_budget': 30, 'fixed_epoch_budget': None
 })
 print(f'Baseline checksum stored: {checksum[:16]}...')
@@ -886,25 +841,33 @@ python3 $SCRIPTS/pipeline_state.py /tmp/ml-opt-diagnostic/experiments verify-bas
 
 If exit code is non-zero, log Phase 3 as FAILED.
 
-### 6.4: Phase 5 — Research (all 3 source modes)
+### 6.4: Phase 5 — Research (dynamic workflow)
 
-**Before dispatching:** Read `experiments/results/baseline.json` and note the actual baseline loss value. Substitute it into the prompts below.
+Phase 5 launches the **actual** research workflow. The workflow fans research-agent out across domain angles, dedups + adversarially vets candidates, writes `reports/research-findings.md`, and initializes the research agenda — internally handling the web / knowledge / HP-only source fallback, so the former three source-mode dispatches collapse into one launch (no manual per-mode dispatch).
 
-The research skill supports 3 source modes. Test all 3 in sequence:
-
-#### 5.4a: source: "web" (WebSearch + alphaxiv MCP)
+**Launch the Phase 5 workflow** (args contract verified from `phase-5-research.js`):
 
 ```text
-Agent(
-  description: "Diagnostic: research (source: web — WebSearch + alphaxiv)",
-  prompt: "Ultrathink. Research ML optimization techniques. Parameters: source: web, model_type: CNN (ResNet), task: image classification (CIFAR-10), current_metrics: {loss: <ACTUAL_BASELINE_LOSS>}, problem_description: Improve classification accuracy on CIFAR-10 with a tiny ResNet. Search for techniques like label smoothing, mixup augmentation, and cosine annealing. Use alphaxiv MCP tools (embedding_similarity_search, full_text_papers_search, agentic_paper_retrieval — all 3 in parallel) alongside WebSearch. If alphaxiv MCP is unavailable, continue with WebSearch only. scope_level: training, exp_root: /tmp/ml-opt-diagnostic/experiments, output_path: /tmp/ml-opt-diagnostic/experiments/reports/research-findings.md. After completing, update your agent memory with effective search strategies, query formulations, and technique compatibility patterns for this model type.",
-  subagent_type: "ml-optimizer:research-agent"
-)
+Workflow({
+  scriptPath: "${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/workflows/phase-5-research.js",
+  args: {
+    exp_root: "/tmp/ml-opt-diagnostic/experiments",
+    primary_metric: "loss",
+    model_category: "supervised",
+    scope_level: "training",
+    source: "web",
+    user_papers: null
+  }
+})
 ```
 
-**Verify:** `experiments/reports/research-findings.md` exists with at least 1 proposal.
+Returns `{findings_path, proposals[], agenda_initialized}` — capture it; Phase 6 consumes `findings_path` and the returned proposal indices.
 
-**alphaxiv verification:**
+> CIFAR offline note: candidate training in Phases 7–8 must load CIFAR offline (the fixture's CIFAR host is throttled) — ensure the persisted `train_command` in `user_choices` carries `--data_dir <cached cifar>` before those workflows run.
+
+**Verify:** `experiments/reports/research-findings.md` exists with at least 1 proposal, and the return's `proposals[]` is non-empty.
+
+**alphaxiv-or-fallback note:**
 
 ```bash
 python3 -c "
@@ -913,76 +876,9 @@ has_arxiv = 'arxiv' in content.lower()
 print(f'alphaxiv MCP: {\"active (arxiv refs found)\" if has_arxiv else \"fallback to WebSearch only\"}')"
 ```
 
-#### 5.4b: source: "knowledge" (LLM knowledge only, no web)
+#### Research agenda (initialized by the workflow)
 
-```text
-Agent(
-  description: "Diagnostic: research (source: knowledge — LLM only, no web)",
-  prompt: "Ultrathink. Research ML optimization techniques. Parameters: source: knowledge, model_type: CNN (ResNet), task: image classification (CIFAR-10), current_metrics: {loss: <ACTUAL_BASELINE_LOSS>}, problem_description: Improve classification accuracy on CIFAR-10 with a tiny ResNet, scope_level: training, exp_root: /tmp/ml-opt-diagnostic/experiments, output_path: /tmp/ml-opt-diagnostic/experiments/reports/research-findings-method-proposals.md.",
-  subagent_type: "ml-optimizer:research-agent"
-)
-```
-
-**Verify:**
-- `experiments/reports/research-findings-method-proposals.md` exists with at least 1 proposal
-- All proposals have `proposal_source: llm_knowledge`
-- Confidence values are capped at 7/10 (knowledge-mode cap)
-
-```bash
-python3 -c "
-content = open('/tmp/ml-opt-diagnostic/experiments/reports/research-findings-method-proposals.md').read()
-has_llm = 'llm_knowledge' in content.lower() or 'knowledge' in content.lower()
-print(f'Knowledge mode: {\"proposals marked as LLM knowledge\" if has_llm else \"WARNING: source not marked\"}')"
-```
-
-#### 5.4c: source: "both" (LLM proposals + web/alphaxiv validation)
-
-```text
-Agent(
-  description: "Diagnostic: research (source: both — LLM + web validation)",
-  prompt: "Ultrathink. Research ML optimization techniques. Parameters: source: both, model_type: CNN (ResNet), task: image classification (CIFAR-10), current_metrics: {loss: <ACTUAL_BASELINE_LOSS>}, problem_description: Improve classification accuracy on CIFAR-10 with a tiny ResNet, scope_level: training, exp_root: /tmp/ml-opt-diagnostic/experiments, output_path: /tmp/ml-opt-diagnostic/experiments/reports/research-findings-method-proposals-both.md.",
-  subagent_type: "ml-optimizer:research-agent"
-)
-```
-
-**Verify:**
-- `experiments/reports/research-findings-method-proposals-both.md` exists
-- Contains both web-sourced (paper/arxiv references) and knowledge-sourced proposals
-
-```bash
-python3 -c "
-from pathlib import Path
-p = Path('/tmp/ml-opt-diagnostic/experiments/reports/research-findings-method-proposals-both.md')
-if p.exists() and p.stat().st_size > 100:
-    content = p.read_text()
-    has_web = 'arxiv' in content.lower() or 'http' in content.lower()
-    has_knowledge = 'knowledge' in content.lower() or 'llm' in content.lower()
-    print(f'Both mode: web={has_web}, knowledge={has_knowledge}')
-else:
-    print('Both mode: file missing or empty')
-"
-```
-
-#### Research deduplication check
-
-Verify that the research agent's deduplication logic works — proposals from the `knowledge` run should not repeat proposals from the `web` run:
-
-```bash
-python3 -c "
-from pathlib import Path
-web = Path('/tmp/ml-opt-diagnostic/experiments/reports/research-findings.md')
-knowledge = Path('/tmp/ml-opt-diagnostic/experiments/reports/research-findings-method-proposals.md')
-if web.exists() and knowledge.exists():
-    print('✓ Research deduplication: both findings files exist for agent to check')
-else:
-    missing = []
-    if not web.exists(): missing.append('web')
-    if not knowledge.exists(): missing.append('knowledge')
-    print(f'— Research deduplication: {\" + \".join(missing)} findings missing')
-"
-```
-
-**Initialize research agenda** (if the research agent didn't create `research-agenda.json`):
+The workflow dedups across its research angles internally and initializes `research-agenda.json` from the vetted proposals (returning `agenda_initialized: true`). Confirm it, and self-heal from `research-findings.md` if the return reports it was not initialized:
 
 ```bash
 python3 -c "
@@ -991,7 +887,7 @@ sys.path.insert(0, os.path.expanduser('$SCRIPTS'))
 agenda_path = '/tmp/ml-opt-diagnostic/experiments/reports/research-agenda.json'
 if not os.path.exists(agenda_path):
     from implement_utils import parse_research_proposals
-    proposals = parse_research_proposals('/tmp/ml-opt-diagnostic/experiments/reports/research-findings-method-proposals.md')
+    proposals = parse_research_proposals('/tmp/ml-opt-diagnostic/experiments/reports/research-findings.md')
     ideas = json.dumps([{'id': f'idea-{i+1}', 'technique': p.get('name', 'unknown'), 'priority': 5, 'status': 'untried', 'source': 'research'} for i, p in enumerate(proposals)])
     subprocess.run([
         'python3', f'{os.environ["SCRIPTS"]}/error_tracker.py',
@@ -1003,26 +899,35 @@ else:
 "
 ```
 
-**Verify:** `python3 $SCRIPTS/error_tracker.py /tmp/ml-opt-diagnostic/experiments agenda list` returns a non-empty list.
+**Verify:** the workflow return's `agenda_initialized` is true and `python3 $SCRIPTS/error_tracker.py /tmp/ml-opt-diagnostic/experiments agenda list` returns a non-empty list.
 
-### 6.5: Phase 6 — Implement
+### 6.5: Phase 6 — Implement (dynamic workflow)
 
-**Before dispatching:** Read `experiments/reports/research-findings-method-proposals.md` and note the proposal names/indices.
+**Before launching:** Use the Phase 5 return — `findings_path` (`research-findings.md`) and the proposal indices from `proposals[]`. Phase 6 launches the **actual** implement workflow, which dispatches implement-agent per proposal (one worktree-isolated `ml-opt/<slug>` branch each, in parallel), runs the code-reviewer + silent-failure-hunter reviewers internally, and assembles `results/implementation-manifest.json`.
 
-Dispatch the implement agent:
+**Launch the Phase 6 workflow** (args contract verified from `phase-6-implement.js`):
 
 ```text
-Agent(
-  description: "Diagnostic: implement research proposals",
-  prompt: "Implement research proposals. Parameters: project_root: /tmp/ml-opt-diagnostic, findings_path: /tmp/ml-opt-diagnostic/experiments/reports/research-findings-method-proposals.md, selected_indices: [1], exp_root: /tmp/ml-opt-diagnostic/experiments. After completing implementation, update your agent memory with what you learned about this project's code structure, file patterns, and any implementation pitfalls encountered.",
-  subagent_type: "ml-optimizer:implement-agent"
-)
+Workflow({
+  scriptPath: "${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/workflows/phase-6-implement.js",
+  args: {
+    exp_root: "/tmp/ml-opt-diagnostic/experiments",
+    project_root: "/tmp/ml-opt-diagnostic",
+    findings_path: "/tmp/ml-opt-diagnostic/experiments/reports/research-findings.md",
+    selected_indices: [1],
+    strategy: "git_branch"
+  }
+})
 ```
+
+Returns `{manifest_path, branches[]}` — `branches[]` carries `{slug, branch, status, validation, reviews}` per proposal.
+
+> CIFAR offline note: the branches this workflow produces are trained in Phases 7–8 — the persisted `train_command` must carry `--data_dir <cached cifar>` so candidate training loads CIFAR offline (throttled host).
 
 **Verify:**
 
 - `experiments/results/implementation-manifest.json` exists with `proposals` array
-- At least one proposal has `status: "validated"`
+- At least one proposal has `status: "validated"` (equivalently, some `branches[].status == "validated"` in the return)
 - Git branches exist: run `git -C /tmp/ml-opt-diagnostic branch --list "ml-opt/*"`
 
 **Schema validation:**
@@ -1034,55 +939,54 @@ python3 $SCRIPTS/schema_validator.py \
 
 Confirm output shows `"valid": true`.
 
-### 6.6: Phase 7 — Experiment Loop (2 iterations)
+### 6.6: Phase 7 — Experiment Loop (dynamic workflow)
 
-**Before dispatching:** Read `experiments/results/implementation-manifest.json` and extract the validated branch names (e.g., `ml-opt/label-smoothing`).
+**Before launching:** Read `experiments/results/baseline.json` (the workflow's `baseline` arg is its parsed contents) and confirm the validated branches from the Phase 6 return / `implementation-manifest.json`. Phase 7 launches ONE **actual** experiment workflow that owns the entire autonomous loop internally: per round it dispatches tuning-agent (propose HP configs) → experiment-agents (parallel, worktree-isolated) → per-run divergence handling (the monitor role) → analysis-agent (writes `batch-N-analysis.md`, returns a decision), then acts on the decision tree (continue / branch_test / hp_expand / narrow_space / regularization / method_proposal / code_evolution / stop), including the code_evolution chain (tuning evolve-HPs → implement evolve skill → experiment on the evolved branch) and the stuck-protocol + fixpoint exit. There is no manual per-agent dispatch here — the workflow does it all.
 
-#### HP-Tune
-
-```text
-Agent(
-  description: "Diagnostic: propose HP configs",
-  prompt: "Ultrathink. Propose HP configurations. Parameters: project_root: /tmp/ml-opt-diagnostic, num_gpus: 1, primary_metric: loss, lower_is_better: true, iteration: 1, fixed_time_budget: 30, code_branches: [<VALIDATED_BRANCHES>], exp_root: /tmp/ml-opt-diagnostic/experiments. After proposing configs, update your agent memory with HP ranges tried, search space insights, and interaction effects discovered for this model.",
-  subagent_type: "ml-optimizer:tuning-agent"
-)
-```
-
-**After hp-tune:** Read the proposed configs from `experiments/proposed-configs/round-1-hp/` (top-level, not under `results/`).
-
-#### Experiment (for each proposed config)
+**Launch the Phase 7 workflow** (args contract verified from `phase-7-experiment-loop.md` + `phase-7-experiment.js`):
 
 ```text
-Agent(
-  description: "Diagnostic: run experiment <EXP_ID>",
-  prompt: "Run experiment. Parameters: exp_id: <EXP_ID>, config: <CONFIG_JSON>, gpu_id: 0, project_root: /tmp/ml-opt-diagnostic, train_command: python train.py --epochs 2, eval_command: python eval.py, code_branch: <BRANCH_OR_NULL>, fixed_time_budget: 30, iteration: 1, method_tier: <TIER>, proposal_source: <SOURCE_OR_NULL>, exp_root: /tmp/ml-opt-diagnostic/experiments. After completing, update your agent memory with environment quirks, command fixes, and timing observations for this project.",
-  subagent_type: "ml-optimizer:experiment-agent"
-)
+Workflow({
+  scriptPath: "${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/workflows/phase-7-experiment.js",
+  args: {
+    exp_root: "/tmp/ml-opt-diagnostic/experiments",
+    project_root: "/tmp/ml-opt-diagnostic",
+    baseline: <parsed contents of experiments/results/baseline.json>,
+    primary_metric: "loss",
+    divergence_metric: "loss",
+    divergence_lower_is_better: true,
+    model_category: "supervised",
+    lower_is_better: true,
+    target_value: null,
+    scope_level: "full",
+    fixed_time_budget: 30,
+    fixed_epoch_budget: null,
+    fixed_step_budget: null,
+    hp_batches_per_round: 3,
+    method_proposal_scope: "architecture",
+    method_proposal_iterations: 1,
+    experiments_per_gpu: 1,
+    secondary_metrics: [],
+    seeds_per_config: 1,
+    budget: null
+  }
+})
 ```
 
-#### Monitor (concurrent with experiments)
+`scope_level: "full"` plus `method_proposal_scope`/`method_proposal_iterations` are set so the loop can exercise the method_proposal AND code_evolution pivots (their outputs are checked post-hoc below). Returns `{best_exp_id, best_metric, rounds_completed, exit_reason, stacking_candidates[]}` — capture `stacking_candidates[]`; Phase 8 launches only when it is non-empty.
 
-Dispatch the monitor agent in the background for each running experiment:
+> CIFAR offline note: the workflow's experiment-agents read the persisted `train_command` from `user_choices` — it MUST carry `--data_dir <cached cifar>` (e.g. `train_command: python train.py --epochs 2 --data_dir <cached cifar>`) so candidate training loads CIFAR offline (throttled host).
 
-```text
-Agent(
-  description: "Diagnostic: monitor experiment <EXP_ID>",
-  prompt: "Monitor experiment for divergence. Parameters: exp_id: <EXP_ID>, log_file: /tmp/ml-opt-diagnostic/experiments/logs/<EXP_ID>/train.log, metric_to_watch: loss, lower_is_better: true, exp_root: /tmp/ml-opt-diagnostic/experiments. After completing, update your agent memory with divergence signatures, log format patterns, and threshold observations for this project.",
-  subagent_type: "ml-optimizer:monitor-agent",
-  run_in_background: true
-)
-```
+#### Post-loop verification (reading the workflow's outputs)
 
-#### Post-experiment verification
-
-After experiments complete, before analyze:
+After the workflow returns, verify the outputs it wrote under `<exp_root>/` (no separate manual dispatches):
 
 **Placeholder result & metadata verification:**
 
 ```bash
 python3 -c "
 import json, glob
-results = glob.glob('/tmp/ml-opt-diagnostic/experiments/results/exp-*.json')
+results = glob.glob('/tmp/ml-opt-diagnostic/experiments/results/round-*/exp-*.json')
 issues = []
 for f in results:
     data = json.loads(open(f).read())
@@ -1102,7 +1006,7 @@ else:
 **Schema validation on all results:**
 
 ```bash
-for f in /tmp/ml-opt-diagnostic/experiments/results/exp-*.json; do
+for f in /tmp/ml-opt-diagnostic/experiments/results/round-*/exp-*.json; do
   python3 $SCRIPTS/schema_validator.py "$f" result --strict 2>/dev/null
 done
 ```
@@ -1120,20 +1024,14 @@ else:
 "
 ```
 
-#### Analyze
+#### Analysis (owned by the workflow)
 
-```text
-Agent(
-  description: "Diagnostic: analyze results",
-  prompt: "Ultrathink. Analyze experiment results. Parameters: project_root: /tmp/ml-opt-diagnostic, batch_number: 1, primary_metric: loss, lower_is_better: true, exp_root: /tmp/ml-opt-diagnostic/experiments. After completing, update your agent memory with correlation patterns, pivot decision reasoning, and metric signals that mattered for this project.",
-  subagent_type: "ml-optimizer:analysis-agent"
-)
-```
+The analysis-agent runs INSIDE the loop each batch — it writes `reports/batch-N-analysis.md` and returns the decision the workflow acts on. There is no manual analyze dispatch here; verify its outputs instead.
 
-**Verify after loop iteration:**
+**Verify after the loop:**
 
-- `experiments/results/exp-*.json` files exist with experiment results
-- `experiments/reports/batch-1-analysis.md` exists
+- `experiments/results/round-*/exp-*.json` files exist with experiment results
+- At least one `experiments/reports/batch-*-analysis.md` exists (the loop writes one per batch)
 - Research agenda updated: `python3 $SCRIPTS/error_tracker.py /tmp/ml-opt-diagnostic/experiments agenda list`
 - Baseline integrity still valid: `python3 $SCRIPTS/pipeline_state.py /tmp/ml-opt-diagnostic/experiments verify-baseline`
 - Goal memory sync and summary: `python3 $SCRIPTS/goal_memory.py /tmp/ml-opt-diagnostic/experiments sync-from-errors && python3 $SCRIPTS/goal_memory.py /tmp/ml-opt-diagnostic/experiments summary`
@@ -1148,28 +1046,9 @@ python3 $SCRIPTS/result_analyzer.py \
 
 Verify the output includes ranking information.
 
-#### Live Evolve Skill Dispatch (via Orchestrator)
+#### Phase 7 code_evolution (exercised inside the workflow)
 
-Tests the Phase 7 code evolution chain: orchestrator dispatches tuning-agent (evolve HPs) → implement-agent with evolve skill (shinka-convert → shinka-run → shinka-inspect) → experiment on evolved code.
-
-**Step 1: Dispatch implement-agent with evolve skill.**
-
-```text
-Agent(
-  description: "Diagnostic: code evolution (ShinkaEvolve)",
-  prompt: "Ultrathink. Invoke Skill('ml-optimizer:evolve'). Run the full ShinkaEvolve pipeline on the best branch.
-
-  Follow the full chain:
-  1. shinka-convert: Create a ShinkaEvolve task from the best experiment branch
-  2. shinka-run: Run evolution (num_generations=5, population_size=2, SHINKA_PROVIDER=claude_code)
-  3. shinka-inspect: Extract the best mutation
-  4. Commit evolved branch as ml-opt/evolved-<slug>
-
-  Parameters: project_root: /tmp/ml-opt-diagnostic, exp_root: /tmp/ml-opt-diagnostic/experiments, primary_metric: loss, lower_is_better: true, scope_level: full, target_value: null.
-  If ShinkaEvolve is unavailable, report shinkaevolve_unavailable and skip.",
-  subagent_type: "ml-optimizer:implement-agent"
-)
-```
+The Phase 7 loop owns the code evolution chain: when analysis returns `code_evolution` (only at `scope_level: "full"`), the workflow dispatches tuning-agent (evolve HPs) → implement-agent with the evolve skill (shinka-convert → shinka-run → shinka-inspect) → experiment on the evolved branch, all internally. There is no manual evolve dispatch here — verify post-hoc whether the loop exercised it (report SKIPPED if analysis never pivoted to code_evolution or ShinkaEvolve is unavailable).
 
 **Verify Phase 7 evolve chain:**
 
@@ -1206,9 +1085,9 @@ Phase 7 Evolve (Orchestrator-Driven):
   If ShinkaEvolve unavailable: log as SKIPPED
 ```
 
-#### Iteration 2: OOM + Divergence Triggers
+#### Post-loop feature checks: OOM feedback + divergence detection
 
-Run a second iteration to exercise error recovery features. Include one experiment with a deliberately extreme LR to trigger divergence, and log an OOM event to test the feedback loop.
+The loop runs multiple iterations internally, so there is no manual "iteration 2". These CLI/python checks confirm the error-recovery machinery the loop relies on works — the OOM feedback loop and the all-diverge pattern detection — without any manual experiment dispatch.
 
 **OOM feedback trigger:** Log OOM events from iteration 1 results, then sync to behavioral memory:
 
@@ -1240,15 +1119,7 @@ else:
 "
 ```
 
-**Divergent experiment:** Dispatch one experiment with extreme LR (100.0) to trigger divergence detection:
-
-```text
-Agent(
-  description: "Diagnostic: run divergent experiment (extreme LR)",
-  prompt: "Run experiment. Parameters: exp_id: exp-diverge-test, config: {\"lr\": 100.0, \"batch_size\": 32}, gpu_id: 0, project_root: /tmp/ml-opt-diagnostic, train_command: python train.py --epochs 2, code_branch: null, iteration: 2, method_tier: baseline, exp_root: /tmp/ml-opt-diagnostic/experiments.",
-  subagent_type: "ml-optimizer:experiment-agent"
-)
-```
+**Divergence detection:** Inside the loop the experiment-agents run `detect_divergence.py` per run and mark extreme-LR runs `diverged`. This check confirms the all-diverge cluster pattern fires on clustered divergence events, independent of a live run:
 
 **Verify divergence detection:**
 
@@ -1258,9 +1129,11 @@ import sys, os, json
 sys.path.insert(0, os.path.expanduser('$SCRIPTS'))
 from error_tracker import get_events, detect_patterns
 
-# Log divergence events for the extreme LR experiment
+# Log divergence events for the extreme-LR experiments.
+# NOTE: high_lr_divergence fires on 2+ divergence events (error_tracker.detect_patterns),
+# so log two — a single event will not trigger the cluster pattern.
 from error_tracker import create_event, log_event
-for lr in [100.0]:
+for lr in [100.0, 50.0]:
     ev = create_event('divergence', 'warning', 'monitor',
                        f'NaN detected at lr={lr}', config={'lr': lr, 'batch_size': 32})
     log_event('/tmp/ml-opt-diagnostic/experiments', ev)
@@ -1277,7 +1150,7 @@ else:
 
 #### Stuck Protocol Trigger
 
-After iteration 2, verify the stop signal persists and the stuck protocol data is readable. The orchestrator makes an evidence-based judgment on whether to continue or exit (there is no fixed stop-count threshold). The `consecutive_stop_count` signal must persist, and the stuck protocol data (error patterns, dead-ends, research agenda) must be available for the orchestrator to dispatch research for fresh ideas and weigh whether the search is exhausted.
+After iteration 2, verify the stop signal persists and the stuck protocol data is readable. The orchestrator makes an evidence-based judgment to continue or exit (no fixed stop-count threshold). `consecutive_stop_count` must persist, and the stuck protocol data (error patterns, dead-ends, research agenda) must be available for the orchestrator to dispatch research for fresh ideas and weigh whether the search is exhausted.
 
 ```bash
 python3 -c "
@@ -1312,7 +1185,7 @@ print('  patterns/dead-ends/agenda: all readable') if all_ok else print('  ✗ s
 
 #### Method Stacking Ranking (Phase 8 logic)
 
-Test `rank_methods_for_stacking()` using the real baseline from the pipeline plus additional method results. This verifies the ranking logic that Phase 8 uses. The orchestrator enters Phase 8 when analysis advises stacking (requires ≥5 improving methods).
+Test `rank_methods_for_stacking()` using the real baseline plus additional method results — verifies the ranking logic Phase 8 uses. The orchestrator enters Phase 8 when analysis advises stacking (requires ≥5 improving methods).
 
 ```bash
 python3 -c "
@@ -1360,206 +1233,75 @@ else:
 ```
 
 
-### 6.6c: Phase 8 — Method Stacking (Orchestrator-Driven)
+### 6.6c: Phase 8 — Method Stacking (dynamic workflow)
 
-Tests Phase 8 method stacking. The orchestrator enters Phase 8 when the analysis agent recommends stacking (≥5 methods improve over baseline). Methods are merged sequentially in improvement-ranked order.
+Phase 8 launches the **actual** stacking workflow — but ONLY when the Phase 7 return carried a non-empty `stacking_candidates[]` (branches that beat baseline). If Phase 7 returned no candidates (the short diagnostic loop may not surface an improving branch), Phase 8 is skipped exactly as the orchestrator skips it — log SKIPPED and go to Phase 9. The workflow ranks the candidates by improvement, seeds `ml-opt/stack-1` from the strongest, then accumulates the rest one at a time: implement-agent merges each into `ml-opt/stack-N` (resolving conflicts) in a worktree, the merged branch is reviewed (code-reviewer + silent-failure-hunter) at the merge boundary, experiment-agent runs it, and analysis-agent assesses interference — all internally. There is no manual branch creation, merge, or experiment dispatch here.
 
-#### Create method branches
-
-Create 4 additional branches from `master`, each with a small training-scope code change. Combined with the existing `ml-opt/weight-decay-tuning-l2-regularization` from Phase 6, this gives 5 branches for stacking.
-
-```bash
-cd /tmp/ml-opt-diagnostic
-
-# Branch 2: label smoothing
-git checkout master
-git checkout -b ml-opt/label-smoothing
-sed -i 's/nn.CrossEntropyLoss()/nn.CrossEntropyLoss(label_smoothing=0.1)/' train.py
-git add train.py && git commit -m "Add label smoothing 0.1"
-
-# Branch 3: cosine-lr (change max_epochs for cosine schedule)
-git checkout master
-git checkout -b ml-opt/cosine-lr
-sed -i 's/epochs: 10/epochs: 20/' config.yaml 2>/dev/null || true
-git add -A && git commit -m "Increase epochs for cosine LR" --allow-empty
-
-# Branch 4: warmup (add warmup to config)
-git checkout master
-git checkout -b ml-opt/warmup
-echo "warmup_epochs: 5" >> config.yaml
-git add config.yaml && git commit -m "Add warmup epochs"
-
-# Branch 5: dropout-tune (modify dropout)
-git checkout master
-git checkout -b ml-opt/dropout-tune
-sed -i 's/dropout=0.0/dropout=0.1/' model.py 2>/dev/null || sed -i 's/self.fc/self.dropout = nn.Dropout(0.1)\n        self.fc/' model.py 2>/dev/null || true
-git add -A && git commit -m "Add dropout 0.1" --allow-empty
-
-git checkout master
-echo "✓ Created 4 method branches for stacking"
-git branch --list "ml-opt/*"
-```
-
-#### Sequential merge: stack-1 and stack-2
-
-Following the stacking spec: best method → stack-1, then merge next method → stack-2.
-
-```bash
-cd /tmp/ml-opt-diagnostic
-
-# Stack-1: best method is weight-decay (from Phase 6)
-git checkout -b ml-opt/stack-1 ml-opt/weight-decay-tuning-l2-regularization
-echo "✓ stack-1 created from weight-decay branch"
-
-# Stack-2: merge label-smoothing into stack-1
-git checkout -b ml-opt/stack-2 ml-opt/stack-1
-git merge ml-opt/label-smoothing --no-ff --no-edit && echo "✓ stack-2: clean merge of label-smoothing" || echo "✗ stack-2: merge conflict (will attempt resolution)"
-
-git checkout master
-```
-
-#### Run stacked experiment
-
-Dispatch experiment-agent on the stack-2 branch to test the combined method:
+**Launch the Phase 8 workflow** (args contract verified from `phase-8-stacking.md` + `phase-8-stacking.js`; `stacking_candidates` and `baseline_metric` come from the Phase 7 return / baseline):
 
 ```text
-Agent(
-  description: "Phase 8: run stacked experiment (stack-2 = weight-decay + label-smoothing)",
-  prompt: "Run experiment. Parameters: exp_id: exp-stack-live, config: {\"lr\": 0.01, \"batch_size\": 64, \"weight_decay\": 0.0005, \"epochs\": 3}, gpu_id: 0, project_root: /tmp/ml-opt-diagnostic, train_command: python train.py --epochs 3, eval_command: python eval.py, code_branch: ml-opt/stack-2, fixed_time_budget: 30, iteration: 1, method_tier: stacked_default_hp, stacking_order: 2, code_branches: [\"ml-opt/weight-decay-tuning-l2-regularization\", \"ml-opt/label-smoothing\"], exp_root: /tmp/ml-opt-diagnostic/experiments.",
-  subagent_type: "ml-optimizer:experiment-agent"
-)
+Workflow({
+  scriptPath: "${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/workflows/phase-8-stacking.js",
+  args: {
+    exp_root: "/tmp/ml-opt-diagnostic/experiments",
+    project_root: "/tmp/ml-opt-diagnostic",
+    primary_metric: "loss",
+    lower_is_better: true,
+    scope_level: "full",
+    baseline_metric: <baseline loss value from experiments/results/baseline.json>,
+    stacking_candidates: <the Phase 7 return's stacking_candidates[] — [{branch, improvement_pct}, ...]>,
+    divergence_metric: "loss",
+    divergence_lower_is_better: true,
+    model_category: "supervised",
+    fixed_time_budget: 30,
+    fixed_epoch_budget: null,
+    fixed_step_budget: null,
+    budget: null
+  }
+})
 ```
+
+Returns `{best_stack_branch, best_stack_metric, steps[]}` (`steps[]` = the per-method `{method, branch, kept}` ledger).
+
+> CIFAR offline note: each stacked run trains on the merged branch — the persisted `train_command` must carry `--data_dir <cached cifar>` so stacked training loads CIFAR offline (throttled host).
 
 #### Verify stacking outputs
 
-```bash
-python3 -c "
-import json
-from pathlib import Path
-
-EXP = Path('/tmp/ml-opt-diagnostic/experiments')
-issues = []
-
-# Check stack branches exist
-import subprocess
-r = subprocess.run(['git', '-C', '/tmp/ml-opt-diagnostic', 'branch', '--list', 'ml-opt/stack-*'],
-                   capture_output=True, text=True)
-branches = [b.strip() for b in r.stdout.strip().split('\n') if b.strip()]
-if len(branches) >= 2:
-    print(f'✓ Stacking branches: {len(branches)} created ({', '.join(branches)})')
-else:
-    print(f'✗ Stacking branches: only {len(branches)} (need ≥2)')
-
-# Check stacked experiment result
-stack_result = EXP / 'results' / 'exp-stack-live.json'
-if stack_result.exists():
-    data = json.loads(stack_result.read_text())
-    tier = data.get('method_tier', '?')
-    order = data.get('stacking_order', '?')
-    status = data.get('status', '?')
-    print(f'✓ Stacked experiment: status={status}, tier={tier}, order={order}')
-else:
-    print('✗ Stacked experiment result not found')
-
-# Save stacking state to pipeline-state.json
-import sys, os
-sys.path.insert(0, os.path.expanduser('$SCRIPTS'))
-from pipeline_state import save_state, load_state
-state = load_state(str(EXP)) or {}
-save_state(
-    phase=8, iteration=0, running_exp_ids=[], exp_root=str(EXP),
-    user_choices={
-        **state.get('user_choices', {}),
-        'stacking': {
-            'ranked_methods': ['weight-decay', 'label-smoothing', 'cosine-lr', 'warmup', 'dropout-tune'],
-            'current_stack_order': 2,
-            'stack_base_branch': 'ml-opt/stack-2',
-            'stack_base_exp': 'exp-stack-live',
-            'skipped_methods': [],
-            'stacked_methods': ['weight-decay', 'label-smoothing'],
-        'evolved_methods': [],
-        }
-    }
-)
-state = load_state(str(EXP))
-if state and 'stacking' in state.get('user_choices', {}):
-    stacking = state['user_choices']['stacking']
-    print(f'✓ Stacking state persisted: {len(stacking[\"stacked_methods\"])} methods stacked, order={stacking[\"current_stack_order\"]}')
-else:
-    print('✗ Stacking state not persisted')
-"
-```
-
-#### Phase 8 — Evolve on Stacked Code (Orchestrator-Driven)
-
-Tests the Phase 8 evolve chain: when the stacked gain is less than the best individual method's gain (method interference), the orchestrator dispatches the implement-agent with the evolve skill to resolve conflicts.
-
-**Step 1: Analyze stacked result.** Dispatch analysis-agent to assess whether methods interfere:
-
-```text
-Agent(
-  description: "Phase 8: analyze stacked result for interference",
-  prompt: "Ultrathink. Analyze stacked experiment. Compare the stacked gain to the best individual method gain. If stacked gain < best individual gain → methods interfere → recommend code_evolution pivot. Parameters: project_root: /tmp/ml-opt-diagnostic, exp_root: /tmp/ml-opt-diagnostic/experiments, primary_metric: loss, lower_is_better: true.",
-  subagent_type: "ml-optimizer:analysis-agent"
-)
-```
-
-**Step 2: Evolve stacked code (if interference detected).** Dispatch implement-agent with evolve skill:
-
-```text
-Agent(
-  description: "Phase 8: evolve stacked code to resolve interference",
-  prompt: "Ultrathink. Invoke Skill('ml-optimizer:evolve'). Resolve method interference on ml-opt/stack-2 via ShinkaEvolve.
-
-  Follow the full chain:
-  1. shinka-convert: Create task from ml-opt/stack-2
-  2. shinka-run: Run evolution (num_generations=5, population_size=2, SHINKA_PROVIDER=claude_code)
-  3. shinka-inspect: Extract best mutation
-  4. Commit evolved branch
-
-  Parameters: project_root: /tmp/ml-opt-diagnostic, exp_root: /tmp/ml-opt-diagnostic/experiments, primary_metric: loss, lower_is_better: true, scope_level: full.
-  If ShinkaEvolve unavailable: report shinkaevolve_unavailable.",
-  subagent_type: "ml-optimizer:implement-agent"
-)
-```
-
-**Verify Phase 8 evolve chain:**
+The Phase 8 workflow did the ranking, sequential merges, per-boundary reviews (code-reviewer + silent-failure-hunter), stacked experiments, interference analysis, and — on detected interference — the evolve-on-stack chain, all internally. Read its outputs; do NOT re-run any of it manually.
 
 ```bash
 python3 -c "
-import subprocess, json, sys, glob
-
-# Check evolved stack branch
-r = subprocess.run(['git', '-C', '/tmp/ml-opt-diagnostic', 'branch', '--list', 'ml-opt/*evolved*stack*'],
-                   capture_output=True, text=True)
-branches = [b.strip() for b in r.stdout.strip().split('\n') if b.strip()]
-if branches:
-    print(f'✓ Evolved stack branch: {branches[0]}')
-else:
-    print('— No evolved stack branch (ShinkaEvolve may be unavailable or no interference)')
-
-# Check experiment on evolved stack
+import json, glob, subprocess
 EXP = '/tmp/ml-opt-diagnostic/experiments'
-evolved_stack = [f for f in glob.glob(f'{EXP}/results/round-*-evolved/exp-*stack*.json')]
-if evolved_stack:
-    data = json.loads(open(evolved_stack[0]).read())
-    print(f'✓ Experiment on evolved stack: status={data.get(\"status\")}, tier={data.get(\"method_tier\")}')
+
+# Stack branches the workflow created
+r = subprocess.run(['git','-C','/tmp/ml-opt-diagnostic','branch','--list','ml-opt/stack-*'], capture_output=True, text=True)
+branches = [b.strip() for b in r.stdout.strip().split('\n') if b.strip()]
+print(f'{\"✓\" if branches else \"—\"} Stacking branches: {len(branches)} ({\", \".join(branches)})')
+
+# Stacked experiment results (workflow writes results/round-N-stacked/exp-*.json)
+stacked = glob.glob(f'{EXP}/results/round-*-stacked/exp-*.json')
+if stacked:
+    d = json.loads(open(stacked[0]).read())
+    print(f'✓ Stacked experiment: {len(stacked)} result(s), tier={d.get(\"method_tier\")}, order={d.get(\"stacking_order\")}, code_branches={len(d.get(\"code_branches\",[]))}')
 else:
-    print('— No evolved stack experiment (may not have been needed)')
+    print('— No stacked experiment result (Phase 8 skipped: Phase 7 returned <2 improving candidates)')
+
+# Evolve-on-stack (the workflow evolves only when its analysis detects interference)
+evolved_stack = glob.glob(f'{EXP}/results/round-*-evolved/exp-*.json')
+print(f'{\"✓\" if evolved_stack else \"—\"} Evolve-on-stack: {len(evolved_stack)} result(s) (runs only on detected interference)')
 "
 ```
 
 ```
-Phase 8 Evolve (Orchestrator-Driven):
-  1. Analysis of stack:        [passed/failed]
-  2. Interference detected:    [yes/no]
-  3. Evolve HPs tuned:         [passed/failed/skipped]
-  4. ShinkaEvolve on stack:    [passed/failed/skipped]
-  5. Evolved stack branch:     [passed/failed/skipped]
-  6. HP tuning evolved stack:  [passed/failed/skipped]
-  7. Experiment on evolved:    [passed/failed/skipped]
-  If no interference: Steps 3-7 skipped (clean stack)
-  If ShinkaEvolve unavailable: log as SKIPPED
+Phase 8 Stacking (workflow-driven — all steps internal to phase-8-stacking.js):
+  Candidates from Phase 7:     [N, or 0 → whole phase SKIPPED as the orchestrator skips it]
+  Sequential merges → stack-N: [passed/failed]
+  Per-merge review:            [code-reviewer + silent-failure-hunter at each boundary]
+  Stacked experiment(s):       [passed/failed]
+  Interference analysis:       [analysis-agent, inside the workflow]
+  Evolve-on-stack:             [ran if interference detected, else skipped]
+  Return: {best_stack_branch, best_stack_metric, steps[]}
 ```
 
 ### 6.7: Phase 9 — Report + Review
@@ -1625,7 +1367,7 @@ print(f'✓ Excalidraw: {len(elems)} elements') if elems else print('✗ Excalid
 ```text
 Agent(
   description: "Diagnostic: session review",
-  prompt: "Ultrathink. Run session review. Parameters: project_root: /tmp/ml-opt-diagnostic, exp_root: /tmp/ml-opt-diagnostic/experiments, primary_metric: loss, lower_is_better: true, scope: session. After completing, update your agent memory with optimization anti-patterns observed and actionable suggestions for this project.",
+  prompt: "Run session review. Parameters: project_root: /tmp/ml-opt-diagnostic, exp_root: /tmp/ml-opt-diagnostic/experiments, primary_metric: loss, lower_is_better: true, scope: session. After completing, update your agent memory with optimization anti-patterns observed and actionable suggestions for this project.",
   subagent_type: "ml-optimizer:analysis-agent"
 )
 ```
@@ -1635,7 +1377,16 @@ Agent(
 
 Run these checks and report pass/fail for each:
 
+Checks (each prints ✓/✗; all run regardless of individual failures):
+
 ```bash
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}"
+export PLUGIN_ROOT
+SCRIPTS=$PLUGIN_ROOT/scripts
+HOOKS=$PLUGIN_ROOT/hooks
+FIX=$PLUGIN_ROOT/tests/fixtures
+EXP=/tmp/ml-opt-diagnostic/experiments
+
 EXP=/tmp/ml-opt-diagnostic/experiments
 SCRIPTS=$PLUGIN_ROOT/scripts
 
@@ -1704,16 +1455,19 @@ for pair in "results/prerequisites.json:prerequisites" "results/baseline.json:ba
   python3 $SCRIPTS/schema_validator.py $EXP/$FILE $TYPE 2>/dev/null \
     && echo "  ✓ $FILE valid" || echo "  ✗ $FILE invalid"
 done
-for f in $EXP/results/exp-*.json; do
-  [ -f "$f" ] && python3 $SCRIPTS/schema_validator.py "$f" result 2>/dev/null \
+# Experiment results live under round dirs (results/round-N-<type>/exp-*.json), not flat.
+shopt -s nullglob
+for f in $EXP/results/round-*/exp-*.json; do
+  python3 $SCRIPTS/schema_validator.py "$f" result 2>/dev/null \
     && echo "  ✓ $(basename $f) valid" || echo "  ✗ $(basename $f) invalid"
 done
+shopt -u nullglob
 echo "✓ [8/25] Schema validation: complete"
 
 # 9. Result metadata (placeholder verification)
 python3 -c "
 import json, glob
-results = glob.glob('$EXP/results/exp-*.json')
+results = glob.glob('$EXP/results/round-*/exp-*.json')
 issues = []
 for f in results:
     data = json.loads(open(f).read())
@@ -1863,41 +1617,42 @@ else:
     print('✗ [20/25] Completeness enforcement: FAILED')
 "
 
-# 21. Resumable subagents
+# 21. Workflow files present
 python3 -c "
-import json
-state = json.loads(open('$EXP/pipeline-state.json').read())
-has_registry = 'agent_registry' in state
-print('✓ [21/25] Resumable subagents: agent_registry in pipeline state') if has_registry else print('✗ [21/25] Resumable subagents: agent_registry missing')
+from pathlib import Path
+wf = Path('$PLUGIN_ROOT/skills/orchestrate/workflows')
+expected = ['phase-5-research.js', 'phase-6-implement.js', 'phase-7-experiment.js', 'phase-8-stacking.js']
+missing = [f for f in expected if not (wf / f).exists()]
+bad_meta = [f for f in expected if (wf / f).exists() and not (wf / f).read_text().startswith('export const meta')]
+if not missing and not bad_meta:
+    print('✓ [21/25] Workflow files: 4/4 present, each begins with export const meta')
+else:
+    print('✗ [21/25] Workflow files: ' + '; '.join([f'missing {missing}' if missing else '', f'bad meta {bad_meta}' if bad_meta else '']).strip('; '))
 "
 
-# 23. Inter-agent relay
+# 22. Phase docs dispatch via Workflow(
 python3 -c "
-content = open('$PLUGIN_ROOT/skills/orchestrate/references/phase-7-experiment-loop.md').read()
-relay_count = content.count('CONTEXT FROM OTHER AGENTS')
-ok = relay_count >= 5
-print(f'✓ [22/25] Inter-agent relay: {relay_count} context relay sections') if ok else print(f'✗ [22/25] Inter-agent relay: only {relay_count} (need ≥5)')
+from pathlib import Path
+refs = Path('$PLUGIN_ROOT/skills/orchestrate/references')
+docs = ['phase-5-research', 'phase-6-implement', 'phase-7-experiment-loop', 'phase-8-stacking']
+bad = [d for d in docs if not ((refs / f'{d}.md').exists() and 'Workflow(' in (refs / f'{d}.md').read_text())]
+if not bad:
+    print('✓ [22/25] Workflow dispatch: 4/4 phase-5/6/7/8 docs dispatch via Workflow(')
+else:
+    print(f'✗ [22/25] Workflow dispatch: docs not using Workflow(: {bad}')
 "
 
-# 24. Persistent/ephemeral classification
+# 23. Agent definitions present (10 agents)
 python3 -c "
 from pathlib import Path
 agents_dir = Path('$PLUGIN_ROOT/agents')
-persistent = ['research', 'implement', 'tuning', 'analysis', 'monitor']
-ephemeral = ['prerequisites', 'baseline', 'experiment', 'report']
-issues = []
-for a in persistent:
-    content = (agents_dir / f'{a}-agent.md').read_text()
-    if 'Resumable Agent' not in content:
-        issues.append(f'{a} missing Resumable Agent')
-for a in ephemeral:
-    content = (agents_dir / f'{a}-agent.md').read_text()
-    if 'Resumable Agent' in content:
-        issues.append(f'{a} should NOT have Resumable Agent')
-if issues:
-    print('✗ [23/25] Persistent/ephemeral: ' + '; '.join(issues))
+expected = ['prerequisites', 'baseline', 'experiment', 'report', 'monitor',
+            'research', 'implement', 'tuning', 'analysis', 'orchestrator']
+missing = [a for a in expected if not (agents_dir / f'{a}-agent.md').exists()]
+if not missing:
+    print('✓ [23/25] Agent definitions: all 10 agents present')
 else:
-    print('✓ [23/25] Persistent/ephemeral: 5 persistent + 4 ephemeral correctly classified')
+    print(f'✗ [23/25] Agent definitions: missing {missing}')
 "
 
 # 25. Evolve file handoff (ShinkaEvolve integration)
@@ -1948,7 +1703,17 @@ echo "=== Feature Verification Done ==="
 
 This differs from Step 3.2 (synthetic hook tests) by checking what the **live agent dispatch actually produced** on disk. If Step 3.2 passes but Step 6.9 fails, the hook scripts work in isolation but the Claude Code runtime integration is broken.
 
+Checks (each prints ✓/✗; all run regardless of individual failures):
+
 ```bash
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}"
+export PLUGIN_ROOT
+SCRIPTS="$PLUGIN_ROOT/scripts"
+HOOKS="$PLUGIN_ROOT/hooks"
+FIX="$PLUGIN_ROOT/tests/fixtures"
+# NOTE: the Step 6.9 body references $EXP/experiments/... so EXP is the PROJECT root here.
+EXP=/tmp/ml-opt-diagnostic
+
 echo "=== 3-Checkpoint Evidence in Real Run ==="
 
 # --- Layer 2 evidence: PreToolUse approved the agent's writes ---
@@ -2042,16 +1807,16 @@ else
   echo "✗ [6.9-9] L3 evidence: analysis-agent any_of NOT satisfied (neither batch nor session review)"
 fi
 
-# --- Layer 3 evidence: dev_notes.md agent_id correlation ---
+# --- Layer 3 evidence: dev_notes.md running log ---
 if [ -f $EXP/experiments/dev_notes.md ]; then
-  AGENT_ID_COUNT=$(grep -c '<!-- agent_id:' $EXP/experiments/dev_notes.md)
-  if [ "$AGENT_ID_COUNT" -gt 0 ]; then
-    echo "✓ [6.9-10] L3 evidence: dev_notes.md has $AGENT_ID_COUNT agent_id-tagged entries"
+  ENTRY_COUNT=$(grep -cE '^## ' $EXP/experiments/dev_notes.md)
+  if [ "$ENTRY_COUNT" -gt 0 ]; then
+    echo "✓ [6.9-10] L3 evidence: dev_notes.md has $ENTRY_COUNT running-log entries"
   else
-    echo "✗ [6.9-10] L3 evidence: dev_notes.md exists but has zero agent_id tags (dev_notes.py not called)"
+    echo "✗ [6.9-10] L3 evidence: dev_notes.md exists but has zero entries"
   fi
 else
-  echo "✗ [6.9-10] L3 evidence: dev_notes.md not created (no agent called dev_notes.py)"
+  echo "✗ [6.9-10] L3 evidence: dev_notes.md not created"
 fi
 
 # --- Layer 3 evidence: report-agent contract ---
@@ -2076,14 +1841,14 @@ Summarize all results:
 ```text
 ML Optimizer End-to-End Diagnostic Results
 ==========================================
-Structural tests (pytest):  X/Y passed (full suite — 10 test files)
+Structural tests (pytest):  X/Y passed (full suite — 22 test files)
 Script CLI smoke tests:     X/26 passed (21 scripts — 100% of scripts/ directory)
 Hook functional tests:      X/23 passed (9 hooks — all of hooks.json except the 3 tested separately in Step 3.2)
-3-checkpoint enforcement:   X/24 passed (L1 inject × 3, L2 write-validate × 11, L3 stop-verify × 10)
-Resumable subagent infra:   X/Y checks passed (registry, patterns, docs)
-Agent smoke tests:          10/10 dispatched (memory: local confirmed)
+3-checkpoint enforcement:   X/22 passed (L1 inject × 3, L2 write-validate × 11, L3 stop-verify × 8)
+Workflow infrastructure:    X/Y checks passed (workflow files, meta header, node --check, Workflow( dispatch)
+Agent smoke tests:          9/9 worker agents dispatched (memory: local confirmed)
 
-Full Pipeline (live Agent() dispatch):
+Full Pipeline (phases 2/3/9 via Agent(); phases 5-8 via Workflow({scriptPath})):
   Phase 2 Prerequisites:    [passed/failed] — schema [valid/invalid]
   Phase 3 Baseline:         [passed/failed] — schema [valid/invalid], checksum [stored/missing]
   Phase 5 Research:         [passed/failed] — 3 modes tested:
@@ -2130,9 +1895,9 @@ Feature Verification (25 items):
   18. Experiment comparison:  [✓/✗] — compare_experiments() pairwise diff
   19. Results table:          [✓/✗] — results-table.md generated
   20. Completeness enforce:   [✓/✗] — --strict catches incomplete results
-  21. Resumable subagents:    [✓/✗] — agent_registry in pipeline state, SendMessage patterns in phase refs
-  22. Inter-agent relay:      [✓/✗] — CONTEXT FROM OTHER AGENTS in phase-7 dispatches
-  23. Persistent/ephemeral:   [✓/✗] — 5 persistent + 4 ephemeral correctly classified
+  21. Workflow files:         [✓/✗] — phase-{5,6,7,8}-*.js present, begin with export const meta
+  22. Workflow dispatch:      [✓/✗] — phase-5/6/7/8 docs dispatch via Workflow(
+  23. Agent definitions:      [✓/✗] — all 10 agents present
   24. Evolve file handoff:    [✓/✗] — ShinkaEvolve round-trip works
   25. ShinkaEvolve submodule: [✓/—] — present (optional)
 

@@ -1,41 +1,22 @@
 #!/usr/bin/env python3
-"""Helpers for GitNexus code-graph indexing: availability, MCP registration, and indexing.
+"""GitNexus code-graph helpers: CLI availability, MCP registration, and indexing.
 
-Wraps the `gitnexus` CLI to build/check the `.gitnexus` code knowledge graph
-that agents query — via the gitnexus MCP server — instead of grep. GitNexus is a
-hard prerequisite: `index()` never raises, reporting failure via its return dict
-so callers can halt with install guidance rather than fall back.
+Wraps the `gitnexus` CLI to build/check the `.gitnexus` code knowledge graph that
+agents query via the gitnexus MCP server (never grep). GitNexus is a hard
+prerequisite, so `index()` never raises — it reports failure via its return dict
+so callers halt with install guidance rather than fall back.
 
-Indexing uses `gitnexus analyze <path> --index-only`. `--index-only` keeps the
-index pure: it does NOT inject a "GitNexus — Code Intelligence" section into the
-repo's CLAUDE.md / AGENTS.md, nor install skill files under `.claude/` — so the
-indexed project (and any worktree) is never contaminated. On success `index()`
-also adds `.gitnexus/` to the repo's git exclude so the artifact never shows up
-as untracked. `gitnexus analyze` is incremental; `index()` skips re-indexing an
-already-indexed path unless `force=True` (which adds `--force`).
+Indexing runs `gitnexus analyze <path> --index-only`: `--index-only` keeps the
+index pure (no GitNexus section injected into the repo's CLAUDE.md/AGENTS.md, no
+`.claude/` skill files), so the indexed repo/worktree is never contaminated. On
+success `index()` adds `.gitnexus/` to the repo's git exclude; re-indexing an
+already-indexed path is skipped unless force=True (adds `--force`).
 
-Querying the graph is MCP-only (the agents use the `mcp__gitnexus__*` tools), so
-`mcp_registered()` lets Phase 2 warn early when the CLI is installed but its MCP
-server was never registered with Claude Code.
+Querying the graph is MCP-only, so `mcp_registered()` lets Phase 2 warn when the
+CLI is installed but its MCP server was never registered with Claude Code.
 
-Usage:
-    python3 gitnexus_utils.py available            # Check if the gitnexus CLI is on PATH
-    python3 gitnexus_utils.py mcp-registered       # Check if the gitnexus MCP server is registered with Claude Code
-    python3 gitnexus_utils.py require              # Hard prerequisite check (exits nonzero if CLI absent)
-    python3 gitnexus_utils.py index <path>         # Index a repo (gitnexus analyze <path> --index-only)
-    python3 gitnexus_utils.py index <path> --force # Force a full re-index
-    python3 gitnexus_utils.py is-indexed <path>    # Check for an existing .gitnexus index
-
-`require` and `index` exit nonzero on failure; `available`, `mcp-registered`,
-and `is-indexed` always exit 0 and report status in their JSON output.
-
-Examples:
-    python3 gitnexus_utils.py available
-    python3 gitnexus_utils.py mcp-registered
-    python3 gitnexus_utils.py require
-    python3 gitnexus_utils.py index /path/to/repo
-    python3 gitnexus_utils.py index /path/to/repo --force
-    python3 gitnexus_utils.py is-indexed /path/to/repo
+CLI: available | mcp-registered | require | index <path> [--force] | is-indexed <path>
+require/index exit nonzero on failure; available/mcp-registered/is-indexed always exit 0.
 """
 
 import json
@@ -45,9 +26,8 @@ import subprocess
 import sys
 
 
-# Canonical install/repair guidance. `gitnexus setup` auto-registers the MCP
-# server for Claude Code (the official path); the manual `claude mcp add` form is
-# the fallback when `setup` cannot be used.
+# `gitnexus setup` auto-registers the MCP server (official path); manual
+# `claude mcp add` is the fallback when setup can't be used.
 INSTALL_GUIDANCE = [
     "npm install -g gitnexus",
     "gitnexus setup",
@@ -74,13 +54,11 @@ def available() -> bool:
 
 
 def mcp_registered():
-    """Return whether the gitnexus MCP server is registered with Claude Code.
+    """Whether the gitnexus MCP server is registered with Claude Code.
 
-    Best-effort: runs `claude mcp get gitnexus`. Returns True if the server is
-    registered, False if `claude` runs but the server is not registered, and
-    None if the check cannot run (the `claude` CLI is absent, errors, or times
-    out). Never raises. Querying the code graph is MCP-only, so this lets Phase 2
-    warn early when the CLI is present but its MCP server was never registered.
+    Best-effort `claude mcp get gitnexus`: True if registered, False if `claude`
+    runs but the server isn't, None if the check can't run (claude absent/errors/
+    times out). Never raises.
     """
     if shutil.which("claude") is None:
         return None
@@ -104,12 +82,10 @@ def is_indexed(path: str) -> bool:
 
 
 def _exclude_gitnexus_artifact(path: str) -> None:
-    """Best-effort: add `.gitnexus/` to the repo's git exclude file.
-
-    Keeps the index artifact out of `git status` so it is never accidentally
-    committed. Resolves the correct exclude file via `git rev-parse --git-path`
-    (which handles worktrees and the shared git dir). Never raises and silently
-    no-ops for non-git paths or when the entry already exists.
+    """Best-effort: add `.gitnexus/` to the repo's git exclude so the index never
+    shows in `git status`. Resolves the exclude file via `git rev-parse
+    --git-path` (handles worktrees/shared git dir). Never raises; no-ops for
+    non-git paths or when the entry already exists.
     """
     try:
         proc = subprocess.run(
@@ -139,93 +115,52 @@ def _exclude_gitnexus_artifact(path: str) -> None:
 
 
 def index(path: str, timeout: int = 600, force: bool = False) -> dict:
-    """Index a repository with `gitnexus analyze <path> --index-only`.
+    """Index a repo with `gitnexus analyze <path> --index-only` (graph at
+    `<path>/.gitnexus`). `--index-only` keeps the index pure (no CLAUDE.md/
+    AGENTS.md injection, no `.claude/` skills). On success adds `.gitnexus/` to the
+    git exclude; skips re-indexing an already-indexed path unless *force* (adds
+    `--force`).
 
-    Writes the code knowledge graph to ``<path>/.gitnexus``. ``--index-only``
-    keeps the index pure — it does NOT inject a GitNexus section into the repo's
-    CLAUDE.md / AGENTS.md or install skill files under ``.claude/``. On success,
-    ``.gitnexus/`` is added to the repo's git exclude so it never appears as
-    untracked.
+    Never raises: any failure (CLI missing, timeout, non-zero exit) is reported via
+    the return dict so callers halt with install guidance — success:False is a halt
+    signal, NOT a fallback signal.
 
-    Skips re-indexing when *path* already has a ``.gitnexus`` index unless
-    *force* is True. (``gitnexus analyze`` is itself incremental, but skipping
-    avoids even spawning the subprocess.) ``force=True`` forces a full re-index
-    (``--force``).
-
-    Never raises: any failure (CLI missing, timeout, non-zero exit) is reported
-    via the returned dict so callers can surface a clean HARD ERROR (with
-    install/repair guidance) rather than crashing. ``success: False`` is NOT a
-    signal to fall back — it is a signal to halt.
-
-    Returns {"success": bool, "graph_path": str, "already_indexed": bool,
-    "output": str|None, "error": str|None}.
+    Returns {success, graph_path, already_indexed, output, error}.
     """
     graph_path = os.path.join(path, ".gitnexus")
 
-    if not available():
+    def result(success, already_indexed=False, output=None, error=None):
         return {
-            "success": False,
+            "success": success,
             "graph_path": graph_path,
-            "already_indexed": False,
-            "output": None,
-            "error": "gitnexus CLI not found on PATH",
+            "already_indexed": already_indexed,
+            "output": output,
+            "error": error,
         }
 
+    if not available():
+        return result(False, error="gitnexus CLI not found on PATH")
+
     if not force and is_indexed(path):
-        return {
-            "success": True,
-            "graph_path": graph_path,
-            "already_indexed": True,
-            "output": None,
-            "error": None,
-        }
+        return result(True, already_indexed=True)
 
     cmd = ["gitnexus", "analyze", path, "--index-only"]
     if force:
         cmd.append("--force")
 
     try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=True,
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout, check=True
         )
     except FileNotFoundError:
-        return {
-            "success": False,
-            "graph_path": graph_path,
-            "already_indexed": False,
-            "output": None,
-            "error": "gitnexus CLI not found on PATH",
-        }
+        return result(False, error="gitnexus CLI not found on PATH")
     except subprocess.TimeoutExpired:
-        return {
-            "success": False,
-            "graph_path": graph_path,
-            "already_indexed": False,
-            "output": None,
-            "error": f"gitnexus analyze timed out after {timeout} seconds",
-        }
+        return result(False, error=f"gitnexus analyze timed out after {timeout} seconds")
     except subprocess.CalledProcessError as e:
-        return {
-            "success": False,
-            "graph_path": graph_path,
-            "already_indexed": False,
-            "output": None,
-            "error": (e.stderr or e.stdout or str(e)).strip(),
-        }
+        return result(False, error=(e.stderr or e.stdout or str(e)).strip())
 
     _exclude_gitnexus_artifact(path)
-
-    return {
-        "success": True,
-        "graph_path": graph_path,
-        "already_indexed": False,
-        "output": (result.stdout or "").strip(),
-        "error": None,
-    }
+    return result(True, output=(proc.stdout or "").strip())
 
 
 if __name__ == "__main__":
@@ -243,11 +178,7 @@ if __name__ == "__main__":
         sys.exit(0)
     elif mode == "require":
         ok = available()
-        payload: dict[str, object] = {
-            "available": ok,
-            "required": True,
-            "mcp_registered": mcp_registered(),
-        }
+        payload = {"available": ok, "required": True, "mcp_registered": mcp_registered()}
         if not ok:
             payload["error"] = "GitNexus is a HARD PREREQUISITE and is not installed."
             payload["install"] = list(INSTALL_GUIDANCE)

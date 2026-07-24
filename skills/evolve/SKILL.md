@@ -6,15 +6,13 @@ user-invocable: false
 
 # Evolve Skill
 
-Use extended thinking for all reasoning. Ultrathink.
-
 > **Path convention:** All paths written as `<exp_root>/...` refer to the `exp_root` parameter from your dispatch. The plugin does not hardcode the output directory name.
 
 ## Overview
 
-This skill orchestrates **evolutionary code refinement** on the best method branch. It runs the full ShinkaEvolve pipeline internally — converting code, running evolution, and extracting the best mutation — then commits the result as a new branch.
+Orchestrates **evolutionary code refinement** on the best method branch. Runs the full ShinkaEvolve pipeline internally — convert code, run evolution, extract the best mutation — then commits the result as a new branch.
 
-ShinkaEvolve provides population management, island model, novelty detection, and selection pressure. The implement-agent acts as the LLM backend via file-based handoff (`SHINKA_PROVIDER=claude_code`).
+ShinkaEvolve provides population management, island model, novelty detection, and selection pressure. The implement-agent is the LLM backend via file-based handoff (`SHINKA_PROVIDER=claude_code`).
 
 ## Prerequisites
 
@@ -23,7 +21,7 @@ ShinkaEvolve is available via git submodule at `${CLAUDE_PLUGIN_ROOT}/skills/evo
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/setup_evolve.sh
 ```
 
-If the submodule is missing or imports fail, report `status: "shinkaevolve_unavailable"` and return immediately. The orchestrator will fall back to the research → implement path.
+If the submodule is missing or imports fail, report `status: "shinkaevolve_unavailable"` and return immediately. The orchestrator falls back to the research → implement path.
 
 **Important:** Use the local submodule, not PyPI `shinka-evolve` — the PyPI version lacks the `file_handoff_provider` module needed for `SHINKA_PROVIDER=claude_code`. Set `PYTHONPATH=${CLAUDE_PLUGIN_ROOT}/skills/evolve/ShinkaEvolve:$PYTHONPATH` before running `shinka_run`.
 
@@ -144,7 +142,7 @@ While shinka-run process is alive (check: kill -0 $SHINKA_PID 2>/dev/null):
 - If you fail to generate a mutation, write an error response: `{"content": "# ERROR: <reason>"}`. ShinkaEvolve treats this as low-fitness and continues.
 - If pending/ is empty for 60+ seconds and the process is alive, shinka-run is evaluating candidates. Keep polling.
 
-**Important:** You ARE the LLM that ShinkaEvolve is calling. Read the prompt carefully and generate a high-quality code mutation. Understand the code, identify weaknesses, propose targeted improvements.
+**Important:** You ARE the LLM that ShinkaEvolve is calling. Read the prompt carefully and generate a high-quality mutation: understand the code, identify weaknesses, propose targeted improvements.
 
 ## Step 4: Inspect Results
 
@@ -197,6 +195,6 @@ If ShinkaEvolve is unavailable or crashes: `status: "shinkaevolve_unavailable"`,
 - **Check dead ends.** If a technique is in `feedback_context.dead_ends`, do NOT use it.
 - **Preserve provenance.** All code must have `# [ml-opt] evolved: <description>` comments.
 - **Return to original branch.** Never leave the repo on the evolved branch.
-- **Use analysis-recommended HPs.** Always use `evolve_recommendation` from Step 0 — the analysis agent sizes the run based on budget and prior outcomes.
+- **Use analysis-recommended HPs.** Always use `evolve_recommendation` from Step 0 — the analysis agent sizes the run from budget and prior outcomes.
 - **Report failures cleanly.** If shinka-run crashes or produces no valid programs, return `status: "shinkaevolve_unavailable"`. Do not attempt ad-hoc mutations — let the orchestrator decide the fallback.
 - **File handoff cleanup.** After evolution completes, remove `<exp_root>/evolve/pending/` and `<exp_root>/evolve/completed/` contents.

@@ -1,0 +1,53 @@
+Using cpu device
+---------------------------------
+| rollout/           |          |
+|    ep_len_mean     | 22.5     |
+|    ep_rew_mean     | 22.5     |
+| time/              |          |
+|    fps             | 1250     |
+|    iterations      | 1        |
+|    time_elapsed    | 1        |
+|    total_timesteps | 2048     |
+---------------------------------
+-----------------------------------------
+| rollout/                |             |
+|    ep_len_mean          | 41.2        |
+|    ep_rew_mean          | 41.2        |
+| time/                   |             |
+|    fps                  | 1180        |
+|    iterations           | 2           |
+|    time_elapsed         | 3           |
+|    total_timesteps      | 4096        |
+| train/                  |             |
+|    approx_kl            | 0.0087      |
+|    clip_fraction        | 0.096       |
+|    clip_range           | 0.2         |
+|    entropy_loss         | -0.686      |
+|    explained_variance   | 0.0058      |
+|    learning_rate        | 0.0003      |
+|    loss                 | 51.2        |
+|    n_updates            | 10          |
+|    policy_gradient_loss | -0.0154     |
+|    value_loss           | 102.4       |
+-----------------------------------------
+-----------------------------------------
+| rollout/                |             |
+|    ep_len_mean          | 87.6        |
+|    ep_rew_mean          | 87.6        |
+| time/                   |             |
+|    fps                  | 1150        |
+|    iterations           | 3           |
+|    time_elapsed         | 5           |
+|    total_timesteps      | 6144        |
+| train/                  |             |
+|    approx_kl            | 0.0102      |
+|    clip_fraction        | 0.112       |
+|    clip_range           | 0.2         |
+|    entropy_loss         | -0.601      |
+|    explained_variance   | 0.421       |
+|    learning_rate        | 0.0003      |
+|    loss                 | 38.7        |
+|    n_updates            | 20          |
+|    policy_gradient_loss | -0.0121     |
+|    value_loss           | 74.9        |
+-----------------------------------------

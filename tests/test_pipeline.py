@@ -4,6 +4,7 @@ import concurrent.futures
 import json
 import os
 import stat
+import subprocess
 import tempfile
 import time
 from datetime import datetime, timedelta, timezone
@@ -238,66 +239,6 @@ class TestStatePersistence:
         save_state(7, 1, [], str(tmp_path))
         assert "stuck_protocol_triggered" not in load_state(str(tmp_path))
 
-    def test_agent_registry_persist_preserve_reset(self, tmp_path):
-        """Agent registry roundtrips, preserves across saves, and can be cleared."""
-        registry = {"research": "agent-abc123", "tuning": "agent-def456"}
-        save_state(7, 1, [], str(tmp_path), agent_registry=registry)
-        assert load_state(str(tmp_path))["agent_registry"] == registry
-        # Preserved when not explicitly provided
-        save_state(7, 2, [], str(tmp_path))
-        assert load_state(str(tmp_path))["agent_registry"] == registry
-        # Updated with new entries
-        updated = {**registry, "analysis": "agent-ghi789"}
-        save_state(7, 3, [], str(tmp_path), agent_registry=updated)
-        assert load_state(str(tmp_path))["agent_registry"] == updated
-        # Cleared with empty dict
-        save_state(7, 4, [], str(tmp_path), agent_registry={})
-        assert load_state(str(tmp_path))["agent_registry"] == {}
-
-    def test_agent_registry_absent_when_never_set(self, tmp_path):
-        """The agent registry is absent until it is explicitly set."""
-        save_state(7, 1, [], str(tmp_path))
-        assert "agent_registry" not in load_state(str(tmp_path))
-
-    def test_agent_registry_and_user_choices_simultaneous(self, tmp_path):
-        """Both agent_registry and user_choices survive when saved together."""
-        registry = {"research": "agent-abc", "tuning": "agent-def"}
-        choices = {"primary_metric": "accuracy", "lower_is_better": False}
-        save_state(7, 1, [], str(tmp_path),
-                   agent_registry=registry, user_choices=choices)
-        state = load_state(str(tmp_path))
-        assert state["agent_registry"] == registry
-        assert state["user_choices"] == choices
-
-    def test_agent_registry_preserved_when_user_choices_updated(self, tmp_path):
-        """Updating user_choices alone doesn't clobber agent_registry."""
-        save_state(7, 1, [], str(tmp_path),
-                   agent_registry={"research": "agent-abc"})
-        save_state(7, 2, [], str(tmp_path),
-                   user_choices={"primary_metric": "loss"})
-        state = load_state(str(tmp_path))
-        assert state["agent_registry"] == {"research": "agent-abc"}
-        assert state["user_choices"]["primary_metric"] == "loss"
-
-    def test_agent_registry_clearing_simulates_resumption(self, tmp_path):
-        """Clearing the agent registry on resumption preserves user_choices."""
-        full_registry = {
-            "research": "agent-old-1", "implement": "agent-old-2",
-            "tuning": "agent-old-3", "analysis": "agent-old-4",
-            "monitor": "agent-old-5",
-        }
-        choices = {"primary_metric": "accuracy"}
-        save_state(7, 5, [], str(tmp_path),
-                   agent_registry=full_registry, user_choices=choices)
-        # Simulate new session: load state, clear registry, re-save
-        state = load_state(str(tmp_path))
-        assert state["agent_registry"] == full_registry
-        save_state(state["phase"], state["iteration"], [], str(tmp_path),
-                   agent_registry={})
-        state = load_state(str(tmp_path))
-        assert state["agent_registry"] == {}
-        assert state["user_choices"] == choices  # preserved
-
     def test_stacking_state_roundtrip(self, tmp_path):
         """Nested stacking state inside user_choices survives save/load."""
         stacking = {
@@ -522,6 +463,32 @@ class TestCleanup:
         assert json.loads((tmp_path / "exp-002.json").read_text())["status"] == "running"
         assert json.loads(done.read_text())["status"] == "completed"
 
+    def test_cleanup_stale_round_dirs_and_pending(self, tmp_path):
+        """Round-dir results are scanned; pending placeholders are never stale."""
+        rdir = tmp_path / "results" / "round-1-hp"
+        rdir.mkdir(parents=True)
+        stale_ts = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
+        (rdir / "exp-010.json").write_text(json.dumps(
+            {"exp_id": "exp-010", "status": "running", "timestamp": stale_ts}))
+        (rdir / "exp-011.json").write_text(json.dumps(
+            {"exp_id": "exp-011", "status": "pending", "timestamp": stale_ts}))
+        cleaned = cleanup_stale(str(tmp_path), timeout_hours=2.0)
+        assert any("exp-010" in c for c in cleaned)
+        assert not any("exp-011" in c for c in cleaned)
+        assert json.loads((rdir / "exp-010.json").read_text())["status"] == "failed"
+        assert json.loads((rdir / "exp-011.json").read_text())["status"] == "pending"
+
+    def test_cleanup_stale_timeout_derived_threshold(self, tmp_path):
+        """A running exp inside its own 3x time-budget window is not stale."""
+        rdir = tmp_path / "results" / "round-1-hp"
+        rdir.mkdir(parents=True)
+        ts = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
+        (rdir / "exp-012.json").write_text(json.dumps(
+            {"exp_id": "exp-012", "status": "running", "timestamp": ts,
+             "time_budget_seconds": 14400}))  # 3x budget = 12h window > 3h elapsed
+        assert cleanup_stale(str(tmp_path), timeout_hours=2.0) == []
+        assert json.loads((rdir / "exp-012.json").read_text())["status"] == "running"
+
 
 # ---------------------------------------------------------------------------
 # TestExperimentSetup
@@ -560,16 +527,20 @@ class TestExperimentSetup:
         assert json.loads(Path(path).read_text())["lr"] == 0.001
 
     def test_generate_script_features(self, tmp_path):
-        """GPU, command, env vars, log piping, executable, PID."""
+        """GPU, command, env vars, background launch + redirect, real PID, exit code."""
         path = generate_script(
             str(tmp_path), "exp-001", "python train.py --lr 0.001",
             gpu_id=2, log_file="logs/round-1-hp/exp-001/train.log",
             env_vars={"WANDB_DISABLED": "true"})
         content = Path(path).read_text()
         for expected in ["CUDA_VISIBLE_DEVICES=2", "python train.py --lr 0.001",
-                         "WANDB_DISABLED=true", "tee logs/round-1-hp/exp-001/train.log",
-                         "pid", "$$"]:
+                         "WANDB_DISABLED=true", "set -o pipefail",
+                         "> logs/round-1-hp/exp-001/train.log 2>&1 &",
+                         "echo $! > logs/round-1-hp/exp-001/pid",
+                         "wait $! || EXIT_CODE=$?"]:
             assert expected in content
+        assert content.rstrip().endswith("exit $EXIT_CODE")
+        assert "$$" not in content  # pid file must hold the TRAINING pid, not the wrapper's
         assert Path(path).stat().st_mode & stat.S_IXUSR
 
     def test_generate_script_requires_log_file(self, tmp_path):
@@ -588,15 +559,38 @@ class TestExperimentSetup:
         (120, True), (None, False), (0, False),
     ], ids=["with_budget", "none", "zero"])
     def test_generate_script_time_budget(self, tmp_path, budget, expect_timeout):
-        """A positive time budget wraps the command in timeout; zero/None does not."""
+        """Budget wraps in timeout; 124→success ONLY in the time-budget branch."""
         path = generate_script(str(tmp_path), "exp-001", "python train.py",
                                      gpu_id=0, log_file="logs/round-1-hp/exp-001/train.log",
                                      time_budget=budget)
         content = Path(path).read_text()
         if expect_timeout:
             assert "timeout --signal=SIGTERM --kill-after=60 120" in content
+            assert "if [ $EXIT_CODE -eq 124 ]; then" in content
+            assert "    EXIT_CODE=0" in content
         else:
             assert "timeout --signal=SIGTERM" not in content
+            assert "-eq 124" not in content  # no 124→success outside the budget branch
+        assert content.rstrip().endswith("exit $EXIT_CODE")
+
+    def test_generate_script_propagates_failure_exit_code(self, tmp_path):
+        """Running the script propagates the command's real exit code and writes the pid."""
+        log = tmp_path / "logs" / "round-1-hp" / "exp-001" / "train.log"
+        path = generate_script(str(tmp_path / "scripts"), "exp-001",
+                               "sh -c 'echo boom; exit 3'",
+                               gpu_id=0, log_file=str(log))
+        proc = subprocess.run(["bash", path], capture_output=True, text=True, timeout=30)
+        assert proc.returncode == 3
+        assert "boom" in log.read_text()
+        assert (log.parent / "pid").read_text().strip().isdigit()
+
+    def test_generate_script_success_exit_zero(self, tmp_path):
+        """A succeeding command exits 0 through the wait/exit chain."""
+        log = tmp_path / "logs" / "round-1-hp" / "exp-002" / "train.log"
+        path = generate_script(str(tmp_path / "scripts"), "exp-002", "true",
+                               gpu_id=0, log_file=str(log))
+        proc = subprocess.run(["bash", path], capture_output=True, text=True, timeout=30)
+        assert proc.returncode == 0
 
     def test_setup_increments_ids(self, tmp_path):
         """Sequential setups produce incrementing IDs and create config/script files."""

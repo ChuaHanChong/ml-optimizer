@@ -15,11 +15,6 @@ Usage:
 
 --live also activates automatically when the pipeline status is "running".
 --table can be combined with the dashboard run to emit both outputs.
-
-Examples:
-    python3 dashboard.py <exp_root>
-    python3 dashboard.py <exp_root> --live --table
-    python3 dashboard.py <exp_root> --serve --port 8080
 """
 
 import html as html_mod
@@ -56,12 +51,15 @@ def _load_dashboard_data(exp_root: str) -> dict:
         "primary_metric": None,
         "lower_is_better": True,
         "is_running": False,
+        "secondary_metrics": [],
+        "results_raw": {},
     }
 
     # Load results
     results_dir = root / "results"
     if results_dir.is_dir():
         results = load_results(str(results_dir))
+        data["results_raw"] = results
         baseline = results.get("baseline")
         if baseline:
             data["baseline"] = baseline
@@ -75,6 +73,10 @@ def _load_dashboard_data(exp_root: str) -> dict:
                 uc = state.get("user_choices", {})
                 data["primary_metric"] = uc.get("primary_metric")
                 data["lower_is_better"] = uc.get("lower_is_better", True)
+                data["secondary_metrics"] = [
+                    m for m in (uc.get("secondary_metrics") or [])
+                    if isinstance(m, dict) and m.get("name")
+                ]
                 data["running_experiments"] = state.get("running_experiments", [])
                 data["is_running"] = state.get("status") == "running"
             except (json.JSONDecodeError, OSError):
@@ -191,6 +193,7 @@ svg{max-width:100%}
     <div class="metric-label">${metric_name} (${direction})</div>
     <div style="margin-top:8px;font-size:0.85rem;color:#495057">${best_exp_id}</div>
     <div style="font-size:0.85rem;color:#2f9e44">${improvement}</div>
+    ${data_quality_banner}
   </div>
   <div class="card">
     <h2>Pipeline State</h2>
@@ -220,7 +223,7 @@ ${running_section}
         <th onclick="sortTable(2)">${metric_name}</th>
         <th onclick="sortTable(3)">vs Baseline</th>
         <th onclick="sortTable(4)">Branch</th>
-        <th onclick="sortTable(5)">Iteration</th>
+        <th onclick="sortTable(5)">Iteration</th>${secondary_headers}
       </tr></thead>
       <tbody>${results_rows}</tbody>
     </table>
@@ -331,11 +334,10 @@ def _generate_timeline_svg(experiments, metric, baseline_val, lower_is_better):
 
 
 def generate_dashboard(exp_root: str, *, live: bool = False) -> str:
-    """Generate the dashboard HTML file. Returns the output path.
+    """Generate the dashboard HTML file -> output path.
 
-    When *live* is True (or the pipeline is still running), the HTML
-    includes `<meta http-equiv="refresh" content="30">` so the browser
-    auto-reloads every 30 seconds.
+    *live* (or a still-running pipeline) adds `<meta http-equiv="refresh"
+    content="30">` so the browser auto-reloads every 30 seconds.
     """
     data = _load_dashboard_data(exp_root)
     metric = data["primary_metric"] or "loss"
@@ -352,6 +354,19 @@ def generate_dashboard(exp_root: str, *, live: bool = False) -> str:
     best = completed[0] if completed else None
     best_value = _format_value(best.get("value") if best else None)
     best_id = best.get("exp_id", "—") if best else "—"
+
+    # Data-quality banner: flag when the ranking includes non-held-out-eval results.
+    unverified_count = sum(1 for e in completed if e.get("eval_protocol") != "held_out_eval")
+    if unverified_count:
+        best_unverified = best is not None and best.get("eval_protocol") != "held_out_eval"
+        data_quality_banner = (
+            f'<div style="margin-top:8px;font-size:0.8rem;color:#c0392b;font-weight:600">'
+            f'⚠ {unverified_count}/{len(completed)} completed results are not held-out evaluations'
+            f'{" — including the result shown above" if best_unverified else ""}.'
+            f' Sort by eval_protocol=held_out_eval before trusting rankings.</div>'
+        )
+    else:
+        data_quality_banner = ""
     improvement = ""
     if best and baseline_val is not None:
         bv = best.get("value")
@@ -362,9 +377,14 @@ def generate_dashboard(exp_root: str, *, live: bool = False) -> str:
 
     # Pipeline state
     ps = data["pipeline_state"] or {}
-    uc = ps.get("user_choices", {})
 
-    # Results rows
+    # Results rows (+ secondary metric columns from user_choices.secondary_metrics)
+    secondary = data.get("secondary_metrics", [])
+    raw_results = data.get("results_raw", {})
+    secondary_headers = "".join(
+        f'<th onclick="sortTable({6 + i})">{html_mod.escape(str(m["name"]))}</th>'
+        for i, m in enumerate(secondary)
+    )
     rows = []
     for exp in exps:
         eid = exp.get("exp_id", "?")
@@ -377,10 +397,18 @@ def generate_dashboard(exp_root: str, *, live: bool = False) -> str:
             d = baseline_val - val if lower else val - baseline_val
             pct = d / abs(baseline_val) * 100
             delta = f"{pct:+.2f}%"
+        sec_cells = ""
+        for m in secondary:
+            sval = raw_results.get(eid, {}).get("metrics", {}).get(m["name"])
+            num = sval if isinstance(sval, (int, float)) and not isinstance(sval, bool) else ""
+            sec_cells += f'<td data-val="{num}">{_format_value(sval)}</td>'
+        # Flag non-held-out-eval values — a train-set proxy otherwise looks like a real result.
+        proto = exp.get("eval_protocol")
+        proto_badge = "" if proto == "held_out_eval" else ' <span class="badge" style="background:#c0392b" title="not a held-out evaluation">⚠ unverified</span>'
         rows.append(
             f'<tr><td>{eid}</td><td>{_status_badge(status)}</td>'
-            f'<td data-val="{val if val is not None else ""}">{_format_value(val)}</td>'
-            f'<td>{delta}</td><td>{branch}</td><td>{iteration}</td></tr>'
+            f'<td data-val="{val if val is not None else ""}">{_format_value(val)}{proto_badge}</td>'
+            f'<td>{delta}</td><td>{branch}</td><td>{iteration}</td>{sec_cells}</tr>'
         )
 
     # HP sensitivity section
@@ -516,11 +544,13 @@ def generate_dashboard(exp_root: str, *, live: bool = False) -> str:
         direction="lower is better" if lower else "higher is better",
         best_exp_id=best_id,
         improvement=improvement,
+        data_quality_banner=data_quality_banner,
         phase=str(ps.get("phase", "—")),
         iteration=str(ps.get("iteration", "—")),
         running_section=running_section,
         timeline_svg=timeline_svg,
         results_rows="\n".join(rows),
+        secondary_headers=secondary_headers,
         hp_section=hp_section,
         agenda_section=agenda_section,
         errors_section=errors_section,
@@ -539,16 +569,14 @@ def generate_dashboard(exp_root: str, *, live: bool = False) -> str:
 
 
 def generate_results_table(exp_root: str, metric: str = "loss", lower_is_better: bool = True) -> str:
-    """Generate <exp_root>/results-table.md with ranked experiment results.
-
-    Returns the output file path.
-    """
+    """Generate <exp_root>/results-table.md with ranked experiment results -> output path."""
     root = Path(exp_root)
     results_dir = root / "results"
     results = load_results(str(results_dir)) if results_dir.is_dir() else {}
 
     # Read pipeline state for phase/iteration
     phase, iteration = "?", "?"
+    secondary = []
     state_path = root / "pipeline-state.json"
     if state_path.is_file():
         try:
@@ -558,6 +586,10 @@ def generate_results_table(exp_root: str, metric: str = "loss", lower_is_better:
             uc = state.get("user_choices", {})
             metric = uc.get("primary_metric", metric)
             lower_is_better = uc.get("lower_is_better", lower_is_better)
+            secondary = [
+                m for m in (uc.get("secondary_metrics") or [])
+                if isinstance(m, dict) and m.get("name")
+            ]
         except (json.JSONDecodeError, OSError):
             pass
 
@@ -609,20 +641,36 @@ def generate_results_table(exp_root: str, metric: str = "loss", lower_is_better:
         f"- Completed: {statuses['completed']} | Failed: {statuses['failed']} | "
         f"Diverged: {statuses['diverged']} | Running: {statuses['running']}",
         f"- Best result: {best_line}",
-        "",
     ]
+    unverified_count = sum(1 for r in ranked if r.get("eval_protocol") != "held_out_eval")
+    if unverified_count:
+        lines.append(
+            f"- ⚠ **{unverified_count}/{len(ranked)} ranked results are not held-out evaluations** "
+            f"(missing/non-`held_out_eval` `eval_protocol`) — marked with ⚠ below. "
+            f"Do not trust these values against results that are genuinely held-out."
+        )
+    lines.append("")
 
     # Results table
     if ranked:
         lines.append("## Results")
         lines.append("")
-        lines.append(f"| # | Exp ID | Status | {metric.capitalize()} | vs Baseline | Branch | Tier | Iter |")
-        lines.append("|---|--------|--------|" + "-" * max(len(metric), 6) + "--|-------------|--------|------|------|")
+        sec_names = [str(m["name"]) for m in secondary]
+        lines.append(
+            f"| # | Exp ID | Status | {metric.capitalize()} | vs Baseline | Branch | Tier | Iter |"
+            + "".join(f" {n} |" for n in sec_names)
+        )
+        lines.append(
+            "|---|--------|--------|" + "-" * max(len(metric), 6)
+            + "--|-------------|--------|------|------|" + "------|" * len(sec_names)
+        )
         for i, r in enumerate(ranked, 1):
             eid = r.get("exp_id", "?")
             status = results.get(eid, {}).get("status", "?")
             val = r.get("value")
             val_str = f"{val:.4f}" if isinstance(val, (int, float)) else "—"
+            if r.get("eval_protocol") != "held_out_eval":
+                val_str += " ⚠"
             delta_str = "—"
             if val is not None and baseline_val is not None and abs(baseline_val) > 1e-12:
                 if lower_is_better:
@@ -635,7 +683,14 @@ def generate_results_table(exp_root: str, metric: str = "loss", lower_is_better:
             branch = f"`{branch_raw}`" if branch_raw else "—"
             tier = results.get(eid, {}).get("method_tier") or "—"
             it = results.get(eid, {}).get("iteration", "—")
-            lines.append(f"| {i} | {eid} | {status} | {val_str} | {delta_str} | {branch} | {tier} | {it} |")
+            sec_cells = ""
+            for m in secondary:
+                sv = results.get(eid, {}).get("metrics", {}).get(m["name"])
+                if isinstance(sv, (int, float)) and not isinstance(sv, bool):
+                    sec_cells += f" {sv:.4f} |"
+                else:
+                    sec_cells += " — |"
+            lines.append(f"| {i} | {eid} | {status} | {val_str} | {delta_str} | {branch} | {tier} | {it} |" + sec_cells)
         lines.append("")
 
     # Code changes per branch
@@ -644,12 +699,21 @@ def generate_results_table(exp_root: str, metric: str = "loss", lower_is_better:
         if d.get("code_branch") and d.get("status") == "completed"
     })
     if branches:
+        # Diff base = the run's original branch from the implementation manifest
+        # (ml-opt/* branches were created off it, which is not necessarily "main").
+        base_branch = "main"
+        manifest_path = results_dir / "implementation-manifest.json"
+        if manifest_path.is_file():
+            try:
+                base_branch = json.loads(manifest_path.read_text()).get("original_branch") or "main"
+            except (json.JSONDecodeError, OSError):
+                pass
         lines.append("## Code Changes")
         lines.append("")
         lines.append("View the code diff for each method branch:")
         lines.append("")
         for b in branches:
-            lines.append(f"- **`{b}`**: `git diff main...{b}`")
+            lines.append(f"- **`{b}`**: `git diff {base_branch}...{b}`")
         lines.append("")
 
     # HP correlations

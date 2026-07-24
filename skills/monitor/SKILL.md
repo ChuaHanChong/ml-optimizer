@@ -6,23 +6,23 @@ user-invocable: false
 
 # Experiment Monitor
 
-Watches running training experiments for signs of divergence and takes corrective action.
+Watch running training experiments for divergence and take corrective action.
 
-> **Path convention:** All paths written as `<exp_root>/...` refer to the `exp_root` parameter from your dispatch. The plugin does not hardcode the output directory name.
+> **Path convention:** All `<exp_root>/...` paths refer to the `exp_root` dispatch parameter. The plugin does not hardcode the output directory name.
 
 ## Inputs Expected
 
 From the orchestrator:
-- `log_files`: List of log file paths to monitor (one per running experiment)
-- `exp_ids`: Corresponding experiment IDs
-- `project_root`: Project root directory
-- `poll_interval`: How often to check (default: 30 seconds)
-- `metric_to_watch`: Which metric to monitor for divergence (default: "loss"). The orchestrator passes the user's chosen divergence metric from Phase 0. Common values: `"loss"`, `"train_loss"`, `"val_loss"`, `"objective"`, `"nll_loss"`, `"total_loss"`.
-- `lower_is_better`: Whether lower values are better for the watched metric (default: true). The `primary_metric` (accuracy, PSNR, etc.) is used by analyze/hp-tune, not by monitor.
-- `explosion_threshold`: Threshold multiplier for explosion detection (default: 5.0). Override based on model type.
-- `plateau_patience`: Steps without improvement before plateau alarm (default: 20). Override based on model type.
-- `model_category` (optional): From user_choices — `"rl"`, `"generative"`, or null. Controls RL-specific monitoring adjustments (see RL Model Monitoring section).
-- `overfitting_check` (optional): When provided, also check for overfitting by comparing train vs val metrics. Dict with `train_metric` and `val_metric` names. Example: `{"train_metric": "train_loss", "val_metric": "val_loss"}`. Requires both metrics to be available in the training logs.
+- `log_files`: log file paths to monitor (one per running experiment)
+- `exp_ids`: corresponding experiment IDs
+- `project_root`: project root directory
+- `poll_interval`: check frequency (default: 30 seconds)
+- `metric_to_watch`: metric to monitor for divergence (default: "loss"). The orchestrator passes the user's chosen divergence metric from Phase 0. Common values: `"loss"`, `"train_loss"`, `"val_loss"`, `"objective"`, `"nll_loss"`, `"total_loss"`; for RL reward-watching: `"reward"`, `"episode_return"` (pass `lower_is_better: false`).
+- `lower_is_better`: whether lower values are better for the watched metric (default: true). The `primary_metric` (accuracy, PSNR, etc.) is used by analyze/hp-tune, not monitor.
+- `explosion_threshold`: explosion-detection multiplier (default: 5.0). Override per model type.
+- `plateau_patience`: steps without improvement before plateau alarm (default: 20). Override per model type.
+- `model_category` (optional): from user_choices — `"rl"`, `"generative"`, or null. Controls RL-specific monitoring (see RL Model Monitoring).
+- `overfitting_check` (optional): when provided, also check overfitting by comparing train vs val metrics. Dict with `train_metric` and `val_metric` names, e.g. `{"train_metric": "train_loss", "val_metric": "val_loss"}`. Requires both metrics in the training logs.
 
 ## Step 1: Validate Inputs
 
@@ -32,11 +32,11 @@ From the orchestrator:
    # Check if training process is still running
    ps aux | grep "<exp_id>" | grep -v grep
    ```
-   Or check for PID files in `<exp_root>/logs/<round_dir>/<exp_id>/pid`
+   Or check for PID files at `<exp_root>/logs/<round_dir>/<exp_id>/pid`
 
 ## Step 2: Poll Loop
 
-For each monitoring cycle:
+Each monitoring cycle:
 
 ### 2a: Read Latest Log Content
 
@@ -48,7 +48,7 @@ tail -100 <exp_root>/logs/<round_dir>/<exp_id>/train.log
 
 ### 2b: Parse Metrics
 
-Parse the log content for the watched metric:
+Parse the log for the watched metric:
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/parse_logs.py <exp_root>/logs/<round_dir>/<exp_id>/train.log
 ```
@@ -57,17 +57,17 @@ Extract the metric trajectory (all values of the watched metric over time).
 
 ### 2b.1: Metric Name Fallback
 
-If the watched metric is not found in the parsed records, attempt auto-detection:
+If the watched metric is not in the parsed records, auto-detect:
 
-1. **Case-insensitive match:** Try `metric_to_watch.lower()` against all keys lowercased
-2. **Prefix variants:** Try `train_<metric>`, `val_<metric>`, `<metric>_train` (e.g., `loss` → `train_loss`, `val_loss`)
-   **Disambiguation:** If multiple prefix variants match (e.g., both `train_loss` and `val_loss`), prefer `val_<metric>` — validation loss is a better divergence signal than training loss. Log which variant was selected to dev_notes.
-3. **Substring match:** Look for any key containing `metric_to_watch` as a substring (e.g., `"loss"` matches `"total_loss"`)
-4. **Report missing:** If no match found after all fallbacks, log a warning and report the available metric names to the orchestrator. Do not treat this as divergence. Return status `unmonitored` with the list of available metrics. The orchestrator handles this status by continuing without divergence checks but with a hard timeout fallback.
+1. **Case-insensitive match:** try `metric_to_watch.lower()` against all keys lowercased
+2. **Prefix variants:** try `train_<metric>`, `val_<metric>`, `<metric>_train` (e.g., `loss` → `train_loss`, `val_loss`).
+   **Disambiguation:** if multiple prefix variants match (e.g., both `train_loss` and `val_loss`), prefer `val_<metric>` — validation loss is a better divergence signal than training loss. Log the selected variant to dev_notes.
+3. **Substring match:** any key containing `metric_to_watch` (e.g., `"loss"` matches `"total_loss"`)
+4. **Report missing:** if no match after all fallbacks, log a warning and report available metric names to the orchestrator. Do not treat this as divergence. Return status `unmonitored` with the available metrics. The orchestrator continues without divergence checks but with a hard timeout fallback.
 
 ### 2c: Check for Divergence
 
-Run divergence detection on the extracted trajectory, passing `lower_is_better` and model-category-aware thresholds:
+Run divergence detection on the trajectory, passing `lower_is_better` and model-category thresholds:
 ```bash
 python3 -c "
 import json, sys
@@ -84,7 +84,7 @@ print(json.dumps(result))
 "
 ```
 
-Alternatively, use the CLI with the `--model-category` flag:
+Or the CLI with `--model-category`:
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/detect_divergence.py '<json_values>' --model-category <model_category>
 ```
@@ -93,11 +93,9 @@ This applies category-specific thresholds automatically (e.g., RL uses `explosio
 
 ### 2d: Overfitting Check (if `overfitting_check` provided)
 
-If `overfitting_check` was provided in the inputs:
-
-1. Extract both metric trajectories from the log:
-   - Train metric: `extract_metric_trajectory(records, overfitting_check["train_metric"])`
-   - Val metric: `extract_metric_trajectory(records, overfitting_check["val_metric"])`
+1. Extract both trajectories from the log:
+   - Train: `extract_metric_trajectory(records, overfitting_check["train_metric"])`
+   - Val: `extract_metric_trajectory(records, overfitting_check["val_metric"])`
 
 2. Run overfitting detection:
    ```bash
@@ -131,7 +129,7 @@ If divergence is detected:
 
 2. **Record the divergence:**
    - Read the current experiment result file (if it exists)
-   - **Ownership check:** If the file already has `status: "completed"` or `status: "failed"`, do NOT overwrite — the experiment finished first. Log to dev_notes: "Monitor detected divergence for <exp_id> but experiment already completed with status '<status>' — skipping overwrite." Skip to step 3.
+   - **Ownership check:** if the file already has `status: "completed"` or `status: "failed"`, do NOT overwrite — the experiment finished first. Log to dev_notes: "Monitor detected divergence for <exp_id> but experiment already completed with status '<status>' — skipping overwrite." Skip to step 3.
    - If the file does not exist, or has `status: "running"`: update status to `"diverged"` and add divergence details to notes:
      ```json
      {
@@ -146,8 +144,7 @@ If divergence is detected:
      ```
      If validation fails, fix the JSON before continuing.
 
-3. **Log the event:**
-   Append to `<exp_root>/dev_notes.md`:
+3. **Log the event** — append to `<exp_root>/dev_notes.md`:
    ```
    ## Divergence Detected
    - Experiment: <exp_id>
@@ -161,9 +158,7 @@ If divergence is detected:
    python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"category":"divergence","severity":"warning","source":"monitor","message":"<divergence reason>","exp_id":"<exp_id>","context":{"divergence_type":"<nan|explosion|plateau|drift>","step":<step>,"metric_to_watch":"<metric>"}}'
    ```
 
-5. **Log divergence pattern to behavioral memory:**
-
-   When an experiment is killed due to divergence, also log the pattern to behavioral memory:
+5. **Log divergence pattern to behavioral memory** — when an experiment is killed for divergence, also log the pattern:
    ```bash
    python3 ${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py <exp_root> log-behavior divergence_pattern '{"description":"<metric> diverged at step <N> with config <config>","affected_branches":["<branch>"],"threshold":{"parameter":"<hp>","value":<val>},"source":"monitor"}'
    ```
@@ -171,7 +166,7 @@ If divergence is detected:
 
 ### 2f: Report Status
 
-For healthy experiments, report status:
+For healthy experiments:
 ```
 Monitoring status:
 - exp-001: healthy (loss=0.45 at step 500, trending down)
@@ -182,19 +177,19 @@ Monitoring status:
 ## Step 3: Completion
 
 The monitor exits when:
-1. All experiments have completed (log files stop being updated)
-2. All experiments have been killed (divergence)
-3. The orchestrator signals to stop
+1. All experiments completed (log files stop updating)
+2. All experiments killed (divergence)
+3. The orchestrator signals stop
 
 ## Monitoring Heuristics
 
 ### Check frequency
-- First 100 steps: check every 10 seconds (early divergence is common)
-- Steps 100-1000: check every 30 seconds
-- After step 1000: check every 60 seconds
+- First 100 steps: every 10 seconds (early divergence is common)
+- Steps 100-1000: every 30 seconds
+- After step 1000: every 60 seconds
 
-### Divergence parameters (defaults, adjust based on model type)
-- **NaN/Inf detection:** Always enabled, immediate kill
+### Divergence parameters (defaults, adjust per model type)
+- **NaN/Inf detection:** always enabled, immediate kill
 - **Explosion threshold:** 5x rolling average over 10-step window
 - **Plateau patience:** 20 evaluation checkpoints with min_delta=1e-6
 
@@ -227,31 +222,31 @@ When `divergence_metric` is a reward metric (`lower_is_better = False`):
 - NaN/Inf detection still applies normally
 
 ### Common divergence patterns
-- **NaN in first 10 steps:** Learning rate too high. Note this for hp-tune.
-- **Loss explosion after good start:** Possible learning rate schedule issue or gradient accumulation bug.
-- **Slow plateau:** Model capacity may be insufficient, or learning rate too low.
+- **NaN in first 10 steps:** learning rate too high. Note for hp-tune.
+- **Loss explosion after good start:** possible LR schedule issue or gradient accumulation bug.
+- **Slow plateau:** model capacity may be insufficient, or learning rate too low.
 
 ## Error Handling
 
-- **Log file doesn't exist yet:** Wait up to 60 seconds for it to appear (or 180 seconds if the experiment has a `code_branch` — worktree setup, dataset downloads, and dependency resolution add significant startup time). If the log file still doesn't exist after the wait period, check whether the experiment process is still alive (via PID file at `<exp_root>/logs/<round_dir>/<exp_id>/pid`). If the process is alive, extend the wait by another 60 seconds. If the process is dead or no PID file exists, report error immediately.
-- **Log file format unrecognized:** Try all parsers, report if none work
-- **Process already dead:** Check exit code, mark as failed if non-zero
-- **Permission errors:** Report and skip that experiment
-- **Log file exists but is empty:** If the log file has 0 bytes after 5 minutes of monitoring, report status `"no_output"` with reason `"Log file empty after 5 minutes — training may have stalled"`. Log to error tracker with `category: "training_failure"`, `severity: "warning"`, `source: "monitor"`.
+- **Log file doesn't exist yet:** wait up to 60 seconds for it to appear (180 seconds if the experiment has a `code_branch` — worktree setup, dataset downloads, and dependency resolution add startup time). If it still doesn't exist, check whether the process is alive (PID file at `<exp_root>/logs/<round_dir>/<exp_id>/pid`). If alive, extend the wait by another 60 seconds. If dead or no PID file, report error immediately.
+- **Log file format unrecognized:** try all parsers, report if none work
+- **Process already dead:** check exit code, mark as failed if non-zero
+- **Permission errors:** report and skip that experiment
+- **Log file exists but is empty:** if 0 bytes after 5 minutes of monitoring, report status `"no_output"` with reason `"Log file empty after 5 minutes — training may have stalled"`. Log to error tracker with `category: "training_failure"`, `severity: "warning"`, `source: "monitor"`.
 
 ## Output
 
 Return to the orchestrator a dict per experiment:
-- `exp_id`: Experiment identifier
-- `status`: One of `healthy`, `diverged`, `completed`, `failed`, `no_output`
-- `reason`: Divergence reason (if diverged) or `null`
-- `step`: Step at which divergence was detected (if diverged) or `-1`
-- `latest_metrics`: Dict of most recent metric values
-- `metric_trajectory`: List of watched metric values over time
+- `exp_id`: experiment identifier
+- `status`: one of `healthy`, `diverged`, `completed`, `failed`, `no_output`
+- `reason`: divergence reason (if diverged) or `null`
+- `step`: step at which divergence was detected (if diverged) or `-1`
+- `latest_metrics`: dict of most recent metric values
+- `metric_trajectory`: list of watched metric values over time
 
 **When the watched metric is not found after fallbacks** (Step 2b.1):
 - `metric_trajectory`: `[]` (empty — watched metric was never parsed)
-- `latest_metrics`: All other available metrics from the final log line (the watched metric will be absent from this dict)
+- `latest_metrics`: all other available metrics from the final log line (the watched metric will be absent)
 - `reason`: `"Watched metric '<name>' not found; available: [<list>]"`
 
 > **Important:** These status values (`healthy`, `no_output`) are internal monitor output for the orchestrator only. They must NOT be written to experiment result JSON files. Result files use: `completed`, `failed`, `diverged`, `timeout`.

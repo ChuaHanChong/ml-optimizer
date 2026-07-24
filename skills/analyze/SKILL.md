@@ -6,27 +6,25 @@ user-invocable: false
 
 # Experiment Analysis
 
-Use extended thinking for all analytical reasoning in this skill. Ultrathink. Think through HP interaction effects, trend detection across batches, and the continue/pivot/stop decision with full consideration of alternatives and edge cases.
+Think through HP interaction effects, trend detection across batches, and the continue/pivot/stop decision with full consideration of alternatives and edge cases — determine what worked, what didn't, and what to do next.
 
-Analyze completed experiment results to determine what worked, what didn't, and what to do next.
-
-> **Path convention:** All paths written as `<exp_root>/...` refer to the `exp_root` parameter from your dispatch. The plugin does not hardcode the output directory name.
+> **Path convention:** All `<exp_root>/...` paths refer to the `exp_root` dispatch parameter. The plugin does not hardcode the output directory name.
 
 ## Inputs Expected
 
 From the orchestrator:
-- `project_root`: Project root directory
-- `batch_number`: Which batch of experiments this is (1, 2, 3, ...)
-- `primary_metric`: The metric to optimize
-- `lower_is_better`: Whether lower values are better (True for loss, False for PSNR/accuracy)
-- `target_value`: The goal value for the primary metric (optional)
-- `scope_level`: Constraint on changes (`"training"` = HP only, `"architecture"` = HP + research, `"full"` = everything including ShinkaEvolve)
+- `project_root`: project root directory
+- `batch_number`: which batch of experiments this is (1, 2, 3, ...)
+- `primary_metric`: the metric to optimize
+- `lower_is_better`: whether lower values are better (True for loss, False for PSNR/accuracy)
+- `target_value`: goal value for the primary metric (optional)
+- `scope_level`: constraint on changes (`"training"` = HP only, `"architecture"` = HP + research, `"full"` = everything including ShinkaEvolve)
+- `secondary_metrics`: optional extra metrics to track — `[{"name": ..., "lower_is_better": ..., "role": "guardrail"|"report"}]` from Phase 0 user_choices. See Step 2.3.
 
 ## Step 1: Load and Compare Results
 
-> **Goal check:** Verify that the `primary_metric` and `lower_is_better` you use match the optimization goals. If they don't match, flag as a critical error.
+> **Goal check:** verify the `primary_metric` and `lower_is_better` you use match the optimization goals. If they don't match, flag as a critical error.
 
-Run the result analyzer:
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/result_analyzer.py \
   <exp_root>/results \
@@ -35,75 +33,76 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/result_analyzer.py \
   <lower_is_better>
 ```
 
-This returns:
-- Ranking of all experiments
-- Deltas vs baseline
-- HP correlations
+This returns: ranking of all experiments, deltas vs baseline, HP correlations.
 
-**Branch-aware analysis:** If experiments span multiple `code_branch` values, the global result analyzer output mixes HP correlations across branches. Before computing correlations in Step 2, filter the JSON output by `code_branch` field and analyze each group separately. Do NOT mix HP correlations across branches — identical HPs on different code branches are independent experiments. If only one branch (or all null/baseline), global analysis is sufficient.
+**Branch-aware analysis:** if experiments span multiple `code_branch` values, the global output mixes HP correlations across branches. Before computing correlations in Step 2, filter the JSON output by `code_branch` and analyze each group separately. Do NOT mix HP correlations across branches — identical HPs on different code branches are independent experiments. If only one branch (or all null/baseline), global analysis is sufficient.
 
 ## Step 1.1: Filter Results
 
 Before analysis, filter out non-completed experiments:
-- Exclude experiments with `status: "diverged"` or `status: "failed"` from correlation analysis
+- Exclude `status: "diverged"` or `status: "failed"` from correlation analysis
 - Include diverged/failed experiments in the failure analysis section (they provide boundary information)
 - Note: `rank_by_metric()` includes all experiments (with a `status` field for filtering); only `identify_correlations()` auto-filters to completed experiments
-- **Branch-aware grouping:** When computing HP correlations (Step 2), group results by `code_branch` field. Experiments on different code branches should be analyzed separately — identical HPs may behave differently on different code. If `code_branch` is null or missing, treat as baseline code group.
+- **Branch-aware grouping:** when computing HP correlations (Step 2), group by `code_branch`. Experiments on different branches are analyzed separately — identical HPs may behave differently on different code. If `code_branch` is null or missing, treat as baseline code group.
+- **Warm-start segregation:** segregate results whose config has `checkpoint_source` set (warm-started) from from-scratch results when declaring the best experiment under a fixed budget — a warm-started run consumed its parent's training on top of its own budget, so it is NOT budget-comparable to a from-scratch run. Report the best of each group separately and label warm-started bests as not budget-fair.
+- **Same-protocol comparisons only:** compare `metrics.<primary_metric>` values **only** between experiments sharing the same `eval_protocol`. A held-out-eval number and a train-report number for the same metric can differ by several points on identical code — a cross-protocol delta is invalid. If a batch mixes protocols, normalize to the canonical held-out-eval value (or refuse the delta and flag it) before ranking; never declare an improvement/dead-end/tie across protocols.
 
 ## Step 2: Deep Analysis
 
 Beyond what the script provides, reason about:
 
 ### Performance Trends
-- Is there a clear trend in the results? (e.g., lower LR consistently better)
+- Is there a clear trend? (e.g., lower LR consistently better)
 - Are improvements accelerating or decelerating?
 - How does this batch compare to previous batches?
 
 ### Failure Analysis
 - Which experiments diverged or failed?
 - What do failed experiments have in common?
-- Are there boundary conditions being hit? (OOM, NaN at high LR)
+- Are boundary conditions being hit? (OOM, NaN at high LR)
 
 ### HP Impact Assessment
-For each hyperparameter that was varied, use **relative** (percentage) thresholds to classify impact. These thresholds are relative to the baseline value, making them meaningful across different metric scales:
-- **High impact:** Changing this HP caused >5% relative metric change vs baseline
+For each varied hyperparameter, use **relative** (percentage) thresholds to classify impact — relative to the baseline value, so they're meaningful across metric scales:
+- **High impact:** >5% relative metric change vs baseline
 - **Medium impact:** 1-5% relative metric change vs baseline
 - **Low impact:** <1% relative metric change vs baseline
-- **Unknown:** Not enough variation to determine
+- **Unknown:** not enough variation to determine
 
 ### Interaction Effects
 - Check the `"interactions"` array in the result analyzer output
-- If interactions are detected, note them in the batch report — they indicate which HP pairs should be explored together, not independently
-- Use interaction data to inform HP tuning recommendations: "If LR × batch_size interaction is strong, suggest testing specific LR+batch combos"
+- If interactions are detected, note them in the batch report — they indicate which HP pairs to explore together, not independently
+- Use interaction data to inform HP tuning: "If LR × batch_size interaction is strong, suggest testing specific LR+batch combos"
+- **Low-n gating:** correlation entries carry `n` and `low_n`; interaction entries carry `significant` (exact small-n Spearman critical values, n=5..10). A rho from `low_n` (n < 10) single-seed runs is preliminary evidence at best — NEVER base a pivot or an hp-tune directive on a `low_n` or non-`significant` interaction alone; wait for more experiments or corroborating evidence.
+- **Zero-centered metrics:** when delta entries carry `delta_vs_spread` (baseline near zero relative to the batch spread), percent-of-baseline is meaningless — reason in absolute deltas against `batch_std` instead.
 
 ## Step 2.1: Tier-Aware Analysis (if method proposals were used)
 
 When experiments have `method_tier` fields, use them for smarter budget allocation:
 
 ### Method Effectiveness Ranking
-For each code branch that has `method_default_hp` results:
+For each code branch with `method_default_hp` results:
 1. Compare its `method_default_hp` metric to the baseline metric
 2. Compute the **isolated method effect** = `(method_default_hp_metric - baseline_metric) / baseline_metric × 100%`
 3. Rank branches by isolated method effect
 
 ### Branch Pruning Recommendations
-Use your judgment based on the magnitude and consistency of results — no fixed percentage thresholds:
-- **Prune:** If a method with default HPs performs substantially worse than baseline and the deficit is consistent across configs, recommend pruning — HP tuning is unlikely to recover it
-- **Promising:** If a method clearly improves over baseline, flag as high-priority for HP tuning
-- **Neutral:** If the method's effect is marginal or inconsistent, keep but deprioritize
+Use judgment based on magnitude and consistency — no fixed percentage thresholds:
+- **Prune:** if a method with default HPs performs substantially worse than baseline and the deficit is consistent across configs, recommend pruning — HP tuning is unlikely to recover it
+- **Promising:** if a method clearly improves over baseline, flag as high-priority for HP tuning
+- **Neutral:** if the effect is marginal or inconsistent, keep but deprioritize
 
 ### Inform the Decision (Step 3)
-- If promising branches exist but haven't been HP-tuned yet (`method_tuned_hp` results don't exist for them), recommend **continue** with direction: "tune HPs on promising method branches"
-- If all branches have been pruned (all methods hurt), recommend **pivot** or **stop**
+- If promising branches exist but aren't HP-tuned yet (no `method_tuned_hp` results), recommend **continue** with direction: "tune HPs on promising method branches"
+- If all branches are pruned (all methods hurt), recommend **pivot** or **stop**
 - Include the method effectiveness ranking in the batch analysis report (Step 4)
 
 If no experiments have `method_tier` fields, skip this step entirely.
 
-**Fallback for missing per-branch baseline:** If a `method_default_hp` experiment exists but no per-branch baseline result is available, use the global baseline metric (from `baseline.json`) as the comparison point for computing the isolated method effect.
+**Fallback for missing per-branch baseline:** if a `method_default_hp` experiment exists but no per-branch baseline result is available, use the global baseline metric (from `baseline.json`) as the comparison point for the isolated method effect.
 
 ## Step 2.2: Statistical Confidence Assessment
 
-Assess the statistical confidence of your findings based on available data. Use your judgment — more data means higher confidence, but don't refuse to analyze with fewer experiments. Cohen's d effect sizes (negligible/small/medium/large) and confidence labels (high/medium/low/preliminary) are guidelines, not rigid thresholds.
+Assess the statistical confidence of your findings from available data. Use judgment — more data means higher confidence, but don't refuse to analyze with fewer experiments. Cohen's d effect sizes (negligible/small/medium/large) and confidence labels (high/medium/low/preliminary) are guidelines, not rigid thresholds.
 
 ### Method Attribution (when method_tier data exists)
 When method proposals were tested, explicitly attribute improvements:
@@ -113,14 +112,28 @@ When method proposals were tested, explicitly attribute improvements:
 
 Include effect sizes and confidence labels in the batch analysis report (Step 4).
 
+### Seed-Replicate Noise Floor (when `random_seed` replicates exist)
+
+When results contain seed replicates (identical config except `random_seed`), `result_analyzer.py` aggregates them to mean±std (`replicates: {n, mean, std}` on branch scores and stacking ranks). Treat the observed replicate std as the **measured noise floor**: a difference between experiments smaller than that spread is within noise — do NOT prune a branch, declare a dead end, or call a plateau on a difference inside the noise floor. Rank by replicate mean, never by the best single seed.
+
+## Step 2.3: Secondary Metrics & Guardrails (if `secondary_metrics` provided)
+
+When the dispatch includes `secondary_metrics`, each entry is `{name, lower_is_better, role}` with role `"guardrail"` or `"report"`:
+
+1. **Read the extra keys** from each result's existing `metrics` dict — already parsed; do NOT re-parse logs. A missing key renders as `—` and is never treated as a regression.
+2. **Report per batch:** add one column per secondary metric to the batch report's Results Table (Step 4) and note each metric's direction.
+3. **Guardrail regression flag:** BEFORE declaring a best experiment or nominating stacking candidates, compare each top-ranked experiment's guardrail metrics against baseline using that metric's own `lower_is_better`. If a guardrail regressed, mark the experiment `guardrail_regressed` in the batch report and do NOT declare it best or include it in `stacking_candidates` without an explicit note stating the trade-off. `report`-role metrics never block.
+
+Skip this step when `secondary_metrics` is absent or empty.
+
 ## Step 3: Decide Next Action
 
 Based on analysis, recommend ONE of:
 
 ### Continue Tuning
-**When:** Clear direction for improvement exists
+**When:** clear direction for improvement exists
 - Improvement trend is positive
-- Unexplored regions of the search space remain
+- Unexplored search-space regions remain
 - Not yet at diminishing returns
 
 Output:
@@ -134,25 +147,25 @@ Output:
 ```
 
 ### Try Different Approach (Pivot)
-**When:** You judge that the current approach has plateaued. Use your analysis of trends, effect sizes, confidence levels, and improvement trajectories to decide — **no hardcoded thresholds**.
+**When:** you judge the current approach has plateaued. Use your analysis of trends, effect sizes, confidence levels, and improvement trajectories — **no hardcoded thresholds**.
 
-**Pivot Decision Tree** — evaluate conditions in order, respecting `scope_level`. Use your judgment on what "plateaued", "declining", or "stalled" means based on the evidence:
+**Pivot Decision Tree** — evaluate conditions in order, respecting `scope_level`. Use judgment on what "plateaued", "declining", or "stalled" means from the evidence:
 
 1. **Branch coverage:**
    - Untested branches exist → `branch_test`
    - Tested branches with insufficient configs → `hp_expand`
 2. **Code-level optimization** _(skip if `scope_level == "training"`)_:
    All code-level pivots emit `code_evolution`. The orchestrator routes the action (ShinkaEvolve or research-implement).
-   - Trigger: ANY of these conditions → pivot_type: `"code_evolution"`:
-     - HP tuning shows diminishing returns (you judge from trend analysis, not a fixed %)
-     - HP correlations are weak (improvement is not explained by HP changes)
+   - Trigger: ANY of these → pivot_type: `"code_evolution"`:
+     - HP tuning shows diminishing returns (judge from trend analysis, not a fixed %)
+     - HP correlations are weak (improvement not explained by HP changes)
      - No research done yet and HP exploration is flattening
 3. **Method stacking** _(skip if `scope_level == "training"` or non-git project)_:
-   Multiple methods from different papers or significant code changes have improved independently → pivot_type: `"method_stacking"`. Combining them could yield compound gains. No fixed method count — you judge from the archive whether stacking is worth trying.
+   Multiple methods from different papers or significant code changes improved independently → pivot_type: `"method_stacking"`. Combining them could yield compound gains. No fixed method count — judge from the archive whether stacking is worth trying.
 4. **Failure pattern:**
    - High divergence rate → `narrow_space`
    - Results clustering tightly (no variance) → `code_evolution` (need qualitative change)
-   - Overfitting detected → `regularization`
+   - Overfitting detected → `regularization` (weight decay/dropout; for `model_category=rl`: entropy coefficient / KL penalty)
 5. **Default:** `continue` — keep exploring. The loop runs autonomously until the goal is reached or the user manually stops.
 
 Output:
@@ -177,7 +190,14 @@ You (the analysis agent) evaluate evidence and advise a DIRECTION. The orchestra
 | `method_stacking` | Enters Phase 8: merges methods sequentially, resolves interference via ShinkaEvolve |
 
 ### Stop
-**When:** Target metric achieved. This is the ONLY automatic stop condition. The loop is autonomous — it runs until the goal is reached or the user manually stops. Even if progress is slow, keep trying different approaches. Never recommend stop just because improvement is small — breakthroughs can come after plateaus.
+**When:** target metric **robustly** achieved. This is the ONLY automatic stop condition. The loop is autonomous — it runs until the goal is reached or the user manually stops. Even if progress is slow, keep trying different approaches. Never recommend stop just because improvement is small — breakthroughs can come after plateaus.
+
+**Do NOT stop on a within-noise, single-seed target-hit.** A "target achieved" call is only valid on evidence that survives the measured noise floor (Step 2.3):
+- If the best experiment's margin over target is **≥ the measured seed-noise floor**, and it is a real result on the canonical `eval_protocol` → stop is legitimate.
+- If the margin is **within the noise floor**, or the best result is a single unreplicated seed, or it changed >1 variable vs the prior best → do **NOT** stop. Recommend `continue` with a cheap seed-confirmation batch (≥3 seeds on one protocol, champion config held fixed) and a stop-rule of `seed_mean ≥ target`. Gate the stop on `best_seed_mean ≥ target`, never `best_single_seed ≥ target`.
+- **Exit block:** if any `untried` item in `research-agenda.json` outranks (priority) the best-executed idea, exit-to-Phase-9 is blocked — recommend `continue` and run that item first. Never leave the single highest-priority in-scope idea untried at exit.
+
+Include in the stop/continue output: `"noise_floor"`, `"best_seed_mean"` (or null if unreplicated), and `"margin_over_target"` so the orchestrator's fixpoint judgment can audit the call.
 
 Output:
 ```json
@@ -222,7 +242,7 @@ When a technique is conclusively unpromising, log it to the dead-end catalog so 
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> dead-end add '{"technique":"<technique_name>","reason":"<why it failed>","branch":"<ml-opt/branch or null>","experiments_tried":<N>,"best_result":{"metric":"<primary_metric>","value":<best_value>,"baseline":<baseline_value>},"source":"analyze"}'
 ```
 
-Do not log dead ends for techniques that showed mixed results (some improvement, some regression) — only for those conclusively worse.
+Do not log dead ends for techniques with mixed results (some improvement, some regression) — only conclusively worse ones.
 
 ## Step 4: Write Batch Analysis Report
 
@@ -242,6 +262,8 @@ Write to `<exp_root>/reports/batch-<N>-analysis.md`:
 | Exp ID | Status | LR | Batch Size | Other Changes | <Metric> | vs Baseline |
 |--------|--------|----|------------|---------------|----------|-------------|
 | ... | ... | ... | ... | ... | ... | ... |
+
+(When `secondary_metrics` is configured, append one column per secondary metric and mark `guardrail_regressed` rows — Step 2.3.)
 
 ## HP Impact Analysis
 - **Learning rate:** [impact level] — [observation]
@@ -276,11 +298,11 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> agenda update 
 ```
 
 **Priority adjustment rules:**
-- If improved over baseline: increase priority by 1-2 points, set `status: "improved"`
-- If mixed results (some configs better, some worse): keep priority, set `status: "tried"`, add evidence
-- If conclusively worse (substantially below baseline across all configs, in your judgment): decrease priority to 1, set `status: "dead-end"`, also log to dead-end catalog (Step 3.2)
+- Improved over baseline: increase priority by 1-2 points, set `status: "improved"`
+- Mixed results (some configs better, some worse): keep priority, set `status: "tried"`, add evidence
+- Conclusively worse (substantially below baseline across all configs, in your judgment): decrease priority to 1, set `status: "dead-end"`, also log to dead-end catalog (Step 3.2)
 
-**Add evidence-suggested ideas:** If the analysis reveals new optimization directions (e.g., LR sensitivity is very high → try cyclical LR), add them:
+**Add evidence-suggested ideas:** if analysis reveals new directions (e.g., LR sensitivity very high → try cyclical LR), add them:
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> agenda add '{"id":"evidence-<N>","name":"<new idea>","priority":<score>,"source":"experimental_evidence","scope":"training"}'
 ```
@@ -289,10 +311,10 @@ Skip this step if no agenda file exists (e.g., HP-only optimization without rese
 
 ## Step 4.2: Time-Budget-Normalized Analysis
 
-If experiments have `time_budget_seconds` set (all experiments ran for the same wall-clock duration):
-- **Direct comparison is valid** — all experiments had equal compute time, so metric deltas reflect true efficiency differences
+If experiments have `time_budget_seconds` set (all ran for the same wall-clock duration):
+- **Direct comparison is valid** — equal compute time, so metric deltas reflect true efficiency differences
 - No duration normalization needed
-- **Convergence check:** If many experiments show improving trends at cutoff (metric still decreasing/increasing), recommend a longer time budget in the next iteration
+- **Convergence check:** if many experiments show improving trends at cutoff (metric still decreasing/increasing), recommend a longer time budget next iteration
 - Note in the batch report: "All experiments ran with {time_budget}s fixed time budget — metrics are directly comparable"
 
 Skip this step if `time_budget_seconds` is not present in experiment results.
@@ -320,29 +342,28 @@ Return to the orchestrator:
 ### Branch Allocation Data (for hp-tune)
 
 When multiple code branches are being tested, include in the analysis output:
-- `branch_scores`: Per-branch allocation scores from `${CLAUDE_PLUGIN_ROOT}/scripts/result_analyzer.py` (run with `branch-scores` subcommand or use `compute_branch_scores()`)
-- This data is passed to hp-tune for adaptive budget allocation in the next iteration
+- `branch_scores`: per-branch allocation scores from `${CLAUDE_PLUGIN_ROOT}/scripts/result_analyzer.py` (run with `branch-scores` subcommand or use `compute_branch_scores()`)
+- Passed to hp-tune for adaptive budget allocation in the next iteration
 
 ### Stacking Readiness
 
 Include in the analysis output:
-- `methods_with_improvement`: Count of unique code_branches whose best result beats baseline.
-  Compute using `rank_methods_for_stacking()` from `${CLAUDE_PLUGIN_ROOT}/scripts/result_analyzer.py`.
-- `stacking_candidates`: List of method names (code_proposal values) that improved, ranked by improvement magnitude.
+- `methods_with_improvement`: count of unique code_branches whose best result beats baseline. Compute using `rank_methods_for_stacking()` from `${CLAUDE_PLUGIN_ROOT}/scripts/result_analyzer.py`.
+- `stacking_candidates`: list of method names (code_proposal values) that improved, ranked by improvement magnitude.
 
 ---
 
 ## Session Review Mode
 
-When dispatched with `scope: "session"`, switch from batch analysis to session review mode. Instead of analyzing a single batch, review the entire optimization session to generate self-improvement recommendations. This is advisory only — present insights and recommendations, do NOT auto-apply changes.
+When dispatched with `scope: "session"`, switch from batch analysis to session review mode. Instead of a single batch, review the entire optimization session to generate self-improvement recommendations. This is advisory only — present insights and recommendations, do NOT auto-apply changes.
 
 ### Review Inputs
 
 From the orchestrator:
-- `project_root`: Project root directory
-- `exp_root`: Path to <exp_root>/ directory (default: `<project_root>/experiments`)
-- `primary_metric`: The metric that was optimized
-- `lower_is_better`: Whether lower values are better for the primary metric
+- `project_root`: project root directory
+- `exp_root`: path to <exp_root>/ directory (default: `<project_root>/experiments`)
+- `primary_metric`: the metric that was optimized
+- `lower_is_better`: whether lower values are better for the primary metric
 - `scope`: `"session"`
 
 ### Review Step 1: Load Error and Experiment Data
@@ -437,8 +458,8 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log-suggestion
 
 ### Review Error Handling
 
-- **No error log exists:** Report "No errors tracked in this session." Still run success metrics and proposal outcomes if experiment results exist.
-- **Empty error log:** Report "0 events tracked." Still analyze experiment outcomes for success patterns.
-- **No experiment results:** Report "No experiments found." Only analyze error events.
-- **Corrupt JSON files:** Skip the corrupt file, note it as a warning in the review.
-- **Missing primary_metric or lower_is_better:** Skip success metrics and proposal outcomes, note in the review that these inputs are needed for full analysis.
+- **No error log exists:** report "No errors tracked in this session." Still run success metrics and proposal outcomes if experiment results exist.
+- **Empty error log:** report "0 events tracked." Still analyze experiment outcomes for success patterns.
+- **No experiment results:** report "No experiments found." Only analyze error events.
+- **Corrupt JSON files:** skip the corrupt file, note it as a warning in the review.
+- **Missing primary_metric or lower_is_better:** skip success metrics and proposal outcomes, note in the review that these inputs are needed for full analysis.

@@ -1,31 +1,13 @@
 #!/usr/bin/env python3
 """Goal anchoring and behavioral memory for the ML optimizer plugin.
 
-Maintains two project-scoped files under `<exp_root>/`: optimization-goals.json
-(the goal anchor, written once at Phase 0) and learned-behaviors.json
-(accumulated constraints, method outcomes, divergence patterns). Validates agent
-output against goals to catch drift (frozen-param changes, scope breaches,
-dead-end re-proposals, metric mismatches) and emits a compact agent briefing.
+Maintains optimization-goals.json (goal anchor, written once at Phase 0) and
+learned-behaviors.json (constraints, method outcomes, divergence patterns) under
+`<exp_root>/`. Validates agent output against goals to catch drift (frozen-param
+changes, scope breaches, dead-end re-proposals, metric mismatches) and emits a
+compact agent briefing. See _USAGE for CLI actions/categories.
 
-Usage:
-    python3 goal_memory.py <exp_root> init-goals <goals_json>                # Write optimization-goals.json
-    python3 goal_memory.py <exp_root> update-goals <updates_json>            # Merge partial updates into goals (mid-run)
-    python3 goal_memory.py <exp_root> read-goals                            # Print goals to stdout
-    python3 goal_memory.py <exp_root> log-behavior <category> <entry_json>  # Append a learned behavior
-    python3 goal_memory.py <exp_root> query-behaviors [category] [recent]   # Query behaviors (filter by category, last N)
-    python3 goal_memory.py <exp_root> validate-output <agent> <output_json> # Validate agent output against goals
-    python3 goal_memory.py <exp_root> summary                              # Compact agent briefing (goals + behaviors + dead-ends)
-    python3 goal_memory.py <exp_root> sync-from-errors                     # Pull OOM/divergence patterns from error_tracker
-
-Categories: hp_constraint, method_outcome, divergence_pattern,
-            resource_constraint, training_insight, scope_violation, goal_update.
-validate-output exits 0 = valid, 1 = script error, 2 = violations found.
-
-Examples:
-    python3 goal_memory.py <exp_root> init-goals '{"objective": {"primary_metric": "accuracy", "lower_is_better": false}}'
-    python3 goal_memory.py <exp_root> log-behavior resource_constraint '{"max_batch_size": 32, "notes": "OOM above 32"}'
-    python3 goal_memory.py <exp_root> validate-output hp-tune '{"configs": [{"lr": 0.1}]}'
-    python3 goal_memory.py <exp_root> summary
+validate-output exits: 0 = valid, 1 = script error, 2 = violations found.
 """
 
 import fcntl
@@ -37,9 +19,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
+# --- Constants ---
 
 BEHAVIOR_CATEGORIES = [
     "hp_constraint",
@@ -49,6 +29,7 @@ BEHAVIOR_CATEGORIES = [
     "training_insight",
     "scope_violation",
     "goal_update",
+    "evolve_hp",
 ]
 
 GOALS_REQUIRED_PATHS = [
@@ -56,9 +37,20 @@ GOALS_REQUIRED_PATHS = [
     ("objective", "lower_is_better"),
 ]
 
-# ---------------------------------------------------------------------------
-# File paths
-# ---------------------------------------------------------------------------
+# File-pattern heuristics for scope validation (warnings, not violations).
+# Architecture-scope indicators: supervised model files + RL policy/value nets.
+ARCH_FILE_PATTERNS = [
+    "model", "network", "backbone", "encoder", "decoder", "arch",
+    "policy", "critic", "actor",
+]
+# Env-dynamics indicators — env dynamics / curriculum / domain randomization
+# are FULL scope only (RL scope rows). Reward shaping stays training-scope,
+# so "reward" is intentionally NOT in this list.
+# ponytail: substring heuristic ("env" also matches e.g. "venv/") — acceptable
+# for warning-only output; tighten to path-segment matching if noise appears.
+ENV_FILE_PATTERNS = ["env", "environment", "curriculum", "randomization", "domain_rand"]
+
+# --- File paths ---
 
 def _goals_path(exp_root: str) -> Path:
     return Path(exp_root) / "optimization-goals.json"
@@ -68,9 +60,14 @@ def _behaviors_path(exp_root: str) -> Path:
     return Path(exp_root) / "learned-behaviors.json"
 
 
-# ---------------------------------------------------------------------------
-# Atomic writes (same pattern as error_tracker.py)
-# ---------------------------------------------------------------------------
+def _ensure_scripts_path() -> None:
+    """Put this scripts/ dir on sys.path for lazy error_tracker imports."""
+    d = str(Path(__file__).parent)
+    if d not in sys.path:
+        sys.path.insert(0, d)
+
+
+# --- Atomic writes (same pattern as error_tracker.py) ---
 
 def _atomic_write_json(path: Path, data: dict) -> None:
     """Write JSON atomically via temp file + rename."""
@@ -88,9 +85,7 @@ def _atomic_write_json(path: Path, data: dict) -> None:
         raise
 
 
-# ---------------------------------------------------------------------------
-# Goals: init / load / validate schema
-# ---------------------------------------------------------------------------
+# --- Goals: init / load / validate schema ---
 
 def validate_goals(goals: dict) -> dict:
     """Validate a goals dict. Returns {"valid": bool, "errors": [...]}."""
@@ -123,22 +118,11 @@ def init_goals(exp_root: str, goals: dict) -> str:
 
 
 def update_goals(exp_root: str, updates: dict) -> dict:
-    """Merge updates into existing optimization-goals.json.
+    """Merge partial updates into optimization-goals.json (nested dicts merged,
+    not replaced) and log the change under category 'goal_update'.
 
-    Supports partial updates — only the provided fields are changed.
-    Nested dicts are merged (not replaced). Logs the change to
-    learned-behaviors.json under category 'goal_update'.
-
-    Args:
-        exp_root: Path to the `<exp_root>` directory (any name — not hardcoded).
-        updates: Dict with partial goal structure. Example:
-            {"objective": {"target_value": 85.0}}
-            {"constraints": {"frozen_parameters": ["lr"]}}
-            {"objective": {"primary_metric": "f1", "lower_is_better": false}}
-
-    Returns:
-        {"updated": True, "changes": [...], "path": str} on success.
-        {"updated": False, "error": str} on failure.
+    Returns {"updated": True, "changes": [...], "path": str} on success,
+    {"updated": False, "error": str} on failure.
     """
     goals = load_goals(exp_root)
     if goals is None:
@@ -163,7 +147,6 @@ def update_goals(exp_root: str, updates: dict) -> dict:
     if not changes:
         return {"updated": False, "error": "No changes detected"}
 
-    # Re-validate after merge
     result = validate_goals(goals)
     if not result["valid"]:
         return {"updated": False, "error": f"Invalid after update: {'; '.join(result['errors'])}"}
@@ -172,7 +155,6 @@ def update_goals(exp_root: str, updates: dict) -> dict:
     path = _goals_path(exp_root)
     _atomic_write_json(path, goals)
 
-    # Log the change to behavioral memory
     log_behavior(exp_root, "goal_update", {
         "changes": changes,
         "timestamp": goals["updated_at"],
@@ -192,12 +174,14 @@ def load_goals(exp_root: str) -> dict | None:
         return None
 
 
-# ---------------------------------------------------------------------------
-# Behaviors: log / query
-# ---------------------------------------------------------------------------
+# --- Behaviors: log / query ---
 
-def _load_behaviors(exp_root: str) -> dict:
-    """Load learned-behaviors.json, returning empty structure if absent."""
+def load_behaviors(exp_root: str) -> dict:
+    """Load learned-behaviors.json, returning empty structure if absent.
+
+    Public alongside load_goals — validate_experiment_write.py's PreToolUse hook
+    reads both to run check_goal_compliance at write time.
+    """
     path = _behaviors_path(exp_root)
     if not path.is_file():
         return _empty_behaviors()
@@ -220,6 +204,7 @@ def _empty_behaviors() -> dict:
         "resource_constraints": [],
         "training_insights": [],
         "scope_violations": [],
+        "evolve_hp": [],
     }
 
 
@@ -253,7 +238,7 @@ def log_behavior(exp_root: str, category: str, entry: dict) -> str:
     with open(lock_path, "w") as lock_fd:
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
         try:
-            data = _load_behaviors(exp_root)
+            data = load_behaviors(exp_root)
             key = _category_key(category)
             if key not in data:
                 data[key] = []
@@ -271,7 +256,7 @@ def get_behaviors(
     recent: int | None = None,
 ) -> list[dict]:
     """Query learned behaviors, optionally filtered by category."""
-    data = _load_behaviors(exp_root)
+    data = load_behaviors(exp_root)
     if category is not None:
         key = _category_key(category)
         items = data.get(key, [])
@@ -291,9 +276,41 @@ def get_behaviors(
     return items
 
 
-# ---------------------------------------------------------------------------
-# Validation
-# ---------------------------------------------------------------------------
+# --- Validation ---
+
+def max_batch_size(behaviors: dict) -> int | None:
+    """Tightest OOM batch-size ceiling across resource_constraints, or None."""
+    best = None
+    for rc in behaviors.get("resource_constraints", []):
+        mbs = rc.get("max_batch_size")
+        if mbs is not None:
+            best = mbs if best is None else min(best, mbs)
+    return best
+
+
+def check_goal_compliance(
+    config: dict, frozen: list, max_bs: int | None
+) -> list[str]:
+    """Return violations for one config: frozen-parameter edits and OOM breaches.
+
+    Single owner of this rule set — used by the hp-tune/experiment validators
+    below and by validate_experiment_write.py's PreToolUse hook.
+    """
+    violations: list[str] = []
+    for fp in frozen:
+        if fp in config:
+            violations.append(
+                f"modifies frozen parameter '{fp}' — this parameter cannot be changed"
+            )
+    if max_bs is not None and "batch_size" in config:
+        try:
+            bs = int(config["batch_size"])
+            if bs > int(max_bs):
+                violations.append(f"batch_size={bs} exceeds OOM limit {max_bs}")
+        except (ValueError, TypeError):
+            pass
+    return violations
+
 
 def validate_agent_output(exp_root: str, agent: str, output: dict) -> dict:
     """Validate agent output against goals. Returns {valid, violations, warnings}."""
@@ -304,7 +321,7 @@ def validate_agent_output(exp_root: str, agent: str, output: dict) -> dict:
     if goals is None:
         return {"valid": True, "violations": [], "warnings": ["No optimization-goals.json found"]}
 
-    behaviors = _load_behaviors(exp_root)
+    behaviors = load_behaviors(exp_root)
     constraints = goals.get("constraints", {})
     objective = goals.get("objective", {})
     frozen = constraints.get("frozen_parameters", [])
@@ -334,12 +351,7 @@ def _validate_hp_tune(output, frozen, behaviors, exp_root, violations, warnings)
     if not isinstance(configs, list):
         configs = [output] if isinstance(output, dict) and "lr" in output else []
 
-    # OOM limit from resource constraints
-    max_bs = None
-    for rc in behaviors.get("resource_constraints", []):
-        mbs = rc.get("max_batch_size")
-        if mbs is not None:
-            max_bs = mbs if max_bs is None else min(max_bs, mbs)
+    max_bs = max_batch_size(behaviors)
 
     # HP upper bounds from hp_constraints
     hp_bounds: dict[str, float] = {}
@@ -354,22 +366,9 @@ def _validate_hp_tune(output, frozen, behaviors, exp_root, violations, warnings)
     for i, cfg in enumerate(configs):
         if not isinstance(cfg, dict):
             continue
-        # Frozen parameter check
-        for fp in frozen:
-            if fp in cfg:
-                violations.append(
-                    f"Config {i}: modifies frozen parameter '{fp}'"
-                )
-        # OOM limit
-        if max_bs is not None and "batch_size" in cfg:
-            try:
-                bs = int(cfg["batch_size"])
-                if bs > max_bs:
-                    violations.append(
-                        f"Config {i}: batch_size={bs} exceeds OOM limit {max_bs}"
-                    )
-            except (ValueError, TypeError):
-                pass
+        violations.extend(
+            f"Config {i}: {v}" for v in check_goal_compliance(cfg, frozen, max_bs)
+        )
         # HP bounds (warnings, not violations — agents may intentionally explore)
         for param, bound in hp_bounds.items():
             if param in cfg:
@@ -384,10 +383,8 @@ def _validate_hp_tune(output, frozen, behaviors, exp_root, violations, warnings)
 
     # Dead-end branch check (import lazily to avoid circular deps)
     try:
-        _scripts = Path(__file__).parent
-        if str(_scripts) not in sys.path:
-            sys.path.insert(0, str(_scripts))
-        from error_tracker import is_dead_end  # lazy: avoid circular dep with error_tracker
+        _ensure_scripts_path()
+        from error_tracker import is_dead_end  # lazy: avoid circular dep
         for i, cfg in enumerate(configs):
             if not isinstance(cfg, dict):
                 continue
@@ -421,22 +418,31 @@ def _validate_research(output, scope, exp_root, violations, warnings):
             # Heuristic: code_change could be training-scope or architecture-scope
             # Check files_to_modify for architecture patterns
             files = prop.get("files_to_modify", [])
-            arch_patterns = ["model", "network", "backbone", "encoder", "decoder", "arch"]
-            arch_files = [f for f in files if any(p in str(f).lower() for p in arch_patterns)]
+            arch_files = [f for f in files if any(p in str(f).lower() for p in ARCH_FILE_PATTERNS)]
             if arch_files:
                 warnings.append(
                     f"Proposal {i} ('{prop.get('name', '?')}'): "
                     f"code_change modifies possible architecture files: {arch_files}"
                 )
 
+        # Env-dynamics heuristic: env/curriculum/randomization files are
+        # full-scope only (RL scope rows) — warn at training AND architecture.
+        if prop.get("type") == "code_change" and scope in ("training", "architecture"):
+            files = prop.get("files_to_modify", [])
+            env_files = [f for f in files if any(p in str(f).lower() for p in ENV_FILE_PATTERNS)]
+            if env_files:
+                warnings.append(
+                    f"Proposal {i} ('{prop.get('name', '?')}'): "
+                    f"code_change modifies possible env-dynamics files "
+                    f"(full scope only): {env_files}"
+                )
+
         # Dead-end check
         technique = prop.get("name", prop.get("technique", ""))
         if technique:
             try:
-                _scripts = Path(__file__).parent
-                if str(_scripts) not in sys.path:
-                    sys.path.insert(0, str(_scripts))
-                from error_tracker import is_dead_end  # lazy: avoid circular dep with error_tracker
+                _ensure_scripts_path()
+                from error_tracker import is_dead_end  # lazy: avoid circular dep
                 if is_dead_end(exp_root, technique):
                     violations.append(
                         f"Proposal {i}: re-proposes dead-end technique '{technique}'"
@@ -481,21 +487,26 @@ def _validate_analyze(output, objective, violations, warnings):
 
 def _validate_implement(output, scope, violations, warnings):
     """Validate implement changes stay within scope."""
-    if scope != "training":
-        return  # architecture and full scope allow all changes
+    if scope == "full":
+        return  # full scope allows all changes
 
     changes = output.get("files_modified", output.get("changes", []))
     if not isinstance(changes, list):
         return
 
-    # Heuristic: model definition files suggest architecture changes
-    arch_patterns = ["model", "network", "backbone", "encoder", "decoder", "arch"]
     for f in changes:
         fname = str(f).lower() if isinstance(f, str) else ""
-        if any(p in fname for p in arch_patterns):
+        # Heuristic: model/policy definition files suggest architecture changes
+        if scope == "training" and any(p in fname for p in ARCH_FILE_PATTERNS):
             warnings.append(
                 f"File '{f}' may contain architecture changes "
                 f"(scope_level='training')"
+            )
+        # Env dynamics / curriculum / randomization are full-scope only
+        if any(p in fname for p in ENV_FILE_PATTERNS):
+            warnings.append(
+                f"File '{f}' may contain env-dynamics changes "
+                f"(full scope only; scope_level='{scope}')"
             )
 
 
@@ -505,37 +516,20 @@ def _validate_experiment(output, frozen, behaviors, violations, warnings):
     if not isinstance(cfg, dict):
         return
 
-    for fp in frozen:
-        if fp in cfg:
-            violations.append(f"Experiment modifies frozen parameter '{fp}'")
-
-    max_bs = None
-    for rc in behaviors.get("resource_constraints", []):
-        mbs = rc.get("max_batch_size")
-        if mbs is not None:
-            max_bs = mbs if max_bs is None else min(max_bs, mbs)
-
-    if max_bs is not None and "batch_size" in cfg:
-        try:
-            bs = int(cfg["batch_size"])
-            if bs > max_bs:
-                violations.append(
-                    f"Experiment batch_size={bs} exceeds OOM limit {max_bs}"
-                )
-        except (ValueError, TypeError):
-            pass
+    violations.extend(
+        f"Experiment {v}"
+        for v in check_goal_compliance(cfg, frozen, max_batch_size(behaviors))
+    )
 
 
-# ---------------------------------------------------------------------------
-# Summary generation
-# ---------------------------------------------------------------------------
+# --- Summary generation ---
 
 def generate_summary(exp_root: str) -> str:
     """Generate a compact agent briefing combining goals + behaviors + dead-ends."""
     lines: list[str] = []
 
     goals = load_goals(exp_root)
-    behaviors = _load_behaviors(exp_root)
+    behaviors = load_behaviors(exp_root)
 
     # --- Goals section ---
     if goals:
@@ -596,10 +590,8 @@ def generate_summary(exp_root: str) -> str:
     # --- Dead ends ---
     dead_ends: list[dict] = []
     try:
-        _scripts = Path(__file__).parent
-        if str(_scripts) not in sys.path:
-            sys.path.insert(0, str(_scripts))
-        from error_tracker import get_dead_ends  # lazy: avoid circular dep with error_tracker
+        _ensure_scripts_path()
+        from error_tracker import get_dead_ends  # lazy: avoid circular dep
         dead_ends = get_dead_ends(exp_root)
     except ImportError:
         pass
@@ -678,9 +670,7 @@ def generate_summary(exp_root: str) -> str:
     return "\n".join(lines).strip()
 
 
-# ---------------------------------------------------------------------------
-# Sync from error tracker
-# ---------------------------------------------------------------------------
+# --- Sync from error tracker ---
 
 def sync_from_errors(exp_root: str) -> dict:
     """Pull OOM / divergence patterns from error_tracker into behaviors.
@@ -691,14 +681,12 @@ def sync_from_errors(exp_root: str) -> dict:
     skipped = 0
 
     try:
-        _scripts = Path(__file__).parent
-        if str(_scripts) not in sys.path:
-            sys.path.insert(0, str(_scripts))
-        from error_tracker import get_events, get_dead_ends  # lazy: avoid circular dep with error_tracker
+        _ensure_scripts_path()
+        from error_tracker import get_events, get_dead_ends  # lazy: avoid circular dep
     except ImportError:
         return {"synced": 0, "skipped": 0, "error": "error_tracker not found"}
 
-    behaviors = _load_behaviors(exp_root)
+    behaviors = load_behaviors(exp_root)
 
     # --- OOM events → resource_constraints ---
     oom_events = [
@@ -790,9 +778,7 @@ def sync_from_errors(exp_root: str) -> dict:
     return {"synced": synced, "skipped": skipped}
 
 
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
+# --- CLI ---
 
 _USAGE = """\
 Usage: python3 goal_memory.py <exp_root> <action> [args...]

@@ -8,11 +8,6 @@ Usage:
     python3 plot_results.py <results_dir> <metric> progress          # Matplotlib progress chart (PNG)
 
 Add --higher-is-better flag for accuracy-like metrics (default: lower is better).
-
-Examples:
-    python3 plot_results.py <exp_root>/results accuracy comparison --higher-is-better
-    python3 plot_results.py <exp_root>/results loss sensitivity lr
-    python3 plot_results.py <exp_root>/results loss progress
 """
 
 import math
@@ -29,19 +24,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 from result_analyzer import build_experiment_description, load_results, rank_by_metric
 
 
-def ascii_bar_chart(
-    labels: list[str],
-    values: list[float],
-    title: str = "",
-    width: int = 50,
-) -> str:
-    """Render a horizontal bar chart using ASCII characters.
-
-    Each bar is formatted as:  label | ████████ value
-    Bars are proportional to the maximum value.
-
-    Returns the chart as a multi-line string.
-    """
+def ascii_bar_chart(labels: list[str], values: list[float], title: str = "", width: int = 50) -> str:
+    """Render a horizontal ASCII bar chart (label | ████ value), bars proportional to max."""
     if not labels or not values:
         return ""
 
@@ -72,19 +56,8 @@ def ascii_bar_chart(
     return "\n".join(lines)
 
 
-def ascii_line_chart(
-    values: list[float],
-    title: str = "",
-    width: int = 60,
-    height: int = 15,
-) -> str:
-    """Render a simple ASCII line chart.
-
-    Y-axis on the left with scaled values, X-axis on the bottom with
-    index numbers.  Points are marked with '*'.
-
-    Returns the chart as a multi-line string.
-    """
+def ascii_line_chart(values: list[float], title: str = "", width: int = 60, height: int = 15) -> str:
+    """Render a simple ASCII line chart: scaled Y-axis, index X-axis, points marked '*'."""
     if not values:
         return ""
 
@@ -171,19 +144,8 @@ def ascii_line_chart(
     return "\n".join(lines)
 
 
-def plot_metric_comparison(
-    results_dir: str,
-    metric: str,
-    lower_is_better: bool = True,
-) -> str:
-    """Generate a bar chart comparing a metric across experiments.
-
-    Loads results via result_analyzer.load_results, ranks them by
-    *metric*, and renders an ascii_bar_chart.  The baseline experiment
-    (if present) is marked with a '[B]' suffix.
-
-    Returns the chart string.
-    """
+def plot_metric_comparison(results_dir: str, metric: str, lower_is_better: bool = True) -> str:
+    """Bar chart of a metric across experiments (ranked); baseline marked with a '[B]' suffix."""
     results = load_results(results_dir)
     if not results:
         return "No results found."
@@ -206,18 +168,8 @@ def plot_metric_comparison(
     return ascii_bar_chart(labels, values, title=title)
 
 
-def plot_improvement_timeline(
-    results_dir: str,
-    metric: str,
-    lower_is_better: bool = True,
-) -> str:
-    """Generate a line chart of best-so-far metric over experiments.
-
-    Experiments are sorted by exp_id (chronological proxy).
-    At each step the best metric value seen so far is recorded.
-
-    Returns the chart string.
-    """
+def plot_improvement_timeline(results_dir: str, metric: str, lower_is_better: bool = True) -> str:
+    """Line chart of best-so-far metric over experiments, sorted by exp_id (chronological proxy)."""
     results = load_results(results_dir)
     if not results:
         return "No results found."
@@ -246,18 +198,8 @@ def plot_improvement_timeline(
     return ascii_line_chart(best_so_far, title=title)
 
 
-def plot_hp_sensitivity(
-    results_dir: str,
-    metric: str,
-    hp_name: str,
-) -> str:
-    """Generate an ASCII scatter of metric vs a numeric hyperparameter.
-
-    Extracts (hp_value, metric_value) pairs from results, sorts by
-    hp_value, and renders an ascii_line_chart as a pseudo-scatter.
-
-    Returns the chart string.
-    """
+def plot_hp_sensitivity(results_dir: str, metric: str, hp_name: str) -> str:
+    """ASCII scatter of metric vs a numeric hyperparameter: (hp, metric) pairs sorted by hp."""
     results = load_results(results_dir)
     if not results:
         return "No results found."
@@ -284,19 +226,11 @@ def plot_hp_sensitivity(
     return ascii_line_chart(metric_values, title=title)
 
 
-def plot_progress_chart(
-    results_dir: str,
-    metric: str,
-    lower_is_better: bool = True,
-    output_path: str | None = None,
-) -> str | None:
-    """Generate a matplotlib progress chart showing optimization progress.
-
-    Plots each experiment as a dot — green if it set a new running best,
-    gray otherwise.  A blue step line tracks the running best frontier.
-    Kept experiments are annotated with their exp_id.
-
-    Returns the output file path, or `None` if no results found.
+def plot_progress_chart(results_dir: str, metric: str, lower_is_better: bool = True,
+                        output_path: str | None = None) -> str | None:
+    """Matplotlib progress chart: a dot per experiment (green=new running best, gray otherwise),
+    a step line tracking the running-best frontier, kept experiments annotated with exp_id.
+    Returns the output file path, or None if no results found.
     """
     results = load_results(results_dir)
     if not results:

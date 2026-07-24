@@ -125,9 +125,18 @@ def project_dir(tmp_path):
 
 @pytest.fixture
 def shared_data_dir(tmp_path):
-    """Shared CIFAR-10 data directory to avoid re-downloading per test."""
+    """Shared CIFAR-10 data directory to avoid re-downloading per test.
+
+    If a cached ``cifar-10-batches-py`` is available (``$CIFAR_CACHE_DIR`` or
+    ``<PLUGIN_ROOT>/data``), symlink it in so training loads offline; otherwise
+    return an empty dir and let torchvision download.
+    """
     data_dir = tmp_path / "cifar_data"
     data_dir.mkdir()
+    cache_root = os.environ.get("CIFAR_CACHE_DIR") or str(PLUGIN_ROOT / "data")
+    cached = Path(cache_root) / "cifar-10-batches-py"
+    if cached.is_dir():
+        (data_dir / "cifar-10-batches-py").symlink_to(cached)
     return data_dir
 
 

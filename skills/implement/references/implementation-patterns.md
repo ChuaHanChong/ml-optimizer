@@ -1,6 +1,6 @@
 # Implementation Patterns for ML Code Changes
 
-Patterns for applying research proposals to ML codebases. Each category covers: where to look, what to read first, how to make the minimal reversible change, and common pitfalls.
+Patterns for applying research proposals to ML codebases. Each category covers: where to look, what to read first, the minimal reversible change, and common pitfalls.
 
 ## Framework Detection
 
@@ -16,8 +16,12 @@ Before applying any pattern, determine the project's ML framework by scanning im
 | **scikit-learn** | `import sklearn`, `from sklearn` | `BaseEstimator`, `Pipeline`, `fit()`/`predict()` |
 | **XGBoost** | `import xgboost`, `from xgboost` | `xgb.XGBClassifier`, `DMatrix`, `xgb.train()` |
 | **LightGBM** | `import lightgbm`, `from lightgbm` | `lgb.LGBMClassifier`, `lgb.Dataset`, `lgb.train()` |
+| **Stable-Baselines3** | `import stable_baselines3`, `from stable_baselines3` | `model.learn()` library-owned loop, `policy_kwargs`, callbacks |
+| **IsaacLab / rsl_rl** | `import isaaclab`, `import omni.isaac.lab`, `import rsl_rl` | Hydra/YAML config tree, runner-owned loop, GPU-vectorized envs |
+| **LeRobot** | `import lerobot`, `from lerobot` | Policy configs, dataset-driven imitation learning |
+| **robomimic** | `import robomimic`, `from robomimic` | JSON config, HDF5 demos, algo factory |
 
-Use the matching framework's syntax when applying patterns below. The examples use PyTorch; see **Framework Adaptations** subsections for alternatives.
+Use the matching framework's syntax below. Examples use PyTorch; see **Framework Adaptations** subsections for alternatives.
 
 ---
 
@@ -47,9 +51,9 @@ loss = loss_l1 + self.config.perceptual_weight * loss_perceptual
 ```
 
 ### Pitfalls
-- **Device mismatch:** New loss modules must be on the same device as model tensors. Use `.to(device)` or register as a submodule.
-- **Gradient leaking:** Freeze feature extractors with `eval()` and `requires_grad = False`.
-- **Scale mismatch:** Different losses may have very different magnitudes. Start with a small weight (0.01-0.1) and tune.
+- **Device mismatch:** new loss modules must be on the same device as model tensors. Use `.to(device)` or register as a submodule.
+- **Gradient leaking:** freeze feature extractors with `eval()` and `requires_grad = False`.
+- **Scale mismatch:** losses can differ greatly in magnitude. Start with a small weight (0.01-0.1) and tune.
 - **Input range:** VGG expects [0,1] or ImageNet-normalized inputs. Check your model's output range.
 
 ### Framework Adaptations
@@ -84,10 +88,10 @@ x = self.next_block(x)
 ```
 
 ### Pitfalls
-- **Shape mismatch:** Always verify that the new block preserves spatial dimensions and channel counts. Print shapes before and after.
-- **Broken skip connections:** If modifying a U-Net, ensure encoder-decoder skip connections still align.
-- **Weight initialization:** New layers use random weights. Consider specific initialization if needed.
-- **Checkpoint compatibility:** Adding layers breaks loading from existing checkpoints. Handle with `strict=False` or key mapping.
+- **Shape mismatch:** verify the new block preserves spatial dimensions and channel counts. Print shapes before and after.
+- **Broken skip connections:** if modifying a U-Net, ensure encoder-decoder skip connections still align.
+- **Weight initialization:** new layers use random weights. Consider specific initialization if needed.
+- **Checkpoint compatibility:** adding layers breaks loading from existing checkpoints. Handle with `strict=False` or key mapping.
 
 ### Framework Adaptations
 - **TF/Keras:** Subclass `tf.keras.Model` or use `tf.keras.layers.Layer`. Use `model.summary()` to verify shapes.
@@ -296,50 +300,50 @@ dataloader = DataLoader(dataset, sampler=sampler)
 
 ## 8. From-Scratch Implementation (Paper-Based)
 
-When a research proposal has `implementation_strategy: from_scratch`, implement directly from the paper's method description, pseudocode, and algorithm.
+When a proposal has `implementation_strategy: from_scratch`, implement directly from the paper's method description, pseudocode, and algorithm.
 
 ### Prerequisites
 - Paper URL or method description available
 - Algorithm description, pseudocode, or equations from the paper
-- Target framework understood (use Framework Detection table above)
+- Target framework understood (Framework Detection table above)
 
 ### Process
 
-1. **Extract algorithm:** Read the paper's method section, pseudocode, and equations. Map mathematical notation to code constructs (e.g., summation → loop or `torch.sum`, element-wise product → `*`).
+1. **Extract algorithm:** read the method section, pseudocode, and equations. Map math notation to code (e.g., summation → loop or `torch.sum`, element-wise product → `*`).
 
-2. **Map to project structure:** Determine which pattern category (1-7) the change falls into. Identify where in the existing codebase to insert the new code.
+2. **Map to project structure:** determine which pattern category (1-7) applies; identify where in the codebase to insert the new code.
 
 3. **Implement incrementally:**
-   - Core computation first (the algorithm itself as a function or module)
-   - Wire into existing code (integrate at the identified insertion point)
-   - Add config parameters (expose tunable values through the project's config system)
+   - Core computation first (the algorithm as a function or module)
+   - Wire into existing code at the insertion point
+   - Add config parameters (expose tunable values via the project's config system)
 
-4. **Handle ambiguity:** When the paper is unclear:
+4. **Handle ambiguity:** when the paper is unclear:
    - Prefer the simpler interpretation
    - Add comments: `# [ml-opt] Paper ambiguous on <detail>, using <chosen_approach>`
-   - Flag in the implementation manifest notes
+   - Flag in the manifest notes
 
 ### Pitfalls
-- **Notation mismatch:** Paper uses math notation that doesn't directly translate. Map carefully: subscripts → indexing, superscripts → powers, Greek letters → descriptive variable names.
-- **Missing details:** Papers often omit initialization, normalization, or edge cases. Use standard defaults from the framework.
-- **Scale differences:** Paper may test on different data scales. Verify that constants (learning rates, thresholds) are appropriate for the target dataset.
-- **Framework mismatch:** Paper's pseudocode may assume different tensor layout (channels-first vs channels-last). Adapt accordingly.
+- **Notation mismatch:** math notation doesn't directly translate. Map carefully: subscripts → indexing, superscripts → powers, Greek letters → descriptive variable names.
+- **Missing details:** papers often omit initialization, normalization, or edge cases. Use standard framework defaults.
+- **Scale differences:** the paper may test on different data scales. Verify constants (learning rates, thresholds) suit the target dataset.
+- **Framework mismatch:** pseudocode may assume a different tensor layout (channels-first vs channels-last). Adapt accordingly.
 
 ### When to Escalate
-- No pseudocode AND ambiguous method section — flag as `implementation_error`
+- No pseudocode AND ambiguous method section — flag `implementation_error`
 - Required operations unavailable in the target framework
-- Method requires fundamentally different training paradigm not described in the proposal
+- Method needs a fundamentally different training paradigm not described in the proposal
 
 ---
 
 ## 9. From-Reference-Repo Implementation (Code Adaptation)
 
-When a research proposal has `implementation_strategy: from_reference`, clone the paper's reference repository and adapt relevant code into the user's project.
+When a proposal has `implementation_strategy: from_reference`, clone the paper's reference repository and adapt relevant code into the user's project.
 
 ### Prerequisites
 - Reference repo URL verified and accessible
-- Relevant files identified (from research proposal's `reference_files` field)
-- Both the reference framework and target framework understood
+- Relevant files identified (from the proposal's `reference_files` field)
+- Both reference and target frameworks understood
 
 ### Process
 
@@ -348,31 +352,31 @@ When a research proposal has `implementation_strategy: from_reference`, clone th
    python3 ${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py clone <repo_url> <dest_dir>
    python3 ${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py analyze <dest_dir>
    ```
-   Review the analysis output: framework, relevant files, dependencies.
+   Review the analysis: framework, relevant files, dependencies.
 
-2. **Understand reference code:** Read the relevant files identified by the research agent. Identify:
+2. **Understand reference code:** read the files identified by the research agent. Identify:
    - Core implementation (the algorithm/module to extract)
-   - Internal dependencies (other files in the repo that the core code imports)
+   - Internal dependencies (other repo files the core code imports)
    - External dependencies (pip packages not in the target project)
 
 3. **Assess adaptation complexity:**
-   - **Direct copy:** Same framework, minimal dependencies → copy and adjust imports
-   - **Translation required:** Different framework → rewrite using equivalent APIs
-   - **Extraction required:** Code deeply entangled with repo infrastructure → extract logic, reimplement wrapper
+   - **Direct copy:** same framework, minimal dependencies → copy and adjust imports
+   - **Translation required:** different framework → rewrite using equivalent APIs
+   - **Extraction required:** code entangled with repo infrastructure → extract logic, reimplement wrapper
 
-4. **Adapt:** Extract only the relevant functions/classes. For each:
+4. **Adapt:** extract only the relevant functions/classes. For each:
    - Adapt import statements to the target project
    - Translate framework-specific calls if needed (e.g., `tf.nn.relu` → `F.relu`)
    - Match tensor conventions (shape ordering, dtype, device handling)
    - Preserve numerical behavior (same initialization, same constants)
 
-5. **Track provenance:** Add comments to all adapted code:
+5. **Track provenance:** add comments to all adapted code:
    ```python
    # [ml-opt] Adapted from <repo_url>, file: <original_path>
    # [ml-opt] License: <license_type>
    ```
 
-6. **Cleanup:** Remove the cloned repo after extraction:
+6. **Cleanup:** remove the cloned repo after extraction:
    ```bash
    python3 -c "
    import sys; # sys.path: add the plugin's scripts/ directory
@@ -382,13 +386,45 @@ When a research proposal has `implementation_strategy: from_reference`, clone th
    ```
 
 ### Pitfalls
-- **License issues:** Always check the LICENSE file before adapting code. Flag repos with no license or restrictive licenses (GPL, proprietary) in the manifest as `license_warning`.
-- **Dependency bloat:** Reference code may import heavy packages not needed for the core algorithm. Extract only what's necessary.
-- **Version mismatch:** Reference code may use older API versions (e.g., deprecated PyTorch ops). Update to current equivalents.
-- **Hidden state/registries:** Some frameworks use global registries or module-level state. Ensure adapted code doesn't depend on repo-specific initialization.
+- **License issues:** always check the LICENSE before adapting. Flag repos with no license or restrictive licenses (GPL, proprietary) in the manifest as `license_warning`.
+- **Dependency bloat:** reference code may import heavy packages the core algorithm doesn't need. Extract only what's necessary.
+- **Version mismatch:** reference code may use older API versions (e.g., deprecated PyTorch ops). Update to current equivalents.
+- **Hidden state/registries:** some frameworks use global registries or module-level state. Ensure adapted code doesn't depend on repo-specific initialization.
 
 ### When to Escalate
-- No license file found — flag `license_warning` and inform user
+- No license file found — flag `license_warning` and inform the user
 - Extraction would require rewriting >50% of the reference code
 - Framework translation is infeasible (e.g., JAX functional style → TF eager with heavy Keras integration)
 - Core implementation has unresolvable internal dependencies (imports 10+ repo-specific modules)
+
+---
+
+## 10. RL / Robot-Learning Codebases
+
+RL and robot-learning projects (SB3, IsaacLab/rsl_rl, LeRobot, robomimic) differ structurally from supervised repos: the training loop is usually **library-owned** (`model.learn()`, a runner class) rather than user code, and the levers live in configs and env definitions.
+
+### Where to look
+- **Reward and env dynamics:** the environment class (`step()`, `_get_reward()`/`compute_reward()`, `reset()`), typically under `envs/`, `tasks/`, or registered via `gym.register`/`gymnasium.register`
+- **Algorithm HPs:** constructor kwargs (`PPO(..., ent_coef=, clip_range=, n_steps=)`) or Hydra/YAML config trees (`cfg/`, `conf/`, `configs/`) — IsaacLab and robomimic route nearly everything through configs
+- **Policy/value networks:** `policy_kwargs` (SB3), `ActorCritic` classes (rsl_rl), policy config blocks (LeRobot/robomimic)
+- **Observation normalization / wrappers:** `VecNormalize`, `gym.Wrapper` chains, obs-norm flags in config
+
+### What to read first
+- How the env is constructed and registered (a wrong `gym.register` id or stale entry point fails at env construction, not at import)
+- Which knobs the config tree actually forwards to the algorithm (misspelled Hydra/YAML keys are silently ignored)
+- Whether the training loop is library-owned — if so, changes go into callbacks/wrappers/configs, NOT a copied loop
+
+### Minimal change pattern
+```python
+# Reward shaping: modify inside the env's reward computation, gated by a config knob
+def _get_reward(self):
+    reward = self._task_reward()
+    reward += self.cfg.shaping_weight * self._shaping_term()  # [ml-opt] reward shaping
+    return reward
+```
+
+### Pitfalls
+- **Library-owned loops:** never fork `model.learn()` internals — use callbacks (SB3 `BaseCallback`), env wrappers, or config overrides
+- **Env-registration pitfalls:** changing an env class may require re-registering or bumping the registered id; a stale registration silently loads the old class
+- **Hydra/YAML knobs:** add new knobs to the config schema/dataclass, not as hardcoded constants — misspelled overrides fail silently
+- **Reward scale:** reward shaping changes the value-function scale; entropy coefficient, GAE lambda, and clip settings may need retuning afterwards

@@ -2,30 +2,48 @@
 
 **Phase gate:** Run `pipeline_state.py <exp_root> gate 4 5` before entering. On completion: `pipeline_state.py <exp_root> log-gate 5 completed "<summary>"`.
 
-If the user chose research (option 2 or 3 from Phase 4), dispatch the research agent:
+Phase 5 runs as a **dynamic workflow**. If the user chose research (option 2 or 3 from Phase 4), build the args and launch the workflow:
+
 ```
-Agent(
-  description: "Research optimization techniques",
-  prompt: "Ultrathink. Research ML optimization techniques. Parameters: source: web, model_type: {model_type}, task: {task}, current_metrics: {current_metrics}, problem_description: {problem_description}, user_papers: {user_papers or null}, exp_root: {exp_root}.",
-  subagent_type: "ml-optimizer:research-agent"
-)
+result = Workflow({
+  scriptPath: "${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/workflows/phase-5-research.js",
+  args: {
+    exp_root,
+    primary_metric,
+    model_category,
+    scope_level,          # from Phase 4 (architecture for option 3, etc.)
+    source: "web",        # workflow falls back to knowledge / HP-only internally
+    user_papers           # list, or null
+  }
+})
 ```
-→ Save the returned agentId to `agent_registry["research"]`
-→ Persist registry: `save_state(..., agent_registry=agent_registry)`
 
-Wait for research findings.
+The workflow dispatches `ml-optimizer:research-agent` internally (across NLP/CV/RL/generic angles + user papers), dedups, runs the deep-read + adversarial feasibility check, writes `reports/research-findings.md`, initializes the research agenda (via `error_tracker.py`), and returns:
 
-## Research Failure Recovery
+```
+{
+  findings_path: "<exp_root>/reports/research-findings.md",
+  proposals: [{index, title, impact, confidence, feasibility, scope, type, implementation_strategy, files_to_modify}, ...],
+  agenda_initialized: true
+}
+```
 
-If the research skill fails (web search errors, timeout, or no results):
+Read `result.proposals` and the findings file to drive the post-research checkpoint. Then validate the proposals against goals:
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py <exp_root> validate-output research '<proposals_json>'
+```
 
-1. **First fallback:** Retry with `source: "knowledge"` (skip web search, use LLM training knowledge only). Log to error tracker: `category: "agent_failure", severity: "warning", source: "orchestrate", message: "Research web search failed — retrying with knowledge-only mode"`.
-2. **Second fallback:** If knowledge-only also fails, continue with HP-only optimization (no research proposals). Log to error tracker: `category: "agent_failure", severity: "warning", source: "orchestrate", message: "Research failed entirely — continuing with HP-only optimization"`. Log to dev_notes: "Research failed — proceeding with HP tuning only."
-3. **Each fallback step** is logged to the error tracker for post-session review.
+## Research Failure Recovery (handled inside the workflow)
+
+Recovery is internal to the phase-5 workflow — there is no orchestrator-side retry:
+
+1. **Web/paper degradation is absorbed by the research agent.** The research skill runs WebSearch and alphaxiv in parallel and, for `source: "both"`, also draws on LLM training knowledge — so a web/alphaxiv failure degrades gracefully *within a single* research-agent dispatch rather than aborting (alphaxiv failure alone never blocks; WebSearch results suffice). There is no separate `source: "knowledge"` retry dispatch.
+2. **No surviving proposals → honest-empty findings.** If vetting leaves zero proposals (research turned up nothing, or every candidate was a dead end), the Synthesize stage writes a minimal `research-findings.md` (Problem Statement + an empty "Proposals (Ranked by Priority)" section) and logs a `research_failure` event (`category: "research_failure", severity: "warning", source: "orchestrate"`). The workflow returns empty `proposals` (`agenda_initialized: false`), and the orchestrator continues with HP-only optimization.
+3. **Each step is logged** to the error tracker for post-session review; dev_notes records "Research yielded no proposals — proceeding with HP tuning only."
 
 ## User Checkpoint (Post-Research)
 
-Use AskUserQuestion to show research findings:
+After the workflow returns, use AskUserQuestion to show research findings:
 
 ```
 Research findings:

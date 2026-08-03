@@ -23,6 +23,14 @@
 
    1. **Optimization target:** Which metric to improve? (e.g., accuracy, loss, F1, BLEU, latency)
    1a. **Secondary metrics** (optional): Additional metrics to track alongside the primary. For each collect: name, whether lower is better, and role — "guardrail" (top-ranked results must not regress it) or "report" (informational only). Store as `secondary_metrics` (list of `{name, lower_is_better, role}`) in user_choices; empty if none.
+   1b. **Evaluation tasks** (optional): If the model is evaluated on more than one task or environment, collect the task names. Store as `eval_tasks` (list of strings) in user_choices; empty list if single-task.
+
+   **State plainly to the user:** the plugin does not run tasks itself — it parses whatever `eval_command` prints. For multi-task to work, `eval_command` must emit one key per task named `<primary_metric>_<task>` (e.g. `success_rate_pick=0.83 success_rate_place=0.61`). The plugin then computes the mean under `<primary_metric>` and the worst task under `<primary_metric>_worst`. If `eval_command` cannot do this, leave `eval_tasks` empty — a wrong task list produces aggregates over the wrong denominator, silently making runs incomparable.
+
+   Task names may not be `worst`, `std`, or `mean` — those suffixes are reserved for aggregates.
+   If the eval also reports a per-task standard deviation, order it `<primary_metric>_std_<task>` (e.g. `success_rate_std_pick`) — never `<primary_metric>_<task>_std`, which would be misread as an undeclared task named `"<task>_std"`.
+
+   **Suggest a guardrail:** if `eval_tasks` is non-empty, offer to add `{"name": "<primary_metric>_worst", "lower_is_better": <same as primary>, "role": "guardrail"}` to `secondary_metrics`. This flags a config that lifts the mean while tanking one task — the failure mode multi-task evaluation exists to catch.
    2. **Current performance:** Current value of that metric? (if known)
    3. **Target performance:** Target value? (or "as good as possible")
    4. **Constraints:**

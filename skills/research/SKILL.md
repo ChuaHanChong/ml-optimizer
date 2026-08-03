@@ -537,3 +537,23 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"categor
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"category":"research_failure","severity":"warning","source":"research","message":"alphaxiv MCP tools unavailable — using WebSearch/WebFetch only","phase":5,"context":{"tool":"alphaxiv","fallback":"websearch"}}'
 ```
+
+## Domain Randomization and Curriculum Proposals
+
+**Domain-randomization priors.** When a paper reports randomization ranges (friction, mass, damping, lighting, sensor noise, latency), convert each into a `search_space` entry pair rather than a single range entry:
+
+```json
+[
+  {"param": "friction_center", "range": [0.6, 1.4], "scale": "linear", "source": "<paper title / URL>"},
+  {"param": "friction_width", "range": [0.0, 0.8], "scale": "linear", "source": "<paper title / URL>"}
+]
+```
+
+The effective randomization range is `center ± width/2`. Two scalars keep the entries proposable by hp-tune and make an inverted range impossible. `width` starting at `0.0` lets the search discover that a parameter should not be randomized at all. Only emit these when `scope_level` is `"architecture"` or `"full"` — at `"training"` scope they are a scope violation.
+
+**Curriculum.** A curriculum is a schedule over training, not a config value, so it is a `type: "code_change"` proposal like any other — never an `hp_only` one. Propose it as the code that ramps a randomization width (or task difficulty) over training, naming the ramp's own parameters so they become tunable afterwards:
+
+- `files_to_modify`: the training loop and the environment-construction site
+- the implementation should expose the ramp's shape and endpoints as config values (e.g. `friction_width_final`, `curriculum_warmup_frac`)
+
+Do NOT propose a curriculum as a bare hyperparameter. A schedule flag that the training code does not read produces a run labelled "curriculum" that ran no curriculum — a result that cannot be trusted and is worse than no result. Once the ramp is implemented on its branch, its parameters are ordinary HPs the tuning agent handles with no further special casing.

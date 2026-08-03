@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import PLUGIN_ROOT, SKILLS_DIR, AGENTS_DIR, REFERENCES_DIR, FIXTURES
+from conftest import PLUGIN_ROOT, SKILLS_DIR, SCRIPTS_DIR, AGENTS_DIR, REFERENCES_DIR, FIXTURES
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -815,3 +815,206 @@ class TestScriptBugFixes:
         assert "eval_checkpoint_missing" in baseline
         assert "eval_checkpoint_missing" in experiment
         assert "mtime" in experiment
+
+
+class TestEvalTasksContract:
+    """eval_tasks is declared at Phase 0, persisted, and consumed by analyze."""
+
+    def test_phase_0_asks_for_eval_tasks(self):
+        text = (REFERENCES_DIR / "phase-0-discovery.md").read_text()
+        assert "eval_tasks" in text
+        assert "eval_command" in text, "must state the user's eval command emits per-task keys"
+
+    def test_pipeline_state_documents_eval_tasks(self):
+        text = (SCRIPTS_DIR / "pipeline_state.py").read_text()
+        assert "eval_tasks" in text
+
+    def test_analyze_skill_consumes_eval_tasks(self):
+        text = (SKILLS_DIR / "analyze" / "SKILL.md").read_text()
+        assert "eval_tasks" in text
+        assert "_worst" in text, "analyze must know the worst-task aggregate key"
+
+
+class TestExperimentPerTaskContract:
+    """The experiment skill parses per-task keys and aggregates them via result_analyzer."""
+
+    def test_experiment_skill_documents_per_task_flow(self):
+        text = (SKILLS_DIR / "experiment" / "SKILL.md").read_text()
+        assert "eval_tasks" in text
+        assert "aggregate_task_metrics" in text, "must delegate aggregation, not reimplement it"
+        assert "_worst" in text
+
+    def test_phase_7_workflow_args_include_eval_tasks(self):
+        """eval_tasks must reach the Phase 7 Workflow() args, not just the routing table —
+        an orchestrator copying the literal 'Build the args' instruction line would otherwise
+        silently drop multi-task config even when the user configured it at Phase 0."""
+        orchestrate_text = (SKILLS_DIR / "orchestrate" / "SKILL.md").read_text()
+        args_line = next(
+            line for line in orchestrate_text.splitlines()
+            if "phase-7-experiment.js" in line and "args:" in line
+        )
+        assert "eval_tasks" in args_line
+
+        loop_ref_text = (REFERENCES_DIR / "phase-7-experiment-loop.md").read_text()
+        assert "eval_tasks" in loop_ref_text
+
+    def test_experiment_skill_logs_task_set_mismatch(self):
+        text = (SKILLS_DIR / "experiment" / "SKILL.md").read_text()
+        assert "error_tracker.py" in text and "task_set_mismatch" in text
+
+
+# ===========================================================================
+# TestWorkflowArgsLineMatchesRoutingTable
+# ===========================================================================
+
+WORKFLOW_PHASE_FILES = [
+    "phase-5-research.js",
+    "phase-6-implement.js",
+    "phase-7-experiment.js",
+    "phase-8-stacking.js",
+]
+
+
+def _routing_table_args_cell(orchestrate_text, phase_file):
+    """Extract the routing table's "args (in)" cell for `phase_file`'s row.
+
+    Row shape: | `.../<phase_file>` (`<display-name>`) | `{ ...args... }` | `{ ...return... }` |
+    Anchoring on the "(`<name>`)" that follows the path (unique to this table)
+    avoids the phase-reference table further down, which repeats the same
+    .js filename inside a `Workflow({scriptPath: ..., args})` cell.
+    """
+    pattern = re.compile(
+        r"\|\s*`\$\{CLAUDE_PLUGIN_ROOT\}/skills/orchestrate/workflows/"
+        + re.escape(phase_file)
+        + r"`\s*\(`[^`]*`\)\s*\|\s*`(\{.*?\})`\s*\|"
+    )
+    match = pattern.search(orchestrate_text)
+    assert match is not None, (
+        f"Routing-table row for {phase_file} not found in orchestrate/SKILL.md"
+    )
+    return match.group(1)
+
+
+def _instruction_line_args_cell(orchestrate_text, phase_file):
+    """Extract the `args: { ... }` blob from the literal Workflow({...}) line for `phase_file`.
+
+    Same one-line-per-phase pattern as test_phase_7_workflow_args_include_eval_tasks.
+    """
+    line = next(
+        line for line in orchestrate_text.splitlines()
+        if phase_file in line and "args:" in line
+    )
+    match = re.search(r"args:\s*(\{[^}]*\})", line)
+    assert match is not None, (
+        f"No 'args: {{...}}' found in {phase_file} instruction line: {line!r}"
+    )
+    return match.group(1)
+
+
+def _bare_arg_names(cell_text):
+    """Parse a `{ a, b:[int], c:"x"|"y" }`-style blob into a set of bare arg names.
+
+    Splits on commas at the top level only (bracket/paren/brace depth 0), then
+    for each token drops everything from the first ':' onward (type
+    annotations / literal-union cells like `strategy:"git_branch"|"file_backup"`
+    reduce to just `strategy`), and strips whitespace plus stray braces.
+    """
+    inner = cell_text.strip()
+    if inner.startswith("{"):
+        inner = inner[1:]
+    if inner.endswith("}"):
+        inner = inner[:-1]
+
+    tokens = []
+    depth = 0
+    current = ""
+    for ch in inner:
+        if ch in "[{(":
+            depth += 1
+        elif ch in "]})":
+            depth -= 1
+        if ch == "," and depth == 0:
+            tokens.append(current)
+            current = ""
+        else:
+            current += ch
+    if current.strip():
+        tokens.append(current)
+
+    names = set()
+    for tok in tokens:
+        tok = tok.split(":", 1)[0]
+        tok = tok.strip().strip("{}").strip()
+        if tok:
+            names.add(tok)
+    return names
+
+
+class TestWorkflowArgsLineMatchesRoutingTable:
+    """The two args enumerations in orchestrate/SKILL.md must agree, for every phase.
+
+    orchestrate/SKILL.md documents each workflow's args twice: once in the
+    routing table near the top, once in the "Build the args" literal
+    Workflow({...}) instruction line further down. These can silently drift
+    apart — exactly the bug test_phase_7_workflow_args_include_eval_tasks was
+    added to catch for phase 7 (eval_tasks was dropped from the instruction
+    line). This generalizes the check to all 4 phase workflows.
+    """
+
+    @pytest.mark.parametrize("phase_file", WORKFLOW_PHASE_FILES)
+    def test_instruction_args_match_routing_table(self, phase_file):
+        text = (SKILLS_DIR / "orchestrate" / "SKILL.md").read_text()
+
+        routing_names = _bare_arg_names(_routing_table_args_cell(text, phase_file))
+        instruction_names = _bare_arg_names(_instruction_line_args_cell(text, phase_file))
+
+        missing = routing_names - instruction_names
+        extra = instruction_names - routing_names
+        assert routing_names == instruction_names, (
+            f"{phase_file}: routing table has {sorted(routing_names)} but "
+            f"instruction line has {sorted(instruction_names)} — "
+            f"missing: {sorted(missing)}, extra: {sorted(extra)}"
+        )
+
+
+class TestDomainRandomizationGuidance:
+    """DR priors are research-derived; curriculum rides the research→implement→tune loop."""
+
+    def test_hp_tune_documents_center_width_convention(self):
+        text = (SKILLS_DIR / "hp-tune" / "SKILL.md").read_text()
+        assert "_center" in text and "_width" in text
+        assert "architecture" in text, "must state the scope gate"
+
+    def test_research_documents_dr_priors(self):
+        text = (SKILLS_DIR / "research" / "SKILL.md").read_text()
+        assert "_center" in text and "_width" in text
+        assert "search_space" in text
+
+    def test_research_documents_curriculum_as_code_change(self):
+        text = (SKILLS_DIR / "research" / "SKILL.md").read_text()
+        assert "curriculum" in text.lower()
+        assert "code_change" in text
+
+    def test_implement_documents_curriculum_ramp(self):
+        text = (SKILLS_DIR / "implement" / "SKILL.md").read_text()
+        assert "curriculum" in text.lower()
+        assert "_width" in text
+
+
+# ===========================================================================
+# TestLimitationClaimsCurrent (Batch F, Task 7)
+# ===========================================================================
+
+
+class TestLimitationClaimsCurrent:
+    """The 'unsupported scenarios' list must not contradict shipped features."""
+
+    def test_multi_seed_claim_not_stale(self):
+        """random_seed + replicate aggregation shipped in 4571801."""
+        text = (SKILLS_DIR / "orchestrate" / "SKILL.md").read_text()
+        assert "would need significant orchestrator changes" not in text
+        assert "aggregate_replicates" in (SCRIPTS_DIR / "result_analyzer.py").read_text()
+
+    def test_curriculum_not_claimed_unorchestrated(self):
+        text = (SKILLS_DIR / "orchestrate" / "SKILL.md").read_text()
+        assert "curriculum learning, multi-agent coordination) are not orchestrated" not in text

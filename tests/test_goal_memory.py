@@ -839,3 +839,70 @@ class TestRLScopeHeuristics:
             "files_modified": ["envs/cartpole_env.py", "tasks/curriculum.py"]})
         assert result["valid"] is True
         assert result["warnings"] == []
+
+
+class TestDomainRandomization:
+    """DR center/width parameterization and its scope gate."""
+
+    def test_dr_params_needs_both_center_and_width(self):
+        from goal_memory import dr_params
+        assert dr_params({"friction_center": 1.0, "friction_width": 0.4}) == ["friction"]
+        # a lone _center or _width is not a DR pair
+        assert dr_params({"friction_center": 1.0}) == []
+        assert dr_params({"hidden_width": 64}) == []
+
+    def test_dr_params_finds_multiple_sorted(self):
+        from goal_memory import dr_params
+        cfg = {"mass_center": 2.0, "mass_width": 0.5, "friction_center": 1.0, "friction_width": 0.4}
+        assert dr_params(cfg) == ["friction", "mass"]
+
+    def test_effective_range_never_inverted(self):
+        from goal_memory import dr_effective_range
+        lo, hi = dr_effective_range({"friction_center": 1.0, "friction_width": 0.4}, "friction")
+        assert (lo, hi) == pytest.approx((0.8, 1.2))
+        # width 0 collapses to a point, still ordered
+        lo, hi = dr_effective_range({"friction_center": 1.0, "friction_width": 0.0}, "friction")
+        assert lo == hi == pytest.approx(1.0)
+        # negative width still yields a non-inverted range (the abs() guarantee)
+        lo, hi = dr_effective_range({"friction_center": 1.0, "friction_width": -0.4}, "friction")
+        assert (lo, hi) == pytest.approx((0.8, 1.2))
+
+    def test_effective_range_none_when_absent_or_bad_type(self):
+        from goal_memory import dr_effective_range
+        assert dr_effective_range({"friction_center": 1.0}, "friction") is None
+        assert dr_effective_range({"friction_center": "x", "friction_width": 0.4}, "friction") is None
+
+    def test_dr_tuning_blocked_at_training_scope(self, tmp_path):
+        exp = str(tmp_path / "experiments")
+        Path(exp).mkdir()
+        init_goals(exp, {
+            "objective": {"primary_metric": "reward", "lower_is_better": False},
+            "constraints": {"scope_level": "training"},
+        })
+        result = validate_agent_output(exp, "hp-tune", {
+            "configs": [{"lr": 0.001, "friction_center": 1.0, "friction_width": 0.4}]
+        })
+        assert result["valid"] is False
+        assert any("friction" in v and "scope" in v.lower() for v in result["violations"])
+
+    def test_dr_tuning_allowed_at_architecture_scope(self, tmp_path):
+        exp = str(tmp_path / "experiments")
+        Path(exp).mkdir()
+        init_goals(exp, {
+            "objective": {"primary_metric": "reward", "lower_is_better": False},
+            "constraints": {"scope_level": "architecture"},
+        })
+        result = validate_agent_output(exp, "hp-tune", {
+            "configs": [{"lr": 0.001, "friction_center": 1.0, "friction_width": 0.4}]
+        })
+        assert result["valid"] is True
+
+    def test_non_dr_config_unaffected_at_training_scope(self, tmp_path):
+        exp = str(tmp_path / "experiments")
+        Path(exp).mkdir()
+        init_goals(exp, {
+            "objective": {"primary_metric": "reward", "lower_is_better": False},
+            "constraints": {"scope_level": "training"},
+        })
+        result = validate_agent_output(exp, "hp-tune", {"configs": [{"lr": 0.001}]})
+        assert result["valid"] is True

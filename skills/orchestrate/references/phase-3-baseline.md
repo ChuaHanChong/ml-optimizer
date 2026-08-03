@@ -6,7 +6,7 @@ Dispatch the baseline agent:
 ```
 Agent(
   description: "Establish baseline metrics",
-  prompt: "Establish baseline metrics. Parameters: project_root: {project_root}, train_command: {train_command}, eval_command: {eval_command}, model_category: {model_category}, prepared_train_path: {prepared_train_path or null}, prepared_val_path: {prepared_val_path or null}.",
+  prompt: "Establish baseline metrics. Parameters: project_root: {project_root}, train_command: {train_command}, eval_command: {eval_command}, model_category: {model_category}, prepared_train_path: {prepared_train_path or null}, prepared_val_path: {prepared_val_path or null}, eval_tasks: {eval_tasks or []}.",
   subagent_type: "ml-optimizer:baseline-agent"
 )
 ```

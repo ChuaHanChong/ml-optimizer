@@ -21,6 +21,7 @@ From the orchestrator or hp-tune skill:
 - `project_root`: project root directory
 - `train_command`: base training command (from baseline)
 - `eval_command`: evaluation command (optional)
+- `eval_tasks`: optional list of task/environment names from Phase 0 user_choices (empty for single-task runs)
 - `code_branch`: git branch with code changes (optional, from implement manifest)
 - `code_proposal`: name of the research proposal (optional, for tagging results)
 - `proposal_source`: origin of the proposal — `"paper"`, `"llm_knowledge"`, or `null` (pass-through from hp-tune)
@@ -352,6 +353,28 @@ After training completes:
    - `metrics.<primary_metric>` is **always** the held-out eval value (from `eval_command`) — the single canonical number every downstream comparison uses. If there is no eval command, fall back to the training-output metric AND set `eval_protocol` accordingly so analyze knows.
    - When a training-loop print for the same metric is also available, record it separately as `metrics.train_report_<primary_metric>` — never overwrite the canonical key with it.
    - Set `"eval_protocol"`: `"held_out_eval"` (from eval_command), `"train_report"` (training-loop print fallback), or `"rl_final_eval"` (RL rollout mean). Analyze compares only within the same `eval_protocol`.
+
+   **Multi-task evaluation (only when `eval_tasks` is non-empty).** The plugin never runs tasks itself — `eval_command` reports them. Extract every `<primary_metric>_<task>` key the eval output prints into `metrics` verbatim (flat numeric entries — never nest them), then compute the aggregates:
+
+   ```bash
+   python3 -c "
+   import json, sys
+   sys.path.insert(0, '${CLAUDE_PLUGIN_ROOT}/scripts')
+   from result_analyzer import aggregate_task_metrics
+   metrics = json.loads(sys.argv[1])
+   out = aggregate_task_metrics(metrics, sys.argv[2], json.loads(sys.argv[3]), sys.argv[4] == 'true')
+   print(json.dumps(out))
+   " '<metrics_json>' '<primary_metric>' '<eval_tasks_json>' '<lower_is_better>'
+   ```
+
+   Merge the returned `aggregates` into `metrics` — this sets canonical `<primary_metric>` (mean across tasks, what every downstream comparison ranks on) and `<primary_metric>_worst` (worst task — a guardrail secondary metric can watch it).
+
+   Non-empty `warnings` means the eval's reported task set disagrees with the declared `eval_tasks` — a different denominator than other experiments makes this result incomparable, so record it:
+   - append the warnings to the result's `notes`
+   - add `"task_set_mismatch": true` to the result JSON
+   - log it: `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"category":"config_error","severity":"warning","source":"experiment","message":"task set mismatch: <warnings>"}'`
+
+   Never invent a per-task number the eval did not print, and never re-run `eval_command` once per task with a guessed `--task` flag — a script that ignores the flag returns the same number N times and produces a fake, perfectly uniform breakdown.
 
 4. **Validate required metrics:** ensure `metrics` includes the `divergence_metric` (for monitor) and `primary_metric` (for analyze/hp-tune). If either is missing from parsed output, check the raw log for alternative names (e.g., `train_loss`, `val_loss`). If a match is found, include it under both the original and canonical name. If not found, set to `null` and log a warning.
 

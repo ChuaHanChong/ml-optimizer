@@ -11,7 +11,7 @@ Phase 7 runs as a **dynamic workflow** (`Workflow({scriptPath: "${CLAUDE_PLUGIN_
 { exp_root, project_root, baseline, primary_metric, divergence_metric,
   divergence_lower_is_better, model_category, lower_is_better, target_value, scope_level,
   fixed_time_budget, fixed_epoch_budget, fixed_step_budget, hp_batches_per_round, method_proposal_scope,
-  method_proposal_iterations }
+  method_proposal_iterations, seeds_per_config, eval_tasks }
 ```
 > `fixed_time_budget` (seconds) and `fixed_epoch_budget` (epochs) are the **training** budget, passed through from `user_choices`. The workflow forwards whichever is set into every experiment-agent prompt so each run is capped exactly like the baseline and stays comparable (CLAUDE.md "Training budget options"). Passed as two typed fields (not one derived `budget`) so the experiment agent knows whether to wrap `timeout` vs cap epochs. Distinct from the workflow runtime's token `budget` global, which the script uses to self-bound the loop's agent spend (`budget.remaining()`). *(A legacy scalar `budget` arg is still tolerated and treated as seconds.)* `fixed_step_budget` (integer environment timesteps) is the RL budget unit — when set it wins over the time/epoch budgets and maps to the framework's timestep flag (e.g. `--total_timesteps`).
 

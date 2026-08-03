@@ -18,6 +18,7 @@ The orchestrator provides:
 - `prepared_train_path` (optional): if prerequisites prepared data, use this instead of the original data path in the training command
 - `prepared_val_path` (optional): same for validation data
 - `model_category` (optional): from user_choices — `"supervised"`, `"rl"`, `"generative"`, or null. Controls RL-specific evaluation (see RL Baseline Evaluation) and tabular ML GPU profiling skip.
+- `eval_tasks` (optional): list of task/environment names from Phase 0 `user_choices`, for multi-task evaluation. Empty/absent = single-task, no change in behavior.
 
 ## Step 1: Identify Evaluation Command
 
@@ -161,6 +162,18 @@ Experiments reuse these vars: the experiment skill reads `profiling.sim_env` and
    ```
 4. **Validate parse results:** check `parse_logs` returned non-empty records. If empty, the format may be unrecognized — try forcing formats (`--format kv`, `--format json`, `--format logging`, `--format tqdm`)
 5. If metrics aren't parseable automatically, read the output and extract them manually
+6. **Multi-task evaluation (only when `eval_tasks` is non-empty).** Baseline must use the exact same aggregation as every experiment, or the comparison denominator diverges. Extract every `<primary_metric>_<task>` key the eval output prints into `metrics` verbatim (flat, never nested), then compute the aggregates:
+   ```bash
+   python3 -c "
+   import json, sys
+   sys.path.insert(0, '${CLAUDE_PLUGIN_ROOT}/scripts')
+   from result_analyzer import aggregate_task_metrics
+   metrics = json.loads(sys.argv[1])
+   out = aggregate_task_metrics(metrics, sys.argv[2], json.loads(sys.argv[3]), sys.argv[4] == 'true')
+   print(json.dumps(out))
+   " '<metrics_json>' '<primary_metric>' '<eval_tasks_json>' '<lower_is_better>'
+   ```
+   Merge the returned `aggregates` into `metrics` before Step 5 writes `baseline.json` — this sets the canonical `<primary_metric>` (mean across tasks) and `<primary_metric>_worst`, matching exactly what the experiment skill does. If `warnings` is non-empty, record `"task_set_mismatch": true` and append the warnings to baseline.json's `notes` the same way the experiment skill does.
 
 ## Step 4: Profile Training
 

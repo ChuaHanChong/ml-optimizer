@@ -20,6 +20,7 @@ From the orchestrator:
 - `target_value`: goal value for the primary metric (optional)
 - `scope_level`: constraint on changes (`"training"` = HP only, `"architecture"` = HP + research, `"full"` = everything including ShinkaEvolve)
 - `secondary_metrics`: optional extra metrics to track — `[{"name": ..., "lower_is_better": ..., "role": "guardrail"|"report"}]` from Phase 0 user_choices. See Step 2.3.
+- `eval_tasks`: optional list of task/environment names from Phase 0 user_choices. When non-empty, each result's `metrics` carries `<primary_metric>_<task>` keys plus the `<primary_metric>` mean and `<primary_metric>_worst` aggregates computed by the experiment agent. Rank on `<primary_metric>` as always; when reporting, add a per-task breakdown column and call out any experiment whose `<primary_metric>_worst` regressed against baseline even though the mean improved — that is a policy specializing, not generalizing.
 
 ## Step 1: Load and Compare Results
 

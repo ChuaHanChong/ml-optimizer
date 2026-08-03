@@ -11,10 +11,16 @@ for RL: fixed episode count, argmax policy, mean+std — never best-over-curve):
 
     final_eval_mean=142.30 final_eval_std=51.20 eval_episodes=10
 
+With --eval_tasks pole_short,pole_long the same line also carries one key per
+task, which the plugin aggregates into a mean and a worst-task value:
+
+    final_eval_mean_pole_short=98.40 final_eval_std_pole_short=31.10 ...
+
 Flags map to the plugin's RL conventions:
     --seed N              framework seed (recorded as random_seed)
     --total_timesteps N   environment-step budget (fixed_step_budget)
     --lr F                Adam learning rate
+    --eval_tasks a,b      comma-separated CartPole variants for multi-task eval
 
 Usage:
     python3 train_ppo.py --seed 1 --total_timesteps 8192 --lr 2.5e-4
@@ -61,7 +67,40 @@ def parse_args():
     p.add_argument("--lr", type=float, default=2.5e-4)
     p.add_argument("--num_steps", type=int, default=512, help="rollout length per update")
     p.add_argument("--eval_episodes", type=int, default=10)
+    p.add_argument(
+        "--eval_tasks", type=str, default="",
+        help="comma-separated CartPole variants to evaluate on "
+             "(pole_short/pole_long/heavy); empty = single-task",
+    )
     return p.parse_args()
+
+
+# CartPole variants used as distinct "tasks" — each perturbs the environment's
+# physics, so a policy that only solves the default pole scores worse here.
+TASK_VARIANTS = {
+    "pole_short": {"length": 0.25},
+    "pole_long": {"length": 1.0},
+    "heavy": {"masspole": 0.5},
+}
+
+
+def evaluate(model, env, seed: int, episodes: int) -> tuple[float, float]:
+    """Deterministic argmax rollout; returns (mean, std) of episode returns."""
+    returns = []
+    for ep in range(episodes):
+        obs, _ = env.reset(seed=seed + 1000 + ep)
+        done = False
+        ret = 0.0
+        while not done:
+            with torch.no_grad():
+                logits, _ = model(torch.as_tensor(obs, dtype=torch.float32))
+            obs, reward, terminated, truncated, _ = env.step(int(logits.argmax()))
+            ret += float(reward)
+            done = terminated or truncated
+        returns.append(ret)
+    mean = sum(returns) / len(returns)
+    std = (sum((r - mean) ** 2 for r in returns) / len(returns)) ** 0.5
+    return mean, std
 
 
 def main():
@@ -157,25 +196,33 @@ def main():
 
     # Final deterministic eval — mirrors the baseline skill's RL Evaluation
     # protocol (fixed episode count, deterministic policy, mean+std).
-    eval_returns = []
-    for ep in range(args.eval_episodes):
-        obs, _ = env.reset(seed=args.seed + 1000 + ep)
-        done = False
-        ret = 0.0
-        while not done:
-            with torch.no_grad():
-                logits, _ = model(torch.as_tensor(obs, dtype=torch.float32))
-            obs, reward, terminated, truncated, _ = env.step(int(logits.argmax()))
-            ret += float(reward)
-            done = terminated or truncated
-        eval_returns.append(ret)
-    mean = sum(eval_returns) / len(eval_returns)
-    std = (sum((r - mean) ** 2 for r in eval_returns) / len(eval_returns)) ** 0.5
-    print(
-        f"final_eval_mean={mean:.2f} final_eval_std={std:.2f} "
+    mean, std = evaluate(model, env, args.seed, args.eval_episodes)
+    parts = [
+        f"final_eval_mean={mean:.2f}",
+        f"final_eval_std={std:.2f}",
         f"eval_episodes={args.eval_episodes}",
-        flush=True,
-    )
+    ]
+
+    # Multi-task eval: one <metric>_<task> key per variant, flat and numeric so
+    # the plugin's aggregator reads them without any schema change.
+    tasks = [t for t in args.eval_tasks.split(",") if t]
+    for task in tasks:
+        if task not in TASK_VARIANTS:
+            raise SystemExit(f"unknown eval task {task!r}; known: {sorted(TASK_VARIANTS)}")
+        task_env = gym.make("CartPole-v1")
+        for attr, value in TASK_VARIANTS[task].items():
+            setattr(task_env.unwrapped, attr, value)
+        # Gymnasium caches derived constants at init; recompute them after attribute changes
+        # so physics equations use the correct values (e.g., total_mass divides into cart accel).
+        u = task_env.unwrapped
+        u.total_mass = u.masspole + u.masscart
+        u.polemass_length = u.masspole * u.length
+        t_mean, t_std = evaluate(model, task_env, args.seed, args.eval_episodes)
+        task_env.close()
+        parts.append(f"final_eval_mean_{task}={t_mean:.2f}")
+        parts.append(f"final_eval_std_{task}={t_std:.2f}")
+
+    print(" ".join(parts), flush=True)
     env.close()
 
 

@@ -314,3 +314,12 @@ When invoked during the stacking phase (identifiable by `method_tier: "stacked_d
    - New scheduler → vary `learning_rate`, `warmup_steps`
 3. **Budget:** Cap at 2 iterations during stacking.
 4. **Proposals:** Generate `max(num_gpus, 1)` configs, all targeting the stack branch.
+
+## Domain-Randomization Parameters
+
+Randomization ranges are proposed as a **center/width scalar pair**, never as an explicit `[low, high]` list: `friction_center` + `friction_width` (effective range `center ± width/2`). Two scalars are what you already know how to propose, and the pair cannot produce an inverted range regardless of the values you pick — there is no cross-parameter constraint mechanism that would catch `low > high`.
+
+- `width = 0` means no randomization for that parameter. A width search space therefore spans "off" to "wide" continuously, which is what makes the amount of randomization tunable at all.
+- Propose the pair only when a research-derived `search_space` entry supplies it with a cited `source`. Do not invent randomization ranges from a built-in table — see the research-derived priors section.
+- **Scope gate:** these parameters change environment dynamics, so they require `scope_level` `"architecture"` or `"full"`. At `"training"` scope, proposing one is a goal violation (`goal_memory.py::check_goal_compliance`, enforced live by the PreToolUse hook on every proposed-config write) and the batch will be rejected. At `"training"` scope, leave DR parameters out entirely.
+- Never propose a `<name>_width` alone. A width without its center is not a randomization parameter and will not be recognized as one.

@@ -270,8 +270,8 @@ def save_state(
 ) -> str:
     """Write pipeline-state.json to exp_root, returning its path.
 
-    user_choices: Phase 0 choices (primary_metric, budgets, commands, etc.),
-        preserved across resumptions. consecutive_stop_count: orchestrator
+    user_choices: Phase 0 choices (primary_metric, secondary_metrics, eval_tasks,
+        budgets, commands, etc.), preserved across resumptions. consecutive_stop_count: orchestrator
         exit-judgment signal (NOT a hardcoded threshold). stuck_protocol_triggered:
         prevents infinite recovery loops. Any arg left None keeps its prior value.
     """

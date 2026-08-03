@@ -98,6 +98,70 @@ class TestCartPoleRun:
         assert verdict["diverged"] is False, verdict
 
 
+MULTI_TASK_NAMES = ["pole_short", "pole_long"]
+
+
+@pytest.fixture(scope="module")
+def cartpole_multitask_log(tmp_path_factory):
+    """Run the fixture in multi-task eval mode; return the captured kv log."""
+    pytest.importorskip("torch")
+    pytest.importorskip("gymnasium")
+    result = subprocess.run(
+        [sys.executable, str(TRAIN_PPO), "--seed", "1",
+         "--total_timesteps", str(TOTAL_TIMESTEPS), "--lr", "2.5e-4",
+         "--eval_tasks", ",".join(MULTI_TASK_NAMES)],
+        capture_output=True, text=True, timeout=600,
+    )
+    assert result.returncode == 0, f"train_ppo failed: {result.stderr}"
+    log = tmp_path_factory.mktemp("rl-mt") / "train.log"
+    log.write_text(result.stdout)
+    return log
+
+
+def test_fixture_exposes_eval_tasks_flag():
+    """The fixture accepts --eval_tasks (no torch/gym needed to check the source)."""
+    assert "--eval_tasks" in TRAIN_PPO.read_text()
+
+
+@pytest.mark.slow
+class TestMultiTaskEval:
+    """The parse -> aggregate seam on real eval stdout."""
+
+    def test_per_task_keys_parsed_from_real_output(self, cartpole_multitask_log):
+        records = parse_log(str(cartpole_multitask_log))
+        final = records[-1]
+        for task in MULTI_TASK_NAMES:
+            key = f"final_eval_mean_{task}"
+            assert key in final, f"missing {key} in {sorted(final)}"
+            assert math.isfinite(final[key])
+        # the whole point of using distinct physics variants: confirm they
+        # actually produce different behavior, not silently-identical numbers
+        values = [final[f"final_eval_mean_{t}"] for t in MULTI_TASK_NAMES]
+        assert len(set(values)) > 1, f"task variants produced identical values: {values}"
+
+    def test_aggregates_computed_from_parsed_metrics(self, cartpole_multitask_log):
+        from result_analyzer import aggregate_task_metrics
+        final = parse_log(str(cartpole_multitask_log))[-1]
+        out = aggregate_task_metrics(final, "final_eval_mean", MULTI_TASK_NAMES)
+        assert out["warnings"] == [], out["warnings"]
+        vals = [final[f"final_eval_mean_{t}"] for t in MULTI_TASK_NAMES]
+        assert out["aggregates"]["final_eval_mean"] == pytest.approx(sum(vals) / len(vals))
+        assert out["aggregates"]["final_eval_mean_worst"] == pytest.approx(min(vals))
+
+    def test_undeclared_task_detected_on_real_output(self, cartpole_multitask_log):
+        """Declaring a task the eval never reported is caught, not silently averaged."""
+        from result_analyzer import aggregate_task_metrics
+        final = parse_log(str(cartpole_multitask_log))[-1]
+        out = aggregate_task_metrics(final, "final_eval_mean", MULTI_TASK_NAMES + ["never_ran"])
+        assert any("never_ran" in w for w in out["warnings"])
+
+    def test_single_task_mode_still_emits_flat_key(self, cartpole_log):
+        """Default (no --eval_tasks) output is unchanged — no per-task keys."""
+        final = parse_log(str(cartpole_log))[-1]
+        assert "final_eval_mean" in final
+        assert not any(k.startswith("final_eval_mean_") for k in final)
+
+
 class TestSB3Parsing:
     """B7: the sb3 pipe-table format parses and auto-detects (static sample, no deps)."""
 

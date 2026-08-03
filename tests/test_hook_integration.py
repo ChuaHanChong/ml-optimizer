@@ -313,6 +313,36 @@ class TestLayer2WriteValidation:
         assert decision["decision"] == "block"
         assert "OOM limit" in decision["reason"]
 
+    def test_dr_scope_violation_blocked(self, exp_root):
+        """A domain-randomization proposal is blocked when scope_level is 'training'."""
+        goals = exp_root / "experiments" / "optimization-goals.json"
+        goals.write_text(json.dumps({"constraints": {"scope_level": "training"}}))
+        payload = _write_payload(exp_root, "proposed-configs/round-1-hp/exp-012.json", {
+            "exp_id": "exp-012",
+            "config": {"lr": 0.01, "friction_center": 1.0, "friction_width": 0.4},
+            "method_tier": "method_tuned_hp",
+            "iteration": 2, "code_branch": None, "gpu_id": 0, "reasoning": "test",
+        })
+        _, stdout, _ = _run_hook(VALIDATE_WRITE_SCRIPT, payload)
+        decision = _parse_decision(stdout)
+        assert decision["decision"] == "block"
+        assert "friction" in decision["reason"]
+        assert "scope" in decision["reason"].lower()
+
+    def test_dr_tuning_approved_at_full_scope(self, exp_root):
+        """The same domain-randomization proposal is approved when scope_level is 'full'."""
+        goals = exp_root / "experiments" / "optimization-goals.json"
+        goals.write_text(json.dumps({"constraints": {"scope_level": "full"}}))
+        payload = _write_payload(exp_root, "proposed-configs/round-1-hp/exp-013.json", {
+            "exp_id": "exp-013",
+            "config": {"lr": 0.01, "friction_center": 1.0, "friction_width": 0.4},
+            "method_tier": "method_tuned_hp",
+            "iteration": 2, "code_branch": None, "gpu_id": 0, "reasoning": "test",
+        })
+        _, stdout, _ = _run_hook(VALIDATE_WRITE_SCRIPT, payload)
+        decision = _parse_decision(stdout)
+        assert decision["decision"] == "approve"
+
 
 # ---------------------------------------------------------------------------
 # Layer 3: SubagentStop — output verification

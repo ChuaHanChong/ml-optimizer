@@ -109,6 +109,60 @@ def rank_by_metric(results: dict[str, dict], metric: str, lower_is_better: bool 
     return valid + invalid
 
 
+# Suffixes that are aggregate/statistic names, never task names.
+RESERVED_TASK_SUFFIXES = {"worst", "std", "mean"}
+
+
+def aggregate_task_metrics(
+    metrics: dict,
+    primary_metric: str,
+    eval_tasks: list[str],
+    lower_is_better: bool = False,
+) -> dict:
+    """Aggregate `<primary_metric>_<task>` keys into a mean and a worst value.
+
+    Per-task metrics ride the flat `metrics` dict as namespaced keys so nothing
+    downstream needs to change. Returns {"aggregates": {...}, "warnings": [...]}:
+    `aggregates` carries `<primary_metric>` (mean over reported tasks) and
+    `<primary_metric>_worst` (min, or max when lower_is_better), both omitted if
+    no declared task reported a finite value. Warnings flag declared-but-missing
+    and reported-but-undeclared tasks — the drift that silently makes two runs
+    incomparable by aggregating over different denominators.
+    """
+    if not eval_tasks:
+        return {"aggregates": {}, "warnings": []}
+
+    warnings: list[str] = []
+    values: list[float] = []
+    prefix = f"{primary_metric}_"
+
+    for task in eval_tasks:
+        val = metrics.get(f"{prefix}{task}")
+        if isinstance(val, bool) or not isinstance(val, (int, float)):
+            warnings.append(f"declared task '{task}' missing from metrics")
+            continue
+        if not math.isfinite(val):
+            warnings.append(f"declared task '{task}' has non-finite value {val}")
+            continue
+        values.append(float(val))
+
+    declared = set(eval_tasks)
+    for key in metrics:
+        if not key.startswith(prefix):
+            continue
+        suffix = key[len(prefix):]
+        if suffix in declared or suffix in RESERVED_TASK_SUFFIXES:
+            continue
+        warnings.append(f"metrics report undeclared task '{suffix}'")
+
+    aggregates: dict[str, float] = {}
+    if values:
+        aggregates[primary_metric] = sum(values) / len(values)
+        aggregates[f"{primary_metric}_worst"] = max(values) if lower_is_better else min(values)
+
+    return {"aggregates": aggregates, "warnings": warnings}
+
+
 def spearman_correlation(x: list, y: list) -> float:
     """Spearman rank correlation: rho = 1 - 6*sum(d^2)/(n*(n^2-1)), average-rank ties."""
     if len(x) != len(y) or len(x) < 2:

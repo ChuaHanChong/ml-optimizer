@@ -186,11 +186,15 @@ def _find_exp_root(file_path: str) -> str | None:
 
 
 def _check_goal_compliance(data: dict, file_path: str) -> str | None:
-    """Block reason if the config breaches frozen params or the OOM limit, else None.
+    """Block reason if the config breaches frozen params, the OOM limit, or (at
+    training scope) tunes a domain-randomization parameter, else None.
 
     Thin adapter over goal_memory.check_goal_compliance (the single owner of these
-    rules). Degrades to None when the config is absent, the write is a
-    running/pending placeholder, or no breadcrumb locates the exp_root.
+    rules) — this hook is the actual live enforcement point: it runs on every
+    Write to proposed-configs/round-N-*/exp-*.json, which is how a tuning-agent's
+    DR-tuning proposal actually gets blocked. Degrades to None when the config is
+    absent, the write is a running/pending placeholder, or no breadcrumb locates
+    the exp_root.
     """
     config = data.get("config")
     if not isinstance(config, dict) or not config:
@@ -203,8 +207,10 @@ def _check_goal_compliance(data: dict, file_path: str) -> str | None:
     if not exp_root:
         return None
 
-    frozen = (load_goals(exp_root) or {}).get("constraints", {}).get("frozen_parameters", [])
-    violations = check_goal_compliance(config, frozen, max_batch_size(load_behaviors(exp_root)))
+    goals = load_goals(exp_root) or {}
+    frozen = goals.get("constraints", {}).get("frozen_parameters", [])
+    scope = goals.get("constraints", {}).get("scope_level", "full")
+    violations = check_goal_compliance(config, frozen, max_batch_size(load_behaviors(exp_root)), scope)
     return f"Config {violations[0]}" if violations else None
 
 

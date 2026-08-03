@@ -539,3 +539,12 @@ New dependencies needed (install before experiments):
 **Critical:** the restore-before-apply pattern (step 2) prevents proposal A's changes leaking into proposal B's code. Each proposal is validated and backed up independently against the original code.
 
 **Limitation:** with file backup, proposals cannot be tested in parallel. The experiment skill must restore each proposal's backup before its experiments, then restore baseline before the next proposal's.
+
+## Curriculum Ramps
+
+When implementing a curriculum proposal, the deliverable is code that **reads a schedule and applies it**, plus config values that expose the schedule's shape. Two rules:
+
+1. **Expose the endpoints as config, not constants.** A ramp hardcoded to go from 0.0 to 0.5 cannot be tuned afterwards. Name the final value `<param>_width_final` so it matches the `<name>_center` / `<name>_width` domain-randomization convention the tuning agent already understands, and expose the ramp fraction (e.g. `curriculum_warmup_frac`) alongside it.
+2. **Make the ramp observable in the training log.** Print the current value each time it changes (e.g. `friction_width=0.12` on the update line). Without this there is no way to confirm from the log that the curriculum actually ran, and an unread schedule flag is indistinguishable from a working one.
+
+Validate as usual: the LSP check, then a short smoke run confirming the logged value actually changes across updates. A curriculum branch whose logged width is constant is a failed implementation, not a working one.

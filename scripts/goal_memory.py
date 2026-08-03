@@ -50,6 +50,42 @@ ARCH_FILE_PATTERNS = [
 # for warning-only output; tighten to path-segment matching if noise appears.
 ENV_FILE_PATTERNS = ["env", "environment", "curriculum", "randomization", "domain_rand"]
 
+# Domain-randomization parameters are proposed as a center/width scalar pair
+# rather than an explicit [lo, hi] range: hp-tune proposes scalars, and a pair
+# can never produce an inverted range no matter what values it picks (there is
+# no cross-parameter constraint mechanism to catch lo > hi).
+DR_SUFFIXES = ("_center", "_width")
+
+
+def dr_params(config: dict) -> list[str]:
+    """Base names in `config` having BOTH a `_center` and a `_width` key.
+
+    Requiring both avoids false positives on unrelated names (e.g. a
+    `hidden_width` layer size is not domain randomization).
+    """
+    names = {
+        key[: -len(suffix)]
+        for key in config
+        for suffix in DR_SUFFIXES
+        if key.endswith(suffix)
+    }
+    return sorted(n for n in names if f"{n}_center" in config and f"{n}_width" in config)
+
+
+def dr_effective_range(config: dict, name: str) -> tuple[float, float] | None:
+    """`(low, high)` that `name`'s center/width pair expands to, or None.
+
+    Returns None when the pair is missing or non-numeric. `|width|` is used so a
+    negative width proposal still yields an ordered range instead of an inverted one.
+    """
+    center, width = config.get(f"{name}_center"), config.get(f"{name}_width")
+    if isinstance(center, bool) or isinstance(width, bool):
+        return None
+    if not isinstance(center, (int, float)) or not isinstance(width, (int, float)):
+        return None
+    half = abs(float(width)) / 2.0
+    return float(center) - half, float(center) + half
+
 # --- File paths ---
 
 def _goals_path(exp_root: str) -> Path:
@@ -289,12 +325,16 @@ def max_batch_size(behaviors: dict) -> int | None:
 
 
 def check_goal_compliance(
-    config: dict, frozen: list, max_bs: int | None
+    config: dict, frozen: list, max_bs: int | None, scope: str | None = None
 ) -> list[str]:
-    """Return violations for one config: frozen-parameter edits and OOM breaches.
+    """Return violations for one config: frozen-parameter edits, OOM breaches, and
+    (when scope == "training") domain-randomization parameters that change environment
+    dynamics — `training` scope must leave the environment untouched, the same intent
+    ENV_FILE_PATTERNS enforces for env-file edits.
 
     Single owner of this rule set — used by the hp-tune/experiment validators
-    below and by validate_experiment_write.py's PreToolUse hook.
+    below and by validate_experiment_write.py's PreToolUse hook (the actual live
+    enforcement point: every Write to proposed-configs/round-N-*/exp-*.json).
     """
     violations: list[str] = []
     for fp in frozen:
@@ -309,6 +349,12 @@ def check_goal_compliance(
                 violations.append(f"batch_size={bs} exceeds OOM limit {max_bs}")
         except (ValueError, TypeError):
             pass
+    if scope == "training":
+        for name in dr_params(config):
+            violations.append(
+                f"tunes domain-randomization parameter '{name}' "
+                f"(needs scope_level 'architecture' or 'full', got 'training')"
+            )
     return violations
 
 
@@ -328,7 +374,7 @@ def validate_agent_output(exp_root: str, agent: str, output: dict) -> dict:
     scope = constraints.get("scope_level", "full")
 
     if agent == "hp-tune":
-        _validate_hp_tune(output, frozen, behaviors, exp_root, violations, warnings)
+        _validate_hp_tune(output, frozen, behaviors, exp_root, scope, violations, warnings)
     elif agent == "research":
         _validate_research(output, scope, exp_root, violations, warnings)
     elif agent == "analyze":
@@ -336,7 +382,7 @@ def validate_agent_output(exp_root: str, agent: str, output: dict) -> dict:
     elif agent == "implement":
         _validate_implement(output, scope, violations, warnings)
     elif agent == "experiment":
-        _validate_experiment(output, frozen, behaviors, violations, warnings)
+        _validate_experiment(output, frozen, behaviors, scope, violations, warnings)
 
     return {
         "valid": len(violations) == 0,
@@ -345,7 +391,7 @@ def validate_agent_output(exp_root: str, agent: str, output: dict) -> dict:
     }
 
 
-def _validate_hp_tune(output, frozen, behaviors, exp_root, violations, warnings):
+def _validate_hp_tune(output, frozen, behaviors, exp_root, scope, violations, warnings):
     """Validate hp-tune proposed configs."""
     configs = output.get("configs", [])
     if not isinstance(configs, list):
@@ -367,7 +413,7 @@ def _validate_hp_tune(output, frozen, behaviors, exp_root, violations, warnings)
         if not isinstance(cfg, dict):
             continue
         violations.extend(
-            f"Config {i}: {v}" for v in check_goal_compliance(cfg, frozen, max_bs)
+            f"Config {i}: {v}" for v in check_goal_compliance(cfg, frozen, max_bs, scope)
         )
         # HP bounds (warnings, not violations — agents may intentionally explore)
         for param, bound in hp_bounds.items():
@@ -510,15 +556,16 @@ def _validate_implement(output, scope, violations, warnings):
             )
 
 
-def _validate_experiment(output, frozen, behaviors, violations, warnings):
-    """Validate experiment config respects frozen params and OOM limits."""
+def _validate_experiment(output, frozen, behaviors, scope, violations, warnings):
+    """Validate experiment config respects frozen params, OOM limits, and (at
+    training scope) domain-randomization parameters."""
     cfg = output.get("config", {})
     if not isinstance(cfg, dict):
         return
 
     violations.extend(
         f"Experiment {v}"
-        for v in check_goal_compliance(cfg, frozen, max_batch_size(behaviors))
+        for v in check_goal_compliance(cfg, frozen, max_batch_size(behaviors), scope)
     )
 
 

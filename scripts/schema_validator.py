@@ -38,7 +38,7 @@ EXPERIMENT_RESULT_OPTIONAL = [
     "code_branches", "stacking_order", "stack_base_exp",
     "artifacts_dir", "time_budget_seconds",
     "checkpoint_source", "warm_started",
-    "reproducibility", "random_seed",
+    "reproducibility", "random_seed", "task_set_mismatch",
 ]
 VALID_METHOD_TIERS = ["baseline", "method_default_hp", "method_tuned_hp", "stacked_default_hp", "stacked_tuned_hp"]
 VALID_STATUSES = ["completed", "failed", "diverged", "running", "pending", "timeout"]

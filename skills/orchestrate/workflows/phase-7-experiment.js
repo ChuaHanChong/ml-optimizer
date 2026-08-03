@@ -198,6 +198,10 @@ const cadence = Number(hp_batches_per_round) || 3;
 // Secondary metrics: [{name, lower_is_better, role}] from Phase 0 — threaded into the analysis Step 2.3 guardrail check.
 const secondaryMetrics = Array.isArray(A.secondary_metrics) ? A.secondary_metrics : [];
 
+// eval_tasks: [task_name, ...] from Phase 0 — threaded into the experiment-agent prompt (it
+// merges per-task metrics via aggregate_task_metrics) and the analysis prompt (per-task breakdown).
+const evalTasks = Array.isArray(A.eval_tasks) ? A.eval_tasks : [];
+
 // Seed replicates: pre-authorized at Phase 4 — hp-tune proposes each config seeds_per_config times with distinct random_seed values.
 const seedsPerConfig = A.seeds_per_config || null;
 
@@ -493,6 +497,7 @@ iteration: ${iteration}
 checkpoint_source: ${cfg.checkpoint_source ? JSON.stringify(cfg.checkpoint_source) : "null"}
 primary_metric: ${primary_metric}
 model_category: ${modelCategory}
+eval_tasks: ${JSON.stringify(evalTasks)}
 
 Run inside a git worktree on the given code_branch using \`--detach\` so this run does not disturb the main tree or other parallel runs. ${divergenceClause} ${budgetClause} ${cpuClause}
 
@@ -559,6 +564,7 @@ model_category: ${modelCategory}
 baseline_metric (${primary_metric}): ${baselineMetricValue}
 current_best_metric: ${bestMetric}
 secondary_metrics: ${JSON.stringify(secondaryMetrics)} (each {name, lower_is_better, role}; role "guardrail" entries must not regress vs baseline in top-ranked results — apply your Step 2.3 guardrail check; [] = skip)
+eval_tasks: ${JSON.stringify(evalTasks)} (when non-empty, each result's metrics carries <primary_metric>_<task> keys — add a per-task breakdown column to your batch report per your Step-analyze instructions; [] = skip)
 code_branches: ${JSON.stringify(codeBranches)}
 batch results: ${JSON.stringify(completedSummary)}
 ${allDiverged ? "NOTE: ALL experiments in this batch diverged — recommend a recovery action (halve LRs / narrow_space)." : ""}

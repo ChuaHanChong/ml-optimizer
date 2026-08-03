@@ -16,8 +16,11 @@ Run:
     python -m pytest tests/test_workflows.py -v
 """
 
+import json
+import re
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -282,3 +285,108 @@ class TestPhase7CpuParallelism:
         text = (WORKFLOWS_DIR / "phase-7-experiment.js").read_text()
         assert "OMP_NUM_THREADS" in text
         assert "taskset" in text
+
+
+# ---------------------------------------------------------------------------
+# Real-execution coverage: actually run the literal arg-derivation lines with
+# node, instead of just asserting the string is present in the source. This
+# catches precedence/typo/evaluation bugs a substring check cannot.
+# ---------------------------------------------------------------------------
+
+_DERIVATION_PATTERNS = {
+    "evalTasks": r"const evalTasks = .*?;",
+    "seedsPerConfig": r"const seedsPerConfig = .*?;",
+    "modelCategory": r"const modelCategory = .*?;",
+}
+
+
+def _extract_derivation_lines():
+    """Pull the exact literal derivation lines out of phase-7-experiment.js.
+
+    Fails loudly (not skip) if the source moved — a skip here would silently
+    defeat the point of proving real execution against the current source.
+    """
+    text = _wf("phase-7-experiment.js")
+    lines = {}
+    for name, pattern in _DERIVATION_PATTERNS.items():
+        match = re.search(pattern, text)
+        assert match is not None, (
+            f"{name} derivation line not found in phase-7-experiment.js — did the source move?"
+        )
+        lines[name] = match.group(0)
+    return lines
+
+
+def _run_derivation(A, pre):
+    """Execute the extracted lines verbatim under real node for given A/pre."""
+    if _NODE is None:
+        pytest.skip("node not available — cannot execute real derivation lines")
+    lines = _extract_derivation_lines()
+    script = (
+        f"const A = {json.dumps(A)};\n"
+        f"const pre = {json.dumps(pre)};\n"
+        f"{lines['evalTasks']}\n"
+        f"{lines['seedsPerConfig']}\n"
+        f"{lines['modelCategory']}\n"
+        "console.log(JSON.stringify({evalTasks, seedsPerConfig, modelCategory}));\n"
+    )
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".js", delete=False) as f:
+        f.write(script)
+        tmp_path = f.name
+    try:
+        result = subprocess.run(
+            [_NODE, tmp_path], capture_output=True, text=True, timeout=15,
+        )
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+    assert result.returncode == 0, (
+        f"node execution of extracted derivation lines failed:\n"
+        f"stdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+    return json.loads(result.stdout.strip())
+
+
+class TestArgDerivationRealExecution:
+    """Actually execute the 3 literal arg-derivation lines from
+    phase-7-experiment.js under node, for real A/pre inputs, and assert on
+    the real output — not on substring presence in the source text."""
+
+    def test_model_category_arg_takes_precedence_over_pre(self):
+        out = _run_derivation({"model_category": "vla"}, {"model_category": "rl"})
+        assert out["modelCategory"] == "vla"
+
+    def test_model_category_falls_back_to_pre_when_arg_missing(self):
+        out = _run_derivation({}, {"model_category": "rl"})
+        assert out["modelCategory"] == "rl"
+
+    def test_model_category_falls_back_to_pre_when_arg_null(self):
+        out = _run_derivation({"model_category": None}, {"model_category": "rl"})
+        assert out["modelCategory"] == "rl"
+
+    def test_model_category_null_when_neither_set(self):
+        out = _run_derivation({}, {})
+        assert out["modelCategory"] is None
+
+    def test_eval_tasks_real_array_kept_as_is(self):
+        out = _run_derivation({"eval_tasks": ["pick", "place"]}, {})
+        assert out["evalTasks"] == ["pick", "place"]
+
+    def test_eval_tasks_absent_becomes_empty_list(self):
+        out = _run_derivation({}, {})
+        assert out["evalTasks"] == []
+
+    def test_eval_tasks_null_becomes_empty_list(self):
+        out = _run_derivation({"eval_tasks": None}, {})
+        assert out["evalTasks"] == []
+
+    def test_eval_tasks_non_array_string_becomes_empty_list(self):
+        out = _run_derivation({"eval_tasks": "pick"}, {})
+        assert out["evalTasks"] == []
+
+    def test_seeds_per_config_number_kept(self):
+        out = _run_derivation({"seeds_per_config": 3}, {})
+        assert out["seedsPerConfig"] == 3
+
+    def test_seeds_per_config_absent_becomes_null(self):
+        out = _run_derivation({}, {})
+        assert out["seedsPerConfig"] is None

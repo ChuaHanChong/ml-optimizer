@@ -1122,3 +1122,63 @@ class TestLowNStats:
         assert all(d["delta_pct"] is not None for d in deltas)
         assert all(d["batch_std"] is not None for d in deltas)
         assert not any("delta_vs_spread" in d for d in deltas)
+
+
+class TestTaskAggregation:
+    """Per-task metric aggregation (aggregate_task_metrics)."""
+
+    def test_mean_and_worst_higher_is_better(self):
+        from result_analyzer import aggregate_task_metrics
+        metrics = {"success_rate_pick": 0.8, "success_rate_place": 0.6, "success_rate_stack": 0.4}
+        out = aggregate_task_metrics(metrics, "success_rate", ["pick", "place", "stack"])
+        assert out["aggregates"]["success_rate"] == pytest.approx(0.6)
+        assert out["aggregates"]["success_rate_worst"] == pytest.approx(0.4)
+        assert out["warnings"] == []
+
+    def test_worst_is_max_when_lower_is_better(self):
+        from result_analyzer import aggregate_task_metrics
+        metrics = {"loss_pick": 0.1, "loss_place": 0.9}
+        out = aggregate_task_metrics(metrics, "loss", ["pick", "place"], lower_is_better=True)
+        assert out["aggregates"]["loss"] == pytest.approx(0.5)
+        assert out["aggregates"]["loss_worst"] == pytest.approx(0.9)
+
+    def test_missing_declared_task_warns(self):
+        from result_analyzer import aggregate_task_metrics
+        metrics = {"success_rate_pick": 0.8}
+        out = aggregate_task_metrics(metrics, "success_rate", ["pick", "place"])
+        assert any("place" in w for w in out["warnings"])
+        # aggregates still computed over what WAS reported
+        assert out["aggregates"]["success_rate"] == pytest.approx(0.8)
+
+    def test_undeclared_reported_task_warns(self):
+        from result_analyzer import aggregate_task_metrics
+        metrics = {"success_rate_pick": 0.8, "success_rate_wipe": 0.2}
+        out = aggregate_task_metrics(metrics, "success_rate", ["pick"])
+        assert any("wipe" in w for w in out["warnings"])
+        # undeclared task excluded from the aggregate
+        assert out["aggregates"]["success_rate"] == pytest.approx(0.8)
+
+    def test_reserved_suffixes_not_treated_as_tasks(self):
+        from result_analyzer import aggregate_task_metrics
+        metrics = {"success_rate_pick": 0.8, "success_rate_std": 0.05, "success_rate_worst": 0.1}
+        out = aggregate_task_metrics(metrics, "success_rate", ["pick"])
+        assert out["warnings"] == []
+        assert out["aggregates"]["success_rate"] == pytest.approx(0.8)
+
+    def test_non_finite_task_value_skipped_with_warning(self):
+        from result_analyzer import aggregate_task_metrics
+        metrics = {"success_rate_pick": 0.8, "success_rate_place": float("nan")}
+        out = aggregate_task_metrics(metrics, "success_rate", ["pick", "place"])
+        assert any("place" in w for w in out["warnings"])
+        assert out["aggregates"]["success_rate"] == pytest.approx(0.8)
+
+    def test_no_tasks_reported_yields_no_aggregates(self):
+        from result_analyzer import aggregate_task_metrics
+        out = aggregate_task_metrics({"success_rate": 0.5}, "success_rate", ["pick", "place"])
+        assert out["aggregates"] == {}
+        assert len(out["warnings"]) == 2
+
+    def test_empty_eval_tasks_is_a_noop(self):
+        from result_analyzer import aggregate_task_metrics
+        out = aggregate_task_metrics({"success_rate": 0.5}, "success_rate", [])
+        assert out == {"aggregates": {}, "warnings": []}

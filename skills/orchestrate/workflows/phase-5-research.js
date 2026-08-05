@@ -9,7 +9,8 @@ export const meta = {
 }
 
 // -------------------- args (CONTRACT phase-5-research) --------------------
-// { exp_root, primary_metric, model_category, scope_level, source, user_papers }
+// { exp_root, project_root, primary_metric, model_category, scope_level, source, user_papers,
+//   vault_agent, vault_paths, goal_summary }
 // The Workflow runtime may deliver `args` as a JSON string; parse-if-string so
 // arg reads don't silently become undefined (e.g. `undefined/reports/...` paths).
 const A = typeof args === 'string' ? JSON.parse(args) : (args || {})
@@ -24,6 +25,11 @@ const scopeLevel = A.scope_level || 'training'
 const source = A.source || 'web'
 const userPapers = Array.isArray(A.user_papers) ? A.user_papers : (A.user_papers ? [A.user_papers] : [])
 const findingsPath = `${expRoot}/reports/research-findings.md`
+// Optional host-project research agent for the Fan-out and Vet stages (see FANOUT_AGENT/VET_AGENT below).
+const vaultAgent = A.vault_agent || null
+const vaultPaths = Array.isArray(A.vault_paths) ? A.vault_paths : (A.vault_paths ? [A.vault_paths] : [])
+const goalSummary = A.goal_summary || ''
+const projectRoot = A.project_root || ''
 
 // -------------------- structured return schemas --------------------
 const CANDIDATE_SCHEMA = {
@@ -106,13 +112,30 @@ const FINDINGS_SCHEMA = {
 
 const RESEARCH_AGENT = 'ml-optimizer:research-agent'
 
-const baseCtx = `You are the ml-optimizer research-agent running inside the Phase 5 research workflow.
+// Routing splits on judgment vs contract. Fan-out and Vet are judgment — no files, just
+// schema-validated results — so vault_agent takes them when set. Synthesize (plus
+// verifyFindings and write-empty) writes the exact research-findings.md format under a
+// PreToolUse hook and emits the indices Phase 6 resolves against, so it stays put.
+const FANOUT_AGENT = vaultAgent || RESEARCH_AGENT
+const VET_AGENT = vaultAgent || RESEARCH_AGENT
+
+const mkBaseCtx = (who) => `You are ${who} running inside the ml-optimizer Phase 5 research workflow.
 exp_root: ${expRoot}
+${projectRoot ? `project_root (the code being optimized): ${projectRoot}` : ''}
 primary_metric (optimize this): ${primaryMetric}
 model_category: ${modelCategory}
 scope_level: ${scopeLevel}  (NEVER propose changes outside this scope)
 source: ${source}
 Respect optimization-goals.json constraints and the dead-end catalog under ${expRoot} — do NOT re-propose dead-end or out-of-scope techniques.`
+
+const baseCtx = mkBaseCtx('the ml-optimizer research-agent')
+
+// A host-project agent gets no SubagentStart injection (absent from output_contract.py's
+// CONTRACTS), so goal_summary is its only view of frozen params, scope, and dead ends.
+const vaultCtx = vaultAgent
+  ? mkBaseCtx(`the host project's "${vaultAgent}" research agent, dispatched`) +
+    (goalSummary ? `\n\nGOALS AND CONSTRAINTS FOR THIS RUN (read before proposing or judging anything):\n${goalSummary}` : '')
+  : baseCtx
 
 // Output contract for the research-agent (mirrors output_contract.py "research-agent").
 // Workflow-dispatched agents may skip the SubagentStart/SubagentStop hooks, so the synthesis
@@ -162,14 +185,20 @@ const angles = [...domainAngles, 'generic cross-domain optimization techniques']
 
 // Each angle is an independent research-agent call. user_papers (if any) go to the
 // first angle so the user-paper priority bonus is applied exactly once.
+// The retrieval instruction differs by agent: the plugin's own agent searches the web,
+// a host-project vault agent searches its curated notes with the tools it actually has.
+const retrievalStep = () => vaultAgent
+  ? `Search the host project's own research corpus FIRST — that is the point of routing Fan-out to you. Search the WHOLE project, not a fixed subset: you know its layout, so use your own vault-query skills plus Grep/Glob/Read wherever the evidence lives (paper notes, topic overviews, deep dives, project docs).${vaultPaths.length ? ` Start with ${JSON.stringify(vaultPaths)} if unsure where to look, but do NOT treat that as a boundary.` : ''} Cite each candidate's \`source\` as the underlying paper identifier (e.g. its arxiv ID) plus title, not the note filename, so the Vet stage can deep-read the primary source. Only fall back to WebSearch for an angle the corpus genuinely does not cover, and say so in \`notes\`.`
+  : `Use the research skill's web-search / paper-analysis tooling for source="${source}" (parallel WebSearch + alphaxiv; assess candidate reference repos via alphaxiv / grep).`
+
 const angleThunks = angles.map((angle, i) => () => _dispatch(
-  `${baseCtx}
+  `${vaultCtx}
 
 Research ANGLE ${i + 1}/${angles.length}: "${angle}".
-Use the research skill's web-search / paper-analysis tooling for source="${source}" (parallel WebSearch + alphaxiv; assess candidate reference repos via alphaxiv / grep). ${i === 0 && userPapers.length ? `Also analyze these user-provided papers and apply the user-paper priority bonus: ${JSON.stringify(userPapers)}.` : 'Do NOT analyze user papers in this angle (handled elsewhere).'}
-Do NOT write reports/research-findings.md yet and do NOT initialize the agenda yet — that is a later synthesis step.
+${retrievalStep()} ${i === 0 && userPapers.length ? `Also analyze these user-provided papers and apply the user-paper priority bonus: ${JSON.stringify(userPapers)}.` : 'Do NOT analyze user papers in this angle (handled elsewhere).'}
+Do NOT write reports/research-findings.md yet and do NOT initialize the agenda yet — that is a later synthesis step. Write NO files at all.
 Return only candidate proposals scoped to "${angle}" as the schema. Cap knowledge-mode confidence at 7.`,
-  { agentType: RESEARCH_AGENT, label: `research:angle-${i + 1}`, phase: 'Fan-out', schema: CANDIDATE_SCHEMA }))
+  { agentType: FANOUT_AGENT, label: `research:angle-${i + 1}`, phase: 'Fan-out', schema: CANDIDATE_SCHEMA }))
 
 const angleResults = (await parallel(angleThunks)).filter(Boolean)
 
@@ -198,24 +227,30 @@ log(`Phase 5: ${angleResults.length} angle(s) returned, ${candidates.length} uni
 // -------------------- Phase 2: adversarial vet per candidate --------------------
 phase('Vet')
 
+// research-agent carries the alphaxiv MCP tools in frontmatter; a host-project agent
+// generally does not (it can load them via ToolSearch), so name the route instead.
+const deepReadStep = vaultAgent
+  ? `1. Deep-read the source. Start with your own corpus note for this paper, since that is why this stage is routed to you. Then confirm against the primary source: load the alphaxiv MCP tools via ToolSearch if available, else WebFetch the arxiv abs page. For from_reference, assess the repo with your own repo-reading tools. Say in \`reason\` which route you used, and say plainly if you could not reach the primary source.`
+  : `1. Deep-read the cited source (alphaxiv get_paper_content / answer_pdf_queries, or WebFetch; for from_reference, assess the repo via alphaxiv read_files_from_github_repository / grep).`
+
 // pipeline: one stage — deep-read + adversarial feasibility/novelty check per candidate.
 // No barrier between candidates; each is independently vetted (concurrency auto-capped).
 const vetted = candidates.length
   ? (await pipeline(
       candidates,
       (_prev, cand, idx) => _dispatch(
-        `${baseCtx}
+        `${vaultCtx}
 
 ADVERSARIALLY VET this candidate proposal (#${idx + 1}) before it reaches the user:
 ${JSON.stringify(cand)}
 
 Steps:
-1. Deep-read the cited source (alphaxiv get_paper_content / answer_pdf_queries, or WebFetch; for from_reference, assess the repo via alphaxiv read_files_from_github_repository / grep).
-2. Feasibility check FOR THIS PROJECT: compatible with the model/framework, fits the budget, implementable without major refactor. Set files_to_modify to concrete target paths under the project when known.
+${deepReadStep}
+2. Feasibility check FOR THIS PROJECT: compatible with the model/framework, fits the budget, implementable without major refactor. Set files_to_modify only to paths inside project_root — Phase 6 resolves them there and marks the proposal preflight_failed otherwise. A reference implementation goes in reference_repo, never here; leave the array empty if unsure.
 3. Novelty/dead-end check: drop (keep=false) if it duplicates an existing proposal, is in the dead-end catalog, or violates scope_level "${scopeLevel}".
 4. Re-score impact/confidence/feasibility honestly (1-10; cap knowledge-mode confidence at 7). Set type=hp_only when the change is purely a search-space tweak, else code_change.
 Return the schema with keep + final scores. Do NOT write files.`,
-        { agentType: RESEARCH_AGENT, label: `research:vet-${idx + 1}`, phase: 'Vet', schema: VET_SCHEMA }))
+        { agentType: VET_AGENT, label: `research:vet-${idx + 1}`, phase: 'Vet', schema: VET_SCHEMA }))
     ).filter(Boolean).filter((v) => v && v.keep !== false)
   : []
 

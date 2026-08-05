@@ -6,12 +6,14 @@ utilization < util_threshold AND memory usage < memory_threshold. Prints JSON
 (per-GPU status, free indices, free count) on stdout.
 
 Usage:
-    python3 gpu_check.py [util_threshold] [memory_threshold]
+    python3 gpu_check.py [util_threshold] [memory_threshold] [host]
 
 Defaults: util < 30%, memory < 80.0% (util_threshold=int, memory_threshold=float).
+host (or ML_OPTIMIZER_GPU_HOST) runs nvidia-smi over ssh instead of locally.
 """
 
 import json
+import os
 import subprocess
 import sys
 
@@ -63,25 +65,34 @@ def get_free_gpus(gpus: list[dict]) -> list[int]:
     return [g["index"] for g in gpus if g.get("available", False)]
 
 
-def run(util_threshold: int = 30, memory_threshold: float = 80.0) -> dict:
-    """Run nvidia-smi and return GPU status."""
+def run(util_threshold: int = 30, memory_threshold: float = 80.0, host: str = "") -> dict:
+    """Run nvidia-smi and return GPU status.
+
+    With *host* set (or ML_OPTIMIZER_GPU_HOST in the environment), nvidia-smi runs there
+    over ssh — for remote training, the local box has no GPUs to report. Output shape is
+    identical either way.
+    """
+    host = host or os.environ.get("ML_OPTIMIZER_GPU_HOST", "")
+    query = [
+        "nvidia-smi",
+        "--query-gpu=index,name,memory.total,memory.used,utilization.gpu",
+        "--format=csv",
+    ]
+    # BatchMode: never sit at a password prompt inside an automated pipeline.
+    cmd = (
+        ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", host, " ".join(query)]
+        if host
+        else query
+    )
+    where = f" on {host}" if host else ""
     try:
-        result = subprocess.run(
-            [
-                "nvidia-smi",
-                "--query-gpu=index,name,memory.total,memory.used,utilization.gpu",
-                "--format=csv",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30 if host else 10)
         if result.returncode != 0:
-            return {"error": f"nvidia-smi failed: {result.stderr}", "gpus": []}
+            return {"error": f"nvidia-smi failed{where}: {result.stderr.strip()}", "gpus": []}
     except FileNotFoundError:
-        return {"error": "nvidia-smi not found", "gpus": []}
+        return {"error": f"{'ssh' if host else 'nvidia-smi'} not found", "gpus": []}
     except subprocess.TimeoutExpired:
-        return {"error": "nvidia-smi timed out", "gpus": []}
+        return {"error": f"nvidia-smi timed out{where}", "gpus": []}
 
     gpus = parse_nvidia_smi(result.stdout)
     gpus = check_availability(gpus, util_threshold, memory_threshold)
@@ -94,12 +105,13 @@ if __name__ == "__main__":
         threshold = int(sys.argv[1]) if len(sys.argv) > 1 else 30
     except ValueError:
         print(f"Error: invalid util_threshold '{sys.argv[1]}' (expected integer)")
-        print("Usage: gpu_check.py [util_threshold] [memory_threshold]")
+        print("Usage: gpu_check.py [util_threshold] [memory_threshold] [host]")
         sys.exit(1)
     try:
         mem_threshold = float(sys.argv[2]) if len(sys.argv) > 2 else 80.0
     except ValueError:
         print(f"Error: invalid memory_threshold '{sys.argv[2]}' (expected number)")
-        print("Usage: gpu_check.py [util_threshold] [memory_threshold]")
+        print("Usage: gpu_check.py [util_threshold] [memory_threshold] [host]")
         sys.exit(1)
-    print(json.dumps(run(threshold, mem_threshold), indent=2))
+    remote_host = sys.argv[3] if len(sys.argv) > 3 else ""
+    print(json.dumps(run(threshold, mem_threshold, remote_host), indent=2))

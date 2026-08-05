@@ -206,6 +206,16 @@ const {
 
 const lowerIsBetter = !!lower_is_better;
 const PLUGIN = "${CLAUDE_PLUGIN_ROOT}";
+// Remote GPU host, same contract as phase-7: stacked runs must execute on the machine the
+// experiments they are compared against ran on, or the comparison is across hardware.
+const remote = A.remote && A.remote.host ? A.remote : null;
+const remoteBlock = remote
+  ? `
+REMOTE EXECUTION — the GPUs are on another machine. Do NOT run training locally.
+Wrap the training command as the experiment skill's "Running on a remote GPU host" section describes:
+  \${CLAUDE_PLUGIN_ROOT}/scripts/remote_train.sh --host ${remote.host} --workdir ${remote.workdir}/<exp_id> --gpu <gpu_id> --env-python ${remote.env_python} --sync <worktree path> -- <the training command>
+Pass the GPU via --gpu, not a local CUDA_VISIBLE_DEVICES. Query free GPUs with \`python3 \${CLAUDE_PLUGIN_ROOT}/scripts/gpu_check.py 30 80 ${remote.host}\`.`
+  : "";
 // code_evolution (ShinkaEvolve) only at scope_level "full" (mirrors phase-7's gate) — an
 // "architecture"-scope run never triggers ShinkaEvolve.
 const codeEvolutionEnabled = scope_level === "full";
@@ -377,7 +387,8 @@ for (let i = 1; i < ranked.length; i++) {
       stackBaseExp ? `Stack base exp: ${stackBaseExp}.` : `This is the first re-run of an accumulated stack.`,
       `Primary metric: ${primary_metric}. Run inside an isolated git worktree on ${stackBranch} using \`--detach\` (parallel runs on the same branch must not collide). ${budgetClause} ${divergenceClause}`,
       `After the run completes, register and close the round via round_manager.py.`,
-      `Return exp_id, status, metrics, code_branch, code_branches, stacking_order, stack_base_exp, method_tier, notes.`
+      `Return exp_id, status, metrics, code_branch, code_branches, stacking_order, stack_base_exp, method_tier, notes.`,
+      remoteBlock
     ].join(" "),
     {
       agentType: "ml-optimizer:experiment-agent",

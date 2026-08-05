@@ -33,7 +33,10 @@
 
 4. **Check GPU availability:**
    ```bash
+   # Local GPUs
    python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gpu_check.py
+   # Remote GPUs (user_choices.remote): pass thresholds + host, else you profile the wrong machine
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gpu_check.py 30 80 <remote.host>
    ```
 
 5. **Synthesize understanding:**

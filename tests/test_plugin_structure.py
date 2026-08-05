@@ -362,6 +362,26 @@ class TestScripts:
         except Exception as e:
             pytest.fail(f"Failed to import {module_name}: {e}")
 
+    def test_scripts_run_on_the_active_interpreter(self):
+        """The `python3` on PATH must satisfy what the scripts are written against.
+
+        Skills and hooks invoke them as bare `python3`, and anything older than 3.10
+        fails at import, before main() can report it — with hooks swallowing the error.
+        Fail loudly here rather than leaving that to a silent failure at runtime.
+        """
+        import subprocess
+
+        r = subprocess.run(
+            ["python3", "-c", "import sys; print('%d.%d' % sys.version_info[:2])"],
+            capture_output=True, text=True,
+        )
+        assert r.returncode == 0, f"`python3` is not runnable: {r.stderr.strip()}"
+        major, minor = (int(x) for x in r.stdout.strip().split("."))
+        assert (major, minor) >= (3, 10), (
+            f"`python3` on PATH is {major}.{minor}; the scripts need 3.10+. "
+            "Put a newer interpreter earlier on PATH than /usr/bin."
+        )
+
 
 # ---------------------------------------------------------------------------
 # Plugin manifest
@@ -807,3 +827,53 @@ def test_prerequisites_report_validates():
     }
     result = validate_prerequisites(report_valid)
     assert result["valid"] is True and result["errors"] == []
+
+
+# --- Remote training wrapper ---
+
+class TestRemoteTrainWrapper:
+    """The remote-training wrapper must behave like a local training process.
+
+    That contract is spelled out in the script's own header; what these tests protect is
+    the consequence of breaking it — every downstream check (log parsing, divergence,
+    result status) would read the wrapper instead of the training run.
+    """
+
+    WRAPPER = SCRIPTS_DIR / "remote_train.sh"
+
+    def test_wrapper_exists_and_is_executable(self):
+        """The workflow prompt invokes the path directly, so a lost exec bit fails at runtime."""
+        assert self.WRAPPER.exists(), "scripts/remote_train.sh is missing"
+        assert self.WRAPPER.stat().st_mode & 0o111, "remote_train.sh is not executable"
+
+    def test_wrapper_is_valid_bash(self):
+        """A syntax error here surfaces mid-round, after GPU time is already spent."""
+        import subprocess
+        r = subprocess.run(["bash", "-n", str(self.WRAPPER)], capture_output=True, text=True)
+        assert r.returncode == 0, f"bash -n failed: {r.stderr}"
+
+    def test_launches_detached_so_training_survives_a_dropped_connection(self):
+        """Without tmux, a dropped ssh connection kills training mid-round."""
+        src = self.WRAPPER.read_text()
+        assert "tmux new -d" in src, "training must be launched detached"
+
+    def test_kills_the_remote_job_when_signalled(self):
+        """`timeout` firing must not leave a process holding a remote GPU."""
+        src = self.WRAPPER.read_text()
+        assert "trap 'cleanup SIGTERM' TERM" in src
+        assert "kill-session" in src
+
+    def test_waits_on_a_background_tail_so_the_trap_can_fire(self):
+        """bash defers traps during a foreground command.
+
+        Tailing the remote log in the foreground would swallow SIGTERM until training
+        ended on its own, which is precisely when the kill is no longer useful. The tail
+        therefore runs in the background with an interruptible `wait`.
+        """
+        src = self.WRAPPER.read_text()
+        assert 'TAIL_PID=$!' in src and 'wait "$TAIL_PID"' in src
+
+    def test_propagates_the_remote_exit_code(self):
+        """A wrapper that always exits 0 marks a crashed run as completed."""
+        src = self.WRAPPER.read_text()
+        assert 'exit "$RC"' in src, "the training command's exit status must reach the caller"

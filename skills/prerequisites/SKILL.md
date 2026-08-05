@@ -25,6 +25,7 @@ The orchestrator provides:
 - User-specified environment manager (from Phase 0 Q12: `env_manager`, `env_name`)
 - `model_category` (from user_choices): `"supervised"`, `"rl"`, `"generative"`, or null — `"rl"` with null data paths triggers the Step 1.5 short-circuit
 - `exp_root`: Path to the experiment root directory
+- `remote`: optional `{host, workdir, env_python}` from Phase 0 Q13. When present, probe that host's environment (packages, GPUs, dry-run), not the local one.
 
 ## Step 0: Verify GitNexus (REQUIRED) and Index the Target Project
 
@@ -203,8 +204,10 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/prerequisites_check.py scan-imports <proje
 
 Then check which third-party packages are missing, using the user's Python executable:
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/prerequisites_check.py check-packages '<third_party_json>' <python_executable>
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/prerequisites_check.py check-packages '<third_party_json>' <python_executable> [<remote_host>]
 ```
+
+**Remote GPUs (`user_choices.remote`, from Phase 0 Q13):** pass its `host` as the 4th argument and its `env_python` as `<python_executable>`. Training runs on that machine, so it is that environment which must satisfy the imports — and any install command you then run must target it too, not the local one.
 
 Where `<python_executable>` is:
 - For conda: the python inside the conda env (run `conda run -n <env_name> which python` to find it)
@@ -271,6 +274,10 @@ After all dependencies are installed and data is prepared, verify the training c
 # Run the training command with minimal steps to check it works
 # Default timeout: 120s. RL/simulator projects: 300-600s (see Timeout selection below).
 timeout <dry_run_timeout> <train_command_with_minimal_steps>
+# Remote GPUs (user_choices.remote): dry-run on that host, else you verify the wrong environment
+timeout <dry_run_timeout> ${CLAUDE_PLUGIN_ROOT}/scripts/remote_train.sh --host <remote.host> \
+  --workdir <remote.workdir>/dry-run --env-python <remote.env_python> --sync <project_root> \
+  -- <train_command_with_minimal_steps>
 ```
 
 **How to limit steps:** Modify the training command based on the framework:

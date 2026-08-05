@@ -34,6 +34,7 @@ From the orchestrator or hp-tune skill:
 - `stacking_order`: position in the stacking chain — 1 = best method alone, 2 = best + second, etc. (optional, integer)
 - `stack_base_exp`: experiment ID of the previous stack step this builds on (optional)
 - `checkpoint_source`: checkpoint warm-start info (optional). Dict with `exp_id` (source experiment) and `checkpoint_path` (checkpoint file). When provided, the experiment warm-starts from this checkpoint.
+- `remote`: optional `{host, workdir, env_python}` from Phase 0 Q13. When present, training and eval run on that host via `remote_train.sh` (see "Running on a remote GPU host"); when absent, everything runs locally.
 - `round_dir`: current round directory name (e.g., `"round-3-hp"`). **Required.** Passed by the orchestrator after `round_manager.py create-round`. All experiment result JSONs and proposed-config JSONs MUST be written inside this round's subdirectory. If missing from the dispatch context, fetch it:
 
 ```bash
@@ -96,6 +97,8 @@ Before building the training command, verify:
 1. **Disk space:** check the target filesystem has enough free space for logs and checkpoints:
    ```bash
    df -h <project_root> | tail -1
+   # Remote GPUs (user_choices.remote): check that host's disk, else you measure the wrong one
+   ssh -o BatchMode=yes <remote.host> "df -h <remote.workdir> | tail -1"
    ```
    Warn if less than 5 GB free.
 
@@ -192,6 +195,13 @@ Create the per-experiment subdirectory before training:
 mkdir -p <exp_root>/artifacts/<round_dir>/<exp_id>
 ```
 
+**Remote GPUs (`user_choices.remote`):** training writes its checkpoints on the host, so copy them back after the run — nothing else does, and `<exp_root>` stays local:
+```bash
+scp -r <remote.host>:<remote.workdir>/<exp_id>/<checkpoint_dir>/. \
+  <exp_root>/artifacts/<round_dir>/<exp_id>/ 2>/dev/null || true
+```
+Pull only what a later phase needs (a best checkpoint, an eval report). Whole-run directories can be tens of GB, and the point of remote execution is that they stay there.
+
 If the training command produces checkpoint files (`*.pt`, `*.pth`, `*.ckpt`, `*.h5`, `*.pkl`, `*.safetensors`), configure the save path to point here. Add the artifact path to the generated training script via `--checkpoint_dir`, `--save_dir`, `--output_dir`, or whichever flag the training script uses.
 
 ## Step 3: Generate Bash Script
@@ -225,6 +235,26 @@ fi
 exit $EXIT_CODE
 ```
 Exit code 124 here means the SAFETY timeout fired → `status: "timeout"`. 124 is treated as success ONLY in the fixed-time-budget branch (Step 1.1).
+
+### Running on a remote GPU host
+
+When `pipeline-state.json` `user_choices` carries a `remote` block, the GPUs live on another machine. Wrap `{train_command}` in `${CLAUDE_PLUGIN_ROOT}/scripts/remote_train.sh` and change nothing else — the wrapper streams the remote log to stdout, blocks until training ends, and exits with the training command's real status, so the `timeout`/`wait $!`/exit-code machinery above behaves exactly as it does locally:
+
+```bash
+{train_command} =
+  ${CLAUDE_PLUGIN_ROOT}/scripts/remote_train.sh \
+    --host <remote.host> --workdir <remote.workdir>/<exp_id> --gpu <gpu_id> \
+    --env-python <remote.env_python> --sync <worktree_path_or_project_root> \
+    -- python train.py --lr 0.01 ...
+```
+
+- Pass the GPU through `--gpu` instead of setting `CUDA_VISIBLE_DEVICES` locally; the wrapper applies it on the host, where it means something.
+- `--sync` rsyncs the code before launching. **On a `code_branch` experiment pass `$WORKTREE_PATH` from Step 1, not `<project_root>`** — the worktree holds the branch under test; project_root is still on the base branch, so syncing it silently tests the wrong revision. HP-only runs sync `<project_root>`. Omit `--sync` when the code is already on the host and only hyperparameters change.
+- `--env-python` names the host interpreter, since a training environment there is not the one the plugin runs in.
+- Training runs detached under `tmux`, so a dropped connection does not kill it, and the `timeout` above still terminates the remote job rather than leaking a process onto the GPU.
+- Datasets stay resident on the host. Never sync them per experiment.
+
+Everything downstream is unchanged: the log lands in the same local `train.log`, and `parse_logs.py`, `detect_divergence.py`, and the result JSON all read it as usual.
 
 The script must:
 - Set `CUDA_VISIBLE_DEVICES=<gpu_id>`
@@ -333,8 +363,12 @@ After training completes:
 2. **If an eval command was provided, run evaluation** (mandatory — the primary_metric often comes from eval output):
    ```bash
    <eval_command>
+   # Remote GPUs (user_choices.remote): eval on that host, else the checkpoint is not there
+   ${CLAUDE_PLUGIN_ROOT}/scripts/remote_train.sh --host <remote.host> \
+     --workdir <remote.workdir>/<exp_id> --gpu <gpu_id> --env-python <remote.env_python> \
+     -- <eval_command>
    ```
-   Parse eval output for final metrics.
+   Parse eval output for final metrics. Omit `--sync` here: the code and the checkpoint are already on the host from the training step, and re-syncing would delete the checkpoint.
 
    **Worktree experiments:** evaluation MUST run inside the worktree directory (before `git worktree remove`). Copy model checkpoints/artifacts from the worktree to `<exp_root>/artifacts/<round_dir>/<exp_id>/` BEFORE removing the worktree.
 

@@ -51,6 +51,8 @@ If option 5: Set `scope_level = "training"`. Skip Phases 5-6 (no research, no co
 
 Phases 5–8 run as dynamic workflows that take **no mid-run user input**; the Phase 7 experiment workflow runs fully autonomously to its fixpoint. So every user decision the loop would otherwise ask for must be pre-authorized **here**, at Phase 4, and persisted into `user_choices` so it can be passed as Phase 7 `args`. Do NOT defer these to mid-loop — no prompt is available once the workflow is running.
 
+Nothing to ask about `remote` or `vault_agent`/`vault_paths` — they were settled at Phase 0. Just carry them into every later workflow's `args`. This matters most on options 2 and 5, which skip Phases 5-6 and jump straight to Phase 7: that path never touches the Phase 5 launch, so it is the easy place to lose them.
+
 Use AskUserQuestion (or auto-select in autonomous mode) to lock in:
 
 - **`method_proposal_scope`** — the scope ceiling for any mid-loop method proposals the workflow generates (replaces the old mid-loop "Scope options 1/2/3/4" prompt). Choose one:

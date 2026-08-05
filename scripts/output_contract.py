@@ -117,7 +117,7 @@ SCHEMA_EXAMPLES = {
     "experiment-agent": """{
   "exp_id": "<exp_id>", "status": "completed",
   "config": {"lr": 0.001, ...}, "metrics": {"loss": 0.5, ...},
-  "iteration": 1, "method_tier": "baseline", "duration_seconds": 120.0
+  "iteration": 1, "method_tier": "method_tuned_hp", "duration_seconds": 120.0, "eval_protocol": "held_out_eval"
 }""",
     "baseline-agent": """{
   "exp_id": "baseline", "status": "completed",

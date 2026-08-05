@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# FileChanged hook: detect external modification of pipeline-state.json.
-# Warns if the file was modified outside the current session (corruption, manual edit).
+# FileChanged hook: validate pipeline-state.json integrity on every write
+# (JSON parseability + baseline checksum). Fires regardless of who/what made
+# the change — it flags corruption or a tampered baseline, but cannot tell
+# an external edit from the pipeline's own writes.
 set -euo pipefail
 
 INPUT=$(cat)

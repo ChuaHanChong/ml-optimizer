@@ -228,7 +228,7 @@ def detect_format(lines: list[str]) -> str:
             hf_count += 1
     if hf_count >= 2:
         return "hf_trainer"
-    # Check if first non-empty line looks like CSV header
+    # Check if any of the first 3 non-empty lines looks like a CSV header
     for line in lines[:3]:
         stripped = line.strip()
         if stripped and "," in stripped and not re.search(r'[=:]', stripped):

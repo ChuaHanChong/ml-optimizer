@@ -30,7 +30,9 @@ from pathlib import Path
 # Statistical constants (spec-fixed, NOT tunable heuristics; per-model-category
 # thresholds live in detect_divergence's MODEL_CATEGORY_DEFAULTS, not here).
 
-# Two-sided critical |Spearman rho| at alpha=0.05 for small n (n<5 never significant).
+# Two-sided critical |Spearman rho| at alpha=0.05, tabulated for n=5..10; n outside
+# this range (including n<5) falls through to the min_interaction_rho strength gate
+# below — it is NOT excluded as insignificant.
 SPEARMAN_CRITICAL_05 = {5: 1.0, 6: 0.886, 7: 0.786, 8: 0.738, 9: 0.700, 10: 0.648}
 
 # Correlations from fewer than this many points are flagged low_n.

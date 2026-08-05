@@ -17,7 +17,7 @@ The orchestrator provides:
 - Model/training details (from understanding phase)
 - `prepared_train_path` (optional): if prerequisites prepared data, use this instead of the original data path in the training command
 - `prepared_val_path` (optional): same for validation data
-- `model_category` (optional): from user_choices — `"supervised"`, `"rl"`, `"generative"`, or null. Controls RL-specific evaluation (see RL Baseline Evaluation) and tabular ML GPU profiling skip.
+- `model_category` (optional): from user_choices — `"supervised"`, `"rl"`, `"generative"`, or null. Controls RL-specific evaluation (see RL Baseline Evaluation). The tabular-ML GPU-profiling skip is framework-detected (Step 4), independent of `model_category`.
 - `eval_tasks` (optional): list of task/environment names from Phase 0 `user_choices`, for multi-task evaluation. Empty/absent = single-task, no change in behavior.
 
 ## Step 1: Identify Evaluation Command
@@ -46,7 +46,7 @@ Search the project for evaluation scripts:
    - Log to dev_notes: "No eval command found — using training output metrics as baseline"
    - Log to error tracker: `category: "config_error", severity: "info", source: "baseline", message: "No eval command — falling back to training output metrics"`
 
-   If auto-fallback finds no metrics, use AskUserQuestion:
+   If auto-fallback finds no metrics: baseline-agent has no AskUserQuestion tool. If the user is available via the orchestrator, ask; otherwise fall back to training output metrics and log the gap to dev_notes for the Phase 4 checkpoint:
    ```
    I couldn't automatically identify an evaluation command.
    How do I evaluate this model? Please provide:
@@ -67,18 +67,19 @@ Otherwise use the original commands as-is.
 ## Step 2: Set Up Experiment Directory
 
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/experiment_setup.py <project_root> "<train_command>"
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/experiment_setup.py <exp_root> "<train_command>"
 ```
 
-This creates:
+This creates the 5 top-level directories:
 ```
 <exp_root>/
   logs/
   reports/
   scripts/
   results/
-  dev_notes.md
+  artifacts/
 ```
+It also has side effects worth knowing about: it allocates exp_id "exp-001" (via `next_experiment_id()`) and writes a placeholder `results/exp-001.json` (`{"exp_id": "exp-001", "config": {}, "status": "pending"}`, never updated) plus `scripts/exp-001/train.sh`. These are harmless but orphaned — ignore/discard them, do not treat "exp-001" as a real experiment.
 
 ## Step 2.1: Auto-Repair Loop (for eval/train commands)
 
@@ -133,7 +134,7 @@ The baseline must use the same training budget as experiments for fair compariso
 
 **If neither is set:** run training with the original epoch count from `train_command`.
 
-**Budget-utilization check (any fixed budget):** confirm the baseline actually consumed the budget — its duration/step-count should match what the experiments will use, not fall well short (a hardcoded epoch/step cap the override didn't lift, or a budget applied only to experiments). An under-trained baseline confounds every vs-baseline delta with training duration ("trained longer", not "better method"). Don't accept it silently: fix so the budget binds and re-run the baseline, or — if it genuinely can't — record `"budget_underutilized": true` + the utilization ratio in `baseline.json` and warn the error tracker, so the report and analyze treat vs-baseline deltas as duration-confounded and lean on matched-budget comparisons.
+**Budget-utilization check (any fixed budget):** confirm the baseline actually consumed the budget — its duration/step-count should match what the experiments will use, not fall well short (a hardcoded epoch/step cap the override didn't lift, or a budget applied only to experiments). An under-trained baseline confounds every vs-baseline delta with training duration ("trained longer", not "better method"). Don't accept it silently: fix so the budget binds and re-run the baseline, or — if it genuinely can't — record `"budget_underutilized": true` + the utilization ratio in `baseline.json`, warn the error tracker, AND warn in dev_notes (same pattern as `eval_checkpoint_missing` above) — dev_notes.md is what report actually reads, so that's how the caveat reaches the final report.
 
 ## Step 2.3: Detect Headless Simulator Env Vars
 
@@ -146,7 +147,7 @@ If `model_category` is `"rl"` (or the prerequisites import scan found a simulato
 | `pybullet` | (none — headless by default via DIRECT mode) |
 | `omni` / `isaacsim` / `isaaclab` | prefer the script's `--headless` CLI flag when exposed; otherwise `HEADLESS=1` |
 
-1. Read the import scan from `<exp_root>/results/prerequisites.json` (or re-run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/prerequisites_check.py scan-imports <project_root>`).
+1. Re-run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/prerequisites_check.py scan-imports <project_root>` — `prerequisites.json` does not persist the `{stdlib, third_party, local}` import classification, only `environment.manual_install_required` and `environment.packages_installed`, so the scan must be re-run rather than read back.
 2. Collect the applicable env vars, apply them when running the baseline training/profiling commands, and record them in `baseline.json` under `profiling.sim_env` (a dict of env var name → value; `{}` when none apply).
 3. If baseline training fails with a GL/EGL/display error (`GLFWError`, `cannot connect to X server`, `EGL`), add `MUJOCO_GL=egl` / `PYOPENGL_PLATFORM=egl` and retry via the auto-repair loop (Step 2.1).
 
@@ -160,7 +161,7 @@ Experiments reuse these vars: the experiment skill reads `profiling.sim_env` and
    ```bash
    python3 ${CLAUDE_PLUGIN_ROOT}/scripts/parse_logs.py <output_file>
    ```
-4. **Validate parse results:** check `parse_logs` returned non-empty records. If empty, the format may be unrecognized — try forcing formats (`--format kv`, `--format json`, `--format logging`, `--format tqdm`)
+4. **Validate parse results:** check `parse_logs` returned non-empty records. If empty, the format may be unrecognized — try forcing a format via the second positional argument (there is no `--format` flag): `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/parse_logs.py <output_file> kv` (valid formats: `json`, `csv`, `logging`, `tqdm`, `xgboost`, `hf_trainer`, `sb3`, `kv`)
 5. If metrics aren't parseable automatically, read the output and extract them manually
 6. **Multi-task evaluation (only when `eval_tasks` is non-empty).** Baseline must use the exact same aggregation as every experiment, or the comparison denominator diverges. Extract every `<primary_metric>_<task>` key the eval output prints into `metrics` verbatim (flat, never nested), then compute the aggregates:
    ```bash
@@ -242,7 +243,7 @@ Write `<exp_root>/results/baseline.json`:
 
 Use the Write tool to create this file.
 
-**Nullable fields:** for non-iterative frameworks (scikit-learn, XGBoost, LightGBM), `profiling.throughput_samples_per_sec` and `profiling.estimated_max_batch_size` will be `null`. HP-tune must not use `estimated_max_batch_size` as a cap when null. Experiment must use `estimated_timeout_seconds` instead of throughput-based timeout.
+**Nullable fields:** for non-iterative frameworks (scikit-learn, XGBoost, LightGBM), `profiling.throughput_samples_per_sec` and `profiling.estimated_max_batch_size` will be `null`. Experiment must use `estimated_timeout_seconds` instead of throughput-based timeout.
 
 **`profiling.sim_env`:** dict of headless-simulator env vars detected in Step 2.3 (e.g., `{"MUJOCO_GL": "egl"}`); `{}` when none apply.
 
@@ -263,7 +264,7 @@ After schema validation passes, verify the `metrics` dict contains required keys
 
 1. **Check primary_metric:** if the orchestrator specified `primary_metric`, verify `metrics` contains a matching key (case-insensitive). If not found, search for close matches (e.g., `"val_accuracy"` for `"accuracy"`). If a close match exists, log to dev_notes which key was used. If no match: log warning to error tracker with `category: "config_error"`.
 
-2. **Check divergence metric:** if the orchestrator specified `divergence_metric` (default: `"loss"`), verify it exists in `metrics`. If not, check aliases: `"train_loss"`, `"val_loss"`, `"total_loss"`, `"nll_loss"`. If found under an alias, log which alias to dev_notes — the orchestrator should pass this alias to the monitor skill. If not found at all: log warning — divergence monitoring may not work.
+2. **Check divergence metric:** if the orchestrator specified `divergence_metric` (default: `"loss"`), verify it exists in `metrics`. If not, check aliases: `"train_loss"`, `"val_loss"`, `"total_loss"`, `"nll_loss"`. If found under an alias, log which alias to dev_notes — the orchestrator should carry the alias forward as the `divergence_metric` value passed to the experiment agent (and to monitor-agent too, if that opt-in path is used). If not found at all: log warning — divergence monitoring may not work.
 
 ## Step 6: Write Dev Notes
 
@@ -295,11 +296,11 @@ When `model_category = "rl"`:
 1. **Evaluation method:** run N evaluation episodes (default: 100) with the current policy. Compute mean, std, min, max episode reward.
 2. **Profiling:** measure steps/second and episodes/hour. Set `throughput_samples_per_sec = null`. Record `steps_per_second` and `episodes_per_hour` in profiling.
 3. **Timeout estimation:** compute `estimated_timeout_seconds = (total_timesteps / steps_per_second) * 2` (the `× 2` margin mirrors the tabular estimate) and record it as `profiling.estimated_timeout_seconds` — the field experiment Step 1.1 reads first. Record the measured training wall-clock as `profiling.training_duration_seconds`.
-4. **Config extraction:** capture RL HPs: `gamma`, `learning_rate`, `n_steps`/`buffer_size`, `batch_size`, `entropy_coef`, `clip_range` (PPO), `tau` (SAC/TD3).
+4. **Config extraction:** capture RL HPs: `gamma`, `learning_rate`, `n_steps`/`buffer_size`, `batch_size`, `ent_coef`, `clip_range` (PPO), `tau` (SAC/TD3).
 
 ## Error Handling
 
-- **Eval command fails:** report the error output, ask user for the correct command
+- **Eval command fails:** handled by the Step 2.1 Auto-Repair Loop (diagnose, retry up to 3 attempts); after all attempts fail, report the full error history to the orchestrator — the orchestrator's Phase 3 Failure Recovery table handles escalation, not a direct user prompt
 - **No GPU available:** run CPU-only baseline, note throughput estimates won't be representative
 - **Metrics not parseable:** show raw output, manually extract key numbers, note which metrics were found
 

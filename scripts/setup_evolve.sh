@@ -16,7 +16,10 @@ SHINKA_DIR="$SKILLS_DIR/evolve/ShinkaEvolve"
 SUBMODULE_PATH="skills/evolve/ShinkaEvolve"
 HTTPS_URL="https://github.com/ChuaHanChong/ShinkaEvolve.git"
 
-# Files test_evolve.py + skill discovery require (stdlib-only imports — no pip deps).
+# shinka/__init__.py: submodule-presence marker used by Step 1's check below.
+# shinka/llm/query.py + file_handoff_provider.py: what test_evolve.py's
+# test_shinka_submodule_exists asserts — by path existence only, without importing
+# `shinka`, so the test itself needs no pip deps (query.py itself does import pydantic).
 REQUIRED_FILES=(
     "shinka/__init__.py"
     "shinka/llm/query.py"

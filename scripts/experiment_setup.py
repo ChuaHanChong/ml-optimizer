@@ -69,8 +69,10 @@ def generate_script(
 
     `script_name` distinguishes scripts per experiment (train.sh default, eval.sh, preprocess.sh).
     The (optionally `timeout`-wrapped) command runs in the BACKGROUND with output to `log_file`;
-    the training PID (`$!`) is written to the pid file (monitor kills training, not the wrapper),
-    then the script `wait`s and propagates the REAL exit code. Exit code 124 is rewritten to success
+    `$!` is written to the pid file. When *time_budget* is unset, that's the training process's own
+    PID; when *time_budget* IS set, the backgrounded command is `timeout ... <command>`, so `$!` is
+    `timeout`'s PID instead — killing it relies on `timeout` forwarding the signal to its child.
+    Then the script `wait`s and propagates the REAL exit code. Exit code 124 is rewritten to success
     ONLY when *time_budget* is set (budget reached = normal stop). *checkpoint_path*, when given, is
     exported as `CHECKPOINT_PATH` for warm-starting. `log_file` is required (a round-based path).
     """
@@ -105,8 +107,10 @@ def generate_script(
     lines.append(f"mkdir -p {shlex.quote(log_dir)}")
     lines.append("")
 
-    # Background launch: redirect to log, record the TRAINING pid ($!), wait, propagate real exit code.
-    # (`echo $$` would record the wrapper's pid; `cmd | tee` would hide the command's exit code.)
+    # Background launch: redirect to log, record $! (the training pid, UNLESS time_budget is set —
+    # then $! is timeout's pid, since `timeout ... <cmd> &` backgrounds the timeout process itself),
+    # wait, propagate real exit code. (`echo $$` would record the wrapper's pid; `cmd | tee` would
+    # hide the command's exit code.)
     lines.append(f"echo {shlex.quote(f'Starting {label} for {exp_id} on GPU {gpu_id}')}")
     if time_budget is not None and time_budget > 0:
         lines.append(f"echo {shlex.quote(f'Time budget: {time_budget}s')}")

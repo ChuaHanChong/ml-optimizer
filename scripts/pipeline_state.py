@@ -365,8 +365,10 @@ def cleanup_stale(exp_root: str, timeout_hours: float = 2.0) -> list[str]:
 
     Checks pipeline-state.json against *timeout_hours*, and scans
     results/round-*/exp-*.json (plus legacy flat results/exp-*.json) against each
-    result's own timeout — 3x time_budget_seconds when present (the existing
-    baseline_training_time*3 rule), else *timeout_hours*. Returns cleaned descriptions.
+    result's own timeout — max(timeout_hours, 3x time_budget_seconds) when
+    time_budget_seconds is a positive int/float, else plain *timeout_hours*
+    (the timeout_hours floor always applies, not an either/or). Returns cleaned
+    descriptions.
     """
     cleaned: list[str] = []
     now = datetime.now(timezone.utc)
@@ -433,7 +435,7 @@ RECOVERY_INSTRUCTIONS = {
     (2, "dependency_missing"): "Install missing packages and retry prerequisites",
     (3, "training_crash"): "Check training command, reduce batch size, retry baseline",
     (3, "eval_failed"): "Verify eval command and data paths, retry baseline",
-    (5, "search_failed"): "Retry with source='knowledge' (LLM-only fallback)",
+    (5, "search_failed"): "Handled internally by the research-agent's source='both' dispatch; if vetting yields zero proposals the workflow writes a minimal research-findings.md and the orchestrator continues HP-only (no separate orchestrator-side retry dispatch calls this entry today).",
     (6, "implementation_failed"): "Check implementation errors, try from_scratch strategy",
     (7, "all_diverged"): "Halve learning rates and retry batch",
     (7, "all_timeout"): "Reduce training budget or increase timeout multiplier",
@@ -699,7 +701,7 @@ if __name__ == "__main__":
     if len(sys.argv) < 3:
         print(
             "Usage: pipeline_state.py <exp_root> "
-            "[validate <phase>|save <phase> <iteration>|load|cleanup"
+            "[validate <phase>|save <phase> <iteration>|load|cleanup|verify-baseline"
             "|gate <current_phase> <next_phase>|log-gate <phase> <status> <summary>"
             "|log-decision <json_data>|replay-check <decision_id> <current_decision>"
             "|decisions [--phase N] [--agent NAME] [--type TYPE]]"

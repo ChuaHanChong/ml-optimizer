@@ -28,7 +28,7 @@ Two execution modes, split by phase:
 |---|---|---|
 | `${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/workflows/phase-5-research.js` (`phase-5-research`) | `{ exp_root, primary_metric, model_category, scope_level, source, user_papers }` | `{ findings_path, proposals:[{index,title,impact,confidence,feasibility,scope,type,implementation_strategy,files_to_modify}], agenda_initialized }` |
 | `${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/workflows/phase-6-implement.js` (`phase-6-implement`) | `{ exp_root, project_root, findings_path, selected_indices:[int], strategy:"git_branch"\|"file_backup" }` | `{ manifest_path, branches:[{slug,branch,status,validation,reviews}] }` |
-| `${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/workflows/phase-7-experiment.js` (`phase-7-experiment`) | `{ exp_root, project_root, baseline, primary_metric, divergence_metric, divergence_lower_is_better, model_category, lower_is_better, target_value, scope_level, fixed_time_budget, fixed_epoch_budget, fixed_step_budget, hp_batches_per_round, method_proposal_scope, method_proposal_iterations, seeds_per_config, eval_tasks }` | `{ best_exp_id, best_metric, rounds_completed, exit_reason, stacking_candidates:[{branch,improvement_pct}] }` |
+| `${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/workflows/phase-7-experiment.js` (`phase-7-experiment`) | `{ exp_root, project_root, baseline, primary_metric, divergence_metric, divergence_lower_is_better, model_category, lower_is_better, target_value, scope_level, fixed_time_budget, fixed_epoch_budget, fixed_step_budget, hp_batches_per_round, method_proposal_scope, method_proposal_iterations, seeds_per_config, secondary_metrics, experiments_per_gpu, eval_tasks }` | `{ best_exp_id, best_metric, rounds_completed, exit_reason, stacking_candidates:[{branch,improvement_pct}] }` |
 | `${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/workflows/phase-8-stacking.js` (`phase-8-stacking`) | `{ exp_root, project_root, primary_metric, lower_is_better, baseline_metric, scope_level, divergence_metric, divergence_lower_is_better, model_category, fixed_time_budget, fixed_epoch_budget, fixed_step_budget, stacking_candidates }` | `{ best_stack_branch, best_stack_metric, steps:[{method,branch,kept}] }` |
 
 **Cross-agent context = args + files.** No message bus / `SendMessage` for phases 5–8. The phase references below keep the reusable, non-dispatch content (decision tables, metric-routing rule, schemas, round lifecycle, file-output contracts, stuck-protocol/fixpoint definition) because it documents what the scripts do internally. The "build args → `Workflow({scriptPath})` → read return + files → checkpoint" pattern replaces the old `Agent()`/`SendMessage`/registry dispatch steps.
@@ -36,8 +36,8 @@ Two execution modes, split by phase:
 ## Reference
 
 - Plan template: `${CLAUDE_SKILL_DIR}/references/plan-template.md` (in this skill's directory)
-- JSON schemas: enforced at runtime by `${CLAUDE_PLUGIN_ROOT}/scripts/schema_validator.py` — the authoritative source. Validate any file via `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/schema_validator.py <file> result|baseline|manifest|prerequisites`. Markdown templates (batch analysis, research findings) live in their owning skill's SKILL.md.
-- Python scripts: `${CLAUDE_PLUGIN_ROOT}/scripts/` (gpu_check.py, scripts/parse_logs.py, scripts/detect_divergence.py, scripts/result_analyzer.py, scripts/experiment_setup.py, scripts/implement_utils.py, scripts/pipeline_state.py, scripts/schema_validator.py, scripts/plot_results.py, scripts/error_tracker.py, scripts/prerequisites_check.py, scripts/goal_memory.py)
+- JSON schemas: enforced at runtime by `${CLAUDE_PLUGIN_ROOT}/scripts/schema_validator.py` — the authoritative source. Validate any file via `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/schema_validator.py <file> result|baseline|manifest|prerequisites|hp_proposal|rounds_manifest`. Markdown templates (batch analysis, research findings) live in their owning skill's SKILL.md.
+- Python scripts: `${CLAUDE_PLUGIN_ROOT}/scripts/` (gpu_check.py, parse_logs.py, detect_divergence.py, result_analyzer.py, experiment_setup.py, implement_utils.py, pipeline_state.py, schema_validator.py, plot_results.py, error_tracker.py, prerequisites_check.py, goal_memory.py)
 - Workflow scripts (bundled in this skill, launched by `scriptPath` — internal pipeline steps, NOT user slash-commands): `${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/workflows/` (phase-5-research.js, phase-6-implement.js, phase-7-experiment.js, phase-8-stacking.js)
 
 ## Goal Anchoring & Behavioral Memory
@@ -50,11 +50,11 @@ The pipeline maintains two project-scoped files to prevent optimization drift:
 
 **Key script:** `${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py <exp_root> <action>` — manages both files:
 - `summary` — compact briefing combining goals + behaviors + dead-ends (~500 tokens, read by agents before acting)
-- `validate-output <agent> <output_json>` — post-dispatch validation (orchestrator calls after hp-tune, research, analyze)
+- `validate-output <agent> <output_json>` — post-dispatch validation (orchestrator calls once, after the Phase 5 workflow returns `research` proposals)
 - `sync-from-errors` — pulls OOM/divergence patterns from error_tracker into behavioral memory
 - `init-goals`, `read-goals`, `log-behavior`, `query-behaviors` — CRUD operations
 
-**Validation flow:** after hp-tune, research, and analyze return, the orchestrator validates outputs against goals. Violations (frozen param changes, scope breaches, dead-end re-proposals) are auto-corrected where possible and logged as `scope_violation` entries in behavioral memory.
+**Validation flow:** after the Phase 5 workflow returns `research` proposals, the orchestrator validates them against goals via `validate-output research`. Violations (frozen param changes, scope breaches, dead-end re-proposals) are auto-corrected where possible and logged as `scope_violation` entries in behavioral memory. hp-tune and analyze are dispatched many times per single `Workflow()` launch, entirely inside the phase-7/phase-8 workflow loops — their raw per-call output never reaches the orchestrator, so this call does not apply to them; they're constrained instead by PreToolUse schema/frozen-param checks on the files they write, plus the dead-end/OOM/agenda context they read directly.
 
 Each agent also has `memory: local` in its frontmatter for persistent role-specific memory at `.claude/agent-memory-local/<agent-name>/` in the target project.
 
@@ -97,7 +97,7 @@ Dispatch `ml-optimizer:baseline-agent`. Handle failure recovery with up to 2 ret
 
 Read `${CLAUDE_SKILL_DIR}/references/phase-4-checkpoint.md` for the full workflow.
 
-Show baseline results. User chooses direction: HP tuning, research, user papers, skip to experiments, or method proposals. Autonomous mode auto-selects method proposals. **Pre-authorize Phase 7 autonomy here** (`method_proposal_scope`, `method_proposal_iterations`, budget) — these become Phase 7 `args` so the experiment workflow runs with no mid-run prompts.
+Show baseline results. User chooses direction: full autonomous optimization (default), HP tuning only, research first, user-provided papers, or skip to experiments. **Pre-authorize Phase 7 autonomy here** (this is where method proposals get configured, separately from the 5-option menu above) (`method_proposal_scope`, `method_proposal_iterations`, budget) — these become Phase 7 `args` so the experiment workflow runs with no mid-run prompts.
 
 ## Phase 5: Research (Optional)
 
@@ -117,7 +117,7 @@ Build the args from the confirmed selection and launch the workflow:
 ```
 Workflow({ scriptPath: "${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/workflows/phase-6-implement.js", args: { exp_root, project_root, findings_path, selected_indices, strategy } })
 ```
-The workflow dispatches `ml-optimizer:implement-agent` (worktree-isolated) plus the reviewers (`pr-review-toolkit:code-reviewer`, `pr-review-toolkit:silent-failure-hunter`) internally, writes `results/implementation-manifest.json` + git branches, and returns `{ manifest_path, branches }`. After it returns, check the manifest: handle dependencies, license warnings, conflicts (user checkpoints as needed).
+The workflow dispatches `ml-optimizer:implement-agent` (worktree-isolated) plus the reviewers (`pr-review-toolkit:code-reviewer`, `pr-review-toolkit:silent-failure-hunter`, `pr-review-toolkit:pr-test-analyzer`) internally, writes `results/implementation-manifest.json` + git branches, and returns `{ manifest_path, branches }`. After it returns, check the manifest: handle dependencies, license warnings, conflicts (user checkpoints as needed).
 
 ## Phase 7: Experiment Loop (Workflow)
 
@@ -125,14 +125,14 @@ Read `${CLAUDE_SKILL_DIR}/references/phase-7-experiment-loop.md` for the full wo
 
 Build the args (from `user_choices`, baseline, and the Phase 6 manifest) and launch the workflow:
 ```
-Workflow({ scriptPath: "${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/workflows/phase-7-experiment.js", args: { exp_root, project_root, baseline, primary_metric, divergence_metric, divergence_lower_is_better, model_category, lower_is_better, target_value, scope_level, fixed_time_budget, fixed_epoch_budget, fixed_step_budget, hp_batches_per_round, method_proposal_scope, method_proposal_iterations, seeds_per_config, eval_tasks } })
+Workflow({ scriptPath: "${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/workflows/phase-7-experiment.js", args: { exp_root, project_root, baseline, primary_metric, divergence_metric, divergence_lower_is_better, model_category, lower_is_better, target_value, scope_level, fixed_time_budget, fixed_epoch_budget, fixed_step_budget, hp_batches_per_round, method_proposal_scope, method_proposal_iterations, seeds_per_config, secondary_metrics, experiments_per_gpu, eval_tasks } })
 ```
 
-The script owns the experiment loop — it creates rounds and dispatches tuning, experiment, and analysis agents per iteration. Divergence detection is folded into the experiment agent (it runs `detect_divergence.py` against its own log using the `divergence_metric`/`divergence_lower_is_better`/`model_category` args); a standalone `monitor-agent` dispatch is optional, not the default. After each batch the analysis agent recommends the next action (continue, pivot, or stop) and the workflow applies the decision table in phase-7-experiment-loop.md internally.
+The script owns the experiment loop — it creates rounds and dispatches tuning, experiment, and analysis agents per iteration. Divergence detection is folded into the experiment agent (it runs `detect_divergence.py` against its own log using the `divergence_metric`/`divergence_lower_is_better`/`model_category` args); a standalone `monitor-agent` dispatch exists but isn't wired in (no flag, `user_choices` key, or code path in `phase-7-experiment.js` reaches it — see phase-7-experiment-loop.md). After each batch the analysis agent recommends the next action (continue, pivot, or stop) and the workflow applies the decision table in phase-7-experiment-loop.md internally.
 
 **Autonomous, no mid-run prompts:** the loop runs non-stop (Phase 7 autonomy pre-authorized at Phase 4, passed in `args`) until the target or the fixpoint is reached. When the analysis agent recommends stop, the workflow invokes the stuck protocol (research for fresh ideas), then runs the **Exit Judgment** — no hardcoded stop-count threshold. It exits at the *fixpoint*: no new in-scope proposals (`stuck_protocol_triggered=true`) AND empty research agenda AND flat best metric — the idea space is exhausted with no progress to build on. Otherwise it continues. Every exit/continue decision is logged via `pipeline_state.py log-decision`; `consecutive_stop_count` is telemetry, not a trigger.
 
-The workflow returns `{ best_exp_id, best_metric, rounds_completed, exit_reason, stacking_candidates }`. After each batch the live dashboard is regenerated (`${CLAUDE_PLUGIN_ROOT}/scripts/dashboard.py --live`) and baseline integrity verified — all inside the workflow.
+The workflow returns `{ best_exp_id, best_metric, rounds_completed, exit_reason, stacking_candidates }`. After each batch the live dashboard is regenerated (`${CLAUDE_PLUGIN_ROOT}/scripts/dashboard.py --live`) — inside the workflow. Baseline integrity is verified once, in the workflow's pre-loop setup, before the experiment loop begins (not per batch).
 
 ### MANDATORY: Round Lifecycle (Phase 7 & Phase 8)
 
@@ -160,36 +160,31 @@ Valid `<type>` values and when to use each:
 - Tuning-agent: include `round_dir: <dir>` so it writes proposals to `proposed-configs/<round_dir>/`
 - Experiment-agents: include `round_dir: <dir>` so they write results to `results/<round_dir>/`
 
-**After experiment-agents return:**
+**After experiment-agents return (both Phase 7 and Phase 8 use this same mechanism — neither calls `round_manager.py check-round`):**
+A lightweight, non-fatal completeness check (`verifyBatchOutputs()` in phase-7, `verifyStackStep()` in phase-8) dispatches an agent to run, for each completed `exp_id`:
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/round_manager.py <exp_root> check-round <round_dir>
-# Response: {"complete": true/false, "total": N, "valid": N, "terminal": N, "missing_logs": [...], "invalid": [...], "non_terminal": [...]}
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/output_contract.py check <exp_root> experiment-agent --round-dir <round_dir> --exp-id <exp_id>
+# exit code 2 means missing outputs; its JSON output carries a "missing" array
 ```
-
-If `complete: false`:
-- For each ID in `non_terminal` or missing: create a minimal failed placeholder (`{"exp_id": "...", "status": "failed", "notes": "agent did not produce result"}`) to keep the round consistent
-- For each entry in `invalid`: log to error tracker and attempt repair
+plus confirming the batch/step analysis markdown exists (`reports/batch-<N>-analysis.md` for Phase 7, `reports/batch-stack-<N>-analysis.md` for Phase 8). If anything is missing, it is logged ONCE to the error tracker (`category: "agent_failure", severity: "warning"`) as a non-fatal warning — there is no `non_terminal`/`invalid`/missing-placeholder repair logic and no retry; a partial batch is still actionable.
 
 **After the batch is fully analyzed:**
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/round_manager.py <exp_root> close-round --summary "<one-line summary>"
 ```
 
-This marks the round closed in `rounds-manifest.json`. Not strictly required for correctness but helps downstream analysis and reporting.
+This marks the round closed in `rounds-manifest.json`. Phase 7 also regenerates the live dashboard (`dashboard.py --live`) at this point.
 
-**Workflow action by analysis pivot_type** (applied inside the phase-7 workflow):
+**Workflow action by analysis `decision`** (applied inside the phase-7 workflow; `pivot_type` is advisory — see the analyze skill's Pivot Decision Tree for the `qualitative_change` special case):
 
-| Pivot Type | Workflow Action |
+| `decision` | Workflow Action |
 |---|---|
 | `branch_test`, `hp_expand`, `narrow_space`, `regularization` | Adjust search space, dispatch tuning-agent |
 | `code_evolution` | Dispatch tuning (evolve HPs) → implement-agent with evolve skill → experiment |
-| `method_proposal`, `qualitative_change` | Dispatch research → implement → merge branches |
-| `method_stacking` | Return `stacking_candidates` so the orchestrator launches the phase-8 workflow |
+| `method_proposal` | Dispatch research → implement (new branches) |
+| *(no `decision` value)* — `pivot_type: "method_stacking"` | Not dispatched by the script at all. `stacking_candidates` accumulate continuously every batch (analysis agent's own field + the workflow's independent baseline-comparison harvest); the orchestrator launches the phase-8 workflow automatically whenever the accumulated, non-empty list is returned at loop exit — regardless of which `decision`/`pivot_type` fired on that particular batch |
 
-**State updates:** The workflow saves pipeline state after each iteration:
-```
-save_state(phase=7, iteration=N, running_exp_ids=[], exp_root=exp_root)
-```
+**State updates:** No workflow script calls `save_state`/`pipeline_state.py save` — none of the four phase-5/6/7/8 scripts touch it. Pipeline state is persisted by the ORCHESTRATOR (main thread), per Rule 4: `pipeline_state.py <exp_root> save <phase> <iteration>` around each workflow launch/return. Inside the Phase 7 script itself, `pipeline_state.py` is only ever called for `verify-baseline` (pre-loop) and `log-decision` (at the exit-judgment step). In-loop counters such as `methodProposalRoundsUsed` are workflow-run-scoped only — not persisted to `user_choices` or `pipeline-state.json` — and reset to 0 on any fresh `resumeFromRunId` relaunch.
 
 ## Phase 8: Method Stacking (Workflow)
 
@@ -221,7 +216,7 @@ Two steps (both direct `Agent()` dispatch — interactive-adjacent, single-track
 - **GPU unavailable:** fall back to single-GPU sequential execution
 - **Training crashes:** record the error, skip to next experiment in batch
 - **All experiments diverge in a batch:**
-  - **Recovery attempt:** before stopping, attempt a recovery batch with halved learning rates (divide all LR by 2). Log: `category: "training_failure", severity: "warning", message: "All experiments diverged — attempting recovery with halved LRs"`.
+  - **Recovery hint:** when all experiments in a batch diverge, the workflow flags this to the analysis-agent (a prompt note, not a scripted action), which typically recommends narrow_space/hp_expand — e.g. shrinking the LR range — rather than continuing to widen the search blindly. No guaranteed halved-LR batch is run automatically.
   - If the recovery batch also all-diverges: stop the loop and report to user.
 - **OOM feedback to hp-tune:** when an experiment fails with `CUDA out of memory`:
   1. Record the OOM-causing batch size: `category: "training_failure", context: {"oom_batch_size": <batch_size>}`
@@ -239,9 +234,10 @@ When an agent dispatch fails (crash, timeout, invalid output):
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"category":"agent_failure","severity":"critical","source":"orchestrate","message":"<failure description>","agent":"<agent_type>","phase":<phase>,"iteration":<iteration>}'
 ```
 
-### After analyze recommends stop or pivot (Phase 7):
+### Stop/continue/exit decisions inside Phase 7:
+Logged by the workflow itself via `pipeline_state.py log-decision` (`decision_type: "loop_exit_judgment"`) at the Exit Judgment step — not by an orchestrator-side `error_tracker.py log` call keyed on each per-iteration analyze recommendation:
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"category":"pipeline_inefficiency","severity":"warning","source":"orchestrate","message":"<analyze recommendation and reason>","phase":7,"iteration":<iteration>,"context":{"action":"<continue|pivot|stop>","reason":"<from analyze>"}}'
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/pipeline_state.py <exp_root> log-decision '{"phase":7,"agent":"workflow","decision_type":"loop_exit_judgment","decision":"exit"|"continue","iteration":<N>,"reasoning":"<best_metric, improved_since_last_stop, agenda_untried (boolean), new_proposals_count>"}'
 ```
 
 ### On pipeline resumption from interrupted state:
@@ -282,8 +278,8 @@ All state is persisted in the `<exp_root>/` directory:
 
 The orchestrator can be stopped and resumed:
 1. On start, check for `pipeline-state.json` via `pipeline_state.load_state()`
-2. If state exists and status is "running", run `pipeline_state.cleanup_stale()` — a 2-hour timeout: any experiment with status "running" last modified >2 hours ago is marked status "failed", notes "Marked failed by cleanup_stale — presumed interrupted". Log cleaned-up items to dev_notes before resuming.
-3. Restore Phase 0 user choices from `state["user_choices"]` (primary_metric, divergence_metric, lower_is_better, target_value, train_command, eval_command, train_data_path, val_data_path, prepared_train_path, prepared_val_path, env_manager, env_name) — do NOT re-ask
+2. If state exists and status is "running", run `pipeline_state.cleanup_stale()`. pipeline-state.json's own top-level status uses a flat 2-hour default and flips to "interrupted"; individual `results/round-*/exp-*.json` entries still `status: "running"` use an adaptive per-experiment threshold — `max(2h, 3x time_budget_seconds)` when the result has a positive `time_budget_seconds`, else the flat 2h default — and flip to `status: "failed"`, `note: "Marked as stale: exceeded timeout"`. Log cleaned-up items to dev_notes before resuming.
+3. Restore Phase 0 user choices from `state["user_choices"]` (the full set persisted by `save_state` — see CLAUDE.md's Pipeline Resumption section for the complete key list, including the Phase 7 autonomy fields `method_proposal_scope`/`method_proposal_iterations`/budgets/`seeds_per_config`/`secondary_metrics`/`eval_tasks`/`experiments_per_gpu`/`divergence_lower_is_better`/`model_category`) — do NOT re-ask
 4. Resume from the recorded phase and iteration. For phases 5–8, relaunch the workflow (same session, optionally via `resumeFromRunId`); the file-persisted results, rounds, and manifest let it pick up where it left off.
 5. Read all past results to understand what has been tried
 

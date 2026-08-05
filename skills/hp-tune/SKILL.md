@@ -19,6 +19,7 @@ Reason directly about past results to propose the next config batch — no grid/
 From the orchestrator:
 - `project_root`: Project root directory
 - `num_gpus`: GPUs available (determines batch size)
+- `num_configs`: Total proposal batch size the orchestrator computed for this round (e.g. `num_gpus * experiments_per_gpu`, or `1` for sequential file-backup projects). **Cap all proposals at this value** when provided — do not re-derive the cap from `num_gpus` or `code_branches` count.
 - `search_space`: HP ranges from the optimization plan
 - `iteration`: Tuning iteration number (1, 2, 3, ...)
 - `primary_metric`: Metric to optimize (e.g. "loss", "accuracy", "psnr")
@@ -27,11 +28,8 @@ From the orchestrator:
 - `seeds_per_config`: Seed replicates per config (int, default 1; >1 suggested for RL). When >1, propose each config `seeds_per_config` times with distinct `random_seed` values; replicates count against the batch cap.
 - `code_branches`: Validated code branches from the implementation manifest (e.g. `["ml-opt/perceptual-loss"]`), or `[]` for HP-only. In iteration 1, generate one config per branch (baseline HPs) plus one for the original code, instead of spanning the search space.
 - `warm_start_enabled`: Whether checkpoint warm-starting is enabled (boolean, default false). When true and iteration >= 2, propose warm-starting from the best completed experiment on the same branch.
-- `available_checkpoints`: Dict mapping exp_id to checkpoint info (optional). Provided only when `warm_start_enabled` is true. Example: `{"exp-005": {"checkpoint_path": "<exp_root>/artifacts/round-2-hp/exp-005/best.pt", "code_branch": "ml-opt/method-a"}}`.
 - `branch_scores`: Per-branch allocation scores from analyze (optional). Dict mapping branch name to `{"improvement_pct": X, "sample_count": N, "score": Y}`.
 - `round_dir`: Current round directory (e.g. `"round-3-hp"`). **Required.** Passed by the orchestrator after `round_manager.py create-round`. Proposed config JSONs MUST be written inside `proposed-configs/<round_dir>/`. If missing, fetch via `round_manager.py current-round`.
-- `secondary_metrics`: Optional guardrail metrics — `[{name, lower_is_better, role}]` from Phase 0 user_choices; `role: "guardrail"` entries are metrics to avoid regressing and only inform proposal choices — `secondary_metrics` never replaces `primary_metric` as the optimization target.
-
 ## Step 1: Load Past Results
 
 > **Goal check:** Respect frozen parameters, OOM limits, and dead-end constraints from the optimization goals. Never propose configs that violate these.
@@ -82,12 +80,12 @@ If high-priority untried ideas exist, consider whether HP exploration should foc
 2. **Baseline-captured HPs:** ranges seeded around the HP values in `<exp_root>/results/baseline.json` `config`. For `model_category=rl`, seed around the captured gamma, clip_range, ent_coef, n_steps (and learning rate).
 3. **`tuning-strategy.md` reference sections:** cold-start fallback ONLY — use when neither research priors nor baseline HPs cover a parameter.
 
-**Research-round request:** When `model_category` is not `"supervised"` (i.e. `rl` or `generative`) AND no research-derived priors exist yet (no `search_space` entries in findings or agenda), do NOT fall back to supervised defaults. Propose only conservative baseline-anchored configs (prior order 2) for this batch, and include `"research_requested": true` plus a note naming the parameters that need cited priors — the workflow routes a research round before broad HP exploration.
+**Research-round request:** When `model_category` is not `"supervised"` (i.e. `rl` or `generative`) AND no research-derived priors exist yet (no `search_space` entries in findings or agenda), do NOT fall back to supervised defaults. Propose only conservative baseline-anchored configs (prior order 2) for this batch, and include `"research_requested": true` plus a note naming the parameters that need cited priors — the workflow routes a research round before broad HP exploration when `scope_level` permits research and the `method_proposal_iterations` budget is not exhausted; otherwise it logs the request and proceeds with baseline-anchored configs only.
 
 **Training-budget-aware proposals:**
 
 If `fixed_time_budget` is set (all experiments train the same wall-clock duration):
-- **Overshoot the epoch count deliberately — don't calibrate precisely to the budget.** No reliable epochs/sec estimate exists (`baseline.json`'s `profiling.throughput_samples_per_sec` is samples/sec, not epochs/sec — converting needs dataset size, which varies by config). Overshooting is harmless with periodic checkpointing (timeout just cuts training off wherever it reaches); undershooting wastes budget. When a scheduler needs an epoch count (e.g. cosine annealing's `T_max`), propose one noticeably higher than any plausible fit — same pattern the baseline skill uses (`--epochs 200` when only ~90 fit).
+- **Overshoot the epoch count deliberately — don't calibrate precisely to the budget.** No reliable epochs/sec estimate exists (`baseline.json`'s `profiling.throughput_samples_per_sec` is samples/sec, not epochs/sec — converting needs dataset size, which varies by config). Overshooting is harmless with periodic checkpointing (timeout just cuts training off wherever it reaches); undershooting wastes budget. When a scheduler needs an epoch count (e.g. cosine annealing's `T_max`), propose one noticeably higher than any plausible fit — same pattern the baseline skill uses (`--epochs 200` as a deliberately oversized ceiling — see skills/baseline/SKILL.md Step 2.2).
 - Propose LR schedules for the time budget, not a specific epoch target — a schedule keyed to the overshot ceiling still works since it just gets truncated.
 - For short budgets (< 120s), avoid slow-convergence schedules as the primary lever — an oversized epoch flag itself is fine.
 
@@ -111,7 +109,7 @@ Think through the following.
 ### Iteration 1 (Exploration)
 First tuning iteration (only baseline exists):
 
-**If `code_branches` is non-empty:** Generate one config per branch using baseline HPs, plus one for the original code (no branch). Tests each code change in isolation before HP tuning. Assign each config a `code_branch` and `code_proposal` field. Cap total configs at `len(code_branches) + 1`.
+**If `code_branches` is non-empty:** Generate one config per branch using baseline HPs, plus one for the original code (no branch). Tests each code change in isolation before HP tuning. Assign each config a `code_branch` and `code_proposal` field. Cap total proposals at the passed `num_configs` value.
 
 **If `code_branches` is empty (HP-only):**
 
@@ -152,7 +150,11 @@ Reasoning:
 
 ### Warm-Start Proposals (Iteration 2+, when `warm_start_enabled`)
 
-When warm-starting is enabled and `available_checkpoints` is non-empty:
+When `warm_start_enabled` is true and iteration >= 2, discover available checkpoints
+yourself — no `available_checkpoints` input is provided. Scan the results already loaded
+in Step 1 (`results/round-*/exp-*.json`) for `status: "completed"` experiments on the
+branch being tuned, and check each for an `artifacts_dir` (checkpoint files under it) or a
+`checkpoint_source` field. If at least one qualifying checkpoint exists for a branch:
 1. For each branch being tuned, find the best checkpoint on that same branch
 2. Propose warm-started configs with lower LR (0.3-0.5x) and fewer epochs (0.3-0.5x)
 3. Mix: at most 2/3 warm-started, at least 1/3 from-scratch (maintains exploration)
@@ -192,7 +194,7 @@ When `search_space` includes non-numeric choices (e.g. `optimizer: ["adam", "sgd
 
 Before finalizing, check each config:
 
-1. **Batch size cap:** Total proposals must not exceed `max(num_gpus, 1)`.
+1. **Batch size cap:** Total proposals must not exceed the passed `num_configs` value (fall back to `max(num_gpus, 1)` only if `num_configs` was not provided for this dispatch).
 2. **GPU memory:** Will the batch size fit? (Check against baseline profiling)
 3. **Not a duplicate:** Has this exact config been tried? **Seed-replicate exemption:** configs identical except for `random_seed` are intentional replicates (when `seeds_per_config` > 1), NOT duplicates — do not regenerate or drop them.
 4. **Within search space:** All values within defined ranges
@@ -307,13 +309,13 @@ Include a `"recommendation": "continue"|"stop"` field in your output.
 
 When invoked during the stacking phase (identifiable by `method_tier: "stacked_default_hp"` in recent results):
 
-1. **Starting point:** Use the HP config from the best individual method in the stack (passed as `baseline_config`).
+1. **Starting point:** Narrow around the best HPs of the stacked methods — passed as prose guidance in the dispatch prompt, not a structured `baseline_config` field (no such field exists; read the stacked methods' HPs from context).
 2. **Narrow scope:** Only vary HPs the newly added method likely interacts with. E.g.:
    - New loss function → vary `learning_rate`, `weight_decay`
    - New augmentation → vary `batch_size`, `learning_rate`
    - New scheduler → vary `learning_rate`, `warmup_steps`
-3. **Budget:** Cap at 2 iterations during stacking.
-4. **Proposals:** Generate `max(num_gpus, 1)` configs, all targeting the stack branch.
+3. **Budget:** Cap at 1 iteration during stacking (phase-8-stacking.js dispatches tuning-agent at most once per stack step — one narrowed round, no loop).
+4. **Proposals:** phase-8-stacking.js passes no `num_configs`/`num_gpus` for this dispatch (only `exp_root, project_root, code_branches, primary_metric, lower_is_better, iteration: 1`) — propose a small narrowed batch (a handful of configs) sized to "1 small round", all targeting the stack branch.
 
 ## Domain-Randomization Parameters
 
@@ -321,5 +323,5 @@ Randomization ranges are proposed as a **center/width scalar pair**, never as an
 
 - `width = 0` means no randomization for that parameter. A width search space therefore spans "off" to "wide" continuously, which is what makes the amount of randomization tunable at all.
 - Propose the pair only when a research-derived `search_space` entry supplies it with a cited `source`. Do not invent randomization ranges from a built-in table — see the research-derived priors section.
-- **Scope gate:** these parameters change environment dynamics, so they require `scope_level` `"architecture"` or `"full"`. At `"training"` scope, proposing one is a goal violation (`goal_memory.py::check_goal_compliance`, enforced live by the PreToolUse hook on every proposed-config write) and the batch will be rejected. At `"training"` scope, leave DR parameters out entirely.
+- **Scope gate:** these parameters change environment dynamics, so they require `scope_level` `"architecture"` or `"full"`. At `"training"` scope, proposing one is a goal violation (`goal_memory.py::check_goal_compliance`, enforced live by the PreToolUse hook per Write) — that one config's write is blocked; other configs in the same batch are unaffected. At `"training"` scope, leave DR parameters out entirely.
 - Never propose a `<name>_width` alone. A width without its center is not a randomization parameter and will not be recognized as one.

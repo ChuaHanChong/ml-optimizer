@@ -10,6 +10,9 @@ Usage:
     python3 excalidraw_gen.py <exp_root> comparison <id1> <id2>        # Side-by-side comparison of two experiments
     python3 excalidraw_gen.py <exp_root> hp-landscape <hp> <metric>    # Scatter of tried HP values vs metric
     python3 excalidraw_gen.py <exp_root> architecture <proposal>       # Before/after architecture diagram for a proposal
+
+Add --higher-is-better flag (pipeline/hp-landscape modes) for accuracy-like
+metrics (default: lower is better).
 """
 
 import json
@@ -132,8 +135,9 @@ def _write_excalidraw(path: Path, elements: list) -> str:
 
 # --- Diagram: Pipeline overview ---
 
-def generate_pipeline_diagram(exp_root: str, metric: str) -> str:
-    """Generate an optimization journey flowchart."""
+def generate_pipeline_diagram(exp_root: str, metric: str, lower_is_better: bool = True) -> str:
+    """Generate a flowchart of experiments chained by metric rank (best-to-worst
+    per `rank_by_metric`), NOT by run order/exp_id."""
     results_dir = Path(exp_root) / "results"
     results = load_results(str(results_dir))
 
@@ -147,7 +151,7 @@ def generate_pipeline_diagram(exp_root: str, metric: str) -> str:
     if baseline:
         baseline_val = baseline.get("metrics", {}).get(metric)
 
-    ranked = rank_by_metric(results, metric, lower_is_better=True)
+    ranked = rank_by_metric(results, metric, lower_is_better=lower_is_better)
 
     elements = []
     elements.append(_text(50, 20, f"Optimization Pipeline — {metric}", font_size=24, color=COLORS["blue"]))
@@ -160,12 +164,13 @@ def generate_pipeline_diagram(exp_root: str, metric: str) -> str:
     exp_entries = [r for r in ranked if r.get("exp_id", "").startswith("exp-")]
     for i, entry in enumerate(exp_entries[:12]):  # Cap at 12 for readability
         exp_id = entry.get("exp_id", "?")
-        val = entry.get("metric_value")
+        val = entry.get("value")
         status = entry.get("status", "?")
 
         if status == "completed" and baseline_val is not None and val is not None:
             try:
-                if val < baseline_val:
+                beats_baseline = val < baseline_val if lower_is_better else val > baseline_val
+                if beats_baseline:
                     bg, stroke = COLORS["bg_green"], COLORS["green"]
                 else:
                     bg, stroke = COLORS["bg_gray"], COLORS["gray"]
@@ -233,7 +238,7 @@ def generate_comparison_diagram(exp_root: str, exp_id_1: str, exp_id_2: str) -> 
 
 # --- Diagram: HP landscape ---
 
-def generate_hp_landscape(exp_root: str, hp_name: str, metric: str) -> str:
+def generate_hp_landscape(exp_root: str, hp_name: str, metric: str, lower_is_better: bool = True) -> str:
     """Visualize HP search space as a scatter of tried configs."""
     results_dir = Path(exp_root) / "results"
     results = load_results(str(results_dir))
@@ -286,7 +291,10 @@ def generate_hp_landscape(exp_root: str, hp_name: str, metric: str) -> str:
         px = chart_x + 20 + (hp_v - hp_min) / hp_range * (chart_w - 40)
         py = chart_y + chart_h - 20 - (m_v - m_min) / m_range * (chart_h - 40)
 
-        if baseline_val is not None and m_v < baseline_val:
+        beats_baseline = baseline_val is not None and (
+            m_v < baseline_val if lower_is_better else m_v > baseline_val
+        )
+        if beats_baseline:
             color = COLORS["green"]
         elif status in ("failed", "diverged"):
             color = COLORS["red"]
@@ -375,10 +383,11 @@ def _cli_main() -> None:
 
     exp_root = sys.argv[1]
     mode = sys.argv[2]
+    lower_is_better = "--higher-is-better" not in sys.argv
 
     if mode == "pipeline":
         metric = sys.argv[3]
-        path = generate_pipeline_diagram(exp_root, metric)
+        path = generate_pipeline_diagram(exp_root, metric, lower_is_better)
         print(json.dumps({"generated": True, "path": path}))
 
     elif mode == "comparison":
@@ -392,7 +401,7 @@ def _cli_main() -> None:
         if len(sys.argv) < 5:
             print("Usage: excalidraw_gen.py <exp_root> hp-landscape <hp_name> <metric>", file=sys.stderr)
             sys.exit(1)
-        path = generate_hp_landscape(exp_root, sys.argv[3], sys.argv[4])
+        path = generate_hp_landscape(exp_root, sys.argv[3], sys.argv[4], lower_is_better)
         print(json.dumps({"generated": True, "path": path}))
 
     elif mode == "architecture":

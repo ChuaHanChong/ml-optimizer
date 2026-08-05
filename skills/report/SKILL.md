@@ -6,7 +6,7 @@ user-invocable: false
 
 # Final Report Generator
 
-Generate a comprehensive report summarizing the entire optimization effort.
+Generate a comprehensive report summarizing the optimization effort.
 
 > **Path convention:** Paths `<exp_root>/...` refer to the `exp_root` dispatch parameter. Output directory name is not hardcoded.
 
@@ -18,6 +18,7 @@ Generate a comprehensive report summarizing the entire optimization effort.
 
 From the orchestrator:
 - `project_root`: Project root directory
+- `exp_root`: The experiment root directory — every step of this skill reads/writes exclusively via `<exp_root>/...` paths
 - `primary_metric`: The metric that was optimized
 - `lower_is_better`: Whether lower is better for the primary metric
 - `model_description`: Brief description of the model
@@ -49,7 +50,7 @@ Glob `<exp_root>/reports/batch-*-analysis.md`; read each for key findings.
 Read `<exp_root>/dev_notes.md` for decisions, reasoning, and observations.
 
 ### Read research findings (if applicable)
-If `<exp_root>/reports/research-findings.md` exists, read for proposals that were tried. Also check `<exp_root>/reports/research-findings-method-proposals*.md` and read them for method proposals that were tried.
+If `<exp_root>/reports/research-findings.md` exists, read for proposals tried. Also check `<exp_root>/reports/research-findings-method-proposals*.md` for method proposals tried.
 
 ### Read research agenda (if applicable)
 If `<exp_root>/reports/research-agenda.json` exists:
@@ -94,7 +95,7 @@ If any experiments have `method_tier` fields (from research or method proposals)
 # Use ${CLAUDE_PLUGIN_ROOT}/scripts/result_analyzer.py's group_by_method_tier() to separate experiments
 python3 -c "
 import json, sys
-# sys.path: add the plugin's scripts/ directory
+sys.path.insert(0, '${CLAUDE_PLUGIN_ROOT}/scripts')
 from result_analyzer import load_results, group_by_method_tier
 results = load_results('<exp_root>/results')
 groups = group_by_method_tier(results)
@@ -191,12 +192,12 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plot_results.py \
   <exp_root>/results <primary_metric> sensitivity <highest_impact_hp> [--higher-is-better]
 ```
 
-**Polarity:** append `--higher-is-better` to EVERY plot_results.py invocation when `lower_is_better` is false (accuracy, PSNR, reward, ...) — without it the charts mark the wrong experiments as best.
+**Polarity:** append `--higher-is-better` to the comparison/timeline/progress plot_results.py invocations when `lower_is_better` is false (accuracy, PSNR, reward, ...) — without it those charts mark the wrong experiments as best. (`sensitivity` mode ignores this flag — `plot_hp_sensitivity()` takes no polarity parameter, since it has no best/worst concept.) The same polarity applies to `excalidraw_gen.py`'s `pipeline` and `hp-landscape` modes — pass `--higher-is-better` there too when `lower_is_better` is false, or `generate_pipeline_diagram()`'s `beats_baseline` check comes out backwards.
 
 Generate:
 1. Metric comparison bar chart (all experiments)
 2. Improvement timeline (best-so-far over time)
-3. HP sensitivity scatter for the highest-impact HP
+3. HP sensitivity chart (metric ordered by ascending HP value, plotted against point index — not a true HP-magnitude scatter) for the highest-impact HP
 
 Include the ASCII chart output in the report (in code blocks).
 
@@ -212,15 +213,15 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plot_results.py \
 If successful, this saves a PNG to `<exp_root>/reports/progress_chart.png` showing:
 - Green dots for experiments that set a new running best
 - Gray dots for experiments that didn't improve
-- Blue step line tracking the running best frontier
-- Annotated experiment IDs on kept experiments
+- Darker-green step line (`color="#27ae60"`) tracking the running best frontier
+- Annotated with a short description (method/branch name + top HP changes vs baseline, falling back to the bare exp_id only when there's no branch/proposal and no config diff) on kept experiments
 
 Reference the image in the report:
 ```markdown
 ![Optimization Progress](reports/progress_chart.png)
 ```
 
-If matplotlib is unavailable, skip this step (the ASCII charts carry the same information).
+matplotlib is a hard requirement of `plot_results.py` as a whole — it's imported at module load (before any comparison/timeline/sensitivity/progress mode dispatch), so a missing matplotlib breaks every mode of this script, including the ASCII comparison/timeline/sensitivity calls earlier in this step, not just PNG generation; there's no partial-fallback path. Ensure matplotlib is installed before running any part of Step 5.1. Separately, the report-agent's output contract requires `<exp_root>/reports/progress_chart.png` unconditionally, so a missing chart blocks SubagentStop regardless.
 
 ### Excalidraw diagrams
 
@@ -229,7 +230,7 @@ Generate Excalidraw diagrams for interactive exploration:
 ```bash
 # Pipeline overview
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/excalidraw_gen.py \
-  <exp_root> pipeline <primary_metric>
+  <exp_root> pipeline <primary_metric> [--higher-is-better]
 ```
 
 If the best result used a code branch (method proposal), also generate an architecture diagram:
@@ -245,12 +246,13 @@ Reference the generated `.excalidraw` files in the report: users can open them a
 Include in the final report:
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py <exp_root> summary
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py <exp_root> query-behaviors scope_violation
 ```
 
 Use this summary to add:
 1. **Goal vs Achievement:** Compare the best result against `target_value` from optimization-goals.json
 2. **Learned Behaviors:** Summarize key HP constraints, method outcomes, and divergence patterns discovered
-3. **Scope Compliance:** Note any scope violations caught and corrected during the session
+3. **Scope Compliance:** Note any scope violations caught and corrected during the session — `summary` does not surface the `scope_violations` bucket itself; the `query-behaviors scope_violation` call above does (same retrieval the analyze skill uses)
 
 ## Step 5.3: Verify Claims Against Evidence
 

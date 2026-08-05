@@ -1,6 +1,6 @@
 # Phase 1: Understand the Model
 
-**Runs within plan mode (entered in Phase 0). Do NOT exit plan mode here — Phase 0's planning loop (Step 6) handles plan presentation, user refinement, and ExitPlanMode.**
+**Runs within plan mode (entered in Phase 0). Do NOT exit plan mode here — Phase 0's planning loop (Step 6 presents the plan and handles refinement; Step 7 calls ExitPlanMode) handles plan presentation, user refinement, and ExitPlanMode.**
 
 0. **Cross-session memory lookup** (optional but recommended):
    Before analyzing the codebase, use `claude-mem:mem-search` for past sessions with similar model types, tasks, or frameworks. May surface:
@@ -45,8 +45,8 @@
    - **Tabular ML detection:** If the framework is scikit-learn, XGBoost, or LightGBM:
      - GPU check is optional (XGBoost/LightGBM may use GPU; scikit-learn does not)
      - Divergence monitoring is typically unnecessary (fast training, no iterative loss to watch)
-     - Experiment budget uses the CPU fallback: `max(num_gpus, 1) × 5`
-     - Set `divergence_metric` to `null` (do not ask Q7) and skip the monitor skill in Phase 7. Divergence detection is only meaningful for iterative training loops.
+     - Experiment budget follows the standard `num_configs` rule from Phase 7 (no tabular-specific multiplier)
+     - Set `divergence_metric` to `null` (overriding the Q7 answer) and skip the monitor skill in Phase 7. Divergence detection is only meaningful for iterative training loops.
    - **RL detection:** If the codebase imports `gym`, `gymnasium`, `stable-baselines3`, `ray.rllib`, `tianshou`, `cleanrl`, `mujoco`, `dm_control`, `habitat`, `isaaclab`, `omni.isaac.lab`, `rsl_rl`, `skrl`, `brax`, `sample_factory`, or `robosuite`:
      - Set `model_category = "rl"` in user_choices
      - primary_metric is likely "reward" or "episode_return" — confirm with user
@@ -69,7 +69,7 @@
 
 7. **Estimate cost/time budget:**
    - Use baseline profiling data (training time per experiment) and GPU count
-   - Estimate: `total_experiments = num_branches × iterations × num_gpus`
+   - Estimate: `total_experiments ≈ iterations × num_configs`, where `num_configs = num_gpus × experiments_per_gpu` (default 1 GPU-slot each; or 1 total for sequential file_backup projects). Code branches compete for these per-round slots (iteration 1 proposes one config per branch, capped at `num_configs`) rather than multiplying the round size.
    - Show the user estimated total GPU-hours and wall-clock time
    - If it exceeds the user's max training time from Phase 0, warn and adjust
 

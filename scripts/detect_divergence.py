@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Detect training divergence from metric trajectories.
 
-Runs NaN/Inf, explosion, gradual-drift, and plateau checks over a metric
-trajectory (a JSON array string), plus a separate train-vs-val overfitting
-check. Per-model-category threshold defaults via --model-category.
+Runs NaN/Inf, explosion, reward-collapse, gradual-drift, and plateau checks
+over a metric trajectory (a JSON array string), plus a separate train-vs-val
+overfitting check. Per-model-category threshold defaults via --model-category.
 
 Usage:
     python3 detect_divergence.py '<json_values>'                                 # All divergence checks

@@ -18,7 +18,10 @@ block() {
 # --- Blocked patterns ---
 
 # Catastrophic deletion: rm -rf / or rm -rf ~ or rm -rf $HOME
-# Match rm with any flags containing r, followed by / or ~ or $HOME as a standalone path
+# Match rm with any flags containing r, followed by / or ~ as a standalone
+# path (or ~ as a home-relative prefix, ~/...) requiring a trailing boundary
+# (whitespace/end/paren) — or $HOME anywhere as a plain substring, with NO
+# trailing-boundary check (so $HOMEDIR, $HOME_BACKUP, etc. also trigger)
 if echo "$CMD" | grep -qP 'rm\s+-\w*r\w*\s+(/\s|/$|/\)|~\s|~$|~/|~\)|\$HOME)'; then
   block "Blocked: rm -rf on root or home directory"
 fi

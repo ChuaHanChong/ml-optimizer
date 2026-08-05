@@ -39,7 +39,7 @@
 | GPU Memory Used | <gpu_memory_used_mib> MiB / <gpu_memory_total_mib> MiB |
 | Throughput | <throughput_samples_per_sec> samples/sec |
 | Est. Max Batch Size | <estimated_max_batch_size> |
-| Training Duration | <duration_seconds>s |
+| Training Duration | <training_duration_seconds>s |
 
 ---
 
@@ -154,7 +154,7 @@ Analysis based on <N> completed experiments:
 - **Single seed:** [Include if reproducibility data shows single/null seeds] Results may vary with different random seeds.
 - **Limited search space:** Only X% of the defined HP space was explored in Y experiments.
 - **Dataset specificity:** Results are specific to the training/validation split.
-- **Training budget constraint:** [Include if fixed_time_budget or fixed_epoch_budget was set] Models may not have fully converged under the budget.
+- **Training budget constraint:** [Include if fixed_time_budget, fixed_epoch_budget, or fixed_step_budget was set] Models may not have fully converged under the budget.
 - **Noise margin:** [If seed replicates exist] Improvements smaller than the measured replicate spread (±<std> across <n> seeds) may be within random variation. [If single-seed] No measured noise floor — treat small improvements as potentially within run-to-run variation.
 
 ---

@@ -3,7 +3,10 @@
 
 Also generates GPU-aware (CUDA-tagged) install commands for PyTorch/TensorFlow/JAX
 and bulk install commands from dependency files (requirements.txt, environment.yml,
-pyproject.toml), env-manager-aware (pip/conda/uv/poetry/venv).
+pyproject.toml), env-manager-aware (pip/conda/uv/poetry). "venv" has no dedicated
+skip branch — unlike "pip", it does NOT skip conda-only files, so a venv-managed
+project with only an environment.yml present will get a `conda env update` install
+command.
 
 Usage:
     python3 prerequisites_check.py scan-imports <project_root>                              # Classify imports as stdlib/third_party/local
@@ -102,7 +105,7 @@ def scan_imports(
     if breadcrumb.is_file():
         try:
             _bc = json.loads(breadcrumb.read_text())
-            _exp = _bc.get("exp_root", "")
+            _exp = _bc.get("active") or _bc.get("exp_root") or ""
             if _exp:
                 excludes.add(Path(_exp).name)
         except (json.JSONDecodeError, OSError):
@@ -859,8 +862,10 @@ def gpu_install_command(
     """Return the recommended install command for *package*, GPU-aware.
 
     torch/torchvision/torchaudio → CUDA-detected `--index-url` command;
-    tensorflow → `tensorflow[and-cuda]` when a GPU is present; jax/jaxlib →
-    `jax[cuda12]` or similar; otherwise plain `pip install <package>`. When
+    tensorflow → `tensorflow[and-cuda]` when a GPU is present; jax →
+    `jax[cuda12]` or similar (jaxlib always installs plain — it's pulled in
+    transitively by `jax[cudaXX]`, so a standalone jaxlib install is CPU-only);
+    otherwise plain `pip install <package>`. When
     *env_manager* is `"conda"` and *env_name* is given, the pip command is
     wrapped with `conda run --no-banner -n <env_name>`. Returns {"package": ...,
     "gpu_detected": bool, "cuda_version": ...|None, "install_command": ...}.

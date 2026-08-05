@@ -21,11 +21,11 @@ ShinkaEvolve is available via git submodule at `${CLAUDE_PLUGIN_ROOT}/skills/evo
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/setup_evolve.sh
 ```
 
-If the submodule is missing or imports fail, report `status: "shinkaevolve_unavailable"` and return immediately. The orchestrator falls back to the research → implement path.
+If the submodule is missing or imports fail, report `status: "shinkaevolve_unavailable"` and return immediately. If `method_proposal_scope` is set and `scope_level != "training"` (methodProposalsEnabled), the workflow falls back to the research → implement path; otherwise it returns null for this step — no branch produced, loop continues without evolution.
 
-**Important:** Use the local submodule, not PyPI `shinka-evolve` — the PyPI version lacks the `file_handoff_provider` module needed for `SHINKA_PROVIDER=claude_code`. Set `PYTHONPATH=${CLAUDE_PLUGIN_ROOT}/skills/evolve/ShinkaEvolve:$PYTHONPATH` before running `shinka_run`.
+**Important:** Use the local submodule, not PyPI `shinka-evolve` — the PyPI version lacks the `file_handoff_provider` module needed for `SHINKA_PROVIDER=claude_code`. `scripts/setup_evolve.sh` installs the submodule editable (`pip install -e`), so this is import-ready automatically — only set `PYTHONPATH=${CLAUDE_PLUGIN_ROOT}/skills/evolve/ShinkaEvolve:$PYTHONPATH` manually before `shinka_run` if that editable install failed (the script prints a WARNING and the export command in that case).
 
-**Python executable:** ShinkaEvolve invokes bare `python` (not `python3`) in subprocesses. If only `python3` is available, ensure `python` resolves to Python 3 (use a conda env, or `ln -sf "$(which python3)" "$(dirname $(which python3))/python"`).
+**Python executable:** by default (no `conda_env`/`activate_script` set, which is this skill's normal path), ShinkaEvolve subprocesses use `sys.executable` (the interpreter running ShinkaEvolve itself) via `LocalJobConfig`'s fallback in `shinka/launch/scheduler.py` — this normally resolves correctly with no action needed. Only set `python_executable` explicitly, or ensure `python`/`python3` on PATH, if evaluation subprocesses fail with "python not found".
 
 ## Input Parameters
 
@@ -59,8 +59,9 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py <exp_root> log-behavior evo
 
 ## Step 1: Convert Best Branch to ShinkaEvolve Task
 
-Checkout the parent branch first:
+Capture the current branch first (Step 5.9 needs it to return to at the end), then checkout the parent branch:
 ```bash
+original_branch=$(git -C <project_root> rev-parse --abbrev-ref HEAD)
 git checkout <parent_branch>
 ```
 
@@ -103,7 +104,7 @@ Invoke via `Skill("ml-optimizer:shinka-run")`.
 - Run in background (`&`) and capture PID — needed for the handoff polling loop
 - Autonomous execution — this is the "explicitly autonomous" exception in shinka-run's batch control policy, no user confirmation between batches
 - Use `--task-dir <exp_root>/artifacts/shinka-task`, `--results_dir <exp_root>/artifacts/shinka-results`
-- Use `--num_generations` and `--max-proposal-jobs` from Step 0's resolved evolve HPs
+- Use `--num_generations` and `--set db.num_islands=<population_size>` from Step 0's resolved evolve HPs (`population_size` maps to ShinkaEvolve's island count `db.num_islands`, not the `--max-proposal-jobs` concurrency knob — see `shinka/cli/run.py` and `shinka/database/dbase.py`)
 
 ## Step 3: Fulfill Mutation Requests (File Handoff Loop)
 
@@ -178,16 +179,14 @@ After `shinka-run` completes:
 {
   "status": "validated|validation_failed|shinkaevolve_unavailable",
   "branch": "ml-opt/evolved-<slug>",
-  "description": "<what the best mutation changed and why>",
-  "mutations_evaluated": 12,
   "best_combined_score": 0.85,
-  "generations_completed": 10,
-  "files_modified": ["train.py"],
-  "reasoning": "<why this mutation was chosen based on feedback>"
+  "notes": "<what the best mutation changed, mutations evaluated, generations completed, files modified, and why it was chosen>"
 }
 ```
 
-If ShinkaEvolve is unavailable or crashes: `status: "shinkaevolve_unavailable"`, no branch created. The orchestrator falls back to research → implement.
+This is the actual contract both callers use — `phase-7-experiment.js`'s `EVOLVE_RESULT_SCHEMA` is `{status, branch, best_combined_score, notes}`; `phase-8-stacking.js`'s is narrower still, `{status, branch, notes}` (no `best_combined_score`). Fold what would otherwise be separate `description`/`generations_completed`/`files_modified`/`reasoning` fields into the free-text `notes` field. (The separate Step 0 `goal_memory.py log-behavior evolve_hp` call's `mutations_evaluated` field is a different sink, untouched by this.)
+
+If ShinkaEvolve is unavailable or crashes: `status: "shinkaevolve_unavailable"`, no branch created. Falls back to research → implement only when `methodProposalsEnabled` (`method_proposal_scope` set and `scope_level != "training"`); otherwise the step returns null with no fallback.
 
 ## Important Rules
 
@@ -195,6 +194,6 @@ If ShinkaEvolve is unavailable or crashes: `status: "shinkaevolve_unavailable"`,
 - **Check dead ends.** If a technique is in `feedback_context.dead_ends`, do NOT use it.
 - **Preserve provenance.** All code must have `# [ml-opt] evolved: <description>` comments.
 - **Return to original branch.** Never leave the repo on the evolved branch.
-- **Use analysis-recommended HPs.** Always use `evolve_recommendation` from Step 0 — the analysis agent sizes the run from budget and prior outcomes.
+- **Use tuning-agent-recommended HPs.** Always use `evolve_recommendation` from Step 0 — the tuning agent sizes the run from budget and prior outcomes.
 - **Report failures cleanly.** If shinka-run crashes or produces no valid programs, return `status: "shinkaevolve_unavailable"`. Do not attempt ad-hoc mutations — let the orchestrator decide the fallback.
 - **File handoff cleanup.** After evolution completes, remove `<exp_root>/evolve/pending/` and `<exp_root>/evolve/completed/` contents.

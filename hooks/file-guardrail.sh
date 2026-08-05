@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # PreToolUse hook: file-path write guardrail for ml-optimizer.
-# Prevents writes outside the project directory and protects critical files.
+# Protects critical files (.git internals, secrets, lock files) and allow-lists
+# the plugin directory; does not enforce a general project-directory boundary.
 # Exit 0 = allow, Exit 2 = block.
 
 set -euo pipefail

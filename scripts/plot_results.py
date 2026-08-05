@@ -229,7 +229,9 @@ def plot_hp_sensitivity(results_dir: str, metric: str, hp_name: str) -> str:
 def plot_progress_chart(results_dir: str, metric: str, lower_is_better: bool = True,
                         output_path: str | None = None) -> str | None:
     """Matplotlib progress chart: a dot per experiment (green=new running best, gray otherwise),
-    a step line tracking the running-best frontier, kept experiments annotated with exp_id.
+    a step line tracking the running-best frontier, kept experiments annotated with a
+    method/HP-diff description (falls back to exp_id when no method or config info is
+    available — see build_experiment_description()).
     Returns the output file path, or None if no results found.
     """
     results = load_results(results_dir)
@@ -367,7 +369,7 @@ if __name__ == "__main__":
         if path:
             print(f"Progress chart saved to: {path}")
         else:
-            print("matplotlib not available — cannot generate progress chart")
+            print("No experiment results found (or metric missing) — cannot generate progress chart")
             sys.exit(1)
     else:
         print(f"Unknown mode: {mode}")

@@ -21,7 +21,7 @@ From the orchestrator:
 - `lower_is_better`: whether lower values are better for the watched metric (default: true). The `primary_metric` (accuracy, PSNR, etc.) is used by analyze/hp-tune, not monitor.
 - `explosion_threshold`: explosion-detection multiplier (default: 5.0). Override per model type.
 - `plateau_patience`: steps without improvement before plateau alarm (default: 20). Override per model type.
-- `model_category` (optional): from user_choices — `"rl"`, `"generative"`, or null. Controls RL-specific monitoring (see RL Model Monitoring).
+- `model_category` (optional): from user_choices — `"supervised"`, `"rl"`, `"generative"`, or null. Controls RL-specific monitoring (see RL Model Monitoring).
 - `overfitting_check` (optional): when provided, also check overfitting by comparing train vs val metrics. Dict with `train_metric` and `val_metric` names, e.g. `{"train_metric": "train_loss", "val_metric": "val_loss"}`. Requires both metrics in the training logs.
 
 ## Step 1: Validate Inputs
@@ -104,12 +104,14 @@ This applies category-specific thresholds automatically (e.g., RL uses `explosio
 
 3. If overfitting detected:
    - Report status `"overfitting_warning"` (do NOT kill the process — overfitting is a warning, not a hard failure)
-   - Log to error tracker: `category: "overfitting", severity: "warning"`
+   - Log to error tracker: `category: "training_failure", severity: "warning"` ("overfitting" is not a valid category — `scripts/error_tracker.py`'s VALID_CATEGORIES has no such entry)
    - Log to behavioral memory: `${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py <exp_root> log-behavior training_insight '{"insight":"Overfitting detected: <severity> at step <step>","source":"monitor"}'`
 
 ### 2e: Take Action on Divergence
 
-If divergence is detected:
+`check_divergence()`'s result carries both `diverged` (bool) and `status` (`healthy`/`diverged`/`plateaued`). This step's kill action fires ONLY when `status == "diverged"` (NaN/Inf, explosion, crash, reward collapse) — a `status: "plateaued"` result (plateau or gradual drift) is a WARNING, never a kill: report it (like the `overfitting_warning` case in 2d above), do not run steps 1-2 below for it.
+
+If divergence is detected (`status == "diverged"`):
 
 1. **Kill the training process:**
    ```bash
@@ -130,7 +132,7 @@ If divergence is detected:
 2. **Record the divergence:**
    - Read the current experiment result file (if it exists)
    - **Ownership check:** if the file already has `status: "completed"` or `status: "failed"`, do NOT overwrite — the experiment finished first. Log to dev_notes: "Monitor detected divergence for <exp_id> but experiment already completed with status '<status>' — skipping overwrite." Skip to step 3.
-   - If the file does not exist, or has `status: "running"`: update status to `"diverged"` and add divergence details to notes:
+   - If the file has `status: "running"` (the experiment-agent's placeholder write means the file should already exist by the time monitor runs): update status to `"diverged"` and add divergence details to notes, keeping the existing `exp_id`/`config`/`metrics` fields — the schema (`EXPERIMENT_RESULT_REQUIRED = [exp_id, status, config, metrics]`) requires all four, or the PreToolUse hook blocks the write:
      ```json
      {
        "status": "diverged",
@@ -140,7 +142,7 @@ If divergence is detected:
    - Write the updated result using the Write tool
    - **Validate the written file:**
      ```bash
-     python3 schema_validator.py <exp_root>/results/<exp_id>.json result
+     python3 ${CLAUDE_PLUGIN_ROOT}/scripts/schema_validator.py <exp_root>/results/<round_dir>/<exp_id>.json result
      ```
      If validation fails, fix the JSON before continuing.
 
@@ -155,7 +157,7 @@ If divergence is detected:
 
 4. **Log to error tracker:**
    ```bash
-   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"category":"divergence","severity":"warning","source":"monitor","message":"<divergence reason>","exp_id":"<exp_id>","context":{"divergence_type":"<nan|explosion|plateau|drift>","step":<step>,"metric_to_watch":"<metric>"}}'
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"category":"divergence","severity":"warning","source":"monitor","message":"<divergence reason>","exp_id":"<exp_id>","context":{"divergence_type":"<nan|explosion|crash|reward_collapse>","step":<step>,"metric_to_watch":"<metric>"}}'
    ```
 
 5. **Log divergence pattern to behavioral memory** — when an experiment is killed for divergence, also log the pattern:
@@ -190,7 +192,7 @@ The monitor exits when:
 
 ### Divergence parameters (defaults, adjust per model type)
 - **NaN/Inf detection:** always enabled, immediate kill
-- **Explosion threshold:** 5x rolling average over 10-step window
+- **Explosion threshold:** robust z-score (value vs rolling 10-step median, MAD-based dispersion) exceeding threshold (default 5.0); a ratio test using that same configurable `explosion_threshold` (default 5x, e.g. 20x for RL) is a secondary fallback for positive-scale metrics only.
 - **Plateau patience:** 20 evaluation checkpoints with min_delta=1e-6
 
 See also `hp-tune/references/tuning-strategy.md` for per-model-type HP guidance that informs threshold selection.
@@ -212,13 +214,13 @@ When `model_category = "rl"`, apply these adjustments:
 |--------|----------|-------------------|
 | policy_loss / actor_loss | lower is better | Standard: NaN/explosion/plateau |
 | value_loss / critic_loss | lower is better | Standard: NaN/explosion/plateau |
-| reward / episode_return | higher is better | Collapse: drops >50% from rolling max over 100 episodes |
-| entropy | context-dependent | Entropy collapse: drops below 0.01 |
+| reward / episode_return | higher is better | Collapse: value falls below 50% of rolling max sustained for 10 consecutive values |
+| entropy | context-dependent | Not covered by detect_divergence.py (no automated check); if entropy is logged and watched manually, a sharp drop toward 0 is a warning sign, not an automated kill/warn signal |
 
 When `divergence_metric` is a reward metric (`lower_is_better = False`):
 - Reward plateau patience should be higher (50+ episodes) — RL is inherently noisy
 - Do NOT kill on short-term reward drops (exploration causes temporary dips)
-- Only flag divergence if reward collapses to <10% of historical max sustained over 50+ episodes
+- Only flag divergence if reward collapses below 50% of rolling max sustained for 10 consecutive values (matches `reward_collapse_fraction=0.5`, `reward_collapse_patience=10` in `detect_divergence.py`'s RL defaults)
 - NaN/Inf detection still applies normally
 
 ### Common divergence patterns
@@ -238,7 +240,7 @@ When `divergence_metric` is a reward metric (`lower_is_better = False`):
 
 Return to the orchestrator a dict per experiment:
 - `exp_id`: experiment identifier
-- `status`: one of `healthy`, `diverged`, `completed`, `failed`, `no_output`
+- `status`: one of `healthy`, `diverged`, `completed`, `failed`, `no_output`, `unmonitored`, `overfitting_warning`
 - `reason`: divergence reason (if diverged) or `null`
 - `step`: step at which divergence was detected (if diverged) or `-1`
 - `latest_metrics`: dict of most recent metric values
@@ -249,4 +251,4 @@ Return to the orchestrator a dict per experiment:
 - `latest_metrics`: all other available metrics from the final log line (the watched metric will be absent)
 - `reason`: `"Watched metric '<name>' not found; available: [<list>]"`
 
-> **Important:** These status values (`healthy`, `no_output`) are internal monitor output for the orchestrator only. They must NOT be written to experiment result JSON files. Result files use: `completed`, `failed`, `diverged`, `timeout`.
+> **Important:** Monitor's own output statuses that must never be written to a result JSON: `healthy`, `no_output`, `unmonitored`, `overfitting_warning`. Result JSON files use the schema's status set (`schema_validator.py` `VALID_STATUSES`): `running`/`pending` while in progress, then `completed`, `failed`, `diverged`, or `timeout` once finished.

@@ -13,7 +13,7 @@ Usage:
     python3 round_manager.py <exp_root> check-baseline                        # Validate baseline.json completeness
     python3 round_manager.py <exp_root> check-prerequisites                   # Validate prerequisites.json
     python3 round_manager.py <exp_root> check-manifest                        # Validate implementation-manifest.json
-    python3 round_manager.py <exp_root> check-round <round_dir>               # Validate a round's results + logs
+    python3 round_manager.py <exp_root> check-round <round_dir>               # Validate a round's results (logs reported, not gated — missing train.log doesn't fail `complete`)
     python3 round_manager.py <exp_root> check-proposals <round_dir>           # Validate proposed configs in a round
 
 Valid round types: hp, evolved, research, stacked. Exit codes: 0 = success,
@@ -100,7 +100,8 @@ def _scan_exp_ids(results_dir: Path) -> list[int]:
 def create_round(exp_root: str, round_type: str, branch: str | None = None) -> dict:
     """Create a round directory and update rounds-manifest.json atomically (file-locked).
 
-    Creates <exp_root>/results/round-N-<type>/ and its proposed-configs/ sibling.
+    Creates <exp_root>/results/round-N-<type>/ and its four sibling directories:
+    proposed-configs/, logs/, scripts/, artifacts/ (all round-N-<type>/).
     """
     if round_type not in VALID_ROUND_TYPES:
         return {"error": f"Invalid round type '{round_type}': must be one of {VALID_ROUND_TYPES}"}

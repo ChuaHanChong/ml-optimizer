@@ -58,11 +58,11 @@ If the user selected research proposals that require code changes (not just HP t
    The workflow applies the findings:
    - Only review proposals with `status: "validated"` in the manifest
    - If either reviewer flags a critical issue (a real bug, or a silent failure that would invalidate metrics), the proposal is marked `validation_failed` and skipped
-   - If a reviewer flags minor issues (style, non-blocking), they are logged to dev_notes and the workflow proceeds
+   - Non-critical (minor) reviewer findings are NOT persisted — they are dropped when the manifest is assembled (only critical-issue summaries are folded into a proposal's notes); the full per-reviewer output is available transiently in the workflow's returned branches[].reviews for the orchestrator to inspect if desired, but nothing here writes to dev_notes.md.
 
    After the workflow returns, read the per-branch `reviews` field; surface any `validation_failed` branches to the user with the reason.
 
 7. **Test coverage check (run inside the workflow):**
-   The implement-agent writes a focused unit test per proposal (`<exp_root>/tests/test_<slug>.py`, implement skill step 4f). For validated proposals whose `validation.unit_tests` is `"pass"`, the workflow dispatches `pr-review-toolkit:pr-test-analyzer` on the test + the changed files to assess whether the test actually exercises the new behavior (not a token/placeholder test) and to surface missing edge cases.
-   - This is **advisory** — weak coverage does NOT block experimentation (these are ML proposals, not production code), but the findings are logged to dev_notes and inform later analysis.
-   - Skip when `validation.unit_tests` is `"skipped"` (no meaningful test to analyze).
+   The implement-agent writes a focused unit test per proposal (`<exp_root>/tests/test_<slug>.py`, implement skill step 4f). For validated proposals whose manifest entry has a non-empty `test_file`, the workflow dispatches `pr-review-toolkit:pr-test-analyzer` on the test + the changed files to assess whether the test actually exercises the new behavior (not a token/placeholder test) and to surface missing edge cases.
+   - This is **advisory** — weak coverage does NOT block experimentation. The test-coverage finding is only surfaced (via notes) if the code-reviewer or silent-failure-hunter separately flagged a critical issue; otherwise it is discarded after being returned transiently in the workflow's branches[].reviews — it is not written to dev_notes.md and nothing downstream currently consumes it for analysis.
+   - Skip when `test_file` is absent (no test was written to analyze). `validation.unit_tests` is not consulted for this gate.

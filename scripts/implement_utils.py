@@ -12,7 +12,12 @@ Usage:
     python3 implement_utils.py analyze <repo_path>               # Analyze a cloned repo's framework/structure
     python3 implement_utils.py diff <project_root> <branch>      # Extract a branch diff summary vs the current branch
 
-selected_json returns proposals by 1-based index; "[]" or omit returns all.
+selected_json returns proposals by 1-based index. Pass "[1,3]" for specific
+proposals. To select all proposals from the CLI, pass "null" as the indices
+argument (json.loads("null") -> None, which skips filtering in
+parse_research_proposals — see selected_indices=None below); passing [] returns
+none (it filters to index in selected_indices, and no index is ever in an
+empty list).
 clone only permits https://github.com/ and https://gitlab.com/ URLs.
 """
 
@@ -53,17 +58,17 @@ def get_current_branch(project_root: str) -> str:
 
 
 def create_proposal_branch(project_root: str, slug: str, base_branch: str, prefix: str = "ml-opt") -> str:
-    """Create and check out a proposal branch. Returns the branch name (<prefix>/<slug>)."""
+    """Create and check out a proposal branch. Returns the branch name (<prefix>/<slug>).
+
+    Branches directly off base_branch's commit-ish in one step (git checkout -b
+    branch_name base_branch) — does NOT check out base_branch first, since it may
+    already be checked out elsewhere (e.g. the main tree, while this runs inside a
+    worktree). Matches the safe one-liner pattern documented at
+    agents/implement-agent.md ("git checkout -b ml-opt/<slug> <original_branch>").
+    """
     branch_name = f"{prefix}/{slug}"
     subprocess.run(
-        ["git", "checkout", base_branch],
-        cwd=project_root,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    subprocess.run(
-        ["git", "checkout", "-b", branch_name],
+        ["git", "checkout", "-b", branch_name, base_branch],
         cwd=project_root,
         capture_output=True,
         text=True,
@@ -145,7 +150,10 @@ def validate_imports(module_path: str, project_root: str,
 def parse_research_proposals(findings_path: str, selected_indices: list[int] | None = None) -> list[dict]:
     """Parse research-findings.md into structured proposals from '### Proposal N: ...' blocks.
 
-    If selected_indices is provided, only return those proposals (1-based).
+    If selected_indices is None (the default — omit the argument in Python
+    call sites), all proposals are returned. If selected_indices is a list,
+    only proposals whose 1-based index is in that list are returned — an
+    empty list [] returns none, not all.
     """
     text = Path(findings_path).read_text()
 

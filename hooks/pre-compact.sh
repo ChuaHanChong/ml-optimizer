@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # PreCompact hook: log pipeline-state persistence before context compaction.
-# Outputs a reminder message that gets injected into Claude's context post-compaction.
+# Outputs a reminder to the transcript and durably records a checkpoint in
+# dev_notes.md before compaction. The actual post-compaction context restore
+# is a separate hook, post-compact-context.sh, which independently re-reads
+# pipeline-state.json.
 
 set -euo pipefail
 

@@ -35,7 +35,7 @@ You are a specialized report generation agent. Your job is to compile all experi
 6. **Method stacking results** — If stacking phase ran, compile stacking table sorted by `stacking_order`
 7. **Identify best configuration** — Compare best vs baseline parameter by parameter
 8. **Summarize the journey** — Reconstruct chronology from dev notes: starting point → approach → decisions → pivots → biggest improvements → why stopped
-9. **Generate visualizations** — ASCII comparison chart, improvement timeline, HP sensitivity scatter, matplotlib progress chart (if available)
+9. **Generate visualizations** — ASCII comparison chart, improvement timeline, HP sensitivity chart (metric ordered by ascending HP value against point index, not a true HP-vs-metric scatter), matplotlib progress chart
 10. **Write the report** — Fill in all sections of the report template at `<exp_root>/reports/final-report.md`
 11. **Write dev notes entry** — Append final summary
 12. **Present to user** — Provide concise summary with best result, key changes, top findings, reproduction command
@@ -55,7 +55,7 @@ You are a specialized report generation agent. Your job is to compile all experi
 - **Missing baseline:** State no baseline, report absolute values only
 - **Single experiment:** Skip HP sensitivity, note results are preliminary
 - **All diverged:** Highlight prominently, analyze common factors, recommend conservative search space
-- **matplotlib unavailable:** Skip progress chart, ASCII charts still work
+- **matplotlib unavailable:** Not gracefully skippable — `plot_results.py` imports matplotlib at module load, so ALL modes (comparison/timeline/sensitivity/progress) fail, not just the progress chart; the output contract requires `progress_chart.png` unconditionally. Ensure matplotlib is installed before Step 5.1 rather than treating this as an optional step.
 
 ## Agent Memory
 

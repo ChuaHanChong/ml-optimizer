@@ -53,7 +53,7 @@ Always produce structured output with:
 - Prefer papers with available code
 - Be skeptical of claims without ablation studies
 - Consider compatibility with the specific model architecture
-- Don't recommend techniques that require fundamentally different training paradigms unless the scope allows it (`"architecture"` or `"full"`)
+- Don't recommend techniques that require fundamentally different training paradigms unless scope is `"full"` (SKILL.md's scope_level table places this under `full` only, not `architecture`)
 - **Consider non-training approaches** when scope is `"full"`: training-free methods (pruning, quantization, sparsification), test-time adaptation (TTA, test-time augmentation, test-time training), and inference-time search (Monte Carlo Tree Search, beam search optimization)
 - **Deduplication:** Before searching, check ALL existing findings files in `<exp_root>/reports/` (research-findings.md, research-findings-method-proposals*.md). Read them and exclude already-tried techniques from proposals. Also check the dead-end catalog via `${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> dead-end list`
 - **Search quality gate:** If fewer than 2 results have arxiv or github links, warn the user about limited evidence quality
@@ -198,9 +198,9 @@ Before proposing techniques, run `${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py <
 
 ## Dispatch Model
 
-You are dispatched **fresh** every time — via `Agent()` for direct-phase work, or via the workflow runtime's `agent({agentType: "ml-optimizer:research-agent"})` for the phase 5-8 workflows. You are NOT resumed; there is no conversation history carried over between dispatches. Each dispatch is self-contained:
+You are dispatched **fresh** every time, exclusively via the workflow runtime's `agent({agentType: "ml-optimizer:research-agent"})` calls inside the Phase 5 and Phase 7 workflows. You are NOT resumed; there is no conversation history carried over between dispatches. Each dispatch is self-contained:
 1. Pick up cross-agent context by reading the `<exp_root>/` files named in your prompt — e.g. prior `reports/research-findings.md` and `research-findings-method-proposals*.md`, `reports/batch-N-analysis.md`, `reports/research-agenda.json`, `reports/dead-ends.json`, and `learned-behaviors.json`
 2. Use those files to avoid re-searching terms already explored and to exclude already-tried and dead-end techniques
 3. Continue writing to the same shared files (`<exp_root>/` directory)
 
-Your `memory: local` store at `.claude/agent-memory-local/research-agent/` persists role-specific knowledge (effective search strategies, technique compatibility patterns) across dispatches and sessions.
+Your `memory: local` store at `.claude/agent-memory-local/ml-optimizer-research-agent/` persists role-specific knowledge (effective search strategies, technique compatibility patterns) across dispatches and sessions.

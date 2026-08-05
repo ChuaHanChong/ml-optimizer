@@ -5,7 +5,7 @@ export const meta = {
   phases: [
     { title: "Pre-loop", detail: "Validate baseline integrity, load implementation manifest, seed code_branches + search space, read agenda/dead-ends context files." },
     { title: "Round", detail: "round_manager create-round; tuning-agent proposes configs reading agenda/dead-ends/prior batch-N-analysis.md." },
-    { title: "Experiments", detail: "parallel experiment-agent runs (worktree, --detach) per code_branch; experiment agent runs detect_divergence.py; optional monitor-agent per batch." },
+    { title: "Experiments", detail: "parallel experiment-agent runs (worktree, --detach) per code_branch; experiment agent runs detect_divergence.py." },
     { title: "Analysis", detail: "analysis-agent writes reports/batch-N-analysis.md and returns a structured decision over the primary_metric." },
     { title: "Decision", detail: "continue/pivots loop; stop triggers stuck protocol (research-agent) + fixpoint check; method_proposal triggers research+implement; code_evolution triggers tuning(evolve HPs)+implement(evolve skill)." },
     { title: "Exit", detail: "Return best_exp_id/best_metric/rounds_completed/exit_reason and stacking_candidates (branches that beat baseline)." },
@@ -993,6 +993,7 @@ Skill("ml-optimizer:evolve") parameters:
 - lower_is_better: ${lowerIsBetter}
 - scope_level: ${scope_level}
 - evolve_recommendation: {num_generations: ${numGen}, population_size: ${popSize}}
+- feedback_context: before evolving, read the dead-end catalog (\`python3 ${PLUGIN}/scripts/error_tracker.py ${exp_root} dead-end list\`), recurring error patterns (\`python3 ${PLUGIN}/scripts/error_tracker.py ${exp_root} patterns\`), the most recent \`${exp_root}/reports/batch-*-analysis.md\` (what worked/failed last), and \`${exp_root}/learned-behaviors.json\` (accumulated patterns) — pass them as feedback_context: {dead_ends, error_patterns, batch_analysis, learned_behaviors} per the evolve skill's own Input Parameters contract. Do NOT propose mutations matching a dead_ends technique.
 
 The evolve skill runs shinka-convert -> shinka-run (file handoff, SHINKA_PROVIDER=claude_code) -> shinka-inspect -> commit best as ml-opt/evolved-<slug>. If ShinkaEvolve is unavailable, return status="shinkaevolve_unavailable". Return {status, branch, best_combined_score, notes}.`,
     { schema: EVOLVE_RESULT_SCHEMA, agentType: "ml-optimizer:implement-agent", phase: "Decision", label: "evolve-run" }

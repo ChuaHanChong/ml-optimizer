@@ -311,7 +311,7 @@ When a proposal has `implementation_strategy: from_scratch`, implement directly 
 
 1. **Extract algorithm:** read the method section, pseudocode, and equations. Map math notation to code (e.g., summation → loop or `torch.sum`, element-wise product → `*`).
 
-2. **Map to project structure:** determine which pattern category (1-7) applies; identify where in the codebase to insert the new code.
+2. **Map to project structure:** determine which pattern category (1-7, 10) applies; identify where in the codebase to insert the new code.
 
 3. **Implement incrementally:**
    - Core computation first (the algorithm as a function or module)
@@ -354,29 +354,31 @@ When a proposal has `implementation_strategy: from_reference`, clone the paper's
    ```
    Review the analysis: framework, relevant files, dependencies.
 
-2. **Understand reference code:** read the files identified by the research agent. Identify:
+2. **Index and query the code graph (REQUIRED):** index the cloned repo with GitNexus (`python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py index <dest_dir>` — a HARD REQUIREMENT, no `analyze`/`Read`/`Grep` substitute), then use `mcp__gitnexus__context`/`mcp__gitnexus__query`/`mcp__gitnexus__impact` to locate the core implementation and its internal-dependency edges before reading any files.
+
+3. **Understand reference code:** read the files listed in `reference_files` (guided by the step-2 code graph). Identify:
    - Core implementation (the algorithm/module to extract)
    - Internal dependencies (other repo files the core code imports)
    - External dependencies (pip packages not in the target project)
 
-3. **Assess adaptation complexity:**
+4. **Assess adaptation complexity:**
    - **Direct copy:** same framework, minimal dependencies → copy and adjust imports
    - **Translation required:** different framework → rewrite using equivalent APIs
    - **Extraction required:** code entangled with repo infrastructure → extract logic, reimplement wrapper
 
-4. **Adapt:** extract only the relevant functions/classes. For each:
+5. **Adapt:** extract only the relevant functions/classes. For each:
    - Adapt import statements to the target project
    - Translate framework-specific calls if needed (e.g., `tf.nn.relu` → `F.relu`)
    - Match tensor conventions (shape ordering, dtype, device handling)
    - Preserve numerical behavior (same initialization, same constants)
 
-5. **Track provenance:** add comments to all adapted code:
+6. **Track provenance:** add comments to all adapted code:
    ```python
    # [ml-opt] Adapted from <repo_url>, file: <original_path>
    # [ml-opt] License: <license_type>
    ```
 
-6. **Cleanup:** remove the cloned repo after extraction:
+7. **Cleanup:** remove the cloned repo after extraction:
    ```bash
    python3 -c "
    import sys; # sys.path: add the plugin's scripts/ directory
@@ -395,7 +397,7 @@ When a proposal has `implementation_strategy: from_reference`, clone the paper's
 - No license file found — flag `license_warning` and inform the user
 - Extraction would require rewriting >50% of the reference code
 - Framework translation is infeasible (e.g., JAX functional style → TF eager with heavy Keras integration)
-- Core implementation has unresolvable internal dependencies (imports 10+ repo-specific modules)
+- Core implementation has unresolvable internal dependencies (imports >5 repo-specific modules that cannot be extracted — matches agents/implement-agent.md's `implementation_error` trigger)
 
 ---
 

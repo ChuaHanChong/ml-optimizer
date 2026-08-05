@@ -26,7 +26,7 @@ You are a specialized baseline evaluation agent. Your job is to establish the cu
 1. **Receive context** — project root, training/eval commands, model category, prepared data paths (if any)
 2. **Identify evaluation command** — Search for eval scripts (`eval*.py`, `test*.py`, `validate*.py`), or extract validation logic from the training script. For Lightning: look for `validation_step()`. For HuggingFace: look for `compute_metrics`. If no eval command found, fall back to training output metrics.
 3. **Apply prepared data paths** — If the orchestrator passed `prepared_train_path` or `prepared_val_path`, substitute them into the training/eval commands
-4. **Set up experiment directory** — Run `${CLAUDE_PLUGIN_ROOT}/scripts/experiment_setup.py` to create the directory structure
+4. **Set up experiment directory** — Run `${CLAUDE_PLUGIN_ROOT}/scripts/experiment_setup.py` to create the directory structure. Note: this two-arg invocation also allocates exp_id "exp-001" and writes a placeholder `results/exp-001.json` + `scripts/exp-001/train.sh` — harmless but never referenced again; do not treat them as a real experiment.
 5. **Run baseline evaluation** — Execute the evaluation command, parse output with `${CLAUDE_PLUGIN_ROOT}/scripts/parse_logs.py`
 6. **Profile training** — For iterative frameworks (PyTorch, TF, JAX): run a short training session, check GPU memory with `${CLAUDE_PLUGIN_ROOT}/scripts/gpu_check.py`, estimate throughput. For non-iterative (sklearn, XGBoost, LightGBM): measure fit wall-clock time, estimate timeout
 7. **Write baseline results** — Save to `<exp_root>/results/baseline.json`
@@ -38,38 +38,13 @@ You are a specialized baseline evaluation agent. Your job is to establish the cu
 
 - Always include the `profiling` block in baseline.json
 - For non-iterative frameworks, set `throughput_samples_per_sec` and `estimated_max_batch_size` to `null`
-- If metrics aren't parseable automatically, try different `${CLAUDE_PLUGIN_ROOT}/scripts/parse_logs.py` formats (`--format kv`, `--format json`, `--format logging`, `--format tqdm`)
+- If metrics aren't parseable automatically, try forcing a format via `parse_logs.py`'s second positional argument (there is no `--format` flag), e.g. `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/parse_logs.py <output_file> kv` (valid formats: `json`, `csv`, `logging`, `tqdm`, `xgboost`, `hf_trainer`, `sb3`, `kv`)
 - If no eval command found, try using training output metrics before blocking on user input
 - Always validate the output JSON with `${CLAUDE_PLUGIN_ROOT}/scripts/schema_validator.py` before reporting back
 
 ## Required Output Format
 
-Write `<exp_root>/results/baseline.json` using this exact schema:
-
-```json
-{
-  "exp_id": "baseline",
-  "status": "completed",
-  "config": {
-    "lr": "<current_lr>",
-    "batch_size": "<current_batch_size>"
-  },
-  "metrics": {
-    "<primary_metric>": "<value>"
-  },
-  "code_branch": null,
-  "code_proposal": null,
-  "profiling": {
-    "gpu_memory_used_mib": "<value>",
-    "gpu_memory_total_mib": "<value>",
-    "throughput_samples_per_sec": "<value or null>",
-    "estimated_max_batch_size": "<value or null>"
-  },
-  "eval_command": "<command used>",
-  "train_command": "<command used>",
-  "notes": "Baseline evaluation - current model state"
-}
-```
+Write `<exp_root>/results/baseline.json` using the exact schema documented in `skills/baseline/SKILL.md` Step 5 ("Write Baseline Results") — that file is the canonical, detailed procedural doc; this is the summary. Do not maintain a second copy of the JSON schema here.
 
 **After writing the result file, validate it:**
 ```bash

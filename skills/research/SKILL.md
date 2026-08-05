@@ -33,7 +33,7 @@ From the orchestrator:
   - `"training"`: Optimizer, LR schedulers, warmup strategies, gradient clipping/accumulation, mixed precision, loss functions, weight decay, data augmentation, regularization (dropout, label smoothing), EMA. **RL:** algorithm HPs, reward shaping, observation normalization, entropy/GAE schedules
   - `"architecture"`: All of `training` + attention mechanism changes, normalization layer changes, activation function changes, block design changes, skip connection modifications. **RL:** policy/value network changes
   - `"full"`: All of `architecture` + data pipeline changes, preprocessing, tokenization, feature engineering, ensemble approaches, distillation, curriculum learning, training-free methods (pruning, quantization, sparsification), test-time adaptation (TTA, test-time augmentation), inference-time search (MCTS, beam search). **RL:** env dynamics, curriculum, domain randomization
-- `output_path`: where to write findings (default: `<exp_root>/reports/research-findings.md`). From Phase 7, use `<exp_root>/reports/research-findings-method-proposals.md`
+- `output_path`: where to write findings (default: `<exp_root>/reports/research-findings.md`). From Phase 7, use `<exp_root>/reports/research-findings-method-proposals-iter<N>.md`
 
 ## Step 1: Analyze User-Provided Papers (if any)
 
@@ -56,9 +56,7 @@ Before searching, check existing findings and dead ends:
 
 1. Check ALL existing findings files in `<exp_root>/reports/`:
    - `research-findings.md` (Phase 5 web-based proposals)
-   - `research-findings-method-proposals.md` (Phase 7 pre-loop method proposals)
-   - `research-findings-method-proposals-iter*.md` (Phase 7 mid-loop iterations)
-   - `research-findings-method-proposals-both.md` (combined web + knowledge)
+   - `research-findings-method-proposals-iter*.md` (all Phase 7 research dispatches — pre-loop, mid-loop method-proposal, cadence, code_evolution fallback, and stuck-protocol rounds)
    - the current `output_path` itself (if it exists from a previous run)
 2. Check the dead-end catalog (techniques conclusively unpromising):
    ```bash
@@ -279,7 +277,7 @@ When `source` is `"knowledge"`, **skip Steps 1, 2, and 3 entirely** — do NOT u
 2. **Generate proposals using structured ideation** (diverge → converge → refine):
 
    **Phase A — Diverge (generate 10-15 candidate ideas):**
-   Apply 3 complementary lenses (most relevant from this list):
+   Apply all 6 complementary lenses:
 
    | Lens | Question |
    |------|----------|
@@ -458,7 +456,7 @@ Note: Mark each source with its discovery channel — `(alphaxiv)` for papers fo
 - [Technique X]: [Why it's not suitable for this project]
 ```
 
-**HP priors on `hp_only` proposals:** Every `hp_only` proposal MUST carry the **Search space** field — a JSON array of `{param, range, scale, source}` entries with citations. These are the PRIMARY search-space priors for the hp-tune skill (hp_only proposals skip the implement skill and route directly to hp-tune). Validate the array shape with `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/schema_validator.py relay research_to_tuning '{"search_space": [...]}'`.
+**HP priors on `hp_only` proposals:** For a single-shot, non-fragmented research-agent invocation, every `hp_only` proposal MUST carry the **Search space** field — a JSON array of `{param, range, scale, source}` entries with citations, as PRIMARY search-space priors for the hp-tune skill. Note: the Phase 5 fan-out/vet/synthesize pipeline's schemas (CANDIDATE_SCHEMA, the Vet stage) do not currently ask for or preserve a `search_space` field, so this requirement does not apply end-to-end on that path today. Validate the array shape with `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/schema_validator.py relay research_to_tuning '{"search_space": [...]}'`.
 
 ## Step 5.1: Initialize Research Agenda
 
@@ -484,9 +482,9 @@ If a research agenda already exists (e.g., mid-loop research), use `agenda add` 
 
 **CRITICAL — Output verification:** after writing, verify the file exists at `output_path` (Read tool). If missing or empty, re-write it — the orchestrator depends on this file existing at the exact `output_path`.
 
-## Step 6: Summary for Orchestrator
+## Step 6: Structured Return
 
-Return: number of proposals found; top 3 with brief summaries; recommended implementation order; dependencies between proposals; estimated total implementation effort.
+Return the structured schema fields specified in your dispatch prompt (e.g. `findings_path`, `agenda_initialized`, and the ranked `proposals[]` array) — each Phase 5/7 workflow dispatch site defines its own exact required return schema; there is no separate freeform summary to produce.
 
 ## Tips for Effective Research
 
@@ -499,7 +497,7 @@ Return: number of proposals found; top 3 with brief summaries; recommended imple
 
 ## Error Handling
 
-- **WebSearch fails:** try alternative search terms, or ask the user for specific papers
+- **WebSearch fails:** try alternative search terms, or note the gap in research-findings.md for the user to see at the post-research checkpoint (research-agent has no AskUserQuestion tool and cannot ask mid-dispatch)
 - **Paper behind paywall:** note the limitation, extract what's available from the abstract
 - **No relevant results:** broaden search terms, try related tasks/model types
 - **Contradictory findings:** note both perspectives, let the user decide
@@ -549,7 +547,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"categor
 ]
 ```
 
-The effective randomization range is `center ± width/2`. Two scalars keep the entries proposable by hp-tune and make an inverted range impossible. `width` starting at `0.0` lets the search discover that a parameter should not be randomized at all. Only emit these when `scope_level` is `"architecture"` or `"full"` — at `"training"` scope they are a scope violation.
+The effective randomization range is `center ± width/2`. Two scalars keep the entries proposable by hp-tune and make an inverted range impossible. `width` starting at `0.0` lets the search discover that a parameter should not be randomized at all. Only emit these when `scope_level` is `"full"` — at `"training"` or `"architecture"` scope they are a scope violation.
 
 **Curriculum.** A curriculum is a schedule over training, not a config value, so it is a `type: "code_change"` proposal like any other — never an `hp_only` one. Propose it as the code that ramps a randomization width (or task difficulty) over training, naming the ramp's own parameters so they become tunable afterwards:
 

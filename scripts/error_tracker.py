@@ -3,8 +3,8 @@
 
 Maintains the structured error log, pattern detection, success/proposal
 metrics, suggestion ranking and history, the dead-end catalog, and the
-living research agenda under <exp_root>/reports/. Writes are concurrency-safe
-via file locking.
+living research agenda under <exp_root>/reports/. Most writes are concurrency-safe
+via file locking (log_suggestion's suggestion-history.json write is currently unlocked).
 
 Usage:
     python3 error_tracker.py <exp_root> log <event_json>                        # Append a structured error/event
@@ -383,7 +383,7 @@ def detect_patterns(events: list[dict]) -> list[dict]:
                 "occurrences": count,
                 "suggested_action": f"Avoid {bucket} LR with batch_size={bs}",
             })
-            break  # report worst combo only
+            break  # report first combo over threshold (insertion order, not sorted by count)
 
     # --- temporal_failure_cluster: 60%+ of failures in iteration ≤1 ---
     iter_events = [

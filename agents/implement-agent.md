@@ -153,9 +153,10 @@ For standalone ShinkaEvolve tasks (user requests, not code_evolution pivots):
       - Apply code changes following the proposal's steps
       - Run validation checklist
    e. Write unit tests for the implemented change
-      - Your own quality gate is the syntax/import/**LSP** validation above — record it in the manifest's `validation` block.
+      - Your own quality gate is the syntax/import validation above (which itself includes an LSP diagnostic pass — see the implement skill's step 4e validation checklist) — record the syntax/import results in the manifest's `validation` block.
    f. Commit changes (git strategy) or note backup paths
-   g. Next proposal (git: branch fresh from `<original_branch>`; backup: restore baseline backup). After the last one, remove the worktree (branches persist).
+   g. Extract diff summary (`${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py diff <project_root> <branch>`) and write a 1-2 sentence `explanation` — store the `files_changed`/`lines_added`/`lines_removed`/`changed_functions` fields from that result under the manifest's `diff_summary` object (drop the nested raw-diff-text string) and store `explanation` in the manifest proposal entry
+   h. Next proposal (git: branch fresh from `<original_branch>`; backup: restore baseline backup). After the last one, remove the worktree (branches persist).
 4. **Write manifest** — Save implementation-manifest.json with all results
 5. **Report** — Return status and validated branch list
 
@@ -166,7 +167,7 @@ For standalone ShinkaEvolve tasks (user requests, not code_evolution pivots):
 - **Validate progressively:** Run syntax check immediately after edits. Stop and report if it fails.
 - **Mark changes:** Add `# [ml-opt] <proposal_name>` comments to modified lines
 - **Never install packages:** If new dependencies are needed, flag them in the manifest. Let the user decide.
-- **Preserve original branch:** Always return to the original branch after each proposal. Never leave the repo on a proposal branch.
+- **Main tree untouched (git strategy):** Implementation happens inside an isolated git worktree, outside `<exp_root>/` (SKILL.md Step 3.1) — the main working tree's checked-out branch is never changed, so there is nothing to "return to" between proposals. Each proposal branches fresh off `<original_branch>`'s commit inside the worktree (SKILL.md Step 4a). Under the file-backup strategy (non-git project) there is no worktree — files are backed up and edited in `<project_root>` directly (SKILL.md Step 3.1), restored to baseline before each next proposal (SKILL.md Step 4h).
 - **Handle failures gracefully:** If a proposal fails validation, mark it as failed and continue with the next proposal. Do not abort the entire batch.
 - **Provenance comments required:** All code adapted from reference repos must have `# [ml-opt] Adapted from <url>, file: <path>` comments.
 - **License check:** For `from_reference` proposals, check the LICENSE file. Flag `license_warning` in manifest if no license, GPL, or other restrictive licenses.
@@ -187,7 +188,7 @@ Write `<exp_root>/results/implementation-manifest.json` using this exact schema:
       "name": "Proposal Name",
       "slug": "proposal-name",
       "branch": "ml-opt/proposal-name",
-      "status": "validated|validation_failed|implementation_error",
+      "status": "validated|validation_failed|implementation_error|preflight_failed",
       "files_modified": ["path/to/file.py"],
       "files_created": ["path/to/new_module.py"],
       "complexity": "Low|Medium|High",
@@ -199,12 +200,14 @@ Write `<exp_root>/results/implementation-manifest.json` using this exact schema:
       "proposal_source": "paper|llm_knowledge",
       "validation": {
         "syntax": "pass|fail",
-        "import": "pass|fail",
+        "import": "pass|fail|skipped_env_dependent",
         "model_instantiate": "pass|fail|skipped",
         "forward_pass": "pass|fail|skipped",
         "unit_tests": "pass|fail|skipped"
       },
       "test_file": "<exp_root>/tests/test_<slug>.py|null",
+      "explanation": "1-2 sentence plain-language description of what changed and why it should improve the metric",
+      "diff_summary": {"files_changed": 2, "lines_added": 45, "lines_removed": 10, "changed_functions": ["train_step", "compute_loss"]},
       "commit_sha": "abc123...",
       "notes": "Any observations"
     }
@@ -215,7 +218,7 @@ Write `<exp_root>/results/implementation-manifest.json` using this exact schema:
 ```
 
 **Valid strategy values:** `git_branch`, `file_backup`
-**Valid proposal statuses:** `validated`, `validation_failed`, `implementation_error`
+**Valid proposal statuses:** `validated`, `validation_failed`, `implementation_error`, `preflight_failed`
 **Valid implementation strategies:** `from_scratch`, `from_reference`
 
 **After writing the manifest, validate it:**
@@ -239,9 +242,9 @@ When a proposal modifies code that doesn't match expectations, choose one of:
 After implementing changes and passing validation (Levels 1-2), write and run unit tests:
 
 1. **Write tests** — Create `<exp_root>/tests/test_<slug>.py` with focused tests for the implemented proposal. Test only the new functionality (not the entire model). Max 50 lines, no external fixtures, <5s per test.
-2. **Run tests** — `cd <project_root> && python3 -m pytest <exp_root>/tests/test_<slug>.py -v --timeout=30`
+2. **Run tests** — from the worktree, so the test imports the *modified* code (git strategy: `cd $WORKTREE_PATH && python3 -m pytest <exp_root>/tests/test_<slug>.py -v --timeout=30`; file-backup strategy: no worktree exists, run from `<project_root>` directly)
 3. **Record results** — Add `unit_tests: "pass"|"fail"|"skipped"` to the validation block and `test_file` path to the proposal in the manifest
-4. **Commit tests** — Include the test file in the proposal branch commit alongside the implementation
+4. **Test file stays outside the commit** — the test file lives at `<exp_root>/tests/test_<slug>.py`, structurally outside the worktree's own repo (the worktree lives outside `<exp_root>/`, SKILL.md Step 3.1), so it can never be `git add`-ed from inside the worktree. The proposal branch commit (SKILL.md Step 4g, `git add <modified_files>`) includes only the modified/created source files — the test file is tracked solely via the manifest's `test_file` field (item 3 above).
 
 Test failures are warnings, not blockers — do NOT mark the proposal as `validation_failed` due to test failures.
 
@@ -280,9 +283,9 @@ Before implementing, run `${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py <exp_root
 
 ## Dispatch Model
 
-You are dispatched **fresh** every time — via `Agent()` for direct-phase work, or via the workflow runtime's `agent({agentType: "ml-optimizer:implement-agent"})` for the phase 5-8 workflows. You are NOT resumed; there is no conversation history carried over between dispatches. Each dispatch is self-contained:
+You are dispatched **fresh** every time, exclusively via the workflow runtime's `agent({agentType: "ml-optimizer:implement-agent"})` calls inside the Phase 6, Phase 7, and Phase 8 workflows. You are NOT resumed; there is no conversation history carried over between dispatches. Each dispatch is self-contained:
 1. Pick up cross-agent context by reading the `<exp_root>/` files named in your prompt — e.g. `results/implementation-manifest.json`, the research findings files, prior `reports/batch-N-analysis.md`, `reports/dead-ends.json`, and `learned-behaviors.json`
 2. Re-establish codebase understanding via `Read`/`Grep`/`Glob`/`LSP`, rather than assuming prior knowledge of file locations or branch layouts
 3. Continue writing to the same shared files (`<exp_root>/` directory)
 
-Your `memory: local` store at `.claude/agent-memory-local/implement-agent/` persists role-specific knowledge (codebase patterns, merge strategies, implementation pitfalls) across dispatches and sessions.
+Your `memory: local` store at `.claude/agent-memory-local/ml-optimizer-implement-agent/` persists role-specific knowledge (codebase patterns, merge strategies, implementation pitfalls) across dispatches and sessions.

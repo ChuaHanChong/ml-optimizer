@@ -26,7 +26,7 @@ These agents are dispatched either directly by you (`Agent()`) or by a workflow 
 | `ml-optimizer:implement-agent` | opus | `implement, evolve, shinka-*, debugging, verification, karpathy-guidelines` | Phase 6: implement the selected proposals into code (git: one worktree per branch, fanned out in parallel by the workflow; file_backup: sequential; LSP self-check) | `phase-6-implement` / `phase-7-experiment` / `phase-8-stacking` workflows |
 | `ml-optimizer:tuning-agent` | opus | `hp-tune, mem-search` | Phase 7: hyperparameter search space design | `phase-7-experiment` / `phase-8-stacking` workflows |
 | `ml-optimizer:experiment-agent` | sonnet | `experiment` | Phase 7: run training experiments | `phase-7-experiment` / `phase-8-stacking` workflows |
-| `ml-optimizer:monitor-agent` | sonnet | `monitor` | Phase 7: detect divergence, OOM, overfitting | `phase-7-experiment` workflow |
+| `ml-optimizer:monitor-agent` | sonnet | `monitor` | Phase 7: detect divergence, OOM, overfitting | not currently dispatched by any workflow (in-run divergence polling is folded into experiment-agent instead) |
 | `ml-optimizer:analysis-agent` | opus | `analyze, mem-search` | Phase 7: analyze results, recommend pivots; Phase 9: session review | `phase-7-experiment` / `phase-8-stacking` workflows; orchestrator `Agent()` (Phase 9 review) |
 | `ml-optimizer:report-agent` | opus | `report` | Phase 9: generate final optimization report | orchestrator `Agent()` |
 
@@ -71,8 +71,9 @@ There is no message bus and no `SendMessage` for phases 5–8. Cross-agent conte
    `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py <exp_root> summary`
    This produces a ~500-token briefing combining goals + behaviors + dead-ends. Include it in agent dispatch messages.
 
-3. **ALWAYS validate agent output after hp-tune, research, and analyze return:**
-   `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py <exp_root> validate-output <agent> <output_json>`
+3. **ALWAYS validate research proposals after the Phase 5 workflow returns:**
+   `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/goal_memory.py <exp_root> validate-output research <output_json>`
+   hp-tune and analyze are dispatched from inside the phase-7/phase-8 workflow scripts, not by you directly — you never receive their per-call output, so there is no opportunity to run this for those two agents under the current dispatch model.
 
 4. **ALWAYS save pipeline state after each phase transition:**
    `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/pipeline_state.py <exp_root> save <phase> <iteration>`
@@ -80,7 +81,7 @@ There is no message bus and no `SendMessage` for phases 5–8. Cross-agent conte
 5. **ALWAYS check phase gate before transitions:**
    `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/pipeline_state.py <exp_root> gate <current_phase> <next_phase>`
 
-6. **ALWAYS verify baseline integrity before each experiment batch:**
+6. **Baseline integrity is verified once, by the phase-7 workflow itself**, in its pre-loop setup step before the experiment loop begins — not something you invoke directly, and not repeated per batch. A checksum mismatch halts the whole run:
    `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/pipeline_state.py <exp_root> verify-baseline`
 
 ## Output Structure
@@ -119,7 +120,7 @@ All outputs go under `<exp_root>/`. Verify agents write to the correct paths:
 ## Round Lifecycle
 
 Before each experiment batch, create a round: `round_manager.py <exp_root> create-round <type>`.
-After experiments complete, check completeness: `round_manager.py <exp_root> check-round <round_dir>`.
+After experiments complete, verify completeness with a lightweight, non-fatal check — `output_contract.py check <exp_root> experiment-agent --round-dir <round_dir> --exp-id <exp_id>` per completed exp_id (missing outputs are logged as a warning, not repaired) — then close the round: `round_manager.py <exp_root> close-round --summary "<...>"`. Neither the Phase 7 nor Phase 8 workflow script calls `round_manager.py check-round`.
 Round types: `hp`, `evolved`, `research`, `stacked`. Exp-ids are globally unique across rounds.
 
 ## Goal Anchoring

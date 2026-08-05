@@ -28,7 +28,7 @@
    **State plainly to the user:** the plugin does not run tasks itself — it parses whatever `eval_command` prints. For multi-task to work, `eval_command` must emit one key per task named `<primary_metric>_<task>` (e.g. `success_rate_pick=0.83 success_rate_place=0.61`). The plugin then computes the mean under `<primary_metric>` and the worst task under `<primary_metric>_worst`. If `eval_command` cannot do this, leave `eval_tasks` empty — a wrong task list produces aggregates over the wrong denominator, silently making runs incomparable.
 
    Task names may not be `worst`, `std`, or `mean` — those suffixes are reserved for aggregates.
-   If the eval also reports a per-task standard deviation, order it `<primary_metric>_std_<task>` (e.g. `success_rate_std_pick`) — never `<primary_metric>_<task>_std`, which would be misread as an undeclared task named `"<task>_std"`.
+   A per-task standard deviation has no supported key today — `aggregate_task_metrics()` only recognizes the bare suffix `std` (a whole-run std, no task component) via RESERVED_TASK_SUFFIXES; a compound key like `<primary_metric>_std_<task>` or `<primary_metric>_<task>_std` matches neither a declared task nor a reserved suffix, so either ordering produces the same benign "undeclared task" warning. Don't report per-task std until this is added.
 
    **Suggest a guardrail:** if `eval_tasks` is non-empty, offer to add `{"name": "<primary_metric>_worst", "lower_is_better": <same as primary>, "role": "guardrail"}` to `secondary_metrics`. This flags a config that lifts the mean while tanking one task — the failure mode multi-task evaluation exists to catch.
    2. **Current performance:** Current value of that metric? (if known)
@@ -42,14 +42,14 @@
       - HP tuning only (fastest, no code changes)
       - HP tuning + research (web search for methods, no evolutionary code refinement)
       - Full autonomous optimization (HP + research + ShinkaEvolve — **default if not specified**)
-   7. **Divergence metric name** _(skip for scikit-learn, XGBoost, LightGBM — single fit() call, no iterative loss stream)_: Which metric to monitor for training divergence? (default: "loss"; alternatives: "train_loss", "val_loss", "objective", "nll_loss", "perplexity" for LLMs). For RL: use policy/value loss if logged; if only reward is logged, set divergence_metric to the reward metric name — the monitor skill uses reward-based heuristics (higher-is-better divergence detection).
+   7. **Divergence metric name** _(overridden to `null` in Phase 1 for scikit-learn, XGBoost, LightGBM — single fit() call, no iterative loss stream)_: Which metric to monitor for training divergence? (default: "loss"; alternatives: "train_loss", "val_loss", "objective", "nll_loss", "perplexity" for LLMs). For RL: use policy/value loss if logged; if only reward is logged, set divergence_metric to the reward metric name — the monitor skill uses reward-based heuristics (higher-is-better divergence detection).
    7a. **Divergence polarity** _(auto-inferred, confirm if ambiguous)_:
        Infer polarity from the Q7 metric name:
        - Contains "loss", "error", "nll", "objective", "perplexity" → `divergence_lower_is_better = True`
        - Contains "reward", "accuracy", "psnr", "ssim", "f1", "auc", "return" → `divergence_lower_is_better = False`
        - No match → ask: "Is a lower value of [metric] better (like loss) or higher better (like reward)?"
        Store as `divergence_lower_is_better` in user_choices.
-   8. **Optimization type:** Training or inference performance? (This plugin focuses on **training** — inference optimization like quantization, pruning, ONNX conversion is out of scope.)
+   8. **Optimization type:** Training or inference performance? (This plugin focuses on **training** the model, not standalone inference-serving optimization like ONNX conversion. Note: training-free compression techniques — pruning, quantization, sparsification — ARE still in scope as one category of proposal under `scope_level: "full"`, since they're a way of improving the training/model artifact, not a separate inference pipeline.)
    9. **Training budget per experiment** (optional):
       - **Fixed time**: all experiments train the same wall-clock duration (e.g., "60 seconds each") — metrics directly comparable by time
       - **Fixed epochs**: all experiments train the same number of epochs (e.g., "10 epochs each") — deterministic and reproducible
@@ -147,14 +147,16 @@ json.dump({'active': exp, 'runs': runs}, bc.open('w'), indent=2)
 
 4. **Analyze codebase (still in plan mode):**
 
-   **Do NOT exit plan mode yet.** Run Phase 1 steps 1-7 (read-only analysis):
+   **Do NOT exit plan mode yet.** Run Phase 1 steps 1-5 (read-only analysis):
    - Locate model code, training config, training script
    - Check GPU availability
    - Synthesize model understanding
-   - Create optimization plan from `references/plan-template.md`
-   - Estimate cost/time budget
 
    See `references/phase-1-understand.md` for the full workflow.
+
+5. **Create optimization plan:**
+   - Run Phase 1 steps 6-7: create the optimization plan from `references/plan-template.md`,
+     then estimate cost/time budget.
 
 6. **Present full optimization plan to user:**
 
@@ -169,8 +171,6 @@ json.dump({'active': exp, 'runs': runs}, bc.open('w'), indent=2)
    **Estimated GPU-hours:** {X}
    **Scope:** {scope_level}
 
-   How many HP tuning batches between research rounds? (default: 3)
-
    Would you like to:
    1. Proceed with this plan
    2. Adjust scope, constraints, or budget (returns to discovery)
@@ -179,13 +179,13 @@ json.dump({'active': exp, 'runs': runs}, bc.open('w'), indent=2)
    ```
 
    - **Option 1 (proceed):** Continue to Step 7.
-   - **Option 2 (adjust):** Go back to Step 3.7 — user refines answers, goals are re-written, codebase is re-analyzed if needed, plan is re-generated and re-presented.
+   - **Option 2 (adjust):** Go back to Step 3.3 — user refines answers, goals are re-written, codebase is re-analyzed if needed, plan is re-generated and re-presented.
    - **Option 3 (re-brainstorm):** Re-run `Skill("superpowers:brainstorming")` with the user's new direction, then re-generate and re-present the plan.
    - **Option 4 (questions):** Answer the user's questions, then re-present the same options.
 
-   Store `hp_batches_per_round` (default: 3) in user_choices.
-
    **The user can loop through options 2, 3, and 4 as many times as they want.** Only option 1 advances the pipeline.
+
+   (`hp_batches_per_round` is collected and pre-authorized in Phase 4, not here — see phase-4-checkpoint.md.)
 
 7. **Exit plan mode:**
    - Use `ExitPlanMode` only after the user chooses to proceed (option 1).

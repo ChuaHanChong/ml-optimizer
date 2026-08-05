@@ -274,7 +274,9 @@ def _status_badge(status):
 
 
 def _generate_timeline_svg(experiments, metric, baseline_val, lower_is_better):
-    """Generate an inline SVG timeline chart."""
+    """Generate an inline SVG chart of completed experiments ordered by metric
+    rank (best-to-worst per `rank_by_metric`), NOT by run order/exp_id — the
+    x-axis is rank index, not a chronological timeline."""
     completed = [e for e in experiments if e.get("status") == "completed"
                  and e.get("value") is not None
                  and e.get("exp_id", "").startswith("exp-")]
@@ -363,7 +365,7 @@ def generate_dashboard(exp_root: str, *, live: bool = False) -> str:
             f'<div style="margin-top:8px;font-size:0.8rem;color:#c0392b;font-weight:600">'
             f'⚠ {unverified_count}/{len(completed)} completed results are not held-out evaluations'
             f'{" — including the result shown above" if best_unverified else ""}.'
-            f' Sort by eval_protocol=held_out_eval before trusting rankings.</div>'
+            f' Results marked with the ⚠ unverified badge below are not held-out evaluations — discount them when comparing rankings.</div>'
         )
     else:
         data_quality_banner = ""
@@ -390,8 +392,8 @@ def generate_dashboard(exp_root: str, *, live: bool = False) -> str:
         eid = exp.get("exp_id", "?")
         status = exp.get("status", "?")
         val = exp.get("value")
-        branch = exp.get("code_branch") or "—"
-        iteration = exp.get("iteration", "—")
+        branch = raw_results.get(eid, {}).get("code_branch") or "—"
+        iteration = raw_results.get(eid, {}).get("iteration", "—")
         delta = ""
         if val is not None and baseline_val is not None and baseline_val != 0:
             d = baseline_val - val if lower else val - baseline_val

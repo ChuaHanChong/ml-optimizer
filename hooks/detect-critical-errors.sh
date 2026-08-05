@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
-# PostToolUse hook (Bash): detect critical errors (OOM, segfault, disk full).
+# PostToolUse + PostToolUseFailure hook (Bash): detect critical errors (OOM, segfault, disk full)
 # in command output and log them to the error tracker.
 # Exit 0 always — this is advisory, never blocks.
+# NOTE: the PostToolUseFailure event carries no tool_response (only `error`/`is_interrupt`/
+# `duration_ms`) — the checks below only run their real detection on PostToolUse.
 
 set -euo pipefail
 
 INPUT=$(cat)
-OUTPUT=$(echo "$INPUT" | jq -r '.tool_result.stdout // empty' 2>/dev/null)
-STDERR=$(echo "$INPUT" | jq -r '.tool_result.stderr // empty' 2>/dev/null)
+OUTPUT=$(echo "$INPUT" | jq -r '.tool_response.stdout // empty' 2>/dev/null)
+STDERR=$(echo "$INPUT" | jq -r '.tool_response.stderr // empty' 2>/dev/null)
 CWD=$(echo "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)
 
 # Combine stdout and stderr for pattern matching

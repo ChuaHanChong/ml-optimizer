@@ -18,6 +18,7 @@ from excalidraw_gen import (
     generate_hp_landscape,
     generate_architecture_diagram,
     _cli_main as excalidraw_cli,
+    COLORS,
 )
 
 
@@ -78,6 +79,27 @@ def _create_mock_experiments(exp_root: Path, num_exps=3, metric="loss"):
             "exp_id": f"exp-{i:03d}", "status": "completed",
             "config": {"lr": 0.001 * i, "batch_size": 32 * i},
             "metrics": {metric: 1.0 - 0.1 * i},
+        }
+        (results / f"exp-{i:03d}.json").write_text(json.dumps(exp))
+
+
+def _create_mock_experiments_higher_is_better(exp_root: Path, num_exps=3, metric="accuracy"):
+    """Create baseline + experiment results for a higher-is-better metric (accuracy-like)."""
+    results = exp_root / "results"
+    results.mkdir(parents=True, exist_ok=True)
+
+    baseline = {
+        "exp_id": "baseline", "status": "completed",
+        "config": {"lr": 0.001, "batch_size": 32},
+        "metrics": {metric: 0.5},
+    }
+    (results / "baseline.json").write_text(json.dumps(baseline))
+
+    for i in range(1, num_exps + 1):
+        exp = {
+            "exp_id": f"exp-{i:03d}", "status": "completed",
+            "config": {"lr": 0.001 * i, "batch_size": 32 * i},
+            "metrics": {metric: 0.5 + 0.1 * i},  # increasing — better than baseline
         }
         (results / f"exp-{i:03d}.json").write_text(json.dumps(exp))
 
@@ -407,6 +429,33 @@ class TestExcalidraw:
         assert data["type"] == "excalidraw"
         assert len(data["elements"]) > 0
 
+    def test_pipeline_diagram_value_and_color(self, tmp_path):
+        """Regression: entry.get('value') not 'metric_value' — label shows the real number
+        and beats-baseline boxes render green."""
+        _create_mock_experiments(tmp_path, num_exps=2, metric="loss")
+        # baseline loss=1.0; exp-001 loss=0.9, exp-002 loss=0.8 (both beat baseline, lower_is_better)
+        path = generate_pipeline_diagram(str(tmp_path), "loss")
+        data = json.loads(Path(path).read_text())
+        texts = [e.get("text", "") for e in data["elements"] if e.get("type") == "text"]
+        text_joined = " ".join(texts)
+        assert "loss=None" not in text_joined
+        assert "loss=0.9000" in text_joined
+        rects = [e for e in data["elements"] if e.get("type") == "rectangle"]
+        # at least one experiment box (not the baseline box) is colored green (beat baseline)
+        assert any(r["backgroundColor"] == COLORS["bg_green"] for r in rects[1:])
+
+    def test_pipeline_diagram_higher_is_better(self, tmp_path):
+        """lower_is_better=False: exp accuracy > baseline colors green, not gray."""
+        _create_mock_experiments_higher_is_better(tmp_path, num_exps=2, metric="accuracy")
+        # baseline accuracy=0.5; exp-001=0.6, exp-002=0.7 (both beat baseline under higher-is-better)
+        path = generate_pipeline_diagram(str(tmp_path), "accuracy", lower_is_better=False)
+        data = json.loads(Path(path).read_text())
+        rects = [e for e in data["elements"] if e.get("type") == "rectangle"]
+        # at least one experiment box (not the baseline box) is colored green (beat baseline)
+        assert any(r["backgroundColor"] == COLORS["bg_green"] for r in rects[1:])
+        texts = [e.get("text", "") for e in data["elements"] if e.get("type") == "text"]
+        assert "accuracy=0.6000" in " ".join(texts)
+
     def test_pipeline_empty(self, tmp_path):
         """Pipeline diagram handles empty results gracefully."""
         (tmp_path / "results").mkdir()
@@ -443,6 +492,15 @@ class TestExcalidraw:
         assert Path(path).exists()
         data = json.loads(Path(path).read_text())
         assert len(data["elements"]) > 3
+
+    def test_hp_landscape_higher_is_better(self, tmp_path):
+        """lower_is_better=False: hp-landscape points above baseline color green."""
+        _create_mock_experiments_higher_is_better(tmp_path, num_exps=3, metric="accuracy")
+        path = generate_hp_landscape(str(tmp_path), "lr", "accuracy", lower_is_better=False)
+        data = json.loads(Path(path).read_text())
+        rects = [e for e in data["elements"] if e.get("type") == "rectangle"]
+        # chart background rect + baseline-beating point dots -- at least one dot is green
+        assert any(r["backgroundColor"] == COLORS["green"] for r in rects)
 
     def test_hp_landscape_unknown_hp(self, tmp_path):
         """HP landscape handles HP not in any config."""
@@ -629,6 +687,23 @@ class TestSecondaryMetrics:
         assert " fps |" in md
         assert " 30.0000 |" in md
         assert " — |" in md  # failed exp has no fps value
+
+
+class TestDashboardHTMLBranchIteration:
+    """generate_dashboard() HTML renders code_branch/iteration, not '—' (regression: was reading
+    rank_by_metric()'s trimmed output instead of the raw results dict)."""
+
+    def test_branch_and_iteration_rendered(self, tmp_path):
+        _create_experiments(tmp_path, num=2)
+        exp = {
+            "exp_id": "exp-010", "status": "completed",
+            "config": {"lr": 0.001}, "metrics": {"loss": 0.5},
+            "code_branch": "ml-opt/regression-test-branch", "iteration": 42,
+        }
+        (tmp_path / "results" / "exp-010.json").write_text(json.dumps(exp))
+        html = Path(generate_dashboard(str(tmp_path))).read_text()
+        assert "ml-opt/regression-test-branch" in html
+        assert "<td>42</td>" in html
 
 
 class TestResultsTableDiffBase:

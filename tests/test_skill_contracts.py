@@ -746,13 +746,14 @@ class TestSecondaryMetricsContract:
 
 
 class TestSecondaryMetricsHpTune:
-    """hp-tune lists secondary_metrics as guardrail-only input."""
+    """secondary_metrics is analyze-only — hp-tune's own dispatch never receives it
+    (phase-7-experiment.js sends it only to the analysis-agent prompt), so hp-tune's
+    SKILL.md must not claim it as an input it directly gets."""
 
-    def test_hp_tune_lists_secondary_metrics(self):
+    def test_hp_tune_does_not_claim_secondary_metrics_input(self):
         content = _read_file(SKILLS_DIR / "hp-tune" / "SKILL.md")
         assert content is not None
-        assert "secondary_metrics" in content
-        assert "never replaces `primary_metric`" in content
+        assert "secondary_metrics" not in content
 
 
 # ===========================================================================

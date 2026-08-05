@@ -19,16 +19,17 @@ From the orchestrator or hp-tune skill:
 - `config`: dictionary of hyperparameters
 - `gpu_id`: GPU index to use
 - `project_root`: project root directory
-- `train_command`: base training command (from baseline)
-- `eval_command`: evaluation command (optional)
+- `train_command`: read from `<exp_root>/results/baseline.json` (not passed as a dispatch param)
+- `eval_command`: read from `<exp_root>/results/baseline.json` (optional; not passed as a dispatch param)
 - `eval_tasks`: optional list of task/environment names from Phase 0 user_choices (empty for single-task runs)
+- `divergence_metric`: metric name used for in-run divergence polling (dispatched param; default `"loss"`; see also `divergence_lower_is_better`)
 - `code_branch`: git branch with code changes (optional, from implement manifest)
 - `code_proposal`: name of the research proposal (optional, for tagging results)
 - `proposal_source`: origin of the proposal — `"paper"`, `"llm_knowledge"`, or `null` (pass-through from hp-tune)
 - `method_tier`: which tier this experiment belongs to — `"baseline"`, `"method_default_hp"`, `"method_tuned_hp"`, `"stacked_default_hp"`, or `"stacked_tuned_hp"` (pass-through from hp-tune)
 - `iteration`: HP tuning iteration that produced this config (integer, from hp-tune proposed config)
-- `prepared_train_path`: path to prepared training data (optional, from prerequisites)
-- `prepared_val_path`: path to prepared validation data (optional, from prerequisites)
+- `prepared_train_path`: read from prerequisites/baseline dataset fields (optional; not passed as a dispatch param)
+- `prepared_val_path`: read from prerequisites/baseline dataset fields (optional; not passed as a dispatch param)
 - `code_branches`: list of method branches combined in this stacking experiment (optional, from orchestrator Phase 8)
 - `stacking_order`: position in the stacking chain — 1 = best method alone, 2 = best + second, etc. (optional, integer)
 - `stack_base_exp`: experiment ID of the previous stack step this builds on (optional)
@@ -103,7 +104,7 @@ Before building the training command, verify:
    - **If `fixed_time_budget` is set** (from Phase 0 user_choices): use it directly as `timeout_seconds`. All experiments train for exactly this many seconds. When the budget expires (exit code 124 from `timeout`), this is NOT an error — set `status: "completed"`. Include `"time_budget_seconds": <value>` in the result JSON. **Checkpoint pre-flight:** verify the training script checkpoints periodically (look for `save_freq`, `checkpoint_interval`, `ModelCheckpoint`, periodic `save_checkpoint` calls) or use a framework-native time limit (Lightning `--max_time`, HF `TrainingArguments`). If NEITHER exists, the SIGTERM kill leaves no final checkpoint — warn and record `"eval_checkpoint_missing": true` in the result notes rather than scoring a stale checkpoint.
    - **If `fixed_epoch_budget` is set** (from Phase 0 user_choices): override the epoch count in the training command (e.g., `--epochs <fixed_epoch_budget>`). All experiments train for exactly this many epochs. Include `"epoch_budget": <value>` in the result JSON. Still apply the safety timeout below.
    - **If `fixed_step_budget` is set** (from Phase 0 user_choices — environment timesteps, RL): override the timestep count via the framework's flag (e.g., `--total_timesteps <fixed_step_budget>`). All experiments train for exactly this many environment steps. Include `"step_budget": <value>` in the result JSON. Still apply the safety timeout below.
-   - **Otherwise:** if the orchestrator passes a `timeout_seconds` value, use it directly (it computes `baseline_training_time * 3`). Otherwise compute a timeout:
+   - **Otherwise, compute a timeout** (no dispatch site ever passes a pre-computed `timeout_seconds` value under the current dynamic-workflow dispatch — always derive it from `baseline.json`):
      - If `baseline.json` has `profiling.estimated_timeout_seconds`: `timeout_seconds = profiling.estimated_timeout_seconds` (recorded by the baseline skill for tabular ML and RL)
      - Else if `baseline.json` has `profiling.training_duration_seconds`: `timeout_seconds = profiling.training_duration_seconds * 3`
      - Else if `baseline.json` has `profiling.throughput_samples_per_sec` (iterative DL): `timeout_seconds = int(1.5 × (dataset_size × epochs) / throughput)`
@@ -116,17 +117,13 @@ Before building the training command, verify:
 1. Verify the checkpoint file exists at `checkpoint_source.checkpoint_path`
 2. If missing, log warning to error tracker and fall back to from-scratch training
 3. Read the training script to determine the checkpoint-loading flag (e.g., `--resume`, `--checkpoint`, `--init_checkpoint`)
-4. If no loading mechanism found, set `CHECKPOINT_PATH` environment variable and proceed (the generated script already exports it)
+4. If no loading mechanism found, export `CHECKPOINT_PATH` yourself in the generated script (the CLI-based `experiment_setup.py` generation path does not add this automatically — add the export line when writing/editing the script) and proceed
 
 ## Step 1.3: Capture Reproducibility Metadata
 
 Before running training, capture environment state for reproduction:
 
-1. **Random seed**: if the training script doesn't already set one, generate a seed and set it:
-   ```bash
-   export PYTHONHASHSEED=<seed>
-   ```
-   Record the seed (or null if the training script manages its own seeding).
+1. **Random seed**: record whatever seed value the framework's own `--seed`/`--random_seed` flag uses for this run (set by hp-tune for seed replicates — see `skills/hp-tune/SKILL.md`'s `random_seed` field — or already set by the training script itself). If no such flag exists and the training script manages its own seeding with no way to control it, record `null`. Do NOT use `PYTHONHASHSEED` as the recorded experiment seed — it only affects Python hash randomization, not the numpy/torch/framework RNGs actually driving training.
 
 2. **Environment snapshot**:
    ```bash
@@ -180,8 +177,8 @@ Read the training script to determine the override method:
 - config file (OmegaConf, yaml.load): create a modified config copy
 - environment variables: set them in the script
 
-For the config file approach, write a modified config to:
-`<exp_root>/logs/<round_dir>/<exp_id>/config.yaml`
+For the config file approach: if Step 1.5.b already wrote `<exp_root>/logs/<round_dir>/<exp_id>/config_modified.yaml` (prepared-data-path override), read THAT file as the base and apply the HP overrides on top of it, writing back to the same path — do not start from the original config or write a separately named file, which would silently drop the data-path override. Otherwise, start from the original training config and write the modified copy to:
+`<exp_root>/logs/<round_dir>/<exp_id>/config_modified.yaml`
 
 ## Step 2.1: Artifact Storage
 
@@ -202,7 +199,7 @@ If the training command produces checkpoint files (`*.pt`, `*.pth`, `*.ckpt`, `*
 Use the experiment setup script:
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/experiment_setup.py \
-  <project_root> \
+  <exp_root> \
   "<full_train_command>" \
   <gpu_id> \
   '<config_json>' \
@@ -212,11 +209,11 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/experiment_setup.py \
 
 **Simulator env vars:** read `profiling.sim_env` from `<exp_root>/results/baseline.json` and pass it as the `env_vars_json` argument (it feeds `generate_script`'s `env_vars` param) so every experiment script exports the same headless-rendering env vars as baseline. Omit the argument when `sim_env` is empty or absent.
 
-The `round_dir` argument tells `setup()` to create the placeholder result inside `results/<round_dir>/<exp_id>.json` instead of the flat `results/` path. This is MANDATORY — writes to the flat path are blocked by the PreToolUse hook.
+The `round_dir` argument routes the CLI's placeholder write to `results/<round_dir>/<exp_id>.json` instead of the flat `results/` path. This is MANDATORY — writes to the flat path are blocked by the PreToolUse hook.
 
 Or write the script manually using the Write tool, following templates in `${CLAUDE_SKILL_DIR}/references/script-templates.md`.
 
-**Timeout wrapper:** the training command in the bash script must be wrapped with `timeout`, launched in the background with output redirected to the log, its PID (`$!`) recorded, and the REAL exit code propagated:
+**Timeout wrapper:** the resulting bash script must wrap the training command with `timeout` (using the `timeout_seconds` computed in Step 1.1), launched in the background with output redirected to the log, its PID (`$!`) recorded, and the REAL exit code propagated. Note: the `experiment_setup.py` CLI usage shown above has no argument slot for `timeout_seconds`/`time_budget` — its `generate_script()` only adds this wrapper when called with a `time_budget` kwarg, which the CLI never passes. To get this wrapper when using that CLI, write or edit the generated script to add it, or build the script manually via the Write tool (following `${CLAUDE_SKILL_DIR}/references/script-templates.md`) using the `timeout_seconds` value from Step 1.1:
 ```bash
 timeout --signal=SIGTERM --kill-after=60 {timeout_seconds} {train_command} > <exp_root>/logs/{round_dir}/{exp_id}/train.log 2>&1 &
 echo $! > <exp_root>/logs/{round_dir}/{exp_id}/pid
@@ -322,7 +319,7 @@ After training starts, run a fast sanity check on the first few log entries — 
 
 5. If the first steps look healthy, continue waiting for training to complete normally.
 
-**Note:** this is a fast pre-filter, not a replacement for the monitor skill. The monitor handles gradual divergence (plateau, slow explosion); this handles obvious failures that waste training time.
+**Note:** this is a fast pre-filter, not a replacement for the Step 4 in-run polling loop. That loop (`detect_divergence.py`, every 5 minutes) catches gradual divergence like plateau or slow explosion, by default — no separate monitor dispatch; this early-abort check catches obvious failures in the first few steps, before Step 4's longer polling cadence would notice.
 
 ## Step 5: Parse Results
 
@@ -464,7 +461,7 @@ When training fails, classify the error and either retry (up to 3 attempts) or r
 
 ### Non-Retryable (report immediately, no retry):
 - **OOM** (`CUDA out of memory`): deterministic for the same config — retrying wastes time. Write `status: "failed"`, log with `error_type: "oom"`
-- **Divergence** (detected by monitor): config is inherently unstable. Write `status: "diverged"`
+- **Divergence** (detected by your own Step 4 in-run polling, by default — no separate monitor dispatch): config is inherently unstable. Write `status: "diverged"`
 - **Timeout**: config takes too long. Write `status: "timeout"`
 - **SyntaxError / IndentationError**: code bug, not fixable by retry
 - **Identical error on retry**: if attempt 2 produces the same stderr (first 200 chars match), skip attempt 3
@@ -495,8 +492,8 @@ Retry time counts toward `duration_seconds` (single experiment, not separate ent
     python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log '{"category":"training_failure","severity":"critical","source":"experiment","message":"<error description>","exp_id":"<exp_id>","config":<config_json>,"stack_trace":"<last 20 lines of stderr>"}'
     ```
 
-- **Divergence detected (by monitor):**
-  - Training is killed by the monitor skill
+- **Divergence detected:**
+  - Training is killed by your own Step 4 in-run polling, by default (no separate monitor dispatch unless the opt-in standalone monitor-agent path is wired in for this run)
   - Write results with `"status": "diverged"` and divergence details
 
 - **GPU out of memory:**
@@ -521,4 +518,4 @@ Retry time counts toward `duration_seconds` (single experiment, not separate ent
   - Parse any partial results from the log before the timeout
   - Write results with `"status": "timeout"` and note the timeout duration
   - Log to error tracker with `category: "timeout"`, `severity: "warning"`, `source: "experiment"`
-  - The monitor skill will also detect the process death and mark accordingly
+  - If the opt-in standalone monitor-agent path is wired in for this run, it will also detect the process death and mark accordingly — not the default

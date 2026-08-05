@@ -2,7 +2,7 @@
 """JSON schema validation for pipeline data.
 
 Validates pipeline JSON files (experiment results, baseline, manifest, prerequisites,
-HP proposals, rounds manifest) and inter-agent relay messages against their schemas.
+HP proposals, rounds manifest) and workflow-stage handoff payloads against their schemas.
 
 Usage:
     python3 schema_validator.py <filepath> result                # Validate an experiment result JSON
@@ -12,7 +12,7 @@ Usage:
     python3 schema_validator.py <filepath> hp_proposal           # Validate an HP tuning proposal JSON
     python3 schema_validator.py <filepath> rounds_manifest       # Validate rounds-manifest.json
     python3 schema_validator.py <filepath> result --strict       # Result validation with completeness enforced
-    python3 schema_validator.py relay <route> <json_data>        # Validate an inter-agent relay message
+    python3 schema_validator.py relay <route> <json_data>        # Validate a workflow-stage handoff payload
 
 --strict (result only) promotes completeness warnings to blocking errors. Relay
 routes: analyze_to_tuning, analyze_to_research, monitor_to_tuning,
@@ -39,6 +39,7 @@ EXPERIMENT_RESULT_OPTIONAL = [
     "artifacts_dir", "time_budget_seconds",
     "checkpoint_source", "warm_started",
     "reproducibility", "random_seed", "task_set_mismatch",
+    "eval_protocol",
 ]
 VALID_METHOD_TIERS = ["baseline", "method_default_hp", "method_tuned_hp", "stacked_default_hp", "stacked_tuned_hp"]
 VALID_STATUSES = ["completed", "failed", "diverged", "running", "pending", "timeout"]
@@ -502,13 +503,13 @@ def validate_search_space(entries) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Relay message schemas (inter-agent communication contracts)
+# Handoff payload schemas (workflow-stage contracts, formerly inter-agent relay)
 # ---------------------------------------------------------------------------
 
 RELAY_SCHEMAS = {
     "analyze_to_tuning": {
         "required": ["recommendation", "batch_number"],
-        "optional": ["correlations", "branch_scores", "best_metric_value", "pivot_type", "dead_ends_summary"],
+        "optional": ["correlations", "branch_scores", "best_metric_value", "pivot_type", "dead_ends_summary", "search_space"],
         "types": {"recommendation": str, "batch_number": int, "best_metric_value": (int, float)},
     },
     "analyze_to_research": {

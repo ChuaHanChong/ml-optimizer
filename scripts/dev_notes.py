@@ -2,8 +2,11 @@
 """Managed dev_notes.md writer — dated, agent-attributed session log entries.
 
 Appends to <exp_root>/dev_notes.md with file locking for concurrent-safe writes.
-The --agent-id is embedded as an HTML comment so SubagentStop can verify the
-specific agent invocation (not just the agent type) wrote the entry.
+The --agent-id is embedded as an <!-- agent_id: ... --> HTML comment for
+future/manual verification of which specific agent invocation wrote the
+entry — nothing currently reads it back automatically (SubagentStop's
+validate_agent_output.py accepts an agent_id parameter but never uses it,
+and output_contract.py's CONTRACTS dict has no dev_notes.md entry).
 
 Usage:
     python3 dev_notes.py <exp_root> init

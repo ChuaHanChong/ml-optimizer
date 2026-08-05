@@ -43,9 +43,9 @@ This returns: ranking of all experiments, deltas vs baseline, HP correlations.
 Before analysis, filter out non-completed experiments:
 - Exclude `status: "diverged"` or `status: "failed"` from correlation analysis
 - Include diverged/failed experiments in the failure analysis section (they provide boundary information)
-- Note: `rank_by_metric()` includes all experiments (with a `status` field for filtering); only `identify_correlations()` auto-filters to completed experiments
+- Note: `rank_by_metric()` includes all experiments (with a `status` field for filtering); `identify_correlations()`, `detect_hp_interactions()`, and `aggregate_replicates()` (used by `compute_branch_scores()`/`rank_methods_for_stacking()`) all auto-filter to completed experiments
 - **Branch-aware grouping:** when computing HP correlations (Step 2), group by `code_branch`. Experiments on different branches are analyzed separately — identical HPs may behave differently on different code. If `code_branch` is null or missing, treat as baseline code group.
-- **Warm-start segregation:** segregate results whose config has `checkpoint_source` set (warm-started) from from-scratch results when declaring the best experiment under a fixed budget — a warm-started run consumed its parent's training on top of its own budget, so it is NOT budget-comparable to a from-scratch run. Report the best of each group separately and label warm-started bests as not budget-fair.
+- **Warm-start segregation:** segregate results whose `checkpoint_source` is set (warm-started — a top-level result field, not nested under `config`) from from-scratch results when declaring the best experiment under a fixed budget — a warm-started run consumed its parent's training on top of its own budget, so it is NOT budget-comparable to a from-scratch run. Report the best of each group separately and label warm-started bests as not budget-fair.
 - **Same-protocol comparisons only:** compare `metrics.<primary_metric>` values **only** between experiments sharing the same `eval_protocol`. A held-out-eval number and a train-report number for the same metric can differ by several points on identical code — a cross-protocol delta is invalid. If a batch mixes protocols, normalize to the canonical held-out-eval value (or refuse the delta and flag it) before ranking; never declare an improvement/dead-end/tie across protocols.
 
 ## Step 2: Deep Analysis
@@ -70,7 +70,7 @@ For each varied hyperparameter, use **relative** (percentage) thresholds to clas
 - **Unknown:** not enough variation to determine
 
 ### Interaction Effects
-- Check the `"interactions"` array in the result analyzer output
+- Check the `interactions` array nested at `result.interactions.interactions` in the result analyzer output (the top-level `interactions` key holds `{interactions: [...], note: ...}`)
 - If interactions are detected, note them in the batch report — they indicate which HP pairs to explore together, not independently
 - Use interaction data to inform HP tuning: "If LR × batch_size interaction is strong, suggest testing specific LR+batch combos"
 - **Low-n gating:** correlation entries carry `n` and `low_n`; interaction entries carry `significant` (exact small-n Spearman critical values, n=5..10). A rho from `low_n` (n < 10) single-seed runs is preliminary evidence at best — NEVER base a pivot or an hp-tune directive on a `low_n` or non-`significant` interaction alone; wait for more experiments or corroborating evidence.
@@ -137,77 +137,89 @@ Based on analysis, recommend ONE of:
 - Unexplored search-space regions remain
 - Not yet at diminishing returns
 
-Output:
-```json
-{
-  "action": "continue",
-  "reason": "<specific justification>",
-  "direction": "<what to focus on next>",
-  "suggested_changes": ["<HP1 should be lower>", "<try different scheduler>"]
-}
-```
+Return `decision: "continue"` with `batch_number` and `reason` — see the canonical Output schema at the end of this section (every decision shares one shape; unused fields are `null`/omitted). Note any specific direction (e.g. "HP1 should be lower; try a different scheduler") in `reason`.
 
 ### Try Different Approach (Pivot)
 **When:** you judge the current approach has plateaued. Use your analysis of trends, effect sizes, confidence levels, and improvement trajectories — **no hardcoded thresholds**.
 
-**Pivot Decision Tree** — evaluate conditions in order, respecting `scope_level`. Use judgment on what "plateaued", "declining", or "stalled" means from the evidence:
+**Two fields, two roles.** Your structured output includes both `decision` and `pivot_type`:
+- **`decision`** — the field the phase-7 workflow SCRIPT reads directly to route the next step (required by the schema, along with `batch_number`). One of: `continue | branch_test | hp_expand | narrow_space | regularization | method_proposal | code_evolution | stop`.
+- **`pivot_type`** — a secondary, advisory classification field (optional in the schema — but populate it whenever `decision` is a pivot, so logs/reports and the pivot-gate skeptic check can classify it). The script special-cases exactly ONE `pivot_type` value: if `pivot_type == "qualitative_change"` AND `decision` is not already `stop`/`code_evolution`/`method_proposal`, the workflow reroutes `decision` to `"method_proposal"` for you. Every other `pivot_type` value is informational only — it does not drive dispatch by itself; `decision` does. Valid values: `branch_test | hp_expand | narrow_space | regularization | code_evolution | method_proposal | qualitative_change | method_stacking` (the last two never appear as a `decision` value — see points 3 and 4 below).
+
+**Decision Tree** — evaluate conditions in order, respecting `scope_level`. Use judgment on what "plateaued", "declining", or "stalled" means from the evidence:
 
 1. **Branch coverage:**
-   - Untested branches exist → `branch_test`
-   - Tested branches with insufficient configs → `hp_expand`
-2. **Code-level optimization** _(skip if `scope_level == "training"`)_:
-   All code-level pivots emit `code_evolution`. The orchestrator routes the action (ShinkaEvolve or research-implement).
-   - Trigger: ANY of these → pivot_type: `"code_evolution"`:
-     - HP tuning shows diminishing returns (judge from trend analysis, not a fixed %)
-     - HP correlations are weak (improvement not explained by HP changes)
-     - No research done yet and HP exploration is flattening
-3. **Method stacking** _(skip if `scope_level == "training"` or non-git project)_:
-   Multiple methods from different papers or significant code changes improved independently → pivot_type: `"method_stacking"`. Combining them could yield compound gains. No fixed method count — judge from the archive whether stacking is worth trying.
+   - Untested branches exist → `decision: "branch_test"` (set `untested_branches`)
+   - Tested branches with insufficient configs → `decision: "hp_expand"` (return widened `search_space`)
+2. **Code-level optimization** _(skip if `scope_level == "training"`)_ — a choice between TWO distinct decisions; you must pick which applies, the workflow does not disambiguate a single shared signal into these two routes for you:
+   - No research has been done yet, or HP exploration is flattening and a genuinely new method is needed → `decision: "method_proposal"` (only if `scope_level != "training"`) — the workflow dispatches research-agent then implement-agent.
+   - HP tuning shows diminishing returns AND HP correlations are weak (the method's own code — not its HPs — is what's driving results, roughly |rho|<0.3) → `decision: "code_evolution"` (only if `scope_level == "full"`) — the workflow dispatches tuning-agent (evolve HPs) → implement-agent with the evolve skill (ShinkaEvolve) directly.
+3. **Method stacking** _(advisory only — not a `decision` value; skip if `scope_level == "training"` or non-git project)_:
+   Multiple methods from different papers or significant code changes improved independently — combining them could yield compound gains. This has NO corresponding `decision` value: the phase-7 script's dispatch field has no `method_stacking` entry at all. Instead, report every qualifying branch in `stacking_candidates` (see Stacking Readiness, Output below) on every batch where it applies — the workflow accumulates these continuously across the whole run (plus its own independent baseline-vs-branch harvest each batch) and returns the accumulated, dead-end-filtered list when the loop exits. The orchestrator launches Phase 8 automatically iff that returned list is non-empty — independent of whichever `decision`/`pivot_type` happened to fire on any one batch. You may still set `pivot_type: "method_stacking"` as a note the first batch you notice it — it has no dispatch effect. No fixed method count — judge from the archive whether stacking looks worth flagging.
 4. **Failure pattern:**
-   - High divergence rate → `narrow_space`
-   - Results clustering tightly (no variance) → `code_evolution` (need qualitative change)
-   - Overfitting detected → `regularization` (weight decay/dropout; for `model_category=rl`: entropy coefficient / KL penalty)
-5. **Default:** `continue` — keep exploring. The loop runs autonomously until the goal is reached or the user manually stops.
+   - High divergence rate → `decision: "narrow_space"`
+   - Results clustering tightly (no variance — a qualitative change is needed) → `decision: "code_evolution"` (or `"method_proposal"` if no research has run yet); you may also set `pivot_type: "qualitative_change"` here as a note. (If you set `pivot_type: "qualitative_change"` but leave `decision` at something non-costly — e.g. `continue` — the workflow reroutes `decision` to `"method_proposal"` for you per the special case above; prefer setting `decision` explicitly yourself rather than relying on this fallback.)
+   - Overfitting detected → `decision: "regularization"` (weight decay/dropout; for `model_category=rl`: entropy coefficient / KL penalty)
+5. **Default:** `decision: "continue"` — keep exploring. The loop runs autonomously until the goal is reached or the user manually stops.
 
-Output:
+**Output** (canonical shape for Phase-7 batch-mode analysis — every Phase-7 batch returns this; `decision` and `batch_number` are schema-required, everything else is `null`/omitted when not relevant to your decision. Phase 8's stacking-assessment dispatch of this same agent uses a separate, smaller `recommendation` contract — `continue|code_evolution|stop`, `STACK_ANALYSIS_SCHEMA` in phase-8-stacking.js — with no `decision`/`batch_number` fields):
 ```json
 {
-  "action": "pivot",
+  "decision": "<continue|branch_test|hp_expand|narrow_space|regularization|method_proposal|code_evolution|stop>",
+  "pivot_type": "<branch_test|hp_expand|narrow_space|regularization|code_evolution|method_proposal|qualitative_change|method_stacking|null>",
+  "batch_number": <N>,
+  "best_exp_id": "<best experiment so far, or null>",
+  "best_metric_value": <value, or null>,
+  "improved_since_last_stop": <bool, or null>,
+  "search_space": { "...": "widened/narrowed space for hp_expand/narrow_space/regularization, or null" },
+  "branch_scores": { "...": "per-branch allocation scores, or null" },
+  "correlations": { "...": "HP correlation data, or null" },
+  "untested_branches": ["<branch>", "..."],
+  "surviving_branches": ["<branch>", "..."],
+  "max_batch_size": <int, or null>,
   "reason": "<your evidence-based justification>",
-  "pivot_type": "<branch_test|hp_expand|narrow_space|regularization|code_evolution|method_stacking>",
-  "suggestion": "<specific actionable next step>",
-  "remaining_potential": "<your assessment of room for improvement>"
+  "analysis_path": "<exp_root>/reports/batch-<N>-analysis.md",
+  "stacking_candidates": [{ "branch": "<ml-opt/slug>", "improvement_pct": <value> }]
 }
 ```
 
-**Role split — analysis advises, orchestrator routes:**
+**Role split — you decide, the workflow script dispatches:**
 
-You (the analysis agent) evaluate evidence and advise a DIRECTION. The orchestrator reads your advice and routes the specific ACTION.
+You (the analysis agent) evaluate evidence and return `decision`. The phase-7 workflow script reads `decision` directly and dispatches accordingly:
 
-| You advise (pivot_type) | Orchestrator routes |
+| `decision` | Workflow action |
 |---|---|
-| `branch_test`, `hp_expand`, `narrow_space`, `regularization` | Adjusts search space, dispatches tuning-agent |
-| `code_evolution` | Dispatches tuning (evolve HPs) → implement-agent with evolve skill → experiment |
-| `method_stacking` | Enters Phase 8: merges methods sequentially, resolves interference via ShinkaEvolve |
+| `continue` | Keeps tuning the same search space |
+| `branch_test` | Merges `untested_branches` into `code_branches`, dispatches tuning-agent (does not touch `search_space`) |
+| `hp_expand`, `narrow_space`, `regularization` | Adjusts `search_space`, dispatches tuning-agent |
+| `method_proposal` | Dispatches research-agent, then implement-agent — new methods, new branches |
+| `code_evolution` | Dispatches tuning-agent (evolve HPs) → implement-agent with the evolve skill (ShinkaEvolve) → experiment |
+| `stop` | Runs the stuck protocol (research-agent for fresh ideas) when `method_proposal_scope` is set AND `scope_level != "training"` (`methodProposalsEnabled`); otherwise (including when `method_proposal_scope` is null) checks only for metric improvement + fixpoint exit judgment |
+
+`pivot_type: "method_stacking"` has no row above — it never drives a `decision` (see point 3). It just means: stacking_candidates recorded — the orchestrator enters Phase 8 automatically if any exist when the phase-7 loop exits, not because this pivot_type fired on a particular batch.
 
 ### Stop
-**When:** target metric **robustly** achieved. This is the ONLY automatic stop condition. The loop is autonomous — it runs until the goal is reached or the user manually stops. Even if progress is slow, keep trying different approaches. Never recommend stop just because improvement is small — breakthroughs can come after plateaus.
+**When:** target metric **robustly** achieved, OR approaches genuinely exhausted (no clear direction remains after exploring branches/HPs — this routes through the workflow's stuck protocol + fixpoint check rather than an immediate exit, it does not exit the loop by itself). The loop is autonomous — it runs until the goal is reached or the user manually stops. Even if progress is slow, keep trying different approaches. Never recommend stop just because improvement is small — breakthroughs can come after plateaus.
 
 **Do NOT stop on a within-noise, single-seed target-hit.** A "target achieved" call is only valid on evidence that survives the measured noise floor (Step 2.3):
 - If the best experiment's margin over target is **≥ the measured seed-noise floor**, and it is a real result on the canonical `eval_protocol` → stop is legitimate.
 - If the margin is **within the noise floor**, or the best result is a single unreplicated seed, or it changed >1 variable vs the prior best → do **NOT** stop. Recommend `continue` with a cheap seed-confirmation batch (≥3 seeds on one protocol, champion config held fixed) and a stop-rule of `seed_mean ≥ target`. Gate the stop on `best_seed_mean ≥ target`, never `best_single_seed ≥ target`.
 - **Exit block:** if any `untried` item in `research-agenda.json` outranks (priority) the best-executed idea, exit-to-Phase-9 is blocked — recommend `continue` and run that item first. Never leave the single highest-priority in-scope idea untried at exit.
 
-Include in the stop/continue output: `"noise_floor"`, `"best_seed_mean"` (or null if unreplicated), and `"margin_over_target"` so the orchestrator's fixpoint judgment can audit the call.
+Include in the stop/continue output: `"noise_floor"`, `"best_seed_mean"` (or null if unreplicated), and `"margin_over_target"`. These are informational/audit-trail fields for human review (e.g. in `batch-<N>-analysis.md` and the final report) — the phase-7 workflow's `ANALYSIS_DECISION_SCHEMA` has no such properties and nothing downstream currently reads them programmatically; they don't feed the workflow's fixpoint judgment.
 
 Output:
 ```json
 {
-  "action": "stop",
+  "decision": "stop",
+  "batch_number": <N>,
   "reason": "<why we should stop>",
   "best_exp_id": "<best experiment>",
   "best_metric_value": <value>,
-  "improvement_over_baseline": "<X%>"
+  "improvement_over_baseline": "<X%>",
+  "noise_floor": <value, or null>,
+  "best_seed_mean": <value, or null>,
+  "margin_over_target": <value, or null>
 }
 ```
 
@@ -334,7 +346,7 @@ Append to `<exp_root>/dev_notes.md`:
 ## Output
 
 Return to the orchestrator:
-- The recommended action (continue/pivot/stop)
+- The `decision` value (continue/branch_test/hp_expand/narrow_space/regularization/method_proposal/code_evolution/stop) and, when relevant, the `pivot_type` classification
 - Best experiment ID and metrics
 - Improvement over baseline
 - Key findings summary
@@ -343,14 +355,14 @@ Return to the orchestrator:
 ### Branch Allocation Data (for hp-tune)
 
 When multiple code branches are being tested, include in the analysis output:
-- `branch_scores`: per-branch allocation scores from `${CLAUDE_PLUGIN_ROOT}/scripts/result_analyzer.py` (run with `branch-scores` subcommand or use `compute_branch_scores()`)
+- `branch_scores`: per-branch allocation scores — already part of the `result_analyzer.py <results_dir> <metric> ...` output you ran in Step 1 (computed internally via `compute_branch_scores()`); there is no separate `branch-scores` CLI subcommand
 - Passed to hp-tune for adaptive budget allocation in the next iteration
 
 ### Stacking Readiness
 
 Include in the analysis output:
-- `methods_with_improvement`: count of unique code_branches whose best result beats baseline. Compute using `rank_methods_for_stacking()` from `${CLAUDE_PLUGIN_ROOT}/scripts/result_analyzer.py`.
-- `stacking_candidates`: list of method names (code_proposal values) that improved, ranked by improvement magnitude.
+- `methods_with_improvement`: count of unique code_branches whose best result beats baseline. Compute using `rank_methods_for_stacking()` from `${CLAUDE_PLUGIN_ROOT}/scripts/result_analyzer.py`. Informational only — not in `ANALYSIS_DECISION_SCHEMA`, nothing downstream reads it.
+- `stacking_candidates`: array of `{branch, improvement_pct}` objects — one per code branch whose best result beats baseline, ranked by improvement magnitude (`branch` is the `ml-opt/<slug>` git branch, not a bare method name).
 
 ---
 
@@ -362,7 +374,7 @@ When dispatched with `scope: "session"`, switch from batch analysis to session r
 
 From the orchestrator:
 - `project_root`: project root directory
-- `exp_root`: path to <exp_root>/ directory (default: `<project_root>/experiments`)
+- `exp_root`: path to <exp_root>/ directory (passed explicitly by the orchestrator — no hardcoded default)
 - `primary_metric`: the metric that was optimized
 - `lower_is_better`: whether lower values are better for the primary metric
 - `scope`: `"session"`
@@ -382,7 +394,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> patterns
 
 3. Read experiment data:
    - `<exp_root>/results/baseline.json` — baseline metrics
-   - `<exp_root>/results/exp-*.json` — all experiment results
+   - `<exp_root>/results/round-*/exp-*.json` — all experiment results
    - `<exp_root>/results/implementation-manifest.json` — which proposals were implemented
    - `<exp_root>/reports/research-findings*.md` — what techniques were researched
    - `<exp_root>/optimization-goals.json` — what the user wanted to achieve

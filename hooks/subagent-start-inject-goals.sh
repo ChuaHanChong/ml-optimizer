@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # SubagentStart hook: inject goal memory + output contract for ml-optimizer agents.
-# Ensures every agent sees (1) optimization goals and (2) its required output paths/schemas.
+# Ensures every agent sees (1) available optimization goals and (2), for agents
+# with a defined output contract in output_contract.py, its required output
+# paths/schemas (monitor-agent has none and is exempt).
 set -euo pipefail
 
 INPUT=$(cat)
@@ -32,9 +34,12 @@ if [ -n "$AGENT_TYPE" ] && [ -f "$SCRIPTS/output_contract.py" ]; then
   fi
 fi
 
-# Note: dev_notes.md enforcement is handled entirely at SubagentStop by comparing
-# the embedded <!-- agent_id: ... --> comment in the last entry against the
-# current agent_id. No marker file needed. The output contract (injected via
-# output_contract.py above) tells the agent to call dev_notes.py append.
+# Note: the output contract (injected via output_contract.py above) tells the
+# agent to call dev_notes.py append, which embeds the --agent-id as an
+# <!-- agent_id: ... --> HTML comment. Nothing currently reads that comment
+# back at SubagentStop — output_contract.py's CONTRACTS dict has no
+# dev_notes.md entry, and validate_agent_output.py's check_agent_output()
+# accepts an agent_id parameter but never uses it. The comment is written for
+# future/manual verification, not automatically enforced today.
 
 exit 0

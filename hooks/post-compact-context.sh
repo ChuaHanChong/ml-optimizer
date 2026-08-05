@@ -33,7 +33,8 @@ PRIMARY_METRIC=$(jq -r '.user_choices.primary_metric // "unknown"' "$STATE_FILE"
 LOWER_IS_BETTER=$(jq -r '.user_choices.lower_is_better // "unknown"' "$STATE_FILE" 2>/dev/null)
 RUNNING=$(jq -r '.running_experiments // [] | length' "$STATE_FILE" 2>/dev/null)
 
-# Count completed experiments
+# Count experiment result files (any status — running/failed/diverged/completed all
+# write an exp-*.json; a currently-running experiment is also counted in RUNNING above)
 RESULTS_DIR="$EXP_DIR/results"
 COMPLETED=0
 if [ -d "$RESULTS_DIR" ]; then
@@ -45,7 +46,7 @@ ML-OPTIMIZER PIPELINE CONTEXT (restored after compaction):
 - Phase: $PHASE | Status: $STATUS | Iteration: $ITERATION
 - Primary metric: $PRIMARY_METRIC (lower_is_better=$LOWER_IS_BETTER)
 - Consecutive stops: $STOP_COUNT
-- Experiments completed: $COMPLETED | Currently running: $RUNNING
+- Experiment files: $COMPLETED | Currently running: $RUNNING
 - exp_root: $EXP_DIR
 - State file: $STATE_FILE
 - Read the full state file to restore detailed context before proceeding.

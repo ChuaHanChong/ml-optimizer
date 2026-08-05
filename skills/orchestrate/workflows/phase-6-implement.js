@@ -35,7 +35,7 @@ const VALIDATION_SCHEMA = {
   additionalProperties: false,
   properties: {
     syntax: { enum: ['pass', 'fail'] },
-    import: { enum: ['pass', 'fail'] },
+    import: { enum: ['pass', 'fail', 'skipped_env_dependent'] },
     model_instantiate: { enum: ['pass', 'fail', 'skipped'] },
     forward_pass: { enum: ['pass', 'fail', 'skipped'] },
     unit_tests: { enum: ['pass', 'fail', 'skipped'] },
@@ -66,6 +66,16 @@ const MANIFEST_ENTRY_SCHEMA = {
     commit_sha: { type: 'string' },
     new_dependencies: { type: 'array', items: { type: 'string' } },
     notes: { type: 'string' },
+    diff_summary: {
+      type: 'object',
+      properties: {
+        files_changed: { type: 'number' },
+        lines_added: { type: 'number' },
+        lines_removed: { type: 'number' },
+        changed_functions: { type: 'array', items: { type: 'string' } },
+      },
+    },
+    proposal_source: { type: ['string', 'null'] },
   },
 }
 

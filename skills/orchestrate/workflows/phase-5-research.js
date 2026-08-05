@@ -118,7 +118,7 @@ Respect optimization-goals.json constraints and the dead-end catalog under ${exp
 // Workflow-dispatched agents may skip the SubagentStart/SubagentStop hooks, so the synthesis
 // prompt states the output path and verifyFindings() checks it on disk after the agents run.
 const OUTPUT_CONTRACT = `REQUIRED OUTPUT (research-agent):
-  ${findingsPath}  — research findings (the Phase 5 canonical findings file; PreToolUse hook BLOCKS writes to the wrong path/schema).
+  ${findingsPath}  — research findings (the Phase 5 canonical findings file; no write-time PreToolUse enforcement for this path — verifyFindings() below checks existence post-hoc and repairs a missing/empty file).
 Before finishing, verify ${findingsPath} exists and is non-empty with the Read tool; re-write it if missing.`
 
 // Completeness check (SubagentStop 'verify' role, in-script): a verifier agent confirms the
@@ -173,8 +173,10 @@ Return only candidate proposals scoped to "${angle}" as the schema. Cap knowledg
 
 const angleResults = (await parallel(angleThunks)).filter(Boolean)
 
-// Flatten + dedup candidates by normalized title (case-insensitive, strip trailing
-// "loss"/"function"/"scheduler"/etc.) — the same fuzzy rule the research skill uses.
+// Flatten + dedup candidates by normalized title (case-insensitive; strips the listed
+// words wherever they occur, not just trailing) via an EXACT match on the normalized
+// key — a cruder pass than the substring/abbreviation/70%-overlap fuzzy rule in
+// research/SKILL.md Step 1.1.
 function normTitle(t) {
   let s = String(t || '').toLowerCase().trim()
   s = s.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim()

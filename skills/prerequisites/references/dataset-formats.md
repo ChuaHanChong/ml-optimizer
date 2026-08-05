@@ -18,7 +18,7 @@ data/train/
   class_b/
     img003.jpg
 ```
-**Validation:** Subdirectories exist, each contains image files (.jpg, .jpeg, .png, .bmp, .gif, .tiff, .webp)
+**Validation:** Subdirectories exist; at least one of up to 5 sampled subdirectories contains image files (.jpg, .jpeg, .png, .bmp, .gif, .tiff, .tif, .webp) — not every subdirectory is checked.
 
 ### CIFAR-10/100 (auto-download)
 ```python
@@ -115,7 +115,7 @@ data = jnp.array(np.load("data.npy"))
 import h5py
 f = h5py.File("data.h5", "r")
 ```
-**Expected:** `.h5` or `.hdf5` file. Validate that expected dataset keys exist inside.
+**Expected:** `.h5`, `.hdf5`, or `.hdf` file. Validate that expected dataset keys exist inside (not checked by `validate_data_path()` — the `validate-data` CLI only confirms the file extension matches; agents should open the file with h5py to confirm expected keys if this matters).
 
 ### NumPy arrays
 ```python
@@ -143,7 +143,7 @@ dataset_root/
   data/            # chunked parquet files with per-step observations/actions
   videos/          # optional mp4 camera streams
 ```
-**Validation:** `meta/` and `data/` exist; `data/` contains `.parquet` files. Dataset size is counted in transitions (rows), not episodes.
+**Validation:** Not a special-cased format in `validate_data_path()` (`prerequisites_check.py`) — the `validate-data` CLI only confirms the path is non-empty. Agents should manually check `meta/` and `data/` exist and `data/` contains `.parquet` files before treating a LeRobot dataset as prepared. Dataset size is counted in transitions (rows), not episodes.
 
 ### RLDS (Reinforcement Learning Datasets, TFDS-based)
 ```python

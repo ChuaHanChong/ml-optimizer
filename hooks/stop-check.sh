@@ -27,7 +27,7 @@ if [ ! -f "$STATE_FILE" ]; then
 fi
 
 # If stop_hook_active flag is set, allow stop to avoid infinite loops
-STOP_ACTIVE=$(jq -r '.stop_hook_active // false' "$STATE_FILE" 2>/dev/null)
+STOP_ACTIVE=$(echo "$INPUT" | jq -r '.stop_hook_active // false' 2>/dev/null)
 if [ "$STOP_ACTIVE" = "true" ]; then
   exit 0
 fi

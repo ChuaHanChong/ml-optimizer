@@ -334,7 +334,8 @@ def check_goal_compliance(
 
     Single owner of this rule set — used by the hp-tune/experiment validators
     below and by validate_experiment_write.py's PreToolUse hook (the actual live
-    enforcement point: every Write to proposed-configs/round-N-*/exp-*.json).
+    enforcement point: every Write to proposed-configs/round-N-*/exp-*.json AND
+    results/round-N-*/exp-*.json).
     """
     violations: list[str] = []
     for fp in frozen:
@@ -773,7 +774,7 @@ def sync_from_errors(exp_root: str) -> dict:
         if hc.get("source") == "sync_from_errors"
     }
 
-    # Find the max LR that didn't diverge (if we have divergence events with LR)
+    # Find the min LR that diverged — used as an upper-bound signal (LRs at/above this risk divergence)
     div_lrs = []
     for e in div_events:
         cfg = e.get("config", {})
@@ -841,7 +842,8 @@ Actions:
   sync-from-errors                     Pull OOM/divergence from error_tracker
 
 Categories: hp_constraint, method_outcome, divergence_pattern,
-            resource_constraint, training_insight, scope_violation
+            resource_constraint, training_insight, scope_violation,
+            goal_update, evolve_hp
 """
 
 

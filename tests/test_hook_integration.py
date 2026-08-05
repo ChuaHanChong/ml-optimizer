@@ -12,6 +12,7 @@ SUBAGENT_START_HOOK = HOOKS_DIR / "subagent-start-inject-goals.sh"
 VALIDATE_WRITE_SCRIPT = SCRIPTS_DIR / "validate_experiment_write.py"
 VALIDATE_OUTPUT_SCRIPT = SCRIPTS_DIR / "validate_agent_output.py"
 DEV_NOTES_SCRIPT = SCRIPTS_DIR / "dev_notes.py"
+STOP_CHECK_HOOK = HOOKS_DIR / "stop-check.sh"
 
 
 def _run_hook(hook_path, stdin_json, extra_env=None):
@@ -480,3 +481,47 @@ class TestLayer3OutputVerification:
         )
         decision = _parse_decision(stdout)
         assert decision["decision"] == "approve"
+
+
+# ---------------------------------------------------------------------------
+# Stop hook — loop-guard (stop_hook_active)
+# ---------------------------------------------------------------------------
+
+
+class TestStopCheckLoopGuard:
+    """Stop hook blocks when experiments exist without a final report, but
+    must respect stop_hook_active to avoid re-blocking its own re-invocation."""
+
+    def _setup_experiments_without_report(self, exp_root):
+        exp = exp_root / "experiments"
+        (exp / "pipeline-state.json").write_text(json.dumps({"phase": 7}))
+        (exp / "results" / "round-1-hp").mkdir(parents=True)
+        (exp / "results" / "round-1-hp" / "exp-001.json").write_text(
+            json.dumps({"exp_id": "exp-001", "status": "completed"})
+        )
+        # No reports/final-report.md written — the state that currently
+        # (pre-fix) gets wrongly blocked forever.
+
+    def test_stop_hook_active_true_allows_stop(self, exp_root):
+        """Hook re-invocation (stop_hook_active=true) must allow the stop
+        instead of blocking forever — this is the regression test: it fails
+        before the fix (reads from pipeline-state.json, never true) and
+        passes after (reads from the hook's own stdin)."""
+        self._setup_experiments_without_report(exp_root)
+        exit_code, _, _ = _run_hook(
+            STOP_CHECK_HOOK,
+            {"cwd": str(exp_root), "stop_hook_active": True},
+        )
+        assert exit_code == 0
+
+    def test_stop_hook_active_false_still_blocks(self, exp_root):
+        """Companion test: the same missing-report state still blocks on a
+        fresh (non-reinvoked) stop — proves the fix didn't just make the
+        hook always allow."""
+        self._setup_experiments_without_report(exp_root)
+        exit_code, _, stderr = _run_hook(
+            STOP_CHECK_HOOK,
+            {"cwd": str(exp_root), "stop_hook_active": False},
+        )
+        assert exit_code == 2
+        assert "final report" in stderr.lower()

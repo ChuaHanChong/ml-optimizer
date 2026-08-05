@@ -6,7 +6,7 @@ Dispatch the baseline agent:
 ```
 Agent(
   description: "Establish baseline metrics",
-  prompt: "Establish baseline metrics. Parameters: project_root: {project_root}, train_command: {train_command}, eval_command: {eval_command}, model_category: {model_category}, prepared_train_path: {prepared_train_path or null}, prepared_val_path: {prepared_val_path or null}, eval_tasks: {eval_tasks or []}.",
+  prompt: "Establish baseline metrics. Parameters: project_root: {project_root}, exp_root: {exp_root}, train_command: {train_command}, eval_command: {eval_command}, model_category: {model_category}, primary_metric: {primary_metric}, divergence_metric: {divergence_metric}, prepared_train_path: {prepared_train_path or null}, prepared_val_path: {prepared_val_path or null}, eval_tasks: {eval_tasks or []}.",
   subagent_type: "ml-optimizer:baseline-agent"
 )
 ```
@@ -29,4 +29,4 @@ If baseline fails, diagnose from the error message in baseline.json or error tra
 
 **Retry logic:** Attempt up to 2 retries with adjustments from the table above. Log each retry to the error tracker.
 
-**Skip-baseline fallback:** If all retries fail including unknown errors, offer to create a synthetic baseline.json with user-provided metric values. Mark profiling fields as `null`. This allows the experiment loop to proceed without throughput-based timeout estimation. If the user cannot provide metric values, exit the pipeline and proceed to Phase 9 (report) with partial results. Log to error tracker: `category: "agent_failure", severity: "critical", source: "orchestrate", message: "Baseline failed — cannot proceed"`.
+**Skip-baseline fallback:** If all retries fail including unknown errors, offer to create a synthetic baseline.json with user-provided metric values. Mark profiling fields as `null`, allowing the experiment loop to proceed without throughput-based timeout estimation. If the user cannot provide metric values, exit the pipeline and proceed to Phase 9 (report) with partial results. Log to error tracker: `category: "agent_failure", severity: "critical", source: "orchestrate", message: "Baseline failed — cannot proceed"`.

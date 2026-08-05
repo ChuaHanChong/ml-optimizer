@@ -3,7 +3,7 @@ export const meta = {
   description: "Sequential method-stacking accumulation. Merge improved methods one at a time into ml-opt/stack-N, run/assess each, skip-on-failure, optional code_evolution and narrowed HP-tune. Returns the compound-best stack branch and per-step ledger.",
   phases: [
     { title: "Pre-check", detail: "Skip entirely for non-git (file_backup) projects or when no stacking candidates exist." },
-    { title: "Rank & init", detail: "Rank candidate methods by improvement (descending); the top method's branch seeds ml-opt/stack-1." },
+    { title: "Rank & init", detail: "Rank candidate methods by improvement (descending); the top method's own existing branch becomes the logical stack-1 base (no new branch created for it) -- the first real branch cut is ml-opt/stack-2." },
     { title: "Accumulate", detail: "For each next method: implement-agent merges it into ml-opt/stack-N in a worktree (resolving conflicts), experiment-agent runs it, analysis-agent assesses." },
     { title: "Repair interference", detail: "If the stacked gain trails the best individual gain, optionally run code_evolution (tuning evolve HPs + implement evolve skill); if >1% improvement, optional narrowed HP-tune." },
     { title: "Finalize", detail: "Return the last kept ml-opt/stack-N as the compound best with its metric and a per-step kept/skipped ledger." }
@@ -26,7 +26,9 @@ const STACK_MERGE_SCHEMA = {
   }
 };
 
-// experiment-agent result for one stacked run (subset of EXPERIMENT_RESULT)
+// experiment-agent result for one stacked run (overlaps with EXPERIMENT_RESULT_SCHEMA
+// in phase-7-experiment.js, plus stacking-specific fields: round_dir, code_branches,
+// stacking_order, stack_base_exp)
 const STACK_EXPERIMENT_SCHEMA = {
   type: "object",
   required: ["exp_id", "status", "metrics"],
@@ -478,6 +480,7 @@ for (let i = 1; i < ranked.length; i++) {
         `parent_branch: ${stackBranch}. parent_metrics: ${JSON.stringify(exp.metrics)}.`,
         `primary_metric: ${primary_metric}. lower_is_better: ${lowerIsBetter}. scope_level: ${scope_level}.`,
         `evolve_recommendation: ${JSON.stringify(evolveRec)}.`,
+        `feedback_context: before evolving, read the dead-end catalog (python3 ${PLUGIN}/scripts/error_tracker.py ${exp_root} dead-end list), recurring error patterns (python3 ${PLUGIN}/scripts/error_tracker.py ${exp_root} patterns), the most recent ${exp_root}/reports/batch-*-analysis.md, and ${exp_root}/learned-behaviors.json — pass them as feedback_context: {dead_ends, error_patterns, batch_analysis, learned_behaviors} per the evolve skill's own Input Parameters contract. Do NOT propose mutations matching a dead_ends technique.`,
         `Goal: optimize code-level interactions between the stacked methods ${JSON.stringify(stackedMethods)}.`,
         `Commit the best mutation as ml-opt/evolved-stack-${stackOrder}.`,
         `If ShinkaEvolve is unavailable return status "shinkaevolve_unavailable".`,

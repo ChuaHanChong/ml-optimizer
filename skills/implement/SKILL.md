@@ -45,7 +45,7 @@ If no findings file exists, ask the user to run the `ml-optimizer:research` skil
 
 Group proposals by `implementation_strategy`:
 
-- **`from_reference`:** requires cloning a reference repo. If multiple proposals share the same `reference_repo` URL, clone once and reuse.
+- **`from_reference`:** requires cloning a reference repo. Each proposal clones, uses, and cleans up its own copy independently (Step 4 processes proposals strictly sequentially — see Step 8) — even if multiple proposals share the same `reference_repo` URL, there is no shared-clone reuse.
 - **`from_scratch`:** implemented from paper descriptions and implementation steps only.
 
 Proposals without `implementation_strategy` default to `from_scratch` (backward compatibility).
@@ -76,7 +76,7 @@ cd <project_root> && git rev-parse --is-inside-work-tree 2>/dev/null
 
 **If not a git repo (fallback):**
 - `strategy = "file_backup"`
-- Back up files to `<exp_root>/backups/<slug>/` before each modification
+- One-time baseline snapshot to `<exp_root>/backups/_baseline/` before the first proposal; each proposal restores from it, applies changes, and — if validation passes — backs up its modified state to `<exp_root>/backups/<slug>/` (see Non-Git Fallback Details)
 - Apply changes sequentially, validating after each
 
 ## Step 3.1: Set Up the Implementation Worktree (git strategy)
@@ -85,7 +85,7 @@ Implement inside a git **worktree** so the main working tree is never disturbed.
 ```bash
 PROJECT_HASH=$(echo "<project_root>" | sha1sum | cut -c1-8)
 WORKTREE_ROOT="/tmp/ml-opt-impl-worktrees-${PROJECT_HASH}"; mkdir -p "$WORKTREE_ROOT"
-WORKTREE_PATH="$WORKTREE_ROOT/impl"
+WORKTREE_PATH="$WORKTREE_ROOT/impl-<slug>"  # per-proposal: the workflow dispatches one implement-agent per proposal, concurrently, on git projects — a shared path would race
 # --detach: <original_branch> is checked out in the main tree, so attach detached at its commit.
 git -C <project_root> worktree add --detach "$WORKTREE_PATH" <original_branch>
 cd "$WORKTREE_PATH"
@@ -104,7 +104,7 @@ git -C <project_root> worktree list --porcelain | grep -q "worktree $WORKTREE_PA
 
 Before any implementation (parallel or sequential), validate that all target files exist.
 
-**File-backup strategy note:** for `strategy == "file_backup"`, pre-flight is critical — there is no branch isolation, so a mid-way failure may corrupt the working directory. Verify the baseline backup (`<exp_root>/backups/_baseline/`) is intact before proceeding with other proposals.
+**File-backup strategy note:** for `strategy == "file_backup"`, pre-flight is critical — there is no branch isolation, so a mid-way failure may corrupt the working directory. For the first proposal, this step creates the one-time baseline snapshot (`<exp_root>/backups/_baseline/`, see Non-Git Fallback Details); for every later proposal, verify that snapshot is still intact before proceeding.
 
 For each proposal:
 
@@ -125,7 +125,7 @@ The target `<project_root>` was already indexed at Phase 2 (graph at `<project_r
 Confirm the graph is available (it should be, from Phase 2). If somehow missing, re-index the **main `<project_root>`** (read-only structural analysis — does not modify source), not the throwaway worktree:
 
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py available || { echo "HALT: gitnexus unavailable — was guaranteed by Phase 2"; exit 1; }
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py require || { echo "HALT: gitnexus unavailable — was guaranteed by Phase 2"; exit 1; }
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py is-indexed <project_root> || \
   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py index <project_root>
 ```
@@ -189,7 +189,7 @@ Follow `${CLAUDE_SKILL_DIR}/references/implementation-patterns.md` Section 9.
    ```bash
    python3 ${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py clone <reference_repo_url> <exp_root>/reference-repos/<slug>
    ```
-   If multiple proposals share the same repo, clone once and reuse.
+   Cloned per-proposal into `<slug>`'s own directory and cleaned up at the end of that proposal's cycle (Step 8) — even if another proposal shares the same repo URL, it clones its own independent copy.
 
 2. **Detect framework (narrow use of `analyze`):**
    ```bash
@@ -199,7 +199,7 @@ Follow `${CLAUDE_SKILL_DIR}/references/implementation-patterns.md` Section 9.
 
 3. **Index the reference repo with GitNexus and understand it via the code graph (REQUIRED):** EVERY reference repo MUST be indexed immediately after clone. Index through the wrapper (runs `gitnexus analyze <path> --index-only`, keeping the cloned repo uncontaminated — does NOT inject a GitNexus section into its CLAUDE.md/AGENTS.md, does NOT install `.claude/` skills), then use the gitnexus MCP tools to locate the core implementation and its internal dependencies. You MUST understand the reference repo through the code graph before adapting any code (no `analyze`/`Read`/`Grep` substitute):
    ```bash
-   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py available || { echo "HALT: gitnexus unavailable — was guaranteed by Phase 2"; exit 1; }
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py require || { echo "HALT: gitnexus unavailable — was guaranteed by Phase 2"; exit 1; }
    python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py is-indexed <exp_root>/reference-repos/<slug> || \
      python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py index <exp_root>/reference-repos/<slug>
    ```
@@ -235,7 +235,7 @@ Follow `${CLAUDE_SKILL_DIR}/references/implementation-patterns.md` Section 9.
 
 #### Path B: `from_scratch` (Paper-Based)
 
-Follow `${CLAUDE_SKILL_DIR}/references/implementation-patterns.md` Sections 1-8.
+Follow `${CLAUDE_SKILL_DIR}/references/implementation-patterns.md` Sections 1-8 and 10 (Section 9 is the from_reference path — Path A above).
 
 1. **Read implementation patterns:** Find the matching category for this proposal:
    - Loss function changes → Section 1
@@ -243,7 +243,10 @@ Follow `${CLAUDE_SKILL_DIR}/references/implementation-patterns.md` Sections 1-8.
    - Data augmentation → Section 3
    - Training strategy → Section 4
    - Regularization → Section 5
-   - Paper-based implementation → Section 8
+   - Mixed precision training → Section 6
+   - Distributed training (DDP/FSDP) → Section 7
+   - Paper-based implementation (process) → Section 8
+   - RL / robot-learning codebases (reward shaping, env dynamics, policy/value networks) → Section 10
    Follow the "what to read first" and "minimal change pattern" guidance.
 
 2. **If steps are ambiguous:** if the implementation steps are vague and a paper URL is in the Source field, use WebFetch to re-read the paper before proceeding.
@@ -294,11 +297,11 @@ Read `${CLAUDE_SKILL_DIR}/references/validation-checklist.md` and run checks pro
 4. Model instantiation check — attempt if the project has a model factory (e.g., `get_model()`)
 5. Forward pass shape check — attempt if instantiation succeeds
 
-See `${CLAUDE_SKILL_DIR}/references/validation-checklist.md` for commands. Attempt Level 3 when the project structure supports it (clear model factory or config-based instantiation).
+See `${CLAUDE_SKILL_DIR}/references/validation-checklist.md` for commands. Attempt items 4-5 above — model instantiation, forward pass — when the project structure supports it (clear model factory or config-based instantiation); this is validation-checklist.md's Level 3 (Model Instantiates).
 
 ### 4e.5. Code Quality Gate
 
-Your quality gate is the syntax/import/**LSP** checks above (step 4e) — record the result in the manifest's `validation` block.
+Your quality gate is the syntax/import checks above (step 4e), which include an LSP diagnostic pass (step 4e, item 3) — record the syntax/import results in the manifest's `validation` block.
 
 ### 4f. Write Unit Tests
 
@@ -306,7 +309,7 @@ After validation passes (at least Level 1-2), write a focused unit test for the 
 
 **Test file location:** `<exp_root>/tests/test_<slug>.py`
 
-**Import path: use `<project_root>`, never `$WORKTREE_PATH`** — the worktree is removed after this step, so a test importing from it breaks on re-run.
+**Import path: resolve relative to the current working directory, not a hardcoded absolute path.** Step 4f's test run happens with `cwd=$WORKTREE_PATH` (see "Run tests" below), so the test must pick up the code as it exists there — the *modified* version — not the unmodified `<project_root>`. The generated test does `sys.path.insert(0, os.getcwd())` before importing the module under test (see template below): during Step 4f that resolves to `$WORKTREE_PATH`; if the file is later run again from a different cwd (e.g. `<project_root>` after merge), it resolves against whatever checkout is current there — no hardcoded reference to either path.
 
 **What to test (by proposal type):**
 
@@ -324,6 +327,9 @@ After validation passes (at least Level 1-2), write a focused unit test for the 
 
 ```python
 """Unit tests for ml-opt proposal: <proposal_name>."""
+import os
+import sys
+sys.path.insert(0, os.getcwd())  # resolves against cwd (worktree during Step 4f)
 import pytest
 
 # Framework-specific imports based on detected framework
@@ -382,12 +388,12 @@ Record the commit SHA for the manifest.
 
 ### 4g.1. Extract diff summary and write explanation
 
-After committing, extract a structured diff summary for the dashboard:
+After committing, extract a structured diff summary for the dashboard. **Always use the literal `<project_root>` here, never `$WORKTREE_PATH`, regardless of git strategy** — this overrides the general Step 4 substitution rule above. It's a read-only `git log`/`diff` lookup by branch name, resolvable from the main tree's repo regardless of what's currently checked out where; but inside a worktree `.git` is a file, not a directory, so `implement_utils.py`'s `is_git_repo()` check (which tests `.is_dir()`) returns False and silently short-circuits to an all-zero error result instead:
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py diff <project_root> <branch>
 ```
 
-Store the result as `diff_summary` in the manifest proposal entry.
+The command's JSON result has 5 keys: `files_changed`, `lines_added`, `lines_removed`, `diff_summary` (a string of truncated raw diff text), `changed_functions`. Store only `files_changed`, `lines_added`, `lines_removed`, and `changed_functions` as the manifest proposal entry's `diff_summary` object — drop the nested raw-diff-text string (do not store it under the same key, which would self-nest).
 
 Also write an `explanation` field — a 1-2 sentence plain-language description of what the change does and why it should improve the primary metric (e.g., "Replaces CrossEntropyLoss with FocalLoss to better handle class imbalance, which should improve accuracy on minority classes."). Shown in the live dashboard so users understand each method without reading code.
 
@@ -410,7 +416,7 @@ Write `<exp_root>/results/implementation-manifest.json`:
       "name": "Perceptual Loss Function",
       "slug": "perceptual-loss-function",
       "branch": "ml-opt/perceptual-loss-function",
-      "status": "validated|validation_failed|implementation_error",
+      "status": "validated|validation_failed|implementation_error|preflight_failed",
       "files_modified": ["path/to/file1.py", "path/to/file2.py"],
       "files_created": ["path/to/new_module.py"],
       "complexity": "Low",
@@ -421,7 +427,7 @@ Write `<exp_root>/results/implementation-manifest.json`:
       "license_warning": null,
       "validation": {
         "syntax": "pass|fail",
-        "import": "pass|fail",
+        "import": "pass|fail|skipped_env_dependent",
         "model_instantiate": "pass|fail|skipped",
         "forward_pass": "pass|fail|skipped",
         "unit_tests": "pass|fail|skipped"
@@ -529,8 +535,8 @@ New dependencies needed (install before experiments):
 ## Non-Git Fallback Details
 
 `file_backup` strategy:
-1. **Before the first proposal:** back up ALL files ANY proposal will modify → `<exp_root>/backups/_baseline/` (the clean reference state).
-2. **Before each proposal:** restore ALL target files from `<exp_root>/backups/_baseline/` first (clean slate), then apply this proposal's changes.
+1. **Before each proposal (incremental):** the Phase 6 dispatcher fans out ONE implement-agent per proposal — no single dispatch sees the other selected proposals' `files_to_modify`. Each dispatch backs up only its OWN target files into `<exp_root>/backups/_baseline/` (adding any not already present; existing entries stay untouched) before restoring/applying. `_baseline/` is therefore built up incrementally, one proposal's files at a time, not snapshotted whole up front by a single dispatch. (A whole-batch single-dispatch invocation, e.g. `phase-7-experiment.js`'s `runImplementOnly` — one implement-agent call given the full `selected_indices` array — is the one case where a single dispatch DOES see every proposal's files and can snapshot them all before proposal 1.)
+2. **Before each proposal:** restore this proposal's target files from `<exp_root>/backups/_baseline/` first (clean slate), then apply this proposal's changes.
 3. Validate.
 4. If validation fails: restore from baseline backup.
 5. If validation passes: back up the modified state to `<exp_root>/backups/<slug>/`, then restore from baseline backup (clean state before next proposal).

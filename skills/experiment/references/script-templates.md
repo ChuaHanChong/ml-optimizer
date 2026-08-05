@@ -1,6 +1,6 @@
 # Experiment Script Templates
 
-All templates launch the training command **in the background** with output redirected to the log, record the training PID (`$!` — NOT the wrapper's `$$`, which the monitor cannot use to kill training), `wait` for it, and propagate the **real exit code**. Exit code 124 means the `timeout` wrapper fired — success ONLY in the fixed-time-budget template.
+All templates wrap the training command in `timeout` unconditionally and launch it **in the background** with output redirected to the log. The recorded PID (`$!`) is `timeout`'s own PID, not the training process's directly — `timeout` backgrounds itself and forwards SIGTERM/SIGKILL to its training child. NOT the outer script's `$$` either, which the monitor cannot use to kill anything. The script `wait`s for it and propagates the **real exit code**. Exit code 124 means the `timeout` wrapper fired — success ONLY in the fixed-time-budget template.
 
 ## Basic Training Script (with PID tracking)
 ```bash
@@ -17,7 +17,7 @@ echo "Starting experiment {exp_id} on GPU {gpu_id}"
 echo "Config: {config_summary}"
 echo "Started at: $(date)"
 
-{train_command} > <exp_root>/logs/{round_dir}/{exp_id}/train.log 2>&1 &
+timeout --signal=SIGTERM --kill-after=60 {timeout_seconds} {train_command} > <exp_root>/logs/{round_dir}/{exp_id}/train.log 2>&1 &
 echo $! > <exp_root>/logs/{round_dir}/{exp_id}/pid
 EXIT_CODE=0
 wait $! || EXIT_CODE=$?
@@ -61,7 +61,7 @@ export CUDA_VISIBLE_DEVICES={gpu_id}
 
 mkdir -p <exp_root>/logs/{round_dir}/{exp_id}
 
-python train.py \
+timeout --signal=SIGTERM --kill-after=60 {timeout_seconds} python train.py \
   --config {base_config} \
   --lr {lr} \
   --batch_size {batch_size} \
@@ -87,7 +87,7 @@ export CUDA_VISIBLE_DEVICES={gpu_id}
 mkdir -p <exp_root>/logs/{round_dir}/{exp_id}
 
 # Training (background + real PID + real exit code)
-{train_command} > <exp_root>/logs/{round_dir}/{exp_id}/train.log 2>&1 &
+timeout --signal=SIGTERM --kill-after=60 {timeout_seconds} {train_command} > <exp_root>/logs/{round_dir}/{exp_id}/train.log 2>&1 &
 echo $! > <exp_root>/logs/{round_dir}/{exp_id}/pid
 EXIT_CODE=0
 wait $! || EXIT_CODE=$?
@@ -127,21 +127,24 @@ cd "$WORKTREE_PATH"
 
 # Training (absolute log path — the worktree is outside <exp_root>): background
 # launch, training PID ($!) to the pid file, wait, capture the real exit code.
-{train_command} > <exp_root>/logs/{round_dir}/{exp_id}/train.log 2>&1 &
+timeout --signal=SIGTERM --kill-after=60 {timeout_seconds} {train_command} > <exp_root>/logs/{round_dir}/{exp_id}/train.log 2>&1 &
 echo $! > <exp_root>/logs/{round_dir}/{exp_id}/pid
 EXIT_CODE=0
 wait $! || EXIT_CODE=$?
 
+# Evaluation — MUST run inside the worktree before cleanup (skip if training failed).
+# `|| true` guards against `set -e` aborting the script on a nonzero eval exit, which
+# would otherwise skip the artifact-copy and worktree-cleanup steps below.
+if [ $EXIT_CODE -eq 0 ]; then
+    {eval_command} > <exp_root>/logs/{round_dir}/{exp_id}/eval.log 2>&1 || true
+fi
+
 # Copy artifacts out of the worktree before cleanup — checkpoints may be nested
 # in framework output dirs, so search up to 4 levels deep (not a root-only glob).
+# Runs AFTER eval so any eval-report files {eval_command} writes are captured too.
 find . -maxdepth 4 \( -name '*.pt' -o -name '*.pth' -o -name '*.ckpt' -o -name '*.h5' \
   -o -name '*.pkl' -o -name '*.safetensors' \) \
   -exec cp {} <exp_root>/artifacts/{round_dir}/{exp_id}/ \; 2>/dev/null || true
-
-# Evaluation — MUST run inside the worktree before cleanup (skip if training failed)
-if [ $EXIT_CODE -eq 0 ]; then
-    {eval_command} > <exp_root>/logs/{round_dir}/{exp_id}/eval.log 2>&1
-fi
 
 # Cleanup worktree (validate registration first, never rm -rf)
 cd - >/dev/null

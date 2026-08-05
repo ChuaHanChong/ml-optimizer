@@ -51,7 +51,7 @@ Be skeptical when:
 - No code AND ambiguous method description
 - Reference repo uses an incompatible framework with deep infrastructure entanglement
 - Reference repo has no license (legal risk for adaptation)
-- Reference repo is >3 years old with deprecated dependencies
+- Reference repo is >2 years old with deprecated dependencies (matches the repo quality gate in SKILL.md/research-agent.md — a repo not updated within 2 years already fails that gate)
 - Preprint with no peer review AND no reference implementation
 - alphaxiv summary shows conflicting claims between abstract and results
 
@@ -114,16 +114,16 @@ Especially useful when comparing candidate techniques — one call extracts the 
 2. Drill into the implementation directory (e.g., `path: "models/"` or `path: "src/"`)
 3. Read specific implementation files for core technique code
 
-This replaces cloning repos locally for initial assessment. Reserve cloning (via `${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py clone`) for the implement phase when actual code adaptation happens.
+This alphaxiv pass is a lightweight first look at repo structure and quality — it does not replace cloning. Every `from_reference` candidate must still be cloned and GitNexus-indexed during research (see the Code Analysis workflow in `SKILL.md`) so its feasibility can be judged from the code graph before `implementation_strategy` is set — cloning is not deferred to the implement phase.
 
 ### Fallback:
 If alphaxiv tools are unavailable, use `WebFetch(url)` for paper content and `WebFetch` on GitHub README URLs for repo assessment.
 
 ## Previously Tried Techniques
 
-Before proposing, check if `<exp_root>/reports/research-findings.md` already exists. If so:
-1. Read all previously proposed technique names
-2. Do NOT re-propose already-tried techniques
+Before proposing, check all existing findings-file variants and the dead-end catalog — see research/SKILL.md Step 1.1 for the current list and commands. If any exist:
+1. Read all previously proposed technique names AND dead-end names
+2. Apply fuzzy matching (see SKILL.md Step 1.1) — do NOT re-propose already-tried or dead-end techniques
 3. Note in the output: "Excluded N previously-proposed techniques"
 
 This prevents re-implementing techniques from prior optimization runs.

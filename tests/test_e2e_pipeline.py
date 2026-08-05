@@ -1739,11 +1739,11 @@ def _hook_input(tool_input: dict, tool_name: str = "Bash") -> str:
 
 
 def _hook_result_input(stdout: str = "", stderr: str = "", cwd: str = "/tmp") -> str:
-    """Build PostToolUse JSON payload with tool result."""
+    """Build PostToolUse JSON payload with tool result (real harness field: tool_response)."""
     return json.dumps({
         "tool_name": "Bash",
         "tool_input": {"command": "train"},
-        "tool_result": {"stdout": stdout, "stderr": stderr},
+        "tool_response": {"stdout": stdout, "stderr": stderr},
         "cwd": cwd,
     })
 
@@ -2409,7 +2409,10 @@ class TestEvolveE2E:
         assert "HP-only" in content or "hp.only" in content.lower() or "HP only" in content
 
     def test_phase8_stacking_has_analysis_driven_evolve_loop(self):
-        """Phase 8 loops evolve + HP-tune until analysis confirms improvement or stops."""
+        """Phase 8 attempts code_evolution + HP-tune once per stack step to repair
+        interference; promotion afterward is a direct isBetter() comparison against
+        the pre-evolve/pre-tune metric, not a second analysis-agent loop (there is
+        exactly one analysis-agent dispatch per stack step)."""
         phase8_path = (PLUGIN_ROOT / "skills" / "orchestrate" / "references"
                       / "phase-8-stacking.md")
         content = phase8_path.read_text()
@@ -2420,12 +2423,14 @@ class TestEvolveE2E:
         assert 'Skill("ml-optimizer:evolve")' in content or "ml-optimizer:evolve" in content
         # Compares stacked vs best individual (interference detection)
         assert "best individual" in content or "best_individual" in content
-        # Loops until analysis says continue or stop — no hard max
-        assert "Re-analyze" in content or "re-analyze" in content
-        assert "loop back" in content.lower()
+        # Promotion is a direct numeric comparison, not a second analysis-agent dispatch
+        assert "isBetter" in content
+        assert "not a second analysis call" in content or "not a second analysis-agent" in content
         assert "stop" in content.lower()
-        # Tracks which steps were evolved
-        assert "evolved_methods" in content
+        # Promotion of an evolved branch is tracked in-memory (keptBranch/keptMetric/keptExp),
+        # not via a separate persisted tracking list — no cross-session "stacking state" exists
+        # (see the corrected "Stacking Phase Resumption" section of the same doc).
+        assert "keptBranch" in content
         # Handles evolve failure gracefully
         assert "shinkaevolve_unavailable" in content
         # Dispatches tuning agent for evolve HPs
@@ -2470,6 +2475,8 @@ class TestEvolveE2E:
         # Branch creation uses stack_base_branch (not hardcoded ml-opt/stack-<order-1>)
         assert "stack_base_branch" in content
         assert "ml-opt/stack-<order-1>" not in content
-        # HP-tune dispatch uses stack_base_branch (not hardcoded)
-        assert "{stack_base_branch}]" in content
+        # HP-tune dispatch uses keptBranch (the real phase-8-stacking.js field name for
+        # this dispatch — not stack_base_branch, which is a different variable), not a
+        # hardcoded branch name
+        assert "{keptBranch}]" in content
 

@@ -7,7 +7,8 @@ file_path and content), resolves exp_root from the .claude/ml-optimizer.json
 breadcrumb, and enforces that exp-*.json results live in round-N-<type>/ directories
 (and proposed configs in proposed-configs/round-N-<type>/), that root-level files
 (baseline/prerequisites/manifest/rounds-manifest) sit directly in results/, plus
-schema, completeness, and goal-compliance (frozen params, OOM limits) checks. Prints
+schema, completeness, and goal-compliance (frozen params, OOM limits, and at
+training scope, domain-randomization parameter edits) checks. Prints
 a JSON decision ({"decision": "approve"|"block", "reason": ...}) on stdout.
 """
 
@@ -34,7 +35,7 @@ from schema_validator import (
 )
 
 # Round directory name pattern: round-<N>-<type>
-ROUND_DIR_PATTERN = re.compile(r"^round-\d+-(?:hp|evolved|research|stacked|meta)$")
+ROUND_DIR_PATTERN = re.compile(r"^round-\d+-(?:hp|evolved|research|stacked)$")
 
 
 def approve(reason: str | None = None) -> None:
@@ -191,10 +192,11 @@ def _check_goal_compliance(data: dict, file_path: str) -> str | None:
 
     Thin adapter over goal_memory.check_goal_compliance (the single owner of these
     rules) — this hook is the actual live enforcement point: it runs on every
-    Write to proposed-configs/round-N-*/exp-*.json, which is how a tuning-agent's
-    DR-tuning proposal actually gets blocked. Degrades to None when the config is
-    absent, the write is a running/pending placeholder, or no breadcrumb locates
-    the exp_root.
+    Write to proposed-configs/round-N-*/exp-*.json (blocking a tuning-agent's
+    out-of-bounds proposal before it runs) AND on every Write to
+    results/round-N-*/exp-*.json (blocking a non-compliant completed result).
+    Degrades to None when the config is absent, the write is a running/pending
+    placeholder, or no breadcrumb locates the exp_root.
     """
     config = data.get("config")
     if not isinstance(config, dict) or not config:
@@ -319,7 +321,7 @@ def validate(hook_input: dict) -> None:
             block(
                 f"Experiment result {filename} is in '{parent_dir}/' which does not match "
                 f"the round directory pattern (round-N-<type> where type is "
-                f"hp|evolved|research|stacked|meta)"
+                f"hp|evolved|research|stacked)"
             )
 
         # Validate result content
@@ -342,7 +344,7 @@ def validate(hook_input: dict) -> None:
             if completeness_reason:
                 block(f"Experiment result {filename}: {completeness_reason}")
 
-        # Goal compliance check (frozen params, OOM limits)
+        # Goal compliance check (frozen params, OOM limits, training-scope DR params)
         if data is not None:
             goal_reason = _check_goal_compliance(data, file_path)
             if goal_reason:

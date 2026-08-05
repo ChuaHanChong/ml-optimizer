@@ -50,7 +50,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gitnexus_utils.py mcp-registered
 ```
 Interpret the `{"registered": ...}` output:
 - `false` → emit a **WARNING** (do NOT fail): CLI installed but MCP server not registered, so downstream agents cannot query the code graph. Guide the user to run `gitnexus setup` (manual fallback `claude mcp add --transport stdio --scope user gitnexus gitnexus mcp`). A freshly-registered MCP server only becomes available after a Claude Code session restart. Proceed to Step 0.3.
-- `null` → cannot determine (`claude` CLI not on PATH); proceed silently. Any real failure is caught downstream as a hard error.
+- `null` → cannot determine (`claude` CLI not on PATH, or the `mcp get` probe errored/timed out); proceed silently. Any real failure is caught downstream as a hard error.
 - `true` → good; proceed.
 
 Record the probe result under `code_graph.mcp_registered` (`true`/`false`/`null`) in the prerequisites report (Step 7).
@@ -183,7 +183,7 @@ conda env list | grep -w <env_name>
 ```
 If the environment does not exist:
 
-**Exception — RL/simulator projects (ask, do NOT auto-create):** If `model_category` is `"rl"` OR the import scan found a simulator-runtime import (any `NEVER_AUTO_INSTALL` import, `isaacgym`, or `mujoco`), do NOT auto-create the environment. Simulator stacks require a specific pre-built environment (Isaac Sim's bundled python, a habitat conda env, a ROS-sourced shell). Use AskUserQuestion to ask which existing environment to use first.
+**Exception — RL/simulator projects (ask, do NOT auto-create):** If `model_category` is `"rl"` OR a quick `scan-imports` run now (ahead of the full Step 5 scan below) finds a simulator-runtime import (any `NEVER_AUTO_INSTALL` import, `isaacgym`, or `mujoco`), do NOT auto-create the environment. Simulator stacks require a specific pre-built environment (Isaac Sim's bundled python, a habitat conda env, a ROS-sourced shell). Use AskUserQuestion to ask which existing environment to use first.
 
 Otherwise, auto-create the conda environment with `conda create -n <env_name> python=<detected_python_version> -y`. Log to dev_notes: "Auto-created conda env '<env_name>'". If auto-creation fails, use AskUserQuestion:
 ```
@@ -256,7 +256,7 @@ For all other packages, install using the user's preferred manager:
 
 After installation, re-run the package check to verify:
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/prerequisites_check.py check-packages '<still_missing_json>'
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/prerequisites_check.py check-packages '<still_missing_json>' <python_executable>
 ```
 
 **Classify failures:**
@@ -316,7 +316,7 @@ Write `<exp_root>/results/prerequisites.json`:
     "notes": "<any issues or info>"
   },
   "environment": {
-    "manager": "conda|uv|pip|poetry|other",
+    "manager": "conda|uv|pip|poetry|venv|unknown",
     "python_version": "3.x.y",
     "packages_installed": ["<newly installed packages>"],
     "packages_failed": ["<packages that failed to install>"],

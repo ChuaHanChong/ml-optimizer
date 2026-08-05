@@ -70,13 +70,13 @@ Experiments on different code branches (from the implement skill) are analyzed p
 ### Adaptive Budget Allocation
 
 In iteration 2+, when multiple branches survive pruning, allocate slots proportionally rather than equally:
-- **Scoring:** `score = improvement_pct * (1 - 1/sqrt(n+1))` where n = experiments on that branch
+- **Scoring:** `score = max(improvement_pct * (1 - 1/sqrt(n+1)), 0.0)` where n = experiments on that branch. Branches worse than baseline get score 0 and no allocation.
 - **Minimum:** Every branch gets at least 1 slot
 - **Rebalance each iteration:** Scores change as new data arrives
 
 ## Batch Sizing Strategy
 
-When proposing N experiments (one per GPU):
+When proposing N experiments (N = num_configs, the orchestrator-computed batch size — may pack multiple experiments per GPU, or be capped at 1 for sequential file-backup projects):
 
 - **Exploration batch (first 1-2 batches):** Wide spread across search space
   - e.g. LR in {1e-2, 1e-3, 1e-4, 1e-5} — cover order of magnitude
@@ -86,14 +86,14 @@ When proposing N experiments (one per GPU):
 
 ## Multi-Objective Optimization
 
-When optimizing multiple metrics simultaneously (e.g. accuracy AND latency):
+Even though hp-tune's only metric input is `primary_metric`, proposals sometimes need to reason about secondary concerns (e.g. accuracy AND latency) implied by the goal. General reasoning approaches:
 
 1. **Weighted scoring:** Combine into a single score: `score = w1 * metric1_normalized + w2 * metric2_normalized`. Ask the user for relative weights.
 2. **Pareto frontier:** Identify experiments where no other is better on ALL metrics. Present the Pareto-optimal set to the user.
 3. **Constraint-based:** Optimize the primary metric subject to a secondary constraint (e.g. "maximize accuracy where latency < 100ms").
 4. **Sequential:** First optimize the primary metric, then fine-tune the secondary without regressing.
 
-When `secondary_metric` is provided, include both metrics in the ranking and note trade-offs.
+Multi-metric guardrail handling (including `secondary_metrics`) is owned by the analyze skill, not hp-tune — this section is general reasoning guidance only.
 
 ## Multi-Loss Training
 

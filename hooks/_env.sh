@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Shared helper: common environment for ml-optimizer hooks.
-# Source this at the top of every hook that needs PLUGIN_ROOT or EXP_DIR.
+# Source this at the top of hooks that need PLUGIN_ROOT and want the test-time
+# fallback (all current hooks except file-changed-pipeline-state.sh and
+# subagent-start-inject-goals.sh, which reference ${CLAUDE_PLUGIN_ROOT} directly).
+# EXP_DIR/EXP_ROOT must still be resolved separately via find-exp-root.sh.
 #
 # Provides:
 #   PLUGIN_ROOT  — absolute path to the ml-optimizer plugin directory.

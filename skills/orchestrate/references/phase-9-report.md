@@ -7,8 +7,8 @@ After the experiment loop exits:
 **Pre-report state verification:** Before dispatching the report agent, verify critical state files exist:
 - `<exp_root>/results/baseline.json` — must exist
 - `<exp_root>/pipeline-state.json` — must exist
-- `<exp_root>/results/exp-*.json` — at least 1 must exist
-If any are missing, log to error tracker (`category: "config_error"`) and warn the user. Do NOT proceed with reporting if baseline is missing.
+- `<exp_root>/results/round-*/exp-*.json` — at least 1 must exist
+If any are missing, log to error tracker (`category: "config_error"`) and warn the user. If baseline is missing, still dispatch the report agent — with baseline comparisons omitted, per its own documented graceful handling (report-agent.md: "If no baseline exists, report absolute values only").
 
 ## Step 1: Generate Report & Present Summary
 
@@ -17,7 +17,7 @@ Dispatch the report agent:
 ```
 Agent(
   description: "Generate final optimization report",
-  prompt: "Generate a comprehensive final report. Parameters: project_root: {project_root}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, model_description: {model_description}, task_description: {task_description}.",
+  prompt: "Generate a comprehensive final report. Parameters: project_root: {project_root}, exp_root: {exp_root}, primary_metric: {primary_metric}, lower_is_better: {lower_is_better}, model_description: {model_description}, task_description: {task_description}.",
   subagent_type: "ml-optimizer:report-agent"
 )
 ```

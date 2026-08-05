@@ -39,6 +39,16 @@ result = validate_imports(module_path, project_root, python_executable=project_e
 
 ---
 
+## LSP Static Check (Pyright) (Mandatory)
+
+For each modified `.py` file, use the `LSP` tool to get diagnostics. This catches undefined names, type mismatches, wrong call signatures, and unresolved imports **statically** — before any GPU time.
+
+**Pass criteria:** No blocking errors reported.
+**Failure handling:** Treat errors as blocking — fix and re-check. Warnings are advisory (log to dev_notes).
+**If unavailable:** if the `LSP` tool is unavailable (pyright not installed), skip and note it — the syntax/import checks above still apply.
+
+---
+
 ## Level 3: Model Instantiates (Recommended)
 
 Verify the model can be created with the existing config after code changes.
@@ -220,4 +230,4 @@ print(f"Peak GPU memory: {peak_mb:.0f} MiB")
 | Full validation before experiment | 1-7 |
 | Memory-sensitive changes | 1-8 |
 
-Levels 1-2 are mandatory, automated via `${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py`. Level 5 (unit tests) is written and run by the implement agent. Levels 3-4 and 6-8 need project-specific setup and run as bash commands by the implement agent.
+Levels 1-2 plus the LSP static check (Pyright) are mandatory — Levels 1-2 automated via `${CLAUDE_PLUGIN_ROOT}/scripts/implement_utils.py`, LSP run via the `LSP` tool. Level 5 (unit tests) is written and run by the implement agent. Levels 3-4 and 6-8 need project-specific setup and run as bash commands by the implement agent.

@@ -390,3 +390,43 @@ class TestArgDerivationRealExecution:
     def test_seeds_per_config_absent_becomes_null(self):
         out = _run_derivation({}, {})
         assert out["seedsPerConfig"] is None
+
+
+# ---------------------------------------------------------------------------
+# Phase 7 remote GPU execution
+# ---------------------------------------------------------------------------
+
+class TestPhase7RemoteExecution:
+    """Phase 7 must be able to send training to a remote GPU host.
+
+    The `remote` object from Phase 0 (`{host, workdir, env_python}`) is the only switch:
+    present means experiments wrap their training command in remote_train.sh, absent means
+    everything stays local. A silent failure here is expensive — experiments would run on
+    the orchestrating machine, which in a remote setup has no GPU.
+    """
+
+    SRC = (WORKFLOWS_DIR / "phase-7-experiment.js").read_text()
+
+    def test_remote_is_read_from_args_and_requires_a_host(self):
+        assert "const remote = A.remote && A.remote.host ? A.remote : null;" in self.SRC
+
+    def test_local_runs_are_unchanged(self):
+        """Without `remote`, the injected block must be empty — no prompt drift."""
+        m = re.search(r'const remoteBlock = remote\s*\?(.*?)\n  : "";', self.SRC, re.S)
+        assert m, "remoteBlock ternary missing"
+        assert m.group(0).rstrip().endswith(': "";')
+
+    def test_remote_block_carries_every_field_the_wrapper_needs(self):
+        m = re.search(r'const remoteBlock = remote\s*\?(.*?)\n  : "";', self.SRC, re.S)
+        branch = m.group(1)
+        for needle in ("remote_train.sh", "--host ${remote.host}",
+                       "--env-python ${remote.env_python}", "--gpu <gpu_id>"):
+            assert needle in branch, f"remote branch is missing {needle}"
+
+    def test_gpu_scheduling_targets_the_remote_host(self):
+        """Scheduling against the local box would find zero GPUs and stall the round."""
+        assert "gpu_check.py 30 80 ${remote.host}" in self.SRC
+
+    def test_remote_block_reaches_the_experiment_prompt(self):
+        """Defining the block without interpolating it is the likely refactor slip."""
+        assert "${cpuClause}${remoteBlock}" in self.SRC

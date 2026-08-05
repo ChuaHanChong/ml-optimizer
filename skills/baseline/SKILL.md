@@ -19,6 +19,7 @@ The orchestrator provides:
 - `prepared_val_path` (optional): same for validation data
 - `model_category` (optional): from user_choices — `"supervised"`, `"rl"`, `"generative"`, or null. Controls RL-specific evaluation (see RL Baseline Evaluation). The tabular-ML GPU-profiling skip is framework-detected (Step 4), independent of `model_category`.
 - `eval_tasks` (optional): list of task/environment names from Phase 0 `user_choices`, for multi-task evaluation. Empty/absent = single-task, no change in behavior.
+- `remote`: optional `{host, workdir, env_python}` from Phase 0 Q13. When present, run the baseline through `remote_train.sh` so it shares hardware with the experiments it will be compared against.
 
 ## Step 1: Identify Evaluation Command
 
@@ -196,7 +197,10 @@ Run a short training session to measure GPU resource usage:
    # Start a short training run (1-2 epochs or ~100 steps)
    # Then check GPU memory:
    python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gpu_check.py
+   # Remote GPUs (user_choices.remote): pass thresholds + host, else you profile the wrong machine
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gpu_check.py 30 80 <remote.host>
    ```
+   **Remote GPUs (`user_choices.remote`):** run the baseline itself through `${CLAUDE_PLUGIN_ROOT}/scripts/remote_train.sh` exactly as experiments do (see the experiment skill's "Running on a remote GPU host"). A baseline measured on different hardware than the experiments is not a valid comparison point.
 
 2. **Estimate throughput:** parse the training log for step timing; calculate samples/second or steps/second
 

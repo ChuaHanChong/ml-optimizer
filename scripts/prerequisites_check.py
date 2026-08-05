@@ -10,7 +10,7 @@ command.
 
 Usage:
     python3 prerequisites_check.py scan-imports <project_root>                              # Classify imports as stdlib/third_party/local
-    python3 prerequisites_check.py check-packages '<json_list>' [python_executable]         # Report which packages are installed/missing
+    python3 prerequisites_check.py check-packages '<json_list>' [python_executable] [host]  # Report which packages are installed/missing (probe over ssh when host is given)
     python3 prerequisites_check.py detect-env <project_root>                                # Detect the env manager (conda/uv/poetry/pip/venv)
     python3 prerequisites_check.py detect-format <training_script>                          # Detect dataset format from a training script
     python3 prerequisites_check.py detect-format-project <project_root> <training_script>   # Detect dataset format across script + local imports
@@ -24,6 +24,7 @@ import itertools
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -162,8 +163,12 @@ def scan_imports(
 def check_missing_packages(
     packages: list[str],
     python_executable: str = "python3",
+    host: str = "",
 ) -> dict:
     """Check which *packages* cannot be imported by *python_executable*.
+
+    With *host* set (or ML_OPTIMIZER_GPU_HOST in the environment), the probes run there
+    over ssh — for remote training it is that environment which must satisfy the imports.
 
     Imports listed in NEVER_AUTO_INSTALL are routed to "manual_install_required"
     (import name → guidance) instead of "missing" when absent. Returns
@@ -174,14 +179,23 @@ def check_missing_packages(
     missing: list[str] = []
     manual: dict[str, str] = {}
     errors: dict[str, str] = {}
+    host = host or os.environ.get("ML_OPTIMIZER_GPU_HOST", "")
 
     for pkg in packages:
+        # shlex.quote so a package name can never break out of the remote shell word.
+        probe = [python_executable, "-c", f"import {pkg}"]
+        cmd = (
+            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", host,
+             " ".join(shlex.quote(part) for part in probe)]
+            if host
+            else probe
+        )
         try:
             result = subprocess.run(
-                [python_executable, "-c", f"import {pkg}"],
+                cmd,
                 capture_output=True,
                 text=True,
-                timeout=30,
+                timeout=60 if host else 30,
             )
             if result.returncode == 0:
                 installed.append(pkg)
@@ -195,7 +209,8 @@ def check_missing_packages(
                     errors[pkg] = stderr.splitlines()[-1]
         except FileNotFoundError:
             missing.append(pkg)
-            errors[pkg] = f"Python executable not found: {python_executable}"
+            # With host set it is ssh that is missing locally, not the remote interpreter.
+            errors[pkg] = "ssh not found" if host else f"Python executable not found: {python_executable}"
         except subprocess.TimeoutExpired:
             missing.append(pkg)
             errors[pkg] = "Import timed out"
@@ -950,7 +965,7 @@ if __name__ == "__main__":
         print(
             "Usage:\n"
             "  prerequisites_check.py scan-imports <project_root>\n"
-            "  prerequisites_check.py check-packages '<json_list>' [python_executable]\n"
+            "  prerequisites_check.py check-packages '<json_list>' [python_executable] [host]\n"
             "  prerequisites_check.py detect-env <project_root>\n"
             "  prerequisites_check.py detect-format <training_script>\n"
             "  prerequisites_check.py detect-format-project <project_root> <training_script>\n"
@@ -978,7 +993,10 @@ if __name__ == "__main__":
             print(f"Error: invalid JSON '{sys.argv[2]}'")
             sys.exit(1)
         python_exec = sys.argv[3] if len(sys.argv) > 3 else "python3"
-        _print_json(check_missing_packages(packages, python_executable=python_exec))
+        remote_host = sys.argv[4] if len(sys.argv) > 4 else ""
+        _print_json(
+            check_missing_packages(packages, python_executable=python_exec, host=remote_host)
+        )
 
     elif action == "detect-env":
         if len(sys.argv) < 3:

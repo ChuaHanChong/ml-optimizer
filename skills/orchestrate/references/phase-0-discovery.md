@@ -63,13 +63,34 @@
        - Or: "no dataset — training interacts with a simulator/RL environment" (online RL). Set `train_data_path` and `val_data_path` to `null` in user_choices; prerequisites skips dataset validation and records format `rl_environment`.
    12. **Environment:** Which environment manager?
        - conda (environment name?) / uv / pip / venv / poetry / other
+   13. **Where do the GPUs live?** Local machine (default), or a remote host over ssh?
+       - Run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gpu_check.py` before asking; skip this question if it reports a free GPU and the user has not mentioned a cluster.
+       - If remote, collect: the **ssh host** (an `~/.ssh/config` alias is fine), the **working directory** on that host, and the **interpreter** for the training environment there (e.g. a conda env's `bin/python`). Confirm passwordless ssh works before continuing: `ssh -o BatchMode=yes <host> true`.
    ```
 
 3. **Record user responses:**
    - Store the answers — they guide every subsequent phase.
+   - From Q13, store a `remote` object in `user_choices` (omit it entirely for a local run):
+     ```json
+     {"host": "<ssh host>", "workdir": "<abs path on host>", "env_python": "<interpreter on host>"}
+     ```
+     Later phases key off this object (see "Remote GPU execution" in the plugin's CLAUDE.md). One consequence for Q11: datasets stay resident on the host, so `train_data_path` for a remote run is a path there, not a local one.
    - If the user is unsure on some, note those as Phase 1 investigation areas.
 
-3.1. **Write experiment root breadcrumb and optimization goals:**
+3.1. **Offer a host-project research agent (for Phase 5):**
+   Where a project has its own literature agent over a curated corpus, Phase 5 should source and judge candidates from it rather than cold-searching the web. Detect, then always confirm — never adopt silently.
+
+   1. `ls .claude/agents/*.md 2>/dev/null`. Absent or empty: skip silently, no prompt.
+   2. Read only each file's `name` and first `description` line. Do not keyword-match the prose to guess a winner.
+   3. `AskUserQuestion` listing each agent (name plus that line), always with a final "use web search instead" option.
+
+   Store the answer in `user_choices` so it is asked once per run:
+   - `vault_agent` — the chosen agent's `name` (its `subagent_type`), or `null` for web search
+   - `vault_paths` — that project's main note directories as a starting hint, or `[]`. **Not a boundary:** the agent searches its whole project.
+
+   When an agent is chosen, tell the user what changes: Phase 5 will propose and vet from that agent's corpus, while the plugin's own research-agent still writes the findings file.
+
+3.2. **Write experiment root breadcrumb and optimization goals:**
    First write a breadcrumb so hooks can find `<exp_root>` (even on a different mount). The breadcrumb supports multiple runs — each new run appends to `runs[]` and sets `active`:
    ```bash
    mkdir -p .claude
@@ -114,7 +135,7 @@ json.dump({'active': exp, 'runs': runs}, bc.open('w'), indent=2)
    ```
    Persists in `<exp_root>/optimization-goals.json`, read by all agents before acting.
 
-3.2. **Brainstorm optimization strategy:**
+3.3. **Brainstorm optimization strategy:**
    Use `Skill("superpowers:brainstorming")` to explore the optimization space with the user — surfacing non-obvious approaches, trade-offs, and priorities before committing to a plan. It explores:
    - Most likely bottlenecks? (data, model capacity, training recipe, regularization)
    - Which trade-offs matter? (speed vs accuracy, simplicity vs performance)
@@ -123,7 +144,7 @@ json.dump({'active': exp, 'runs': runs}, bc.open('w'), indent=2)
 
    The output informs the plan's scope, search space, and strategy.
 
-3.3. **Present understanding and invite refinement:**
+3.4. **Present understanding and invite refinement:**
    Summarize back to the user:
    ```
    Here's what I understood:

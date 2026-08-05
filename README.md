@@ -45,13 +45,15 @@ Inspired by [SakanaAI ShinkaEvolve](https://github.com/SakanaAI/ShinkaEvolve) an
 | **Behavioral Memory** | `learned-behaviors.json` accumulates HP constraints, method outcomes, divergence patterns. All agents have `memory: local` for persistent role-specific learning |
 | **Workflow-Driven Phases 5–8** | Research, implement, experiment, and stacking run as dynamic workflows bundled in the orchestrate skill (`skills/orchestrate/workflows/phase-{5,6,7,8}-*.js`). The orchestrator launches one `Workflow({scriptPath, args})` per phase; each script holds that phase's fan-out/loop and reuses the existing agents via `agentType`. Internal pipeline steps launched by `scriptPath`, not user-facing `/commands` |
 | **File/Args Handoff** | Cross-agent context inside a workflow flows through `args` + files agents write under `<exp_root>/` (results, manifests, research agenda, `batch-N-analysis.md`) + each workflow's structured return — no `SendMessage`, no `agent_registry`, no relay |
+| **Remote GPU Execution** | Training runs on a remote GPU host while the project stays local. Phase 0 collects one `remote` object (`host`, `workdir`, `env_python`); its presence switches baseline, experiments, prerequisites, and GPU scheduling to that host through `scripts/remote_train.sh`. Omit it and everything runs locally |
+| **Host-Project Research Agent** | Phase 5 can route Fan-out and Vet to a research agent belonging to the host project (`vault_agent`), so proposals come from a curated local corpus instead of a cold web search. Synthesize stays on `ml-optimizer:research-agent`, which owns the findings-file contract |
 | **GitNexus Code Graph** | **Required** MCP + CLI that indexes a repo into a queryable code knowledge graph. The pipeline indexes every code repo (target + every cloned reference repo); implement/research agents must query structure, call-graph, and blast-radius before editing. No grep/analyze fallback — Phase 2 verifies it and blocks if absent |
 
 ## Getting Started
 
 ### Prerequisites
 
-- **Python 3.10+**
+- **Python 3.10+** on PATH — the scripts run as bare `python3`, so check `python3 -V`. Plus `matplotlib`, for `plot_results.py` only.
 - **Claude Code** — the plugin runs inside Claude Code sessions
 - **Dynamic workflows enabled** — **required** for phases 5–8. Phases 5 (research), 6 (implement), 7 (experiment loop), 8 (stacking) run as dynamic workflows (the `Workflow` tool) with **no `Agent` fallback path**. A research-preview / paid-plan feature; per-phase launch approval applies (choose "don't ask again" to run unattended). If unavailable on your plan, phases 5–8 cannot run.
 - **git** — branch isolation when implementing research proposals
@@ -60,6 +62,7 @@ Inspired by [SakanaAI ShinkaEvolve](https://github.com/SakanaAI/ShinkaEvolve) an
   npm install -g gitnexus && gitnexus setup
   ```
   `gitnexus setup` auto-registers the gitnexus MCP server for Claude Code (manual MCP-registration fallback: `claude mcp add --transport stdio --scope user gitnexus gitnexus mcp`). It also installs gitnexus's own global skills (7) and PreToolUse/PostToolUse hooks into `~/.claude/`, affecting all Claude Code projects. A freshly-registered MCP server becomes available only after a session restart. Indexing is non-invasive (`gitnexus analyze --index-only`) — it doesn't modify the indexed repo's CLAUDE.md/AGENTS.md or install `.claude/` skills there. The `.gitnexus/` index artifacts are auto-excluded from git, but don't commit them.
+- **Remote GPU host** (optional) — only when Phase 0 is given a `remote` object. The host needs `tmux` (runs survive a dropped connection), `nvidia-smi` (GPU scheduling), and an ssh key that authenticates without a prompt — `scripts/remote_train.sh` and `gpu_check.py` both run ssh in batch mode. An `~/.ssh/config` alias is the simplest way to supply the host.
 - **Your ML project** — the plugin brings its own orchestration (stdlib only, aside from matplotlib used by plot_results.py); your training code brings its own stack (PyTorch, TensorFlow, scikit-learn, XGBoost, LightGBM, etc.)
 
 #### MCP Servers (gitnexus required; alphaxiv/context7/claude-mem recommended)
@@ -180,11 +183,11 @@ Only `orchestrate` is user-facing (via `/optimize`). Other skills preload into a
 
 ### Agent Definitions
 
-Ten agent types in `agents/`. The plugin ships `settings.json` with `"agent": "ml-optimizer:orchestrator-agent"` — when enabled, the orchestrator agent becomes the main thread and auto-starts Phase 0.
+Ten agent types in `agents/`. Enabling the plugin adds the `/optimize` command, the skills, and the agents; it does not claim the session's main thread, so a project keeps whatever main agent it already uses. To have the pipeline auto-start instead, a project sets `"agent": "ml-optimizer:orchestrator-agent"` in its own settings, and the orchestrator's `initialPrompt` opens Phase 0 at session start.
 
 | Agent | Tools | Model | Effort | Preloaded Skill |
 |-------|-------|-------|--------|-----------------|
-| **`orchestrator-agent`** | Agent, Workflow, Read, Write, Edit, Bash, Glob, Grep, Skill, WebSearch, WebFetch | **opus[1m]** | xhigh | `ml-optimizer:orchestrate` + verification |
+| **`orchestrator-agent`** | Agent, Workflow, Read, Write, Edit, Bash, Glob, Grep, Skill, WebSearch, WebFetch, AskUserQuestion, EnterPlanMode, ExitPlanMode | **opus[1m]** | xhigh | `ml-optimizer:orchestrate` + verification |
 | `research-agent` | WebSearch, WebFetch, Read, Write, Bash, Glob, Grep, Skill + alphaxiv MCP (6) + gitnexus MCP (3) | opus[1m] | xhigh | `ml-optimizer:research` + mem-search + verification |
 | `implement-agent` | Bash, Read, Write, Edit, LSP, Glob, Grep, Skill, WebSearch, WebFetch + alphaxiv MCP (2) + gitnexus MCP (3) | opus[1m] | xhigh | `ml-optimizer:implement` + evolve + shinka-* + debugging + verification + karpathy-guidelines |
 | `tuning-agent` | Read, Write, Bash, Glob, Grep, Skill, WebSearch, WebFetch | opus[1m] | xhigh | `ml-optimizer:hp-tune` + mem-search + verification |
@@ -195,7 +198,7 @@ Ten agent types in `agents/`. The plugin ships `settings.json` with `"agent": "m
 | `experiment-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | sonnet[1m] | medium | `ml-optimizer:experiment` |
 | `prerequisites-agent` | Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch | sonnet[1m] | medium | `ml-optimizer:prerequisites` |
 
-The **orchestrator-agent** is the main-thread agent (activated by `settings.json`); the rest are specialized workers — see [`.claude/CLAUDE.md`](.claude/CLAUDE.md) for dispatch (`Agent()` for phases 0/1/2/3/4/9, `agentType` inside the phase-5–8 workflows). Analytical agents use `effort: xhigh` + `model: opus[1m]`; procedural agents use `effort: medium` + `model: sonnet[1m]`. The `[1m]` suffix requests the 1M-token context window (Opus auto-upgrades to 1M on Max/Team/Enterprise; Sonnet 1M may consume usage credits). `xhigh` is supported on Opus 4.8/4.7 and falls back to the highest supported level on older Opus.
+The **orchestrator-agent** drives the pipeline; the rest are specialized workers — see [`.claude/CLAUDE.md`](.claude/CLAUDE.md) for dispatch (`Agent()` for phases 0/1/2/3/4/9, `agentType` inside the phase-5–8 workflows). Analytical agents use `effort: xhigh` + `model: opus[1m]`; procedural agents use `effort: medium` + `model: sonnet[1m]`. The `[1m]` suffix requests the 1M-token context window; both it and `xhigh` fall back to the highest available setting where unsupported.
 
 ### Python Utilities
 
@@ -203,7 +206,8 @@ All scripts in `scripts/` use only the standard library, except `plot_results.py
 
 | Script | CLI Usage |
 |--------|-----------|
-| `scripts/gpu_check.py` | `python3 scripts/gpu_check.py` |
+| `scripts/gpu_check.py` | `python3 scripts/gpu_check.py [util_threshold] [memory_threshold] [host]` — with `host` (or `ML_OPTIMIZER_GPU_HOST`) it reads that host's `nvidia-smi` over ssh |
+| `scripts/remote_train.sh` | `bash scripts/remote_train.sh --host H --workdir W [--gpu N] [--env-python P] [--sync DIR] -- CMD...` — runs CMD on a remote host under `tmux`, streams its log, and exits with CMD's status. `--sync` mirrors a local directory into `--workdir` first (`rsync --delete-after`, so a second `--sync` erases the first one's files) |
 | `scripts/parse_logs.py` | `python3 scripts/parse_logs.py <logfile>` — auto-detects and parses 8 log formats: JSON, Python `logging`, tqdm, XGBoost/LightGBM, SB3/rsl_rl, HuggingFace Trainer, CSV, kv |
 | `scripts/detect_divergence.py` | `python3 scripts/detect_divergence.py '<json_values>' [--higher-is-better] [--model-category rl\|generative\|supervised] [--reward-collapse-fraction F] [--reward-collapse-patience N]` — also: `--check-overfitting '<train_json>' '<val_json>' [--patience N] [--min-gap F]` |
 | `scripts/result_analyzer.py` | `python3 scripts/result_analyzer.py <results_dir> <metric> [baseline_id] [lower_is_better]` — also: `compare <exp_id_1> <exp_id_2> [metric]` |
@@ -213,7 +217,7 @@ All scripts in `scripts/` use only the standard library, except `plot_results.py
 | `scripts/pipeline_state.py` | `python3 scripts/pipeline_state.py <exp_root> validate\|save\|load\|cleanup\|verify-baseline\|gate\|log-gate\|log-decision\|replay-check\|decisions` |
 | `scripts/schema_validator.py` | `python3 scripts/schema_validator.py <filepath> result\|baseline\|manifest\|prerequisites\|hp_proposal\|rounds_manifest [--strict]` — also: `relay <route> <json>` validates the file/args payloads handed off between workflow stages (6 routes). `--strict` enforces completeness |
 | `scripts/plot_results.py` | `python3 scripts/plot_results.py <results_dir> <metric> comparison\|timeline\|sensitivity <hp>\|progress [--higher-is-better]` |
-| `scripts/prerequisites_check.py` | `python3 scripts/prerequisites_check.py scan-imports\|check-packages\|detect-env\|detect-format\|detect-format-project\|validate-data\|bulk-install-cmd\|gpu-install-cmd` |
+| `scripts/prerequisites_check.py` | `python3 scripts/prerequisites_check.py scan-imports\|check-packages\|detect-env\|detect-format\|detect-format-project\|validate-data\|bulk-install-cmd\|gpu-install-cmd` — `check-packages '<pkgs>' [python_executable] [host]` probes a remote interpreter over ssh when `host` is given |
 | `scripts/error_tracker.py` | `python3 scripts/error_tracker.py <exp_root> log\|show\|patterns\|summary\|success\|proposals\|rank\|log-suggestion\|suggestion-history\|dead-end <add\|list\|check>\|agenda <init\|update\|list\|add>` |
 | `scripts/dashboard.py` | `python3 scripts/dashboard.py <exp_root> [--live] [--table] [--serve --port 8080]` — HTML dashboard + Markdown results table |
 | `scripts/excalidraw_gen.py` | `python3 scripts/excalidraw_gen.py <exp_root> pipeline\|comparison\|hp-landscape\|architecture <args>` — Excalidraw JSON diagrams |

@@ -4,7 +4,7 @@ description: "Main-thread ML optimization orchestrator. Coordinates the full 10-
 model: opus[1m]
 effort: xhigh
 color: blue
-tools: Agent, Workflow, Read, Write, Edit, Bash, Glob, Grep, Skill, WebSearch, WebFetch
+tools: Agent, Workflow, Read, Write, Edit, Bash, Glob, Grep, Skill, WebSearch, WebFetch, AskUserQuestion, EnterPlanMode, ExitPlanMode
 skills:
   - ml-optimizer:orchestrate
   - superpowers:verification-before-completion
@@ -54,6 +54,7 @@ Each phase has a reference file at `${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/ref
 
 **Phases 5, 6, 7, 8** — launched as dynamic workflows:
 - `Workflow({scriptPath: "${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/workflows/phase-<N>-<slug>.js", args: {...}})` — the workflow scripts are **bundled inside the orchestrate skill** and launched by `scriptPath` (NOT by saved `name`), which keeps them out of the user `/slash-command` namespace. The workflow script owns the phase's fan-out/loop and dispatches the agents internally via `agentType`. You build the `args` (from `user_choices`, baseline, manifest, and prior workflow returns), launch the workflow, then read its structured return + the files the agents wrote under `<exp_root>/`.
+- **Two `user_choices` keys must be forwarded on every phase that accepts them, or the run silently changes character.** `remote` ({host, workdir, env_python}) sends prerequisites, baseline, and every experiment to the GPU host — drop it on one phase and that phase runs locally, so its numbers are not comparable with the rest. `vault_agent`/`vault_paths` keep research sourced from the host project's curated corpus — drop them and later rounds fall back to a cold web search after Phase 5 used the corpus.
 - Workflows take **no mid-run user input**. Phase 7 autonomy (`method_proposal_scope`, `method_proposal_iterations`, budget) is pre-authorized at Phase 4 and passed in `args`. A genuine user-decision point returns to you as a workflow boundary; relaunch the continuation via `resumeFromRunId` (same session).
 - Run the **user checkpoint between phases** (e.g., confirm proposals after phase-5, present baseline before phase-7), never inside a workflow.
 

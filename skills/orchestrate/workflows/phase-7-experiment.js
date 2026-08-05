@@ -197,6 +197,24 @@ const divergenceLowerIsBetter = A.divergence_lower_is_better;
 const cadence = Number(hp_batches_per_round) || 3;
 // Secondary metrics: [{name, lower_is_better, role}] from Phase 0 — threaded into the analysis Step 2.3 guardrail check.
 const secondaryMetrics = Array.isArray(A.secondary_metrics) ? A.secondary_metrics : [];
+// Remote GPU host from Phase 0, or absent for a local run. Experiment agents wrap their
+// training command with it; without it they run on the orchestrating machine, which has no GPU.
+const remote = A.remote && A.remote.host ? A.remote : null;
+// Host-project research agent (same one Phase 5 used). Mid-loop research keeps writing the
+// findings file, so the dispatch stays on research-agent — only its ideation moves to the corpus,
+// otherwise later rounds silently revert to web search after Phase 5 sourced from the vault.
+const vaultAgent = A.vault_agent || null;
+const vaultPaths = Array.isArray(A.vault_paths) ? A.vault_paths : (A.vault_paths ? [A.vault_paths] : []);
+const corpusFirst = vaultAgent
+  ? `\nSEARCH THE HOST PROJECT'S CURATED CORPUS FIRST — that is where this run's earlier proposals came from. Search the WHOLE project, not a fixed subset: use your own vault-query skills plus Grep/Glob/Read wherever the evidence lives${vaultPaths.length ? ` (start at ${JSON.stringify(vaultPaths)} if unsure, but that is not a boundary)` : ""}, and cite each proposal's source as the underlying paper identifier plus title. Fall back to WebSearch only for an angle the corpus does not cover, and say so in the proposal's notes.`
+  : "";
+const remoteBlock = remote
+  ? `
+REMOTE EXECUTION — the GPUs are on another machine. Do NOT run training locally.
+Wrap the training command exactly as the experiment skill's "Running on a remote GPU host" section describes:
+  \${CLAUDE_PLUGIN_ROOT}/scripts/remote_train.sh --host ${remote.host} --workdir ${remote.workdir}/<exp_id> --gpu <gpu_id> --env-python ${remote.env_python} --sync <worktree path> -- <the training command>
+Pass the GPU via --gpu (not a local CUDA_VISIBLE_DEVICES); the wrapper applies it on the host. Query free GPUs with \`python3 \${CLAUDE_PLUGIN_ROOT}/scripts/gpu_check.py 30 80 ${remote.host}\`. The wrapper streams the remote log to stdout, so the log path, parsing, and result JSON are unchanged.`
+  : "";
 
 // eval_tasks: [task_name, ...] from Phase 0 — threaded into the experiment-agent prompt (it
 // merges per-task metrics via aggregate_task_metrics) and the analysis prompt (per-task breakdown).
@@ -276,7 +294,7 @@ Steps:
 3. Load implementation manifest at ${exp_root}/results/implementation-manifest.json if it exists. Collect proposals with status=="validated"; skip validation_failed/implementation_error. For each validated branch, verify it exists via \`git -C ${project_root} rev-parse --verify <branch>\`; drop missing ones (log to error_tracker). Always include the baseline (original) branch for HP-only comparison, and return its name as original_branch (the current branch of ${project_root} via \`git -C ${project_root} rev-parse --abbrev-ref HEAD\`, or null for non-git). If manifest strategy=="file_backup", set sequential=true and strategy="file_backup". If no manifest exists, set strategy="hp_only", code_branches=[] (HP-only on current code).
 4. Read the research agenda and dead-end catalog for context (no action, just confirm they exist): \`python3 ${PLUGIN}/scripts/error_tracker.py ${exp_root} agenda list\` and \`... dead-end list\`.
 5. Build the initial search_space dict for HP tuning from baseline config (${exp_root}/results/baseline.json) — sensible ranges around the baseline lr / batch_size / weight_decay etc. For tree-based frameworks (sklearn/XGBoost/LightGBM) prioritize max_depth / n_estimators. When model_category=rl, seed ranges from baseline.json's captured RL HPs — gamma, clip_range, ent_coef, n_steps — around the baseline values; do NOT apply supervised defaults.
-6. Detect num_gpus via \`python3 ${PLUGIN}/scripts/gpu_check.py\` and model_category from baseline.json if present.
+6. Detect num_gpus via \`python3 ${PLUGIN}/scripts/gpu_check.py${remote ? ` 30 80 ${remote.host}` : ""}\` and model_category from baseline.json if present.
 7. Read ${exp_root}/optimization-goals.json's objective.target_value (Read tool; null if the file or field is absent) and return it as goals_target_value — this workflow's target_value arg is cross-checked/fallen-back against it below.
 
 Return baseline_ok, strategy, sequential, code_branches, search_space, model_category, num_gpus, warm_start_enabled, halt, halt_reason, original_branch, goals_target_value.`,
@@ -499,7 +517,7 @@ primary_metric: ${primary_metric}
 model_category: ${modelCategory}
 eval_tasks: ${JSON.stringify(evalTasks)}
 
-Run inside a git worktree on the given code_branch using \`--detach\` so this run does not disturb the main tree or other parallel runs. ${divergenceClause} ${budgetClause} ${cpuClause}
+Run inside a git worktree on the given code_branch using \`--detach\` so this run does not disturb the main tree or other parallel runs. ${divergenceClause} ${budgetClause} ${cpuClause}${remoteBlock}
 
 REQUIRED OUTPUTS (experiment-agent, mirrors scripts/output_contract.py — ALL of these must exist before you finish):
   1. ${exp_root}/results/${roundDir}/${cfg.exp_id}.json — the result JSON (the PreToolUse hook BLOCKS any other path / bad schema).
@@ -897,7 +915,7 @@ async function runResearchImplement(reasonLabel, idx) {
     `${reasonLabel}. Research ML optimization techniques and write in-scope proposals.
 
 Parameters:
-- source: both
+- source: both${corpusFirst}
 - scope_level: ${method_proposal_scope}
 - output_path: ${findingsPath}
 - exp_root: ${exp_root}
@@ -926,7 +944,7 @@ async function runStuckResearch(idx) {
 Read first (FILES under ${exp_root}): error patterns (\`python3 ${PLUGIN}/scripts/error_tracker.py ${exp_root} patterns\`), success metrics, the dead-end catalog (\`... dead-end list\` — DO NOT re-propose any of these), and the research agenda (\`... agenda list\`).
 
 Parameters:
-- source: both
+- source: both${corpusFirst}
 - scope_level: ${method_proposal_scope || "architecture"}
 - output_path: ${findingsPath}
 - exp_root: ${exp_root}

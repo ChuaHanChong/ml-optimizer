@@ -36,6 +36,10 @@ FEATURE_PROBES = {
     ],
     "File/Args Handoff": [("scripts/schema_validator.py", "def validate_relay")],
     "GitNexus Code Graph": [("scripts/gitnexus_utils.py", "--index-only")],
+    "Remote GPU Execution": [("scripts/remote_train.sh", "tmux new -d")],
+    "Host-Project Research Agent": [
+        ("skills/orchestrate/workflows/phase-5-research.js", "vault_agent"),
+    ],
     # --- CLAUDE.md design patterns not named in the README table ---
     "Three-tier result tracking": [("scripts/schema_validator.py", "method_tier")],
     "Round lifecycle": [("scripts/round_manager.py", "rounds-manifest.json")],

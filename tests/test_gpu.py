@@ -4,6 +4,7 @@ import json
 import subprocess
 from unittest.mock import patch, MagicMock
 
+import gpu_check
 from gpu_check import parse_nvidia_smi, check_availability, get_free_gpus, run
 
 
@@ -187,3 +188,64 @@ def test_cli_invalid_memory_threshold(run_main):
     assert r.returncode == 1
     assert "Error" in r.stdout
     assert "memory_threshold" in r.stdout
+
+
+class TestRemoteHostSupport:
+    """The GPU probe must be able to target a remote training host.
+
+    When training runs on another machine, asking the local box about GPUs describes the
+    wrong environment: it reports zero free, which stalls scheduling. So the probe takes
+    a host and shells out over ssh.
+    """
+
+    def test_gpu_check_builds_ssh_command_for_host(self, monkeypatch):
+        """A host argument turns the probe into an ssh invocation of nvidia-smi."""
+        seen = {}
+
+        def fake_run(cmd, **kwargs):
+            seen["cmd"] = cmd
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        monkeypatch.setattr(gpu_check.subprocess, "run", fake_run)
+        gpu_check.run(host="gpu-box")
+        assert seen["cmd"][0] == "ssh"
+        assert "gpu-box" in seen["cmd"]
+        assert any("nvidia-smi" in part for part in seen["cmd"])
+        # BatchMode keeps an automated run from blocking on a password prompt.
+        assert "BatchMode=yes" in seen["cmd"]
+
+    def test_gpu_check_stays_local_without_host(self, monkeypatch):
+        """With no host and no env override, nvidia-smi runs locally."""
+        seen = {}
+
+        def fake_run(cmd, **kwargs):
+            seen["cmd"] = cmd
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        monkeypatch.delenv("ML_OPTIMIZER_GPU_HOST", raising=False)
+        monkeypatch.setattr(gpu_check.subprocess, "run", fake_run)
+        gpu_check.run()
+        assert seen["cmd"][0] == "nvidia-smi"
+
+    def test_gpu_check_reads_host_from_environment(self, monkeypatch):
+        """ML_OPTIMIZER_GPU_HOST supplies the host when the caller passes none."""
+        seen = {}
+
+        def fake_run(cmd, **kwargs):
+            seen["cmd"] = cmd
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        monkeypatch.setenv("ML_OPTIMIZER_GPU_HOST", "env-box")
+        monkeypatch.setattr(gpu_check.subprocess, "run", fake_run)
+        gpu_check.run()
+        assert seen["cmd"][0] == "ssh" and "env-box" in seen["cmd"]
+
+    def test_unreachable_host_reports_error_not_crash(self, monkeypatch):
+        """A failed ssh returns an error naming the host, not an exception."""
+        def fake_run(cmd, **kwargs):
+            return subprocess.CompletedProcess(cmd, 255, stdout="", stderr="ssh: no route")
+
+        monkeypatch.setattr(gpu_check.subprocess, "run", fake_run)
+        result = gpu_check.run(host="dead-box")
+        assert result["gpus"] == []
+        assert "dead-box" in result["error"]

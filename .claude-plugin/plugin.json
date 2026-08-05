@@ -1,7 +1,7 @@
 {
   "name": "ml-optimizer",
   "description": "An autonomous ML model optimization plugin. Dispatches specialized agents for research, hyperparameter tuning, and experiment running. Monitors training for divergence and records findings in structured format.",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "author": {
     "name": "Chua Han Chong"
   },

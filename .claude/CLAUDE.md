@@ -74,7 +74,7 @@ Phase 9: Agent(report) → Final optimization report
 ### Dispatch Chain & Output Map
 
 ```
-/optimize → orchestrator-agent (main thread, settings.json)
+/optimize → orchestrator-agent
   │  Phases 0/1, 2, 3, 4, 9 → direct Agent() (interactive/trivial).
   │  Phases 5, 6, 7, 8       → Workflow({scriptPath, args}) (dynamic workflows, bundled in skills/orchestrate/workflows/).
   │
@@ -201,7 +201,7 @@ The implement skill creates `ml-opt/<slug>` branches per proposal; the experimen
 
 ### Agent Definitions (`agents/`)
 
-Ten agent types — nine subagents plus one main-thread agent — each with a preloaded skill and specified tool access. `orchestrate` is the user-facing entry point (via `/optimize`); other skills preload into agents via the `skills:` array in their definitions. The `orchestrator-agent`, activated by `settings.json`, loads the orchestrate skill and auto-starts Phase 0 via `initialPrompt`. All agents have `memory: local` for persistent role-specific memory at `.claude/agent-memory-local/<agent-name>/` in the target project.
+Ten agent types — nine subagents plus one orchestrator — each with a preloaded skill and specified tool access. `orchestrate` is the user-facing entry point (via `/optimize`); other skills preload into agents via the `skills:` array in their definitions. The `orchestrator-agent` loads the orchestrate skill and drives the pipeline; when a host project declares it as the main-thread agent in `settings.json`, it also auto-starts Phase 0 via `initialPrompt` (see "Entry point" below). All agents have `memory: local` for persistent role-specific memory at `.claude/agent-memory-local/<agent-name>/` in the target project.
 
 All nine worker agents dispatch as **fresh spawns** — `Agent()` for phases 2/3/9, the workflow runtime's `agent({agentType: "ml-optimizer:<name>-agent"})` for 5–8. No persistent-agent / `SendMessage` / `agent_registry` resumption. Cross-agent context flows via `args`, files under `<exp_root>/`, and each workflow's structured return. Role knowledge persists via `memory: local` (see below).
 
@@ -218,8 +218,8 @@ All nine worker agents dispatch as **fresh spawns** — `Agent()` for phases 2/3
 - **analysis-agent**: Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:analyze, claude-mem:mem-search, superpowers:verification-before-completion]` (includes session review mode)
 - **report-agent**: Bash, Read, Write, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:report, superpowers:verification-before-completion]`
 
-**Main-thread agent** (activated by `settings.json`):
-- **orchestrator-agent**: Agent, Workflow, Read, Write, Edit, Bash, Glob, Grep, Skill, WebSearch, WebFetch — skills: `[ml-optimizer:orchestrate, superpowers:verification-before-completion]` — main thread when plugin is enabled, auto-starts Phase 0 via `initialPrompt: "/ml-optimizer:orchestrate"`
+**Orchestrator** (drives the pipeline; runs on the main thread when a host project designates it — see "Entry point"):
+- **orchestrator-agent**: Agent, Workflow, Read, Write, Edit, Bash, Glob, Grep, Skill, WebSearch, WebFetch, AskUserQuestion, EnterPlanMode, ExitPlanMode — skills: `[ml-optimizer:orchestrate, superpowers:verification-before-completion]` — carries `initialPrompt: "/ml-optimizer:orchestrate"`, which auto-starts Phase 0 when it holds the main thread
 
 For parallel execution, use `run_in_background: true`. External skills/tools also available:
 - **research-agent**: `context7` for framework API docs, `claude-mem:mem-search` for cross-session learning, `alphaxiv` MCP for paper search/analysis (6 tools: embedding search, full-text search, agentic retrieval, paper content, PDF Q&A, GitHub repo reader), and `gitnexus` MCP (`context`/`query`/`impact`) — **required** — to index candidate reference repos (immediately after clone) and query structure/call-graph for a feasibility read before recommending `from_reference`. Querying gitnexus is mandatory, not best-effort
@@ -232,7 +232,8 @@ All scripts work as both importable modules and CLI tools:
 
 | Script | CLI Usage |
 |--------|-----------|
-| `${CLAUDE_PLUGIN_ROOT}/scripts/gpu_check.py` | `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gpu_check.py` — parse nvidia-smi |
+| `${CLAUDE_PLUGIN_ROOT}/scripts/gpu_check.py` | `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gpu_check.py [util_threshold] [memory_threshold] [host]` — parse nvidia-smi; with `host` (or `ML_OPTIMIZER_GPU_HOST`) it reads that host's `nvidia-smi` over ssh |
+| `${CLAUDE_PLUGIN_ROOT}/scripts/remote_train.sh` | `bash ${CLAUDE_PLUGIN_ROOT}/scripts/remote_train.sh --host H --workdir W [--gpu N] [--env-python P] [--sync DIR] -- CMD...` — runs CMD on a remote host under `tmux`, streams its log, and exits with CMD's status. `--sync` mirrors a local directory into `--workdir` first (`rsync --delete-after`, so a second `--sync` erases the first one's files) |
 | `${CLAUDE_PLUGIN_ROOT}/scripts/parse_logs.py` | `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/parse_logs.py <logfile>` — auto-detects and parses 8 log formats: JSON, Python `logging`, tqdm, XGBoost/LightGBM, SB3/rsl_rl, HuggingFace Trainer, CSV, kv |
 | `${CLAUDE_PLUGIN_ROOT}/scripts/detect_divergence.py` | `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/detect_divergence.py '<json_values>' [--higher-is-better] [--model-category rl\|generative\|supervised] [--explosion-threshold N] [--plateau-patience N] [--reward-collapse-fraction F] [--reward-collapse-patience N]` — detect NaN/explosion/plateau/reward-collapse with configurable thresholds. Also: `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/detect_divergence.py --check-overfitting '<train_json>' '<val_json>' [--higher-is-better] [--patience N] [--min-gap F] [--model-category rl\|generative\|supervised]` — detect overfitting |
 | `${CLAUDE_PLUGIN_ROOT}/scripts/result_analyzer.py` | `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/result_analyzer.py <results_dir> <metric> [baseline_id] [lower_is_better]` — full analysis. Also: `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/result_analyzer.py <results_dir> compare <exp_id_1> <exp_id_2> [metric] [lower_is_better]` — pairwise comparison |
@@ -242,7 +243,7 @@ All scripts work as both importable modules and CLI tools:
 | `${CLAUDE_PLUGIN_ROOT}/scripts/pipeline_state.py` | `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/pipeline_state.py <exp_root> validate\|save\|load\|cleanup\|verify-baseline\|gate\|log-gate\|log-decision\|replay-check\|decisions` — phase gates, decision logging |
 | `${CLAUDE_PLUGIN_ROOT}/scripts/schema_validator.py` | `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/schema_validator.py <filepath> result\|baseline\|manifest\|prerequisites\|hp_proposal\|rounds_manifest [--strict]` — validates JSON schemas. `--strict` enforces completeness. Also: `relay <route> <json>` validates the file/args payloads handed off between workflow stages (6 routes; schemas unchanged from the former inter-agent relay) |
 | `${CLAUDE_PLUGIN_ROOT}/scripts/plot_results.py` | `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plot_results.py <results_dir> <metric> comparison\|timeline\|sensitivity <hp>\|progress [--higher-is-better]` — ASCII charts + matplotlib progress chart |
-| `${CLAUDE_PLUGIN_ROOT}/scripts/prerequisites_check.py` | `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/prerequisites_check.py scan-imports\|check-packages\|detect-env\|detect-format\|detect-format-project\|validate-data\|bulk-install-cmd\|gpu-install-cmd` — dataset, environment, and GPU-aware install validation |
+| `${CLAUDE_PLUGIN_ROOT}/scripts/prerequisites_check.py` | `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/prerequisites_check.py scan-imports\|check-packages\|detect-env\|detect-format\|detect-format-project\|validate-data\|bulk-install-cmd\|gpu-install-cmd` — dataset, environment, and GPU-aware install validation. `check-packages '<pkgs>' [python_executable] [host]` probes a remote interpreter over ssh when `host` is given |
 | `${CLAUDE_PLUGIN_ROOT}/scripts/dashboard.py` | `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/dashboard.py <exp_root> [--live] [--table] [--serve --port 8080]` — self-contained HTML dashboard (progress timeline, results table, HP sensitivity, research agenda, error summary, method explanations). `--live` = 30s auto-refresh. `--table` generates `results-table.md`. |
 | `${CLAUDE_PLUGIN_ROOT}/scripts/excalidraw_gen.py` | `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/excalidraw_gen.py <exp_root> pipeline\|comparison\|hp-landscape\|architecture <args>` — generate Excalidraw JSON diagrams (pipeline overview, experiment comparison, HP landscape, architecture changes) |
 | `${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py` | `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/error_tracker.py <exp_root> log\|show\|patterns\|summary\|success\|proposals\|rank\|log-suggestion\|suggestion-history\|dead-end <add\|list\|check>\|agenda <init\|update\|list\|add>` — error tracking, pattern detection, success metrics, proposal outcomes, suggestion ranking, suggestion history, dead-end catalog, research agenda |
@@ -275,7 +276,7 @@ Stacking experiments also carry `code_branches` (array of combined branches), `s
 
 ### Pipeline Resumption
 
-The orchestrator can be stopped and resumed. On restart it reads `pipeline-state.json` and uses `cleanup_stale()` to mark interrupted experiments failed after a timeout. `validate_phase_requirements()` prevents cascading failures. Pipeline state persists Phase 0 user choices (`primary_metric`, `divergence_metric`, `divergence_lower_is_better`, `lower_is_better`, `target_value`, `train_command`, `eval_command`, `train_data_path`, `val_data_path`, `prepared_train_path`, `prepared_val_path`, `env_manager`, `env_name`, `model_category`, `user_papers`, `method_proposal_scope`, `method_proposal_iterations`, `hp_batches_per_round`, `fixed_time_budget`, `fixed_epoch_budget`, `fixed_step_budget`, `seeds_per_config`, `secondary_metrics`, `eval_tasks`, `experiments_per_gpu`) via `save_state(user_choices={...})` so they survive interruptions without re-asking. The experiment loop also persists, at pipeline-state root level: `consecutive_stop_count` (telemetry only — not an exit trigger), `stuck_protocol_triggered` (the loop-exit flag: set `true` when the stuck protocol returns no new in-scope proposals; with an empty research agenda and a flat best metric it defines the *fixpoint* at which the orchestrator exits to Phase 9; reset `false` whenever fresh proposals or metric improvement appear), and `baseline_checksum` (SHA-256 of baseline metrics for integrity). A separate `user-choices-backup.json` gives redundant recovery if the main state file corrupts.
+The orchestrator can be stopped and resumed. On restart it reads `pipeline-state.json` and uses `cleanup_stale()` to mark interrupted experiments failed after a timeout. `validate_phase_requirements()` prevents cascading failures. Pipeline state persists Phase 0 user choices (`primary_metric`, `divergence_metric`, `divergence_lower_is_better`, `lower_is_better`, `target_value`, `train_command`, `eval_command`, `train_data_path`, `val_data_path`, `prepared_train_path`, `prepared_val_path`, `env_manager`, `env_name`, `model_category`, `user_papers`, `vault_agent`, `vault_paths`, `remote`, `method_proposal_scope`, `method_proposal_iterations`, `hp_batches_per_round`, `fixed_time_budget`, `fixed_epoch_budget`, `fixed_step_budget`, `seeds_per_config`, `secondary_metrics`, `eval_tasks`, `experiments_per_gpu`) via `save_state(user_choices={...})` so they survive interruptions without re-asking. The experiment loop also persists, at pipeline-state root level: `consecutive_stop_count` (telemetry only — not an exit trigger), `stuck_protocol_triggered` (the loop-exit flag: set `true` when the stuck protocol returns no new in-scope proposals; with an empty research agenda and a flat best metric it defines the *fixpoint* at which the orchestrator exits to Phase 9; reset `false` whenever fresh proposals or metric improvement appear), and `baseline_checksum` (SHA-256 of baseline metrics for integrity). A separate `user-choices-backup.json` gives redundant recovery if the main state file corrupts.
 
 Phase 5–8 workflows resume **within a session** via the `Workflow` runtime's `resumeFromRunId` — relaunch with the prior run id to continue where it stopped. With the file-persisted results/rounds/manifest under `<exp_root>/`, an interrupted phase resumes without re-running completed work. Because phases 5–8 use fresh `agentType` dispatches (no `agent_registry`), there is no session-scoped agent state to clear — the orchestrator just relaunches the workflow. Phase 7 runs **without mid-run user input**: its autonomy parameters (`method_proposal_scope`, `method_proposal_iterations`, budget) are pre-authorized at Phase 4 and read from `user_choices`. A genuine user-decision point returns as a workflow boundary, resumed via `resumeFromRunId`.
 
@@ -350,6 +351,46 @@ Phase 0 (`skills/orchestrate/references/phase-0-discovery.md` Step 1.1) detects 
 - **Reproducibility metadata**: The experiment skill (Step 1.3) captures random seeds, pip freeze snapshots, git SHA, and framework versions under the `"reproducibility"` key in result JSONs. Enables exact reproduction of best experiments.
 - **Report threats to validity**: The report template includes a "Threats to Validity" section covering single-seed risk, limited search space, dataset specificity, budget constraints, and noise margins.
 - **Citation verification**: The report skill (Step 5.3) cross-references technique claims against experiment data and spot-checks source URL accessibility before writing the final report.
+
+## Entry point
+
+`/optimize` invokes the orchestrate skill, which runs the pipeline from Phase 0. The plugin ships `settings.json` as `{}`, so enabling it adds the command, skills, and agents without claiming the session's main thread — a host project keeps its own main agent and its ordinary sessions do not open in Phase 0.
+
+A project that wants the pipeline to auto-start instead names the orchestrator in its own settings, and `initialPrompt` fires Phase 0 at session start:
+
+```json
+{ "agent": "ml-optimizer:orchestrator-agent" }
+```
+
+Only one agent can hold the main thread, so a project that already designates one should leave this unset and reach the pipeline through `/optimize`.
+
+## Host-project research agent (`vault_agent`)
+
+Phase 5 can route Fan-out and Vet to a research agent belonging to the host project, chosen at Phase 0 Step 3.1 and passed as `vault_agent`; Synthesize stays on `ml-optimizer:research-agent`. Stage routing and args: `skills/orchestrate/references/phase-5-research.md`.
+
+**Enforcement differs for such an agent, by design.** `hooks/subagent-start-inject-goals.sh` looks the agent up in `scripts/output_contract.py`, whose `CONTRACTS` keys are all `*-agent`, so a host-project agent gets no SubagentStart injection:
+
+- **Output contract — not a gap.** Fan-out and Vet write no files; their contract is the `schema:` return, enforced at the tool-call layer with model retry. Do NOT add a host-project agent name to `CONTRACTS` — that hardcodes one project into a general plugin.
+- **Goal memory — a real gap, closed by an arg.** Without injection the agent cannot see frozen parameters, `scope_level`, or the dead-end catalog. The orchestrator runs `goal_memory.py <exp_root> summary` and passes it as the `goal_summary` workflow arg. Omitting it silently un-anchors the research stages.
+
+## Remote GPU execution
+
+Phase 0 Q13 collects a `remote` object into `user_choices` — `{host, workdir, env_python}` — and its **presence** switches the pipeline to remote mode. Omit it and everything runs locally, unchanged.
+
+One object, four consumers:
+
+| Phase | Uses it for |
+|---|---|
+| 2 prerequisites | `prerequisites_check.py check-packages '<pkgs>' <env_python> <host>` — probes the environment that actually trains |
+| 3 baseline | runs through `remote_train.sh`, so the baseline and the experiments share hardware |
+| 7 experiments | wraps each training command in `remote_train.sh --host … --gpu …` |
+| 3/7 scheduling | `gpu_check.py 30 80 <host>` — the local box has no GPUs to schedule |
+
+`scripts/remote_train.sh` is the seam — see the experiment skill for usage. Two properties to preserve if it is edited: training launches under `tmux new -d`, so a dropped connection does not kill a run; and the log-follower is backgrounded with an interruptible `wait`, since bash defers traps during a foreground command and would otherwise swallow the `timeout` SIGTERM, stranding a process on a GPU. `tests/test_plugin_structure.py::TestRemoteTrainWrapper` guards both.
+
+## Interpreter requirement
+
+Skills, hooks, and agents call the scripts as bare `python3` (200+ sites). **That `python3` must be 3.10+** or every script fails at import, before `main()` can report anything. Nothing in the plugin resolves this: if a machine's `python3` is older, fix the environment — a wrapper or symlink earlier on PATH — rather than adding a shim here.
 
 ## Gotchas
 

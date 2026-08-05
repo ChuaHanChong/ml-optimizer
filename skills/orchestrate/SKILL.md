@@ -26,10 +26,10 @@ Two execution modes, split by phase:
 
 | Workflow script (`scriptPath`, display `meta.name`) | args (in) | return (out) |
 |---|---|---|
-| `${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/workflows/phase-5-research.js` (`phase-5-research`) | `{ exp_root, primary_metric, model_category, scope_level, source, user_papers }` | `{ findings_path, proposals:[{index,title,impact,confidence,feasibility,scope,type,implementation_strategy,files_to_modify}], agenda_initialized }` |
+| `${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/workflows/phase-5-research.js` (`phase-5-research`) | `{ exp_root, project_root, primary_metric, model_category, scope_level, source, user_papers, vault_agent, vault_paths, goal_summary }` | `{ findings_path, proposals:[{index,title,impact,confidence,feasibility,scope,type,implementation_strategy,files_to_modify}], agenda_initialized }` |
 | `${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/workflows/phase-6-implement.js` (`phase-6-implement`) | `{ exp_root, project_root, findings_path, selected_indices:[int], strategy:"git_branch"\|"file_backup" }` | `{ manifest_path, branches:[{slug,branch,status,validation,reviews}] }` |
-| `${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/workflows/phase-7-experiment.js` (`phase-7-experiment`) | `{ exp_root, project_root, baseline, primary_metric, divergence_metric, divergence_lower_is_better, model_category, lower_is_better, target_value, scope_level, fixed_time_budget, fixed_epoch_budget, fixed_step_budget, hp_batches_per_round, method_proposal_scope, method_proposal_iterations, seeds_per_config, secondary_metrics, experiments_per_gpu, eval_tasks }` | `{ best_exp_id, best_metric, rounds_completed, exit_reason, stacking_candidates:[{branch,improvement_pct}] }` |
-| `${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/workflows/phase-8-stacking.js` (`phase-8-stacking`) | `{ exp_root, project_root, primary_metric, lower_is_better, baseline_metric, scope_level, divergence_metric, divergence_lower_is_better, model_category, fixed_time_budget, fixed_epoch_budget, fixed_step_budget, stacking_candidates }` | `{ best_stack_branch, best_stack_metric, steps:[{method,branch,kept}] }` |
+| `${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/workflows/phase-7-experiment.js` (`phase-7-experiment`) | `{ exp_root, project_root, baseline, primary_metric, divergence_metric, divergence_lower_is_better, model_category, lower_is_better, target_value, scope_level, fixed_time_budget, fixed_epoch_budget, fixed_step_budget, hp_batches_per_round, method_proposal_scope, method_proposal_iterations, seeds_per_config, secondary_metrics, experiments_per_gpu, eval_tasks, remote, vault_agent, vault_paths }` | `{ best_exp_id, best_metric, rounds_completed, exit_reason, stacking_candidates:[{branch,improvement_pct}] }` |
+| `${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/workflows/phase-8-stacking.js` (`phase-8-stacking`) | `{ exp_root, project_root, primary_metric, lower_is_better, baseline_metric, scope_level, divergence_metric, divergence_lower_is_better, model_category, fixed_time_budget, fixed_epoch_budget, fixed_step_budget, stacking_candidates, remote }` | `{ best_stack_branch, best_stack_metric, steps:[{method,branch,kept}] }` |
 
 **Cross-agent context = args + files.** No message bus / `SendMessage` for phases 5–8. The phase references below keep the reusable, non-dispatch content (decision tables, metric-routing rule, schemas, round lifecycle, file-output contracts, stuck-protocol/fixpoint definition) because it documents what the scripts do internally. The "build args → `Workflow({scriptPath})` → read return + files → checkpoint" pattern replaces the old `Agent()`/`SendMessage`/registry dispatch steps.
 
@@ -105,9 +105,11 @@ Read `${CLAUDE_SKILL_DIR}/references/phase-5-research.md` for the full workflow.
 
 Build the args and launch the workflow:
 ```
-Workflow({ scriptPath: "${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/workflows/phase-5-research.js", args: { exp_root, primary_metric, model_category, scope_level, source, user_papers } })
+Workflow({ scriptPath: "${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/workflows/phase-5-research.js", args: { exp_root, project_root, primary_metric, model_category, scope_level, source, user_papers, vault_agent, vault_paths, goal_summary } })
 ```
 The workflow dispatches `ml-optimizer:research-agent` internally (across angles), writes `reports/research-findings.md` + inits the agenda, handles research failure recovery (knowledge-only, then HP-only) internally, and returns `{ findings_path, proposals, agenda_initialized }`. After it returns, run the user checkpoint to confirm proposal selection.
+
+`vault_agent` is optional: pass a host-project research agent's `subagent_type` (chosen by the user at Phase 0 Step 3.1) to route both Fan-out and Vet to that project's curated corpus instead of the web. Synthesize stays on `ml-optimizer:research-agent` regardless, since it owns the findings-file format and the indices Phase 6 resolves against. When you set it, also pass `goal_summary` (`goal_memory.py <exp_root> summary`) — a non-plugin agent gets no SubagentStart injection, so that is its only view of goals and dead ends. See the phase-5 reference; omit the args for unchanged behavior.
 
 ## Phase 6: Implement Research Proposals
 
@@ -125,7 +127,7 @@ Read `${CLAUDE_SKILL_DIR}/references/phase-7-experiment-loop.md` for the full wo
 
 Build the args (from `user_choices`, baseline, and the Phase 6 manifest) and launch the workflow:
 ```
-Workflow({ scriptPath: "${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/workflows/phase-7-experiment.js", args: { exp_root, project_root, baseline, primary_metric, divergence_metric, divergence_lower_is_better, model_category, lower_is_better, target_value, scope_level, fixed_time_budget, fixed_epoch_budget, fixed_step_budget, hp_batches_per_round, method_proposal_scope, method_proposal_iterations, seeds_per_config, secondary_metrics, experiments_per_gpu, eval_tasks } })
+Workflow({ scriptPath: "${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/workflows/phase-7-experiment.js", args: { exp_root, project_root, baseline, primary_metric, divergence_metric, divergence_lower_is_better, model_category, lower_is_better, target_value, scope_level, fixed_time_budget, fixed_epoch_budget, fixed_step_budget, hp_batches_per_round, method_proposal_scope, method_proposal_iterations, seeds_per_config, secondary_metrics, experiments_per_gpu, eval_tasks, remote, vault_agent, vault_paths } })
 ```
 
 The script owns the experiment loop — it creates rounds and dispatches tuning, experiment, and analysis agents per iteration. Divergence detection is folded into the experiment agent (it runs `detect_divergence.py` against its own log using the `divergence_metric`/`divergence_lower_is_better`/`model_category` args); a standalone `monitor-agent` dispatch exists but isn't wired in (no flag, `user_choices` key, or code path in `phase-7-experiment.js` reaches it — see phase-7-experiment-loop.md). After each batch the analysis agent recommends the next action (continue, pivot, or stop) and the workflow applies the decision table in phase-7-experiment-loop.md internally.
@@ -192,7 +194,7 @@ Read `${CLAUDE_SKILL_DIR}/references/phase-8-stacking.md` for the full workflow.
 
 When the phase-7 workflow returns non-empty `stacking_candidates`, launch the stacking workflow:
 ```
-Workflow({ scriptPath: "${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/workflows/phase-8-stacking.js", args: { exp_root, project_root, primary_metric, lower_is_better, baseline_metric, scope_level, divergence_metric, divergence_lower_is_better, model_category, fixed_time_budget, fixed_epoch_budget, fixed_step_budget, stacking_candidates } })
+Workflow({ scriptPath: "${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/workflows/phase-8-stacking.js", args: { exp_root, project_root, primary_metric, lower_is_better, baseline_metric, scope_level, divergence_metric, divergence_lower_is_better, model_category, fixed_time_budget, fixed_epoch_budget, fixed_step_budget, stacking_candidates, remote } })
 ```
 The script ranks methods by improvement magnitude (descending), holds the "current best stack" in a variable, and per step dispatches implement (merge), experiment, and analysis agents internally — resolving interference via ShinkaEvolve if needed (requires git branch strategy). It returns `{ best_stack_branch, best_stack_metric, steps }`. After it returns, the orchestrator may relaunch the phase-7 workflow on the stacked code.
 

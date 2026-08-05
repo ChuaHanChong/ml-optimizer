@@ -6,7 +6,7 @@ Dispatch the prerequisites agent:
 ```
 Agent(
   description: "Check prerequisites",
-  prompt: "Check prerequisites for ML project. Parameters: project_root: {project_root}, exp_root: {exp_root}, framework: {framework}, training_script: {training_script}, config_path: {config_path}, train_data_path: {train_data_path}, val_data_path: {val_data_path}, env_manager: {env_manager}, env_name: {env_name}, model_category: {model_category}.",
+  prompt: "Check prerequisites for ML project. Parameters: project_root: {project_root}, exp_root: {exp_root}, framework: {framework}, training_script: {training_script}, config_path: {config_path}, train_data_path: {train_data_path}, val_data_path: {val_data_path}, env_manager: {env_manager}, env_name: {env_name}, model_category: {model_category}, remote: {remote or null}.",
   subagent_type: "ml-optimizer:prerequisites-agent"
 )
 ```
